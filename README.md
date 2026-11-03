@@ -4,6 +4,8 @@
 
 工作空间：https://tr.zhangheng.eu.org （Cloudflare Access，仅配置的本人邮箱可访问）。原地址 https://taskrelay.zhangheng.workers.dev 继续可用；已配对客户端可继续使用原地址。
 
+当前联调限制：新域名页面及登录正常，但真实模型草稿请求仍遇到地区拒绝；同一配置在原 workers.dev 入口已生成草稿成功。AI 操作暂用原入口，差异和证据见 [验收记录](docs/ACCEPTANCE.md)。美国区域出站流程保持不变。
+
 ## 使用
 
 1. 在网站“设置 → 模型服务”填写自己的公网 OpenAI 兼容服务和任意模型名称。默认 Chat Completions，也支持 Responses。Base URL 示例 `https://api.openai.com/v1`；粘贴完整 `/responses` 或 `/chat/completions` 地址时自动规范，并检查协议是否一致。

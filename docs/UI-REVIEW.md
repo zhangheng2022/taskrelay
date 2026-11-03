@@ -27,6 +27,8 @@
 
 本机截图：`out/ui-review/mobile-chat.png`、`out/ui-review/desktop-proposal.png`。截图与演示数据均不是生产任务证据，不提交构建/截图产物。
 
+上线后另用已登录浏览器确认 `tr.zhangheng.eu.org` 已加载新版共享 UI，截图为 `out/ui-review/production-domain.png`。该页面真实模型请求的地区失败单独记入 ACCEPTANCE，不属于本地演示通过项。
+
 ## 验证边界
 
 本次浏览器交互验证没有使用真实模型、真实目标网站或桌面 IPC。中文输入法组合态保护由代码检查确认，未进行实体输入法候选框现场测试。原生托盘、干净 Windows、跨版本升级、真实断网/休眠和七天观察仍以 ACCEPTANCE 台账为准。首次包构建与打包 smoke 单独记录，不能用它们代替这些现场验证。

@@ -28,8 +28,6 @@ npm run deploy
 
 `GET /api/user/settings/check` 是经过身份验证的有限自检，只返回数据库、加密和固定模型域名 DNS 校验结果，不返回密钥。`node scripts/cloud-self-check.mjs` 会短暂创建隔离诊断设备和无效的测试模型配置，验证生产保存接口后删除这些测试数据，不发起模型推理。
 
-## 模型出站地区
-
 ## 工作空间域名
 
 主入口为 `https://tr.zhangheng.eu.org`，原 `https://taskrelay.zhangheng.workers.dev` 保留。自定义域名已在 `apps/web/wrangler.jsonc` 的 `routes` 中声明为 `custom_domain: true`，指向同一 `taskrelay` Worker；不创建另一套 D1/R2/模型配置。
@@ -39,6 +37,8 @@ npm run deploy
 已配对客户端可继续使用原地址；新配对可填写新域名。回退域名时只撤下自定义域名绑定/配置并保留原地址，不轮换 MASTER_KEY、不重建 Access 应用或数据存储。
 
 ## 模型出站实现
+
+最新部署版本为 `99ca685e-e277-431a-aa2e-0c4260f770e2`。新域名的真实草稿推理仍有地区拒绝，原 workers.dev 相同请求成功，详见 [ACCEPTANCE.md](ACCEPTANCE.md)。域名/Access 检查通过不等于模型请求通过；现阶段 AI 操作使用原入口。两处使用同一 D1 和模型配置。
 
 所有能力测试、任务解析、Stagehand 模型回调及人工协助解析统一经过 `MODEL_EGRESS`，由美国区域 Durable Object 的 alarm 发起上游请求。网页和设备请求只提交加密的推理作业，不转发原始 Request、IP 或地区头。API Key 仍由云端从 D1 解密，网站和客户端均拿不到明文。缺少出站绑定会明确失败，不回退到带访问者上下文的直接请求。
 

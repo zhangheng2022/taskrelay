@@ -188,7 +188,7 @@ Stagehand 固定 4.3.0，Executor 打包保持原生动态 import。Forge Squirr
 
 | 验证 | 已有证据覆盖 | 不能据此证明 |
 | --- | --- | --- |
-| 60 项源码测试 | 协议、状态/幂等、策略、协助、出站；实际 plan/Stagehand/草稿/聊天/验证回复路由的修复与美国出站；多轮确认与创建幂等 | 所有故障交错或整机故障都已覆盖 |
+| 65 项源码测试 | 协议、状态/幂等、策略、协助、出站；实际 plan/Stagehand/草稿/聊天/验证回复路由的修复与美国出站；多轮确认与创建幂等；严格 Schema 投影和 JSON 指令 | 所有故障交错或整机故障都已覆盖 |
 | D1 stand-in | `tests/helpers.ts` 用 Node SQLite 加载真实迁移，并模拟 prepare/batch | Cloudflare D1 的真实并发、网络、部署一致性 |
 | EgressState 测试 | 内存 storage adapter、alarm 状态和中断恢复；本地 jurisdiction 不支持时拒绝旁路 | 真实请求地理位置或提供方可用性 |
 | 模型协议测试 | Chat / Responses 转换、未知用量、错误分类、重定向拒绝 | 非 GPT 实际闭环；隔离测试不能证明云端网络可用 |
@@ -237,6 +237,8 @@ smoke 走 `executor/entry.ts` 中独立手写流程，没有调用 `RuntimePort`
 - **收益与验证**：协助约束获得 locality，新验证类型获得 leverage；保留已有绑定/消费行为测试，补解析期间过期/取消、交付后崩溃、确认目标变化与扫码实际复核。
 
 A 已按用户选择完成；B/C/D 涉及可靠性与责任归属，仍需选定范围后进一步设计。
+
+后续真实联调补充：`packages/model/src/schema.ts` 只转换发送给兼容服务的严格输出 Schema：oneOf 转 anyOf、const 转 enum、去除未支持的 URI format 和字符串长度限制等；原始 Zod/Ajv 约束仍在 `generateStructured` 校验，校验失败最多修复一次。JSON 模式首个请求明确包含 JSON 指令及完整原始 Schema。不能把投影后的宽松约束当作任务授权校验。
 
 ## 9. 应保留的设计与文档维护
 
