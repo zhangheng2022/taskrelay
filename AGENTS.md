@@ -37,12 +37,32 @@ TaskRelay 面向个人：网站描述并配置浏览器任务，Cloudflare 统�
 | --- | --- |
 | 架构分析、module 深化 | [improve-codebase-architecture](.agents/skills/improve-codebase-architecture/SKILL.md) 配合 [codebase-design](.agents/skills/codebase-design/SKILL.md)：先事实、deletion test、实际 adapter，再给候选；不提前设计新 interface |
 | React 行为或性能变更 | [vercel-react-best-practices](.agents/skills/vercel-react-best-practices/SKILL.md)：选与当前问题相关的规则 |
-| shadcn/ui 增改、表单、对话、可访问性 | [shadcn](.agents/skills/shadcn/SKILL.md)：Web/桌面统一默认中性色、组件 variants 和语义 tokens；应用层仅编排布局，不恢复旧的品牌色全局覆盖 |
+| shadcn/ui 增改、表单、对话、可访问性 | [shadcn](.agents/skills/shadcn/SKILL.md)：遵循下方「UI 交互基准」，AI 交互以官方 AI Elements 为准；Web/桌面统一默认中性色、组件 variants 和语义 tokens |
 | Hono 路由和中间件实现 | [hono](.agents/skills/hono/SKILL.md)；当前 UI 是 React，不因 Hono 后端而启用 `hono-jsx` 或 `hono-void` |
 | Workers、D1、R2、Durable Objects、部署 | 使用会话中可用的 Cloudflare、workers-best-practices、durable-objects、wrangler 等对应技能；从当前技能目录获取路径，不硬编码另一台机器的插件版本目录 |
 | 动画或 UI 原语迁移 | 仅在任务实际涉及时使用 `vercel-react-view-transitions` 或 `migrate-radix-to-base`；不要把迁移当作架构分析的默认动作 |
 
 架构讨论使用 `module`、`interface`、`implementation`、`depth`、`deep`、`shallow`、`seam`、`adapter`、`leverage`、`locality` 的技能定义。薄的文件也可能是必要的平台 adapter；删除后知识扩散到调用方，说明该 module 应保留。
+
+## UI 交互基准
+
+**网站与 Windows 桌面执行器的 AI 交互统一以 [shadcn/ui AI Elements 官方文档](https://ui.shadcn.com/docs/ai-elements) 为准。** 覆盖任务创建、任务对话、模型选择、执行步骤、结果及人工确认。“Codex 式”仅描述任务侧栏、会话主区和底部输入区的整体布局；具体组件组合与交互细节以 AI Elements 对应 pattern 为准。设置、导航等常规界面继续使用 shadcn/ui 默认组件。
+
+AI Elements 是 shadcn/ui 组件的组合模式。按需复用官方 pattern 与现有组件，统一放在 `packages/ui`，Web 和 Electron Renderer 共用。保留 React＋Vite＋TypeScript、默认中性色、语义 tokens、组件 variants 及浅色/深色/系统主题；应用层负责布局和业务编排。
+
+| 场景 | 对应 pattern 与项目要求 |
+| --- | --- |
+| 会话与消息 | Chat / Message：使用 `MessageScroller`、`Message`、`Bubble`；消息标识稳定，滚动跟随、用户上翻及回到最新由官方滚动组件负责 |
+| 输入与创建 | Prompt Input / Suggestion：使用 `InputGroup` 组合输入与操作；Enter 发送、Shift+Enter 换行，中文输入法组合态不发送。自然语言创建只追问缺失信息，确认任务卡后才创建或试运行，详细表单作为次级入口 |
+| 模型选择 | Model Selector：展示实际配置和能力，保留任意兼容模型名称；额外选项仅在后端真实支持时提供 |
+| 执行过程与结果 | Tool / Task / Plan：使用 `Trace` 组织实际步骤与状态，按需展开输入、输出和错误；只呈现真实运行事实、脱敏摘要及证据 |
+| 高影响操作确认 | Confirmation：在当前任务对话中呈现具体操作和明确选择；确认结果仍提交现有后端校验，保留运行、步骤、版本、租约与消费绑定 |
+
+验证码、扫码、外部确认继续使用同一任务对话通道，敏感回复不进入普通消息历史。加载、等待协助、离线、失败、取消和完成均以真实业务状态驱动；流式输出、附件、停止生成等控件只在对应能力接通后启用。
+
+修改 UI 前读取 shadcn 技能及对应官方 pattern，核对 `packages/ui/components.json` 和已安装组件；用 CLI 获取组件文档并检查更新差异，选择与项目现有原语库一致的示例。文档中的 AI SDK、Next.js 或演示 transport 按需适配到现有 `Transport`，不因采用交互模式改变宿主架构、云端权威或美国模型出站链路。
+
+UI 验证须对照所用 pattern，覆盖手机、窄桌面、键盘/输入法、历史消息滚动，以及加载、失败、离线、等待确认/协助状态。规则更新不等于全量 UI 已完成对齐；实际实现与检查结果记入 `docs/UI-REVIEW.md` 和验收台账。
 
 ## 必须保留的运行约束
 

@@ -76,6 +76,8 @@ flowchart TB
 
 ### 共享界面与任务草稿
 
+交互约定：网站与 Windows 客户端的 AI 交互以 [shadcn/ui AI Elements](https://ui.shadcn.com/docs/ai-elements) 为准，组件选用、状态呈现和验证要求统一维护在 [AGENTS.md 的 UI 交互基准](../AGENTS.md#ui-交互基准)。“Codex 式”仅作为整体布局描述。此约定是后续 UI 实施与审查的准绳，不表示现有所有交互已经完成逐项对齐。
+
 `app.tsx` 负责任务侧栏、导航、主题及宿主状态；`chat-parts.tsx` 组合官方 Message/MessageScroller/Bubble/InputGroup，`conversation.tsx` 展示实际运行事件、结果和绑定协助。网站与桌面使用同一套默认 shadcn/ui 中性色 tokens，桌面能力仍通过 Transport/Preload/Main。
 
 `task-compose.tsx` 持有当前草稿和短期补全对话。`POST /tasks/compose` 使用统一 `generate`，缺网址直接追问，信息不足返回 `task: null`；模型新增站点必须出现在用户输入或当前草稿中。草稿不落库、不排队。`task-summary.tsx` 展示确认卡，`task-editor.tsx` 仅修改草稿。确认后才调用原有创建/版本更新路由，保留能力、账号、授权和试运行校验。创建失败保留相同 requestId 与载荷，版本更新冲突要求核对新版本。旧 `/tasks/draft` 保留兼容。
