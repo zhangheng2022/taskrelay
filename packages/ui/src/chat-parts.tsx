@@ -74,6 +74,7 @@ export function Composer({
   disabled,
   placeholder,
   label = "消息",
+  maxLength = 6000,
   children,
 }: {
   text: string;
@@ -83,10 +84,12 @@ export function Composer({
   disabled?: boolean;
   placeholder: string;
   label?: string;
+  maxLength?: number;
   children?: ReactNode;
 }) {
   return (
     <form
+      aria-busy={busy}
       className="mx-auto w-full max-w-3xl shrink-0 px-4 pb-4 pt-2 md:px-8"
       onSubmit={(e) => {
         e.preventDefault();
@@ -100,8 +103,9 @@ export function Composer({
           onChange={(e) => setText(e.target.value)}
           placeholder={placeholder}
           rows={2}
-          maxLength={6000}
-          disabled={busy || disabled}
+          maxLength={maxLength}
+          readOnly={busy}
+          disabled={disabled}
           autoComplete="off"
           spellCheck={false}
           onKeyDown={(e) => {

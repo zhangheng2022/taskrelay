@@ -12,6 +12,28 @@ afterEach(() => {
   cleanup();
   localStorage.clear();
 });
+test("pending input stays focused and read-only, and accepts another message after completion", () => {
+  let sends = 0;
+  const props = {
+    text: "任务",
+    setText: () => {},
+    onSend: () => sends++,
+    placeholder: "任务",
+  };
+  const view = render(<Composer {...props} busy={false} />);
+  const input = view.getByRole("textbox") as HTMLTextAreaElement;
+  input.focus();
+  view.rerender(<Composer {...props} busy />);
+  assert.equal(document.activeElement, input);
+  assert.equal(input.disabled, false);
+  assert.equal(input.readOnly, true);
+  fireEvent.keyDown(input, { key: "Enter" });
+  assert.equal(sends, 0);
+  view.rerender(<Composer {...props} busy={false} />);
+  assert.equal(document.activeElement, input);
+  fireEvent.keyDown(input, { key: "Enter" });
+  assert.equal(sends, 1);
+});
 test("composer sends once on Enter; Shift+Enter and IME composition never send", () => {
   let sends = 0;
   function Input() {

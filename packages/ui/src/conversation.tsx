@@ -304,6 +304,7 @@ export function Conversation({
         disabled={replyBlocked}
         onSend={() => void send()}
         label={challenge ? "当前验证回复" : "任务对话回复"}
+        maxLength={challenge ? 4000 : 6000}
         placeholder={
           challenge
             ? challenge.kind === "approval"

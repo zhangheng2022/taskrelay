@@ -237,7 +237,7 @@ const transport: Transport = {
       )
         throw new Error("CHALLENGE_STALE");
       if (current.kind === "code" && body.text !== "0012aB")
-        throw new Error("CHALLENGE_REPLY_INVALID");
+        throw new Error("REPLY_INVALID");
       current.status = "answered";
       result = { ok: true };
     } else if (path.endsWith("/cancel")) {

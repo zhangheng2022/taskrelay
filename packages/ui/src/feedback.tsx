@@ -66,6 +66,10 @@ export function ErrorText({ error }: { error: string }) {
     CHALLENGE_STALE: "这条协助请求已过期或已回复，请刷新当前任务。",
     EXPLICIT_APPROVAL_REQUIRED: "请核对具体操作，再输入“确认执行”。",
     CHALLENGE_UNSUPPORTED: "此验证无法通过当前对话通道完成。",
+    REPLY_SPAN_INVALID:
+      "未能从回复中提取有效信息，请核对当前验证要求后重新输入。",
+    REPLY_INVALID: "回复包含无法填写的字符或过长，请只输入当前步骤需要的信息。",
+    CONFIRMATION_REQUIRED: "请先完成扫码或外部确认，再点击“已扫码，检查状态”。",
     OFFLINE: "暂时无法连接云端。已保留缓存，连接恢复后自动刷新。",
     MODEL_INVALID_JSON: "模型返回的格式不正确，请检查模型配置后重试。",
     MODEL_EGRESS_TIMEOUT: "模型回复超时，输入已保留。请稍后重试。",
