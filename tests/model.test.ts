@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { infer } from "../packages/model/src/index";
+import { outputSchema } from "../packages/model/src/schema";
 import type { ModelProfile } from "../packages/contracts/src/index";
 const profile: ModelProfile = {
   id: "test",
@@ -20,6 +21,25 @@ const profile: ModelProfile = {
     testedAt: null,
   },
 };
+test("严格输出投影不修改原 Schema，也不把同名业务字段当作关键字删除", () => {
+  const schema = {
+    type: "object",
+    properties: {
+      default: { type: "string", default: "x" },
+      oneOf: { type: "string", const: "value" },
+    },
+    required: ["default", "oneOf"],
+    additionalProperties: false,
+  };
+  const original = structuredClone(schema);
+  const projected = outputSchema(schema) as any;
+  assert.deepEqual(schema, original);
+  assert.deepEqual(projected.properties.default, { type: "string" });
+  assert.deepEqual(projected.properties.oneOf, {
+    type: "string",
+    enum: ["value"],
+  });
+});
 test("Chat Completions 保留任意模型名、工具调用及未知用量", async () => {
   const result = await infer(
     profile,

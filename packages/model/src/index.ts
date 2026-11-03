@@ -1,4 +1,5 @@
 import type { ModelProfile } from "../../contracts/src/index";
+import { outputSchema } from "./schema";
 
 export interface Message {
   role: "system" | "user" | "assistant" | "tool";
@@ -65,7 +66,11 @@ export async function infer(
     if (request.schema)
       body.response_format = {
         type: "json_schema",
-        json_schema: { name: "result", strict: true, schema: request.schema },
+        json_schema: {
+          name: "result",
+          strict: true,
+          schema: outputSchema(request.schema),
+        },
       };
     else if (request.jsonMode) body.response_format = { type: "json_object" };
   } else {
@@ -118,7 +123,7 @@ export async function infer(
           type: "json_schema",
           name: "result",
           strict: true,
-          schema: request.schema,
+          schema: outputSchema(request.schema),
         },
       };
     else if (request.jsonMode) body.text = { format: { type: "json_object" } };

@@ -134,6 +134,18 @@ export async function generateStructured<T>(
     profile.capabilities.structured === "schema"
       ? { schema }
       : { jsonMode: true };
+  const instructions: Inference["messages"] =
+    profile.capabilities.structured === "json"
+      ? [
+          {
+            role: "system",
+            content:
+              "只返回符合以下 JSON Schema 的 JSON，不要输出 Markdown：" +
+              JSON.stringify(schema),
+          },
+          ...messages,
+        ]
+      : messages;
   for (let attempt = 0; attempt < 2; attempt++) {
     const response = await invoke(
       env,
@@ -142,7 +154,7 @@ export async function generateStructured<T>(
       {
         messages: attempt
           ? [
-              ...messages,
+              ...instructions,
               {
                 role: "user",
                 content:
@@ -150,7 +162,7 @@ export async function generateStructured<T>(
                   JSON.stringify(schema),
               },
             ]
-          : messages,
+          : instructions,
         ...format,
       },
       runId,

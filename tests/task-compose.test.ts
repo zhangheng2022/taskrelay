@@ -12,6 +12,52 @@ const proposed = {
   verification: { kind: "text_present", value: "成功" },
   schedule: { kind: "manual" },
 };
+for (const protocol of ["chat", "responses"] as const)
+  for (const mode of ["schema", "json"] as const)
+    test(`完整任务草稿/${protocol}/${mode}：可发送的 Schema 与本地原始约束同时生效`, async (t) => {
+      const s = await productionModelFixture(t, protocol, mode);
+      s.replies(
+        JSON.stringify({
+          reply: "草稿",
+          task: { ...proposed, title: "a".repeat(121) },
+        }),
+        JSON.stringify({ reply: "草稿", task: proposed }),
+      );
+      const r = await s.request("/api/user/tasks/compose", {
+        modelId: "model_test",
+        messages: [{ role: "user", content: "查询 https://example.com/" }],
+      });
+      assert.equal(r.status, 200);
+      assert.equal(r.data.task.title, proposed.title);
+      assert.equal(
+        s.jobs(),
+        2,
+        "original maxLength must still reject the first output",
+      );
+      for (const req of s.requests) {
+        const format =
+          protocol === "chat" ? req.body.response_format : req.body.text.format;
+        if (mode === "schema") {
+          const schema =
+            protocol === "chat" ? format.json_schema.schema : format.schema;
+          const task = schema.properties.task.anyOf[0];
+          assert.equal(task.properties.entryUrl.format, undefined);
+          assert.equal(task.properties.schedule.oneOf, undefined);
+          assert.deepEqual(
+            task.properties.schedule.anyOf[0].properties.kind.enum,
+            ["manual"],
+          );
+          assert.equal(schema.additionalProperties, false);
+          assert.ok(task.required.includes("schedule"));
+        } else {
+          const messages =
+            protocol === "chat" ? req.body.messages : req.body.input;
+          assert.match(messages[0].content, /JSON Schema/);
+          assert.match(messages[0].content, /"maxLength":120/);
+          assert.match(messages[0].content, /"oneOf"/);
+        }
+      }
+    });
 test("缺少网址时简洁追问，不调用模型、不创建任务", async (t) => {
   const s = await productionModelFixture(t);
   const r = await s.request("/api/user/tasks/compose", {
