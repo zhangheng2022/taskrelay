@@ -2,6 +2,7 @@
   "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "taskrelay",
   "workers_dev": true,
+  "routes": [{ "pattern": "tr.zhangheng.eu.org", "custom_domain": true }],
   "preview_urls": false,
   "main": "../cloud/src/worker.ts",
   "compatibility_date": "2026-11-03",
