@@ -22,6 +22,8 @@
 | 无 Node 的干净 Windows       | 待独立 Windows x64 环境安装、运行、升级、卸载；本机已有开发工具，不具备该验收条件                                                                                                                                     |
 | 连续 7 天观察                | 未开始。须在本人授权网站及真实模型通过后执行，不可补写为通过                                                                                                                                                          |
 
+源码走读补充：现有打包/安装 smoke 走 `apps/desktop/src/executor/entry.ts` 中的独立 Stagehand 流程，未调用 `runtime.execute()` 或 `ExecutorHost`，因此四类自建站操作通过不能替代完整调度、租约、检查点和恢复验证。源码测试的 D1 adapter 使用 Node SQLite stand-in，不代表已完成 Cloudflare D1 的真实并发验证。
+
 开发机原生窗口的最后一次可视检查受系统锁屏影响，不能据此确认托盘、窗口关闭、显式退出和设备授权交互已完成现场验收。同版本重新安装也不等于跨版本升级验收。
 
 ## 现场验证表

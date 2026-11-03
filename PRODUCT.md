@@ -27,4 +27,4 @@ TaskRelay / 任务接力. Chinese UI. React and official shadcn/ui components. F
 - Secrets never enter ordinary logs or exported diagnostics.
 
 ## Evidence on Hand
-Empty TaskRelay repository. RewardPilot source examined as architecture reference. Real provider keys, target account credentials, clean-machine and seven-day observations are external acceptance inputs.
+Implemented web, Workers and Windows desktop code, with source tests, development-machine packaging/installation smoke evidence, and a real Responses model capability check recorded in docs/ACCEPTANCE.md. The smoke path does not exercise the full task executor or recovery flow. Real GPT/non-GPT browser-task loops, clean-machine acceptance and seven-day observation remain incomplete. RewardPilot was examined only as an architecture reference.
