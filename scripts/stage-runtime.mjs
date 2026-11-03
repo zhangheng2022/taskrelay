@@ -15,7 +15,7 @@ await writeFile(
   path.join(staging, "package.json"),
   JSON.stringify({
     name: "taskrelay-runtime",
-    version: "0.1.0",
+    version: app.version,
     private: true,
     dependencies: app.dependencies,
     overrides: repository.overrides,

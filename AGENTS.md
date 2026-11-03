@@ -23,7 +23,7 @@ TaskRelay 面向个人：网站描述并配置浏览器任务，Cloudflare 统�
 | 桌面生命周期、崩溃恢复、停止、离线 | `apps/desktop/src/main/{index,executor-host,journal,cloud,browser}.ts` |
 | Preload 与 Renderer 权限 | `apps/desktop/src/{preload/index,shared/ipc,renderer/main}.ts` 或 `.tsx`，Main 中的 IPC 注册与参数校验 |
 | 页面动作、站点限制、证据 | `apps/desktop/src/executor/{entry,runtime,proxy}.ts`，`packages/contracts/src/{policy,security}.ts` |
-| 共享界面与样式 | `packages/ui/src/`，`apps/web/src/main.tsx`，`apps/desktop/src/renderer/main.tsx`，`docs/UI-REVIEW.md` |
+| 共享界面与样式 | `packages/ui/src/`；AI 交互入口为 `chat-parts`、`model-selector`、`task-compose`、`conversation`、`run-report`、`challenge-panel`；宿主入口见 `apps/web/src/main.tsx` 和 `apps/desktop/src/renderer/main.tsx`，检查记录见 `docs/UI-REVIEW.md` |
 | Windows 安装与原生运行依赖 | `apps/desktop/forge.config.mts`，`apps/desktop/vite.executor.config.mts`，`scripts/{stage-runtime,prepare-browser,verify-browser,smoke}.mjs` |
 | Cloudflare 绑定、认证、迁移 | `apps/web/wrangler.jsonc`，`apps/cloud/src/{worker,index,auth,pairing,env}.ts`，`apps/cloud/migrations/` |
 
@@ -112,7 +112,7 @@ npm run desktop
 | 纯文档 | 核对源码、命令、相对链接、Markdown 及 `git diff --check`；无需重新调用真实模型或打包 |
 | 协议、状态、策略 | `npm run typecheck`；相关 `api` / `reliability` 测试；改动跨多个运行流程时执行 `npm test` |
 | 模型协议与结构化输出 | `tests/model.test.ts` 加实际生产入口测试；地区/加密作业修改同时验证 `tests/egress.test.ts`，避免只测未接入的 helper |
-| Web/共享 UI | `npm run typecheck`、`npm run build`；检查手机、窄桌面、键盘及加载/离线/错误/等待协助状态 |
+| Web/共享 UI | `npm run typecheck`、`npm run test:ui`、`npm run build`；检查手机、窄桌面、键盘及加载/离线/错误/等待协助状态；组件测试挂载实际共享组件并验证 Transport 请求，JSDOM 不代替布局/滚动或真实 Electron 验证 |
 | Executor、原生依赖、Forge | 打包后 smoke；恢复逻辑还需针对真实 `execute` / `ExecutorHost` 的故障验证，不能由 smoke 代替 |
 
 ```powershell
@@ -136,6 +136,8 @@ npm run make
 固定 Stagehand 4.3.0；保留 Executor 的原生动态 `import()` 和暂存的运行依赖。浏览器与扩展位于 ASAR 外，打包前验证资源哈希。不要把所有 `node_modules` 无筛选打进安装包。升级这些工具时检查安装后的加载路径，不能只凭 Vite 构建成功判断。
 
 `TaskRelay Setup.exe` 位于 `apps/desktop/out/make/squirrel.windows/x64/`。`out/`、`.cache/`、打包资源和图产物不是源文件；不要用旧 smoke JSON 冒充本次结果。`scripts/smoke.mjs` 校验报告的新鲜度。
+
+交付桌面更新必须提升 `apps/desktop/package.json` 的版本并同步锁文件，不能用同版本新包代替已安装更新。若用户实际从桌面/开始菜单启动，检查该入口指向的安装版本，并比对安装目录与构建产物的 `app.asar` 哈希；运行 `scripts/release-manifest.mjs` 时要求安装/打包 smoke 均新于本次产物。不要把直接启动 `out/` 中 exe 的验证描述为系统入口已经更新。
 
 现有 smoke 在安装产物中运行独立 Stagehand 流程，**不调用 `runtime.execute()` 或 `ExecutorHost`**。它证明原生依赖和自建站操作可用，不能证明完整调度、恢复与租约流程。Node SQLite 的 D1 stand-in 也不能代替真实 D1 并发验证。
 
