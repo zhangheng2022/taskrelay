@@ -32,3 +32,11 @@
 ## 验证边界
 
 本次浏览器交互验证没有使用真实模型、真实目标网站或桌面 IPC。中文输入法组合态保护由代码检查确认，未进行实体输入法候选框现场测试。原生托盘、干净 Windows、跨版本升级、真实断网/休眠和七天观察仍以 ACCEPTANCE 台账为准。首次包构建与打包 smoke 单独记录，不能用它们代替这些现场验证。
+
+## AI Elements 改造 · 第一阶段（2026-11-03）
+
+共享会话采用 Message / muted Bubble、InputGroup 和 Marker；模型选择采用 DropdownMenu RadioGroup，显示真实协议、配置版本及能力。Suggestion 直接发送需求，缺失信息由现有 compose API 追问；发送中显示本轮用户消息，失败恢复输入，草稿仍须明确确认后才创建。详细编辑作为次级入口。
+
+组件 registry 从旧 `new-york` 切换为当前 `radix-nova`，用于获取现行 AI Elements 组件；没有整体覆盖主题、Button 或 Separator。结果仅显示纯文本，无需引入 Shiki 高亮运行依赖。
+
+已通过类型检查、Web 构建及 4 个真实 React 组件测试：Enter/Shift+Enter/IME、快捷建议与创建边界、确认失败的同一幂等请求重试、任意模型名及能力禁用。浏览器夹具已验证建议 → 缺网址追问 → 输入网址；模型传输保持原有 Transport。其余执行/协助与双端检查在后续阶段记录。

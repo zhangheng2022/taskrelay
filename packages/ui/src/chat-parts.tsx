@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
 import { ArrowUp, Loader2 } from "lucide-react";
-import { Button } from "./components/ui/button";
 import {
   InputGroup,
   InputGroupAddon,
+  InputGroupButton,
   InputGroupTextarea,
 } from "./components/ui/input-group";
 import { Message, MessageContent } from "./components/ui/message";
@@ -15,6 +15,7 @@ import {
   MessageScrollerContent,
   MessageScrollerButton,
 } from "./components/ui/message-scroller";
+import { Marker, MarkerIcon, MarkerContent } from "./components/ui/marker";
 
 export function Thread({ children }: { children: ReactNode }) {
   return (
@@ -40,16 +41,29 @@ export function ChatMessage({
   return (
     <Message align={role === "user" ? "end" : "start"}>
       <MessageContent>
-        <Bubble
-          variant={role === "user" ? "default" : "ghost"}
-          align={role === "user" ? "end" : "start"}
-        >
-          <BubbleContent>
-            <div className="whitespace-pre-wrap break-words">{children}</div>
-          </BubbleContent>
-        </Bubble>
+        {role === "user" ? (
+          <Bubble variant="muted" align="end">
+            <BubbleContent>
+              <div className="whitespace-pre-wrap break-words">{children}</div>
+            </BubbleContent>
+          </Bubble>
+        ) : (
+          <div className="whitespace-pre-wrap break-words text-sm leading-7">
+            {children}
+          </div>
+        )}
       </MessageContent>
     </Message>
+  );
+}
+export function PendingMessage({ children }: { children: ReactNode }) {
+  return (
+    <Marker role="status">
+      <MarkerIcon>
+        <Loader2 className="animate-spin" />
+      </MarkerIcon>
+      <MarkerContent>{children}</MarkerContent>
+    </Marker>
   );
 }
 export function Composer({
@@ -98,16 +112,17 @@ export function Composer({
               e.keyCode !== 229
             ) {
               e.preventDefault();
-              if (text.trim() && !busy && !disabled) onSend();
+              e.currentTarget.form?.requestSubmit();
             }
           }}
         />
         <InputGroupAddon align="block-end" className="flex-wrap">
           {children}
           <span className="ml-auto" />
-          <Button
+          <InputGroupButton
             type="submit"
             size="icon-sm"
+            variant="default"
             aria-label="发送消息"
             disabled={busy || disabled || !text.trim()}
           >
@@ -116,7 +131,7 @@ export function Composer({
             ) : (
               <ArrowUp data-icon="inline-start" />
             )}
-          </Button>
+          </InputGroupButton>
         </InputGroupAddon>
       </InputGroup>
       <p className="mt-2 text-center text-xs text-muted-foreground">

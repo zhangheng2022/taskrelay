@@ -19,6 +19,7 @@
     "apps/**/*.mts",
     "packages/**/*.ts",
     "packages/**/*.tsx",
-    "tests/**/*.ts"
+    "tests/**/*.ts",
+    "tests/**/*.tsx"
   ]
 }

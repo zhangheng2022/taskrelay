@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Loader2, Pencil, Plus } from "lucide-react";
+import { Loader2, Pencil } from "lucide-react";
 import {
   taskInputSchema,
   type Snapshot,
@@ -26,7 +26,8 @@ import {
   EmptyContent,
 } from "./components/ui/empty";
 import { MessageScrollerItem } from "./components/ui/message-scroller";
-import { Thread, ChatMessage, Composer } from "./chat-parts";
+import { Thread, ChatMessage, Composer, PendingMessage } from "./chat-parts";
+import { canUseModel, ModelSelector } from "./model-selector";
 import { TaskSummary } from "./task-summary";
 import { TaskEditor, Field } from "./task-editor";
 import { ErrorText } from "./feedback";
@@ -48,12 +49,7 @@ export function TaskCompose({
   onSettings: () => void;
   onCancel?: () => void;
 }) {
-  const available = snapshot.models.filter(
-    (m) =>
-      m.capabilities.connection &&
-      m.capabilities.tools &&
-      m.capabilities.structured !== "none",
-  );
+  const available = snapshot.models.filter(canUseModel);
   const [modelId, setModelId] = useState(() => {
     if (initial) return initial.modelId;
     try {
@@ -78,16 +74,27 @@ export function TaskCompose({
     [error, setError] = useState("");
   // Once sent, retain exactly the same payload/id on an ambiguous network failure.
   const attempt = useRef<{ task: TaskInput; requestId: string } | null>(null);
+  const inFlight = useRef(false);
+  const [pending, setPending] = useState<{
+    id: string;
+    role: "user";
+    content: string;
+  } | null>(null);
   const locked = saving || !!attempt.current;
   const capable = available.some((m) => m.id === modelId);
-  async function send() {
-    if (busy || locked || offline || !text.trim() || !capable) return;
+  async function send(content = text) {
+    if (inFlight.current || locked || offline || !content.trim() || !capable)
+      return;
     const pending = {
       id: crypto.randomUUID(),
       role: "user" as const,
-      content: text,
+      content,
     };
     const history = [...messages, pending];
+    inFlight.current = true;
+    setPending(pending);
+    setText("");
+    setReady(false);
     setBusy(true);
     setError("");
     try {
@@ -111,12 +118,16 @@ export function TaskCompose({
       setText("");
     } catch (e) {
       setError((e as Error).message);
+      setText(content);
     } finally {
+      inFlight.current = false;
+      setPending(null);
       setBusy(false);
     }
   }
   async function confirm() {
-    if (!draft || saving || offline || !capable) return;
+    if (!draft || inFlight.current || offline || !capable) return;
+    inFlight.current = true;
     attempt.current ??= {
       task: { ...draft, modelId },
       requestId: crypto.randomUUID(),
@@ -135,64 +146,70 @@ export function TaskCompose({
     } catch (e) {
       setError((e as Error).message);
     } finally {
+      inFlight.current = false;
       setSaving(false);
     }
   }
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <Thread>
-        <MessageScrollerItem messageId="welcome">
-          <Empty className="py-8 md:py-14">
-            <EmptyHeader>
-              <EmptyTitle>
-                {initial ? "想调整什么？" : "今天想交给 TaskRelay 什么任务？"}
-              </EmptyTitle>
-              <EmptyDescription>
-                {initial
-                  ? "描述修改内容，核对新任务卡后保存并重新试运行。"
-                  : "描述目标和网站，确认后即可试运行。"}
-              </EmptyDescription>
-            </EmptyHeader>
-            <EmptyContent className="max-w-xl">
-              {!available.length ? (
-                <Button variant="outline" onClick={onSettings}>
-                  配置模型服务
-                </Button>
-              ) : (
-                !initial && (
-                  <div className="flex flex-wrap justify-center gap-2">
-                    {[
-                      "每天查看网站上的最新信息",
-                      "监测页面是否发生变化",
-                      "登录网站并完成签到",
-                    ].map((x) => (
-                      <Button
-                        key={x}
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setText(x)}
-                        disabled={locked || busy}
-                      >
-                        <Plus data-icon="inline-start" />
-                        {x}
-                      </Button>
-                    ))}
-                  </div>
-                )
-              )}
-              {initial && onCancel && (
-                <Button
-                  variant="ghost"
-                  onClick={onCancel}
-                  disabled={busy || saving}
-                >
-                  返回任务对话
-                </Button>
-              )}
-            </EmptyContent>
-          </Empty>
-        </MessageScrollerItem>
-        {messages.map((m) => (
+        {!messages.length && !pending && (
+          <MessageScrollerItem messageId="welcome">
+            <Empty className="py-8 md:py-14">
+              <EmptyHeader>
+                <EmptyTitle>
+                  {initial ? "想调整什么？" : "今天想交给 TaskRelay 什么任务？"}
+                </EmptyTitle>
+                <EmptyDescription>
+                  {initial
+                    ? "描述修改内容，核对新任务卡后保存并重新试运行。"
+                    : "描述目标和网站，确认后即可试运行。"}
+                </EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent className="max-w-xl">
+                {!available.length ? (
+                  <Button variant="outline" onClick={onSettings}>
+                    配置模型服务
+                  </Button>
+                ) : (
+                  !initial && (
+                    <div
+                      className="flex w-full gap-2 overflow-x-auto pb-2"
+                      aria-label="任务建议"
+                    >
+                      {[
+                        "每天查看网站上的最新信息",
+                        "监测页面是否发生变化",
+                        "登录网站并完成签到",
+                      ].map((x) => (
+                        <Button
+                          key={x}
+                          variant="outline"
+                          size="sm"
+                          className="shrink-0"
+                          onClick={() => void send(x)}
+                          disabled={locked || busy || offline || !capable}
+                        >
+                          {x}
+                        </Button>
+                      ))}
+                    </div>
+                  )
+                )}
+                {initial && onCancel && (
+                  <Button
+                    variant="ghost"
+                    onClick={onCancel}
+                    disabled={busy || saving}
+                  >
+                    返回任务对话
+                  </Button>
+                )}
+              </EmptyContent>
+            </Empty>
+          </MessageScrollerItem>
+        )}
+        {(pending ? [...messages, pending] : messages).map((m) => (
           <MessageScrollerItem
             messageId={m.id}
             key={m.id}
@@ -220,26 +237,34 @@ export function TaskCompose({
                       ?.name
                   }
                 />
-                <Field label="选择站点账号">
-                  <NativeSelect
-                    disabled={locked || busy}
-                    value={draft.accountId ?? ""}
-                    onChange={(e) =>
-                      setDraft({ ...draft, accountId: e.target.value || null })
-                    }
-                  >
-                    <option value="">不使用账号</option>
-                    {snapshot.accounts
-                      .filter(
-                        (a) => a.origin === new URL(draft.entryUrl).origin,
-                      )
-                      .map((a) => (
-                        <option value={a.id} key={a.id}>
-                          {a.name}
-                        </option>
-                      ))}
-                  </NativeSelect>
-                </Field>
+                {(draft.accountId ||
+                  snapshot.accounts.some(
+                    (a) => a.origin === new URL(draft.entryUrl).origin,
+                  )) && (
+                  <Field label="选择站点账号">
+                    <NativeSelect
+                      disabled={locked || busy}
+                      value={draft.accountId ?? ""}
+                      onChange={(e) =>
+                        setDraft({
+                          ...draft,
+                          accountId: e.target.value || null,
+                        })
+                      }
+                    >
+                      <option value="">不使用账号</option>
+                      {snapshot.accounts
+                        .filter(
+                          (a) => a.origin === new URL(draft.entryUrl).origin,
+                        )
+                        .map((a) => (
+                          <option value={a.id} key={a.id}>
+                            {a.name}
+                          </option>
+                        ))}
+                    </NativeSelect>
+                  </Field>
+                )}
               </CardContent>
               <CardFooter className="flex flex-wrap gap-2">
                 <Button
@@ -275,9 +300,7 @@ export function TaskCompose({
         )}
         {busy && (
           <MessageScrollerItem messageId="pending">
-            <p role="status" className="text-sm text-muted-foreground">
-              正在整理任务…
-            </p>
+            <PendingMessage>正在整理任务…</PendingMessage>
           </MessageScrollerItem>
         )}
         {error && (
@@ -304,25 +327,18 @@ export function TaskCompose({
         }
         label="任务需求"
       >
-        <NativeSelect
-          aria-label="使用的模型"
+        <ModelSelector
+          models={snapshot.models}
           value={modelId}
-          disabled={busy || locked}
-          onChange={(e) => {
-            setModelId(e.target.value);
+          disabled={busy || locked || offline}
+          onChange={(id) => {
+            setModelId(id);
             setReady(false);
             try {
-              localStorage.setItem("taskrelay.model", e.target.value);
+              localStorage.setItem("taskrelay.model", id);
             } catch {}
           }}
-        >
-          <option value="">选择模型</option>
-          {available.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.name} · {m.model}
-            </option>
-          ))}
-        </NativeSelect>
+        />
       </Composer>
       {editing && draft && (
         <TaskEditor
@@ -331,6 +347,7 @@ export function TaskCompose({
           onClose={() => setEditing(false)}
           onApply={(value) => {
             setDraft(value);
+            setModelId(value.modelId);
             setEditing(false);
           }}
         />
