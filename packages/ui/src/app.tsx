@@ -1,135 +1,184 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
-  ArrowRight,
-  CheckCircle2,
-  Clock3,
-  Layers3,
-  ListTodo,
-  Loader2,
+  Check,
+  Ellipsis,
   MessageSquare,
   Monitor,
-  Pause,
-  Play,
+  Moon,
   Plus,
   Settings as SettingsIcon,
-  WifiOff,
+  Sun,
 } from "lucide-react";
 import type {
+  DesktopStatus,
   Snapshot,
   TaskDefinition,
-  TaskRun,
   Transport,
 } from "../../contracts/src/index";
 import { Button } from "./components/ui/button";
-import { Badge } from "./components/ui/badge";
-import { TaskEditor } from "./task-editor";
+import { Input } from "./components/ui/input";
+import { Alert, AlertTitle, AlertDescription } from "./components/ui/alert";
+import { Skeleton } from "./components/ui/skeleton";
+import { TooltipProvider } from "./components/ui/tooltip";
+import {
+  SidebarProvider,
+  Sidebar,
+  SidebarHeader,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupLabel,
+  SidebarMenu,
+  SidebarMenuItem,
+  SidebarMenuButton,
+  SidebarInset,
+  SidebarTrigger,
+  useSidebar,
+} from "./components/ui/sidebar";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+} from "./components/ui/dropdown-menu";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "./components/ui/sheet";
+import {
+  Empty,
+  EmptyHeader,
+  EmptyTitle,
+  EmptyDescription,
+} from "./components/ui/empty";
 import { Settings } from "./settings";
 import { Conversation } from "./conversation";
+import { TaskCompose } from "./task-compose";
+import { TaskSummary, scheduleLabel } from "./task-summary";
+import { ErrorText, Status, formatDate } from "./feedback";
 import "./styles.css";
-export const labels: Record<string, string> = {
-  pending_validation: "待试运行",
-  active: "已启用",
-  paused: "已暂停",
-  needs_input: "待补充",
-  queued: "等待设备",
-  running: "正在执行",
-  waiting_user: "需要协助",
-  verifying: "正在核验",
-  succeeded: "已完成",
-  failed: "执行失败",
-  unknown: "结果待核查",
-  cancelled: "已取消",
-  expired: "已过期",
+export { ErrorText, Status, formatDate } from "./feedback";
+const empty: Snapshot = {
+  tasks: [],
+  runs: [],
+  models: [],
+  accounts: [],
+  devices: [],
+  challenges: [],
+  serverTime: "",
 };
-export function formatDate(value: string | null | undefined) {
-  return value
-    ? new Intl.DateTimeFormat("zh-CN", {
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-        timeZone: "Asia/Shanghai",
-      }).format(new Date(value))
-    : "—";
-}
-export function Status({ value }: { value: string }) {
-  return (
-    <Badge variant="outline" className={`status status-${value}`}>
-      <span className="status-dot" />
-      {labels[value] ?? value}
-    </Badge>
-  );
-}
-export function ErrorText({ error }: { error: string }) {
-  const friendly: Record<string, string> = {
-    MODEL_HTTP_403_UNSUPPORTED_REGION:
-      "请求被模型服务判定来自不支持的地区。请使用支持当前使用地区的兼容服务，或联系服务商确认可用性。",
-    MODEL_HTTP_403_PERMISSION:
-      "模型服务拒绝访问。请检查 API Key 所属项目和模型权限。",
-    MODEL_HTTP_403_ORGANIZATION_RESTRICTED:
-      "模型服务限制了当前组织，请检查服务商控制台。",
-    MODEL_HTTP_403_ACCOUNT_RESTRICTED: "模型服务限制了当前账号，请联系服务商。",
-    MODEL_HTTP_403_GATEWAY_DENIED:
-      "模型服务网关拒绝了请求，请检查接口地址及服务商访问策略。",
-    MODEL_HTTP_403: "模型服务返回 403，请检查服务商地区支持、账号及模型权限。",
-    MODEL_HTTP_401_INVALID_KEY: "API Key 未通过服务商验证，请重新检查密钥。",
-    MODEL_HTTP_404_MODEL_UNAVAILABLE:
-      "模型不存在或当前项目无访问权限，请填写服务商 API 实际提供的模型名称。",
-    MODEL_HTTP_429_QUOTA: "模型服务额度不足，请检查服务商账户的额度。",
-    MODEL_DNS_FAILED: "无法校验模型服务地址，请检查域名或稍后重试。",
-    MODEL_PROTOCOL_MISMATCH:
-      "接口路径与所选协议不一致，请使用对应的 Base URL。",
-    MODEL_BASE_URL_INVALID: "Base URL 不能包含查询参数或片段。",
-    MODEL_REDIRECT_BLOCKED: "模型服务返回了重定向，请填写最终 HTTPS 接口地址。",
-    ACCESS_REQUIRED: "请通过 Cloudflare Access 登录后刷新页面。",
-    DEVICE_UNAUTHORIZED: "设备授权已失效，请重新连接。",
-    MODEL_CAPABILITIES_REQUIRED: "模型尚未通过能力测试，请到设置中测试。",
-    TRIAL_REQUIRED: "请先完成一次成功的试运行，再启用调度。",
-    CHALLENGE_STALE: "这条协助请求已过期或已回复，请刷新当前任务。",
-    EXPLICIT_APPROVAL_REQUIRED: "请核对具体操作，再输入“确认执行”。",
-    CHALLENGE_UNSUPPORTED: "此验证无法通过当前对话通道完成。",
-    OFFLINE: "暂时无法连接云端。已保留缓存，连接恢复后自动刷新。",
-    MODEL_INVALID_JSON: "模型返回的格式不正确，请检查模型配置后重试。",
-  };
-  return (
-    <div role="alert" className="error-message">
-      {friendly[error] ?? `操作未完成：${error}。请检查配置后重试。`}
-    </div>
-  );
-}
 export function App({ transport }: { transport: Transport }) {
+  return (
+    <TooltipProvider>
+      <SidebarProvider className="h-dvh min-h-0">
+        <Workspace transport={transport} />
+      </SidebarProvider>
+    </TooltipProvider>
+  );
+}
+function Workspace({ transport }: { transport: Transport }) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null),
     [error, setError] = useState(""),
-    [busy, setBusy] = useState(false),
-    [page, setPage] = useState<"tasks" | "runs" | "settings">("tasks"),
-    [selected, setSelected] = useState<string | null>(null),
-    [runId, setRunId] = useState<string | null>(null),
-    [editor, setEditor] = useState<TaskDefinition | true | null>(null);
-  const [assistanceJump, setAssistanceJump] = useState(0);
-  const [pair, setPair] = useState<{
-    name: string;
-    code: string;
-    approved: boolean;
-  } | null>(null);
-  const load = useCallback(async () => {
+    [actionError, setActionError] = useState(""),
+    [busy, setBusy] = useState(false);
+  const [page, setPage] = useState<"tasks" | "runs" | "settings">("tasks"),
+    [selected, setSelected] = useState<string | null>(
+      () => location.hash.slice(1) || null,
+    ),
+    [runId, setRunId] = useState<string | null>(null);
+  const [edit, setEdit] = useState<TaskDefinition | null>(null),
+    [detail, setDetail] = useState(false),
+    [search, setSearch] = useState(""),
+    [draftKey, setDraftKey] = useState(0);
+  const [desktop, setDesktop] = useState<DesktopStatus | null>(null),
+    [pair, setPair] = useState<{
+      name: string;
+      code: string;
+      approved: boolean;
+    } | null>(null);
+  const [theme, setTheme] = useState(() => {
     try {
-      setSnapshot(
-        await transport.request<Snapshot>("GET", "/api/user/snapshot"),
-      );
-      const device = await transport.desktop?.status();
-      setError(device?.paired && !device.online ? "OFFLINE" : "");
-    } catch (e) {
-      setError((e as Error).message || "OFFLINE");
+      return localStorage.getItem("taskrelay.theme") ?? "system";
+    } catch {
+      return "system";
     }
-  }, [transport]);
+  });
+  const { setOpenMobile } = useSidebar();
+  const loading = useRef<Promise<void> | null>(null),
+    mounted = useRef(true);
+  const load = useCallback(
+    async (fresh = false) => {
+      // A mutation must refresh after an older poll has finished, not reuse its snapshot.
+      while (loading.current) {
+        await loading.current;
+        if (!fresh) return;
+      }
+      const request = (async () => {
+        try {
+          const status = await transport.desktop?.status();
+          if (!mounted.current) return;
+          if (status) {
+            setDesktop(status);
+            if (!status.paired) {
+              setPage("settings");
+              setError("");
+              return;
+            }
+          }
+          const data = await transport.request<Snapshot>(
+            "GET",
+            "/api/user/snapshot",
+          );
+          if (mounted.current) {
+            setSnapshot(data);
+            setError(status && !status.online ? "OFFLINE" : "");
+          }
+        } catch (e) {
+          if (mounted.current) setError((e as Error).message || "OFFLINE");
+        }
+      })();
+      loading.current = request;
+      try {
+        await request;
+      } finally {
+        if (loading.current === request) loading.current = null;
+      }
+    },
+    [transport],
+  );
+  const refresh = useCallback(() => load(true), [load]);
   useEffect(() => {
+    mounted.current = true;
     void load();
     const timer = setInterval(() => void load(), 5000);
-    return () => clearInterval(timer);
-  }, [load]);
+    const unsub = transport.desktop?.subscribe(() => void load());
+    return () => {
+      mounted.current = false;
+      clearInterval(timer);
+      unsub?.();
+    };
+  }, [load, transport]);
   useEffect(() => {
+    const media = matchMedia("(prefers-color-scheme: dark)");
+    const update = () =>
+      document.documentElement.classList.toggle(
+        "dark",
+        theme === "dark" || (theme === "system" && media.matches),
+      );
+    update();
+    media.addEventListener("change", update);
+    try {
+      localStorage.setItem("taskrelay.theme", theme);
+    } catch {}
+    return () => media.removeEventListener("change", update);
+  }, [theme]);
+  useEffect(() => {
+    let live = true;
     const code = new URLSearchParams(location.search).get("pair");
     if (code)
       void transport
@@ -137,418 +186,439 @@ export function App({ transport }: { transport: Transport }) {
           "GET",
           `/api/user/pairings/${encodeURIComponent(code)}`,
         )
-        .then(setPair)
-        .catch((e) => setError(e.message));
+        .then((x) => {
+          if (live) setPair(x);
+        })
+        .catch((e) => {
+          if (live) setActionError(e.message);
+        });
+    return () => {
+      live = false;
+    };
   }, [transport]);
-  const act = async (method: string, path: string, body?: unknown) => {
+  async function act(path: string, body?: unknown) {
     setBusy(true);
+    setActionError("");
     try {
-      await transport.request(method, path, body);
-      await load();
+      await transport.request("POST", path, body);
+      await refresh();
       return true;
     } catch (e) {
-      setError((e as Error).message);
+      setActionError((e as Error).message);
       return false;
     } finally {
       setBusy(false);
     }
-  };
-  const task = snapshot?.tasks.find((t) => t.id === selected) ?? null;
-  const selectedRun =
-    snapshot?.runs.find((r) => r.id === runId) ??
-    (task ? snapshot?.runs.find((r) => r.taskId === task.id) : null) ??
+  }
+  const data = snapshot ?? empty,
+    task = data.tasks.find((t) => t.id === selected) ?? null;
+  const run =
+    data.runs.find((r) => r.id === runId) ??
+    (task ? data.runs.find((r) => r.taskId === task.id) : null) ??
     null;
-  const pending =
-    snapshot?.challenges.filter((c) => c.status === "pending") ?? [];
+  const pending = data.challenges.filter((c) => c.status === "pending");
+  function choose(id: string | null, rid: string | null = null) {
+    setSelected(id);
+    setRunId(rid);
+    setPage("tasks");
+    setEdit(null);
+    setActionError("");
+    setOpenMobile(false);
+    history.replaceState(
+      null,
+      "",
+      location.pathname + location.search + (id ? "#" + id : ""),
+    );
+  }
+  function newTask() {
+    choose(null);
+    setDraftKey((k) => k + 1);
+  }
+  const offline = !!error || (!!desktop && !desktop.paired);
   return (
-    <div className="app-shell">
-      <aside className="navigation">
-        <a
-          className="brand"
-          href="#"
-          onClick={(e) => {
-            e.preventDefault();
-            setPage("tasks");
-          }}
-        >
-          <span className="brand-symbol">
-            <Layers3 size={22} />
-          </span>
-          <strong>TaskRelay</strong>
-        </a>
-        <nav aria-label="主导航">
-          {(
-            [
-              { id: "tasks", label: "任务", icon: ListTodo },
-              { id: "runs", label: "运行记录", icon: Activity },
-              { id: "settings", label: "设置", icon: SettingsIcon },
-            ] as const
-          ).map((item) => (
-            <button
-              key={item.id}
-              aria-label={item.label}
-              aria-current={page === item.id ? "page" : undefined}
-              onClick={() => setPage(item.id)}
-            >
-              <item.icon size={19} />
-              <span>{item.label}</span>
-              {item.id === "tasks" && pending.length > 0 && (
-                <span className="nav-count">{pending.length}</span>
-              )}
-            </button>
-          ))}
-        </nav>
-        <div className="nav-footer">
-          <span className={`connection-dot ${error ? "disconnected" : ""}`} />
-          <span>{error ? "连接中断" : "云端统一调度"}</span>
-          <small>个人工作空间</small>
-        </div>
-      </aside>
-      <main className="workspace">
-        <header className="page-header">
-          <div>
-            <h1>
-              {page === "tasks"
-                ? "把重复的事，交给任务。"
-                : page === "runs"
-                  ? "每次执行，都有迹可循。"
-                  : "你的任务环境"}
-            </h1>
-            <p>
-              {page === "tasks"
-                ? "描述目标，确认范围。需要你时，在这里接力。"
-                : page === "runs"
-                  ? "查看执行步骤、实际结果和需要核查的操作。"
-                  : "模型服务、站点账号与执行设备，由你管理。"}
-            </p>
+    <>
+      <Sidebar>
+        <SidebarHeader>
+          <div className="flex items-center justify-between px-2 py-2">
+            <span className="text-sm font-semibold">TaskRelay</span>
+            <span className="text-xs text-muted-foreground">个人空间</span>
           </div>
-          {page === "tasks" && (
-            <Button
-              onClick={() => setEditor(true)}
-              disabled={!snapshot || !!error}
+          <Button variant="outline" onClick={newTask}>
+            <Plus data-icon="inline-start" />
+            新建任务
+          </Button>
+          <Input
+            aria-label="搜索任务"
+            placeholder="搜索任务…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </SidebarHeader>
+        <SidebarContent>
+          <SidebarGroup>
+            <SidebarGroupLabel>任务</SidebarGroupLabel>
+            <SidebarMenu>
+              {data.tasks
+                .filter((t) =>
+                  (t.title + " " + t.goal)
+                    .toLowerCase()
+                    .includes(search.toLowerCase()),
+                )
+                .map((t) => {
+                  const waiting = pending.some((c) =>
+                    data.runs.some(
+                      (r) => r.id === c.runId && r.taskId === t.id,
+                    ),
+                  );
+                  return (
+                    <SidebarMenuItem key={t.id}>
+                      <SidebarMenuButton
+                        isActive={page === "tasks" && selected === t.id}
+                        onClick={() => choose(t.id)}
+                        tooltip={t.title}
+                      >
+                        <MessageSquare />
+                        <span>{t.title}</span>
+                        {waiting && (
+                          <span className="ml-auto text-xs">待协助</span>
+                        )}
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
+              {!data.tasks.length && (
+                <p className="px-2 py-4 text-xs text-muted-foreground">
+                  新建一个任务，从一句话开始。
+                </p>
+              )}
+            </SidebarMenu>
+          </SidebarGroup>
+        </SidebarContent>
+        <SidebarFooter>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                isActive={page === "runs"}
+                onClick={() => {
+                  setPage("runs");
+                  setOpenMobile(false);
+                }}
+              >
+                <Activity />
+                <span>运行记录</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                isActive={page === "settings"}
+                onClick={() => {
+                  setPage("settings");
+                  setOpenMobile(false);
+                }}
+              >
+                <SettingsIcon />
+                <span>设置</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+          <div className="flex items-center justify-between gap-2 px-2 py-1">
+            <button
+              className="text-left text-xs text-muted-foreground hover:text-foreground"
+              onClick={() => {
+                setPage("settings");
+                setOpenMobile(false);
+              }}
             >
-              <Plus />
-              新建任务
-            </Button>
+              {desktop
+                ? desktop.activeRunId
+                  ? "执行器运行中"
+                  : desktop.paused
+                    ? "已暂停领取"
+                    : desktop.paired
+                      ? desktop.online
+                        ? "执行器在线"
+                        : "执行器离线"
+                      : "连接执行器"
+                : data.devices.some((d) => !d.revoked)
+                  ? "执行设备已连接"
+                  : "连接 Windows 执行器"}
+            </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon-sm" aria-label="切换主题">
+                  <Sun data-icon="inline-start" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent>
+                <DropdownMenuGroup>
+                  {(
+                    [
+                      ["system", "跟随系统"],
+                      ["light", "浅色"],
+                      ["dark", "深色"],
+                    ] as const
+                  ).map(([v, label]) => (
+                    <DropdownMenuItem key={v} onSelect={() => setTheme(v)}>
+                      {theme === v ? <Check /> : <Moon />}
+                      {label}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </SidebarFooter>
+      </Sidebar>
+      <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
+        <header className="flex h-14 shrink-0 items-center gap-2 border-b px-3 md:px-6">
+          <SidebarTrigger />
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-sm font-medium">
+              {page === "settings"
+                ? "设置"
+                : page === "runs"
+                  ? "运行记录"
+                  : edit
+                    ? "调整任务"
+                    : (task?.title ?? "新任务")}
+            </h1>
+            {task && page === "tasks" && (
+              <p className="truncate text-xs text-muted-foreground">
+                {scheduleLabel(task.schedule)}
+              </p>
+            )}
+          </div>
+          {task && page === "tasks" && !edit && (
+            <>
+              <Status value={run?.status ?? task.status} />
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" aria-label="任务操作">
+                    <Ellipsis data-icon="inline-start" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuGroup>
+                    <DropdownMenuItem onSelect={() => setDetail(true)}>
+                      任务详情与历史
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={offline}
+                      onSelect={() => setEdit(task)}
+                    >
+                      调整任务
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={offline || busy}
+                      onSelect={() =>
+                        void act(`/api/user/tasks/${task.id}/run`, {
+                          requestId: crypto.randomUUID(),
+                        })
+                      }
+                    >
+                      立即运行
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={offline || busy}
+                      onSelect={() =>
+                        void act(`/api/user/tasks/${task.id}/state`, {
+                          enabled: task.status !== "active",
+                        })
+                      }
+                    >
+                      {task.status === "active" ? "暂停调度" : "启用调度"}
+                    </DropdownMenuItem>
+                  </DropdownMenuGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </>
           )}
         </header>
         {error && (
-          <div className="connection-banner">
-            <WifiOff size={18} />
-            <ErrorText error={error} />
-            <Button variant="ghost" size="sm" onClick={() => void load()}>
+          <div className="flex shrink-0 items-center gap-2 px-4 py-2">
+            <div className="min-w-0 flex-1">
+              <ErrorText error={error} />
+            </div>
+            <Button variant="outline" size="sm" onClick={() => void load()}>
               重试
             </Button>
+            {desktop?.activeRunId && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  void transport
+                    .desktop!.stop()
+                    .then(refresh)
+                    .catch((e) => setActionError(e.message))
+                }
+              >
+                停止本机任务
+              </Button>
+            )}
+          </div>
+        )}
+        {actionError && (
+          <div className="px-4 py-2">
+            <ErrorText error={actionError} />
           </div>
         )}
         {pair && (
-          <section className="pair-banner">
-            <Monitor />
-            <div>
-              <h2>{pair.approved ? "设备已授权" : "授权连接这台设备"}</h2>
-              <p>
-                {pair.name} · 校验码 <code>{pair.code}</code>
-              </p>
-              <p>请与桌面客户端显示的校验码核对一致。</p>
-            </div>
-            <Button
-              disabled={busy || !!pair.approved}
-              onClick={() =>
-                void act(
-                  "POST",
-                  `/api/user/pairings/${pair.code}/approve`,
-                ).then((ok) => {
-                  if (ok) setPair({ ...pair, approved: true });
-                })
-              }
-            >
-              {pair.approved ? "已授权" : "授权设备"}
-            </Button>
-          </section>
-        )}
-        {!snapshot ? (
-          <div className="loading-state" role="status">
-            <Loader2 className="spin" />
-            正在连接工作空间…
-          </div>
-        ) : page === "settings" ? (
-          <Settings transport={transport} snapshot={snapshot} refresh={load} />
-        ) : (
-          <>
-            {pending.length > 0 && (
-              <button
-                className="assistance-banner"
-                onClick={() => {
-                  const r = snapshot.runs.find(
-                    (r) => r.id === pending[0].runId,
-                  );
-                  if (r) {
-                    setSelected(r.taskId);
-                    setRunId(r.id);
-                    setPage("tasks");
-                    setAssistanceJump((v) => v + 1);
+          <div className="px-4 py-3">
+            <Alert>
+              <Monitor />
+              <AlertTitle>
+                {pair.approved ? "设备已授权" : "授权连接这台设备"}
+              </AlertTitle>
+              <AlertDescription>
+                <p>
+                  {pair.name} · 校验码 {pair.code}。请与客户端核对一致。
+                </p>
+                <Button
+                  size="sm"
+                  disabled={busy || pair.approved}
+                  onClick={() =>
+                    void act(`/api/user/pairings/${pair.code}/approve`).then(
+                      (ok) => {
+                        if (ok) setPair({ ...pair, approved: true });
+                      },
+                    )
                   }
+                >
+                  {pair.approved ? "已授权" : "授权设备"}
+                </Button>
+              </AlertDescription>
+            </Alert>
+          </div>
+        )}
+        {pending.length > 0 &&
+          !(task && pending.some((c) => c.runId === run?.id)) && (
+            <div className="px-4 py-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  const r = data.runs.find((r) => r.id === pending[0].runId);
+                  if (r) choose(r.taskId, r.id);
                 }}
               >
-                <MessageSquare size={20} />
-                <span>
-                  <strong>{pending.length} 个任务正在等你</strong>
-                  <small>在任务对话中补充信息，完成后继续执行</small>
-                </span>
-                <ArrowRight size={20} />
-              </button>
+                {pending.length} 个任务需要协助
+              </Button>
+            </div>
+          )}
+        {page === "settings" ? (
+          <div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-8">
+            <Settings transport={transport} snapshot={data} refresh={refresh} />
+          </div>
+        ) : !snapshot ? (
+          <div
+            className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-8"
+            role="status"
+            aria-label="加载工作空间"
+          >
+            <Skeleton className="h-8 w-40" />
+            <Skeleton className="h-24 w-full" />
+            {error && (
+              <Button variant="outline" onClick={() => setPage("settings")}>
+                打开设置
+              </Button>
             )}
-            {page === "tasks" && snapshot.tasks.length === 0 ? (
-              <section className="welcome">
-                <div className="welcome-mark">
-                  <Layers3 size={42} />
-                </div>
-                <h2>从一件重复的小事开始</h2>
-                <p>
-                  查询信息、监测变化、登录签到或填写表单。
-                  <br />
-                  任务在你的 Windows 设备上执行，结果回到这里。
-                </p>
-                <div className="setup-list">
-                  <button onClick={() => setPage("settings")}>
-                    <span
-                      className={
-                        snapshot.models.some((m) => m.capabilities.tools)
-                          ? "done"
-                          : ""
-                      }
-                    >
-                      {snapshot.models.some((m) => m.capabilities.tools) ? (
-                        <CheckCircle2 size={18} />
-                      ) : (
-                        1
-                      )}
-                    </span>
-                    <div>
-                      <strong>连接一个模型</strong>
-                      <small>支持 OpenAI、DeepSeek、百炼及兼容服务</small>
+          </div>
+        ) : page === "runs" ? (
+          <div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-8">
+            <div className="mx-auto flex max-w-3xl flex-col gap-2">
+              {data.runs.length ? (
+                data.runs.map((r) => (
+                  <Button
+                    key={r.id}
+                    variant="ghost"
+                    className="h-auto justify-start whitespace-normal py-4"
+                    onClick={() => choose(r.taskId, r.id)}
+                  >
+                    <div className="flex min-w-0 flex-1 flex-col gap-1 text-left">
+                      <span className="truncate">{r.task.title}</span>
+                      <span className="line-clamp-2 text-xs text-muted-foreground">
+                        {r.result?.summary ?? formatDate(r.createdAt)}
+                      </span>
                     </div>
-                    <ArrowRight size={18} />
-                  </button>
-                  <button onClick={() => setPage("settings")}>
-                    <span
-                      className={
-                        snapshot.devices.some((d) => !d.revoked) ? "done" : ""
-                      }
-                    >
-                      {snapshot.devices.some((d) => !d.revoked) ? (
-                        <CheckCircle2 size={18} />
-                      ) : (
-                        2
-                      )}
-                    </span>
-                    <div>
-                      <strong>连接 Windows 执行器</strong>
-                      <small>浏览器和账号环境保留在本机</small>
-                    </div>
-                    <ArrowRight size={18} />
-                  </button>
-                  <button onClick={() => setEditor(true)}>
-                    <span>3</span>
-                    <div>
-                      <strong>创建任务并试运行</strong>
-                      <small>核验成功后，再开始周期调度</small>
-                    </div>
-                    <ArrowRight size={18} />
-                  </button>
-                </div>
-                <Button
-                  size="lg"
-                  disabled={!!error}
-                  onClick={() => setEditor(true)}
-                >
-                  创建第一个任务
-                  <ArrowRight />
-                </Button>
-              </section>
-            ) : page === "tasks" ? (
-              <div className={`task-layout ${task ? "has-selection" : ""}`}>
-                <section className="task-list" aria-label="任务列表">
-                  <div className="list-heading">
-                    <h2>
-                      全部任务 <span>{snapshot.tasks.length}</span>
-                    </h2>
-                    <span>上海时间</span>
-                  </div>
-                  {snapshot.tasks.map((t) => {
-                    const latest = snapshot.runs.find((r) => r.taskId === t.id);
-                    return (
-                      <button
-                        className={`task-row ${task?.id === t.id ? "selected" : ""}`}
-                        key={t.id}
-                        onClick={() => {
-                          setSelected(t.id);
-                          setRunId(null);
-                        }}
-                      >
-                        <div className="task-row-top">
-                          <strong>{t.title}</strong>
-                          <Status
-                            value={
-                              latest &&
-                              ![
-                                "succeeded",
-                                "failed",
-                                "cancelled",
-                                "expired",
-                              ].includes(latest.status)
-                                ? latest.status
-                                : t.status
-                            }
-                          />
-                        </div>
-                        <p>{t.goal}</p>
-                        <div className="task-meta">
-                          <span>{new URL(t.entryUrl).hostname}</span>
-                          <span>
-                            <Clock3 size={13} />
-                            {t.nextRunAt
-                              ? formatDate(t.nextRunAt)
-                              : t.schedule.kind === "manual"
-                                ? "手动运行"
-                                : "待试运行"}
-                          </span>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </section>
-                <section className="detail-pane">
-                  {task ? (
-                    <>
-                      <div className="detail-header">
-                        <div>
-                          <button
-                            className="back-link"
-                            onClick={() => setSelected(null)}
-                          >
-                            返回任务列表
-                          </button>
-                          <h2>{task.title}</h2>
-                          <p>
-                            {new URL(task.entryUrl).hostname} · v{task.version}
-                          </p>
-                        </div>
-                        <div className="detail-actions">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            disabled={busy || !!error}
-                            onClick={() => setEditor(task)}
-                          >
-                            编辑
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            disabled={busy || !!error}
-                            onClick={() =>
-                              void act(
-                                "POST",
-                                `/api/user/tasks/${task.id}/state`,
-                                { enabled: task.status !== "active" },
-                              )
-                            }
-                          >
-                            {task.status === "active" ? <Pause /> : <Play />}
-                            {task.status === "active" ? "暂停" : "启用"}
-                          </Button>
-                          <Button
-                            size="sm"
-                            disabled={busy || !!error}
-                            onClick={() =>
-                              void act(
-                                "POST",
-                                `/api/user/tasks/${task.id}/run`,
-                                { requestId: crypto.randomUUID() },
-                              )
-                            }
-                          >
-                            <Play />
-                            立即运行
-                          </Button>
-                        </div>
-                      </div>
-                      <Conversation
-                        assistanceJump={assistanceJump}
-                        transport={transport}
-                        task={task}
-                        run={selectedRun}
-                        challenges={snapshot.challenges.filter(
-                          (c) => c.runId === selectedRun?.id,
-                        )}
-                        refresh={load}
-                      />
-                    </>
-                  ) : (
-                    <div className="empty-detail">
-                      <MessageSquare size={30} />
-                      <h2>选择一个任务</h2>
-                      <p>查看任务对话、最近结果或回复协助请求。</p>
-                    </div>
-                  )}
-                </section>
-              </div>
-            ) : (
-              <section className="runs-view">
-                {snapshot.runs.length === 0 ? (
-                  <div className="empty-detail">
-                    <Activity size={32} />
-                    <h2>还没有运行记录</h2>
-                    <p>任务开始执行后，步骤和结果会出现在这里。</p>
-                  </div>
-                ) : (
-                  <>
-                    <div className="run-table">
-                      <div className="run-table-head">
-                        <span>任务</span>
-                        <span>状态</span>
-                        <span>执行时间</span>
-                        <span>结果</span>
-                      </div>
-                      {snapshot.runs.map((r) => (
-                        <button
-                          className="run-table-row"
-                          key={r.id}
-                          onClick={() => {
-                            setSelected(r.taskId);
-                            setRunId(r.id);
-                            setPage("tasks");
-                          }}
-                        >
-                          <strong>{r.task.title}</strong>
-                          <Status value={r.status} />
-                          <time>{formatDate(r.createdAt)}</time>
-                          <span>{r.result?.summary ?? "等待执行结果"}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </section>
-            )}
-          </>
+                    <Status value={r.status} />
+                  </Button>
+                ))
+              ) : (
+                <Empty>
+                  <EmptyHeader>
+                    <EmptyTitle>还没有运行记录</EmptyTitle>
+                    <EmptyDescription>
+                      任务试运行后，结果会出现在这里。
+                    </EmptyDescription>
+                  </EmptyHeader>
+                </Empty>
+              )}
+            </div>
+          </div>
+        ) : edit || !task ? (
+          <TaskCompose
+            key={edit?.id ?? draftKey}
+            transport={transport}
+            snapshot={data}
+            initial={edit ?? undefined}
+            offline={offline}
+            onCancel={() => setEdit(null)}
+            onSettings={() => setPage("settings")}
+            onSaved={async (id) => {
+              await refresh();
+              choose(id);
+            }}
+          />
+        ) : (
+          <Conversation
+            key={task.id + ":" + (run?.id ?? "")}
+            transport={transport}
+            task={task}
+            run={run}
+            challenges={data.challenges.filter((c) => c.runId === run?.id)}
+            refresh={refresh}
+            onEdit={() => setEdit(task)}
+            offline={offline}
+          />
         )}
-      </main>
-      {editor && snapshot && (
-        <TaskEditor
-          task={editor === true ? null : editor}
-          snapshot={snapshot}
-          transport={transport}
-          onClose={() => setEditor(null)}
-          onSaved={async (id) => {
-            setEditor(null);
-            setSelected(id);
-            setPage("tasks");
-            await load();
-          }}
-        />
-      )}
-    </div>
+      </SidebarInset>
+      <Sheet open={detail} onOpenChange={setDetail}>
+        <SheetContent className="overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle>任务详情</SheetTitle>
+            <SheetDescription>{task?.title}</SheetDescription>
+          </SheetHeader>
+          {task && (
+            <div className="flex flex-col gap-6 p-4">
+              <TaskSummary
+                task={task}
+                accountName={
+                  data.accounts.find((a) => a.id === task.accountId)?.name
+                }
+              />
+              <p className="text-xs text-muted-foreground">
+                下次执行：{formatDate(task.nextRunAt)} · 配置 v{task.version}
+              </p>
+              <h2 className="text-sm font-medium">历史运行</h2>
+              {data.runs
+                .filter((r) => r.taskId === task.id)
+                .map((r) => (
+                  <Button
+                    key={r.id}
+                    variant="outline"
+                    onClick={() => {
+                      choose(task.id, r.id);
+                      setDetail(false);
+                    }}
+                  >
+                    {formatDate(r.createdAt)} · <Status value={r.status} />
+                  </Button>
+                ))}
+            </div>
+          )}
+        </SheetContent>
+      </Sheet>
+    </>
   );
 }

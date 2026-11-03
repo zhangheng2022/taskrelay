@@ -18,7 +18,7 @@ Describe a browser task once, schedule it centrally, execute on an authorized lo
 Cloud is authoritative. Desktop shares task management, caches history and can stop execution offline, but does not schedule offline. Public OpenAI-compatible endpoints support Chat Completions and Responses; no GPT-only restriction. Credential and verification parsing may use the configured model. No direct browser takeover or remote desktop. RewardPilot is an architecture reference only; UI and business implementation are independent. No automatic updater in v1. Never infer success from a model claim alone or replay uncertain external writes.
 
 ## Brand Commitments
-TaskRelay / 任务接力. Chinese UI. React and official shadcn/ui components. Full Windows desktop client and responsive website with shared TaskRelay UI.
+TaskRelay / 任务接力. Chinese UI. React and official shadcn/ui default neutral styles, shared by the Windows client and responsive website. Light, dark and system themes. Codex-like task sidebar, conversation, collapsible execution steps and bottom composer. Natural-language task creation asks only for missing information and requires explicit confirmation of the generated task card before saving or running. Detailed forms remain secondary.
 
 ## Product Principles
 - Cloud task versions and durable execution facts drive state.

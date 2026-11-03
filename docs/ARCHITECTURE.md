@@ -2,7 +2,7 @@
 
 分析日期：2026-11-03（Asia/Shanghai）。源码基线：`923143af8276a36a7d59a11a7d1916d591d860f1`，版本 0.1.0。本文结合 `improve-codebase-architecture`、`codebase-design` 和独立源码走读。2026-11-03 后续实施已统一结构化输出；其余候选仍未实施。
 
-仓库仅有一个初始提交，不能根据提交频率推断热点。本次围绕运行状态、执行器恢复、人工协助与模型出站分析；未发现 `GLOSSARY.md` 或 `docs/adr/`，领域名称沿用共享协议。验收结论引用现有记录，不表示本次重新执行了模型、安装或现场测试。
+初始分析时仓库只有一个提交，不能据此推断热点。后续已分阶段提交文档、结构化输出，并实现共享默认主题和聊天式任务创建。未发现 `GLOSSARY.md` 或 `docs/adr/`，领域名称沿用共享协议。本轮验证范围见第 7 节及验收记录，历史模型和安装证据不自动代表本次复验。
 
 ## 1. 运行拓扑与职责
 
@@ -72,7 +72,15 @@ flowchart TB
 
 实际协议常量为 `PROTOCOL_VERSION = 1`。配对、领取等入口检查版本，设备类型使用 `protocolVersion`；并非每个对象都含 `protocol_version`。`RunEvent` 本身不含 generation/epoch，epoch 位于上传请求，generation 位于本机 IPC。
 
-时间规则的底层表示只有 `manual`、`once`、`cron`；每日/每周由界面转换成 cron。默认时区为 `Asia/Shanghai`。共享限额为自动执行 5 分钟/40 动作、协助等待 5 分钟、心跳 15 秒、租约 90 秒、迟到 1 小时；自动执行计时扣除人工等待。全机并发 1 由云端领取及 Main/Host 守卫实现。
+时间规则的底层表示只有 `manual`、`once`、`cron`；每日/每周由创建对话转换成 cron，确认卡展示可读时间并允许详细编辑。默认时区为 `Asia/Shanghai`。共享限额为自动执行 5 分钟/40 动作、协助等待 5 分钟、心跳 15 秒、租约 90 秒、迟到 1 小时；自动执行计时扣除人工等待。全机并发 1 由云端领取及 Main/Host 守卫实现。
+
+### 共享界面与任务草稿
+
+`app.tsx` 负责任务侧栏、导航、主题及宿主状态；`chat-parts.tsx` 组合官方 Message/MessageScroller/Bubble/InputGroup，`conversation.tsx` 展示实际运行事件、结果和绑定协助。网站与桌面使用同一套默认 shadcn/ui 中性色 tokens，桌面能力仍通过 Transport/Preload/Main。
+
+`task-compose.tsx` 持有当前草稿和短期补全对话。`POST /tasks/compose` 使用统一 `generate`，缺网址直接追问，信息不足返回 `task: null`；模型新增站点必须出现在用户输入或当前草稿中。草稿不落库、不排队。`task-summary.tsx` 展示确认卡，`task-editor.tsx` 仅修改草稿。确认后才调用原有创建/版本更新路由，保留能力、账号、授权和试运行校验。创建失败保留相同 requestId 与载荷，版本更新冲突要求核对新版本。旧 `/tasks/draft` 保留兼容。
+
+运行对话和修改配置是不同操作；普通聊天不修改任务。敏感协助回复不回显为消息，步骤或版本切换时清空输入；UI 禁止离线、已回复、不支持或过期挑战的提交，最终绑定校验仍由后端负责。
 
 ## 3. 任务执行与事实顺序
 
@@ -180,13 +188,13 @@ Stagehand 固定 4.3.0，Executor 打包保持原生动态 import。Forge Squirr
 
 | 验证 | 已有证据覆盖 | 不能据此证明 |
 | --- | --- | --- |
-| 26 项源码测试 | 协议转换、状态/幂等、策略、协助绑定和清理、出站加密及未知结果不重放 | 所有生产路径或整机故障都已覆盖 |
+| 60 项源码测试 | 协议、状态/幂等、策略、协助、出站；实际 plan/Stagehand/草稿/聊天/验证回复路由的修复与美国出站；多轮确认与创建幂等 | 所有故障交错或整机故障都已覆盖 |
 | D1 stand-in | `tests/helpers.ts` 用 Node SQLite 加载真实迁移，并模拟 prepare/batch | Cloudflare D1 的真实并发、网络、部署一致性 |
 | EgressState 测试 | 内存 storage adapter、alarm 状态和中断恢复；本地 jurisdiction 不支持时拒绝旁路 | 真实请求地理位置或提供方可用性 |
 | 模型协议测试 | Chat / Responses 转换、未知用量、错误分类、重定向拒绝 | 非 GPT 实际闭环；隔离测试不能证明云端网络可用 |
 | 已记录真实模型能力 | `gpt-6-luna / Responses` 的连接、工具、严格 Schema；独立出站 trace 美国地区 | 真实浏览器任务成功、真实 Chat、非 GPT 或图像能力 |
 | 打包及安装目录 smoke | 实际 Electron utilityProcess 加载 Stagehand/内置 Chrome，自建站四类操作和 `0012aB` 原样输入 | `runtime.execute`、ExecutorHost、云端调度及恢复的完整流程 |
-| UI 检查 | 手机、桌面、窄窗口及独立修复批次记录 | 所有桌面原生交互现场验收 |
+| UI 检查 | 共享 App 演示 Transport 下的桌面/手机/窄窗口、创建、错误恢复、协助和默认主题，见 UI-REVIEW | 真实模型联调、桌面 IPC、所有原生交互现场验收 |
 
 smoke 走 `executor/entry.ts` 中独立手写流程，没有调用 `RuntimePort` 对应的生产 `execute`。`RuntimePort` 目前只有 entry 中的生产 adapter；不能把 smoke 计作第二个 adapter。
 

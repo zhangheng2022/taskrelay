@@ -2,17 +2,19 @@
 
 个人浏览器任务工作台：网站配置任务，Cloudflare 调度，Windows 客户端在专用 Chromium 中执行。所有验证码、扫码和操作确认都通过任务对话处理。
 
-工作空间：https://taskrelay.zhangheng.workers.dev （Cloudflare Access，仅配置的本人邮箱可访问）
+工作空间：https://tr.zhangheng.eu.org （Cloudflare Access，仅配置的本人邮箱可访问）。原地址 https://taskrelay.zhangheng.workers.dev 继续可用；已配对客户端可继续使用原地址。
 
 ## 使用
 
 1. 在网站“设置 → 模型服务”填写自己的公网 OpenAI 兼容服务和任意模型名称。默认 Chat Completions，也支持 Responses。Base URL 示例 `https://api.openai.com/v1`；粘贴完整 `/responses` 或 `/chat/completions` 地址时自动规范，并检查协议是否一致。
 2. 保存后执行“测试能力”。连接、工具调用、结构化输出都通过后才能创建 AI 任务。图像能力可以单独测试。未返回用量或未设置单价时显示未知。
 3. 安装 Windows x64 的 `TaskRelay Setup.exe`。在客户端“设置 → 设备”通过系统浏览器授权，核对网站和客户端的校验码。
-4. 描述任务，检查生成的任务卡中的网站、账号、时间、操作授权和成功判据，再点击“创建并试运行”。核验成功才启用周期调度。
+4. 点击“新建任务”，用一句话描述目标和完整网站地址；信息不足时继续对话补充。检查确认卡中的网站、账号、时间、操作授权和成功判据，再点击“创建并试运行”。核验成功才启用周期调度。
 5. 需要协助时在任务对话回复。敏感信息不会进入普通聊天历史。结果待核查时先运行只读核查，不自动重复提交。
 
 客户端关闭窗口后保留托盘；从托盘选择退出会停止本机进程。自启动默认关闭。离线时可读缓存、停止本机执行，不能创建或调度新任务。
+
+网站和桌面共用 shadcn/ui 默认中性色主题，支持浅色、深色和跟随系统。左侧选择任务，中间查看对话、折叠步骤和结果，底部回复；通过“调整任务”生成修改草稿，确认后保存并重新试运行。“编辑配置”保留详细配置入口。
 
 所有模型请求统一由美国区域的 Cloudflare Durable Object 后台发出，覆盖能力测试、任务解析、执行规划和人工协助解析。网站及桌面均不直连模型服务，也不向模型服务传递访问者的地区/IP 请求上下文。现有 `gpt-6-luna / Responses` 已通过真实连接、工具及严格结构化输出测试；这不等同于真实网站任务闭环验收。
 
@@ -39,6 +41,8 @@ npm run check:repo
 ```
 
 可选 `node scripts/seed-ui.mjs` 向本地 D1 写入明确标记为“演示”的界面检查数据，不连接生产环境。
+
+界面验收也可打开 `/ui-fixture.html`：只在开发模式渲染共享 App，使用演示 Transport，不访问生产服务。可用 `?state=challenge`、`?state=failed`、`?state=offline`、`?desktop=1`、`?fail=1` 检查协助、未知结果、离线、桌面和首次请求失败。详情见 [UI-REVIEW.md](docs/UI-REVIEW.md)。
 
 ## Windows 构建
 

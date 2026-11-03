@@ -24,8 +24,19 @@ import {
   DialogTitle,
 } from "./components/ui/dialog";
 import { Switch } from "./components/ui/switch";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "./components/ui/tabs";
+import { NativeSelect } from "./components/ui/native-select";
+import { FieldGroup } from "./components/ui/field";
+import { Badge } from "./components/ui/badge";
+import {
+  Empty,
+  EmptyHeader,
+  EmptyTitle,
+  EmptyDescription,
+  EmptyContent,
+} from "./components/ui/empty";
 import { Field } from "./task-editor";
-import { ErrorText, formatDate } from "./app";
+import { ErrorText, formatDate } from "./feedback";
 const presets = {
   openai: { name: "OpenAI", baseUrl: "https://api.openai.com/v1" },
   deepseek: { name: "DeepSeek", baseUrl: "https://api.deepseek.com/v1" },
@@ -68,7 +79,11 @@ export function Settings({
   };
   useEffect(() => {
     if (!transport.desktop) return;
-    const update = () => void transport.desktop!.status().then(setDesktop);
+    const update = () =>
+      void transport
+        .desktop!.status()
+        .then(setDesktop)
+        .catch((e) => setError(e.message));
     update();
     return transport.desktop.subscribe(update);
   }, [transport]);
@@ -98,53 +113,21 @@ export function Settings({
     return () => clearInterval(timer);
   }, [pair, transport, refresh]);
   return (
-    <section className="settings">
-      <div className="settings-tabs" role="tablist" aria-label="设置分类">
+    <Tabs className="settings" value={tab} onValueChange={setTab}>
+      <TabsList className="w-full">
         {[
           ["models", "模型服务"],
           ["accounts", "站点账号"],
           ["devices", "设备"],
           ["data", "数据保留"],
         ].map(([id, label]) => (
-          <button
-            role="tab"
-            id={`settings-tab-${id}`}
-            aria-controls="settings-panel"
-            tabIndex={tab === id ? 0 : -1}
-            onKeyDown={(e) => {
-              const ids = ["models", "accounts", "devices", "data"];
-              const i = ids.indexOf(tab);
-              const next =
-                e.key === "ArrowRight"
-                  ? ids[(i + 1) % 4]
-                  : e.key === "ArrowLeft"
-                    ? ids[(i + 3) % 4]
-                    : e.key === "Home"
-                      ? ids[0]
-                      : e.key === "End"
-                        ? ids[3]
-                        : null;
-              if (next) {
-                e.preventDefault();
-                setTab(next);
-                document.getElementById(`settings-tab-${next}`)?.focus();
-              }
-            }}
-            aria-selected={tab === id}
-            onClick={() => setTab(id)}
-            key={id}
-          >
+          <TabsTrigger key={id} value={id}>
             {label}
-          </button>
+          </TabsTrigger>
         ))}
-      </div>
+      </TabsList>
       {error && <ErrorText error={error} />}
-      <div
-        className="settings-content"
-        role="tabpanel"
-        id="settings-panel"
-        aria-labelledby={`settings-tab-${tab}`}
-      >
+      <TabsContent value={tab} className="settings-content">
         {tab === "models" ? (
           <>
             <div className="section-heading">
@@ -158,16 +141,19 @@ export function Settings({
               </Button>
             </div>
             {!snapshot.models.length ? (
-              <div className="settings-empty">
-                <ShieldCheck size={30} />
-                <h3>先连接一个模型服务</h3>
-                <p>
-                  支持 Chat Completions 和 Responses。API Key 加密保存在云端。
-                </p>
-                <Button variant="outline" onClick={() => setModel(true)}>
-                  配置模型
-                </Button>
-              </div>
+              <Empty>
+                <EmptyHeader>
+                  <EmptyTitle>先连接一个模型服务</EmptyTitle>
+                  <EmptyDescription>
+                    支持 Chat Completions 和 Responses。API Key 加密保存在云端。
+                  </EmptyDescription>
+                </EmptyHeader>
+                <EmptyContent>
+                  <Button variant="outline" onClick={() => setModel(true)}>
+                    配置模型
+                  </Button>
+                </EmptyContent>
+              </Empty>
             ) : (
               snapshot.models.map((m) => (
                 <article className="settings-row" key={m.id}>
@@ -180,30 +166,30 @@ export function Settings({
                       {m.model} ·{" "}
                       {m.protocol === "chat" ? "Chat Completions" : "Responses"}
                     </p>
-                    <p className="capabilities">
-                      <span data-ok={m.capabilities.connection}>
+                    <div className="capabilities mt-3">
+                      <Badge variant="secondary">
                         连接 {m.capabilities.connection ? "通过" : "未通过"}
-                      </span>
-                      <span data-ok={m.capabilities.tools}>
+                      </Badge>
+                      <Badge variant="secondary">
                         工具调用 {m.capabilities.tools ? "通过" : "未通过"}
-                      </span>
-                      <span data-ok={m.capabilities.structured !== "none"}>
+                      </Badge>
+                      <Badge variant="secondary">
                         结构化输出{" "}
                         {m.capabilities.structured === "none"
                           ? "未通过"
                           : m.capabilities.structured}
-                      </span>
-                      <span>
+                      </Badge>
+                      <Badge variant="secondary">
                         图像输入{" "}
                         {m.capabilities.visionTestedAt
                           ? m.capabilities.vision
                             ? "通过"
                             : "未通过"
                           : "未验证"}
-                      </span>
-                    </p>
+                      </Badge>
+                    </div>
                     {m.capabilities.error && (
-                      <ErrorText error={m.capabilities.error}/>
+                      <ErrorText error={m.capabilities.error} />
                     )}
                   </div>
                   <div className="row-actions">
@@ -265,10 +251,14 @@ export function Settings({
               </Button>
             </div>
             {!snapshot.accounts.length ? (
-              <div className="settings-empty">
-                <h3>还没有站点账号</h3>
-                <p>无需登录的查询任务可以直接运行。</p>
-              </div>
+              <Empty>
+                <EmptyHeader>
+                  <EmptyTitle>还没有站点账号</EmptyTitle>
+                  <EmptyDescription>
+                    无需登录的查询任务可以直接运行。
+                  </EmptyDescription>
+                </EmptyHeader>
+              </Empty>
             ) : (
               snapshot.accounts.map((a) => (
                 <article className="settings-row" key={a.id}>
@@ -378,13 +368,14 @@ export function Settings({
               </div>
             </div>
             {!snapshot.devices.length ? (
-              <div className="settings-empty">
-                <Monitor size={30} />
-                <h3>连接 Windows 客户端</h3>
-                <p>
-                  安装 TaskRelay，打开“设置 → 设备”，通过系统浏览器完成授权。
-                </p>
-              </div>
+              <Empty>
+                <EmptyHeader>
+                  <EmptyTitle>连接 Windows 客户端</EmptyTitle>
+                  <EmptyDescription>
+                    安装 TaskRelay，打开“设置 → 设备”，通过系统浏览器完成授权。
+                  </EmptyDescription>
+                </EmptyHeader>
+              </Empty>
             ) : (
               snapshot.devices.map((d) => (
                 <article className="settings-row" key={d.id}>
@@ -452,7 +443,7 @@ export function Settings({
             </p>
           </>
         )}
-      </div>
+      </TabsContent>
       {model && (
         <ModelDialog
           value={model === true ? null : model}
@@ -474,7 +465,7 @@ export function Settings({
           }}
         />
       )}
-    </section>
+    </Tabs>
   );
 }
 function ModelDialog({
@@ -520,123 +511,127 @@ function ModelDialog({
   }
   return (
     <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
-      <DialogContent>
+      <DialogContent className="max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{value ? "编辑模型服务" : "添加模型服务"}</DialogTitle>
           <DialogDescription>
             保存后请运行能力测试。服务地址必须是公网 HTTPS。
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={(e) => void submit(e)}>
-          <Field label="服务商">
-            <select
-              defaultValue="custom"
-              onChange={(e) =>
-                setInput({
-                  ...input,
-                  ...presets[e.target.value as keyof typeof presets],
-                })
-              }
-            >
-              {Object.entries(presets).map(([k, v]) => (
-                <option key={k} value={k}>
-                  {v.name || "自定义兼容服务"}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <div className="form-grid">
-            <Field label="配置名称">
-              <Input
-                required
-                value={input.name}
-                onChange={(e) => setInput({ ...input, name: e.target.value })}
-              />
-            </Field>
-            <Field label="API 协议">
-              <select
-                value={input.protocol}
+        <form className="flex flex-col gap-5" onSubmit={(e) => void submit(e)}>
+          <FieldGroup>
+            <Field label="服务商">
+              <NativeSelect
+                defaultValue="custom"
                 onChange={(e) =>
                   setInput({
                     ...input,
-                    protocol: e.target.value as "chat" | "responses",
+                    ...presets[e.target.value as keyof typeof presets],
                   })
                 }
               >
-                <option value="chat">Chat Completions</option>
-                <option value="responses">Responses</option>
-              </select>
+                {Object.entries(presets).map(([k, v]) => (
+                  <option key={k} value={k}>
+                    {v.name || "自定义兼容服务"}
+                  </option>
+                ))}
+              </NativeSelect>
             </Field>
-          </div>
-          <Field
-            label="Base URL"
-            hint="例如 https://api.openai.com/v1。也可粘贴与协议对应的完整接口地址。"
-          >
-            <Input
-              required
-              type="url"
-              value={input.baseUrl}
-              placeholder="https://api.example.com/v1"
-              onChange={(e) => setInput({ ...input, baseUrl: e.target.value })}
-            />
-          </Field>
-          <Field label="模型名称">
-            <Input
-              required
-              value={input.model}
-              placeholder="填写服务商提供的模型标识"
-              onChange={(e) => setInput({ ...input, model: e.target.value })}
-            />
-          </Field>
-          <Field
-            label="API Key"
-            hint={
-              value
-                ? "留空保留现有密钥。更新配置会创建新版本。"
-                : "密钥只会提交到你的 Workers，保存后不会显示明文。"
-            }
-          >
-            <Input
-              autoComplete="new-password"
-              type="password"
-              required={!value}
-              value={input.apiKey}
-              onChange={(e) => setInput({ ...input, apiKey: e.target.value })}
-            />
-          </Field>
-          <div className="form-grid">
-            <Field label="输入单价 / 百万 tokens（可选）">
+            <FieldGroup className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+              <Field label="配置名称">
+                <Input
+                  required
+                  value={input.name}
+                  onChange={(e) => setInput({ ...input, name: e.target.value })}
+                />
+              </Field>
+              <Field label="API 协议">
+                <NativeSelect
+                  value={input.protocol}
+                  onChange={(e) =>
+                    setInput({
+                      ...input,
+                      protocol: e.target.value as "chat" | "responses",
+                    })
+                  }
+                >
+                  <option value="chat">Chat Completions</option>
+                  <option value="responses">Responses</option>
+                </NativeSelect>
+              </Field>
+            </FieldGroup>
+            <Field
+              label="Base URL"
+              hint="例如 https://api.openai.com/v1。也可粘贴与协议对应的完整接口地址。"
+            >
               <Input
-                type="number"
-                min="0"
-                step="any"
-                value={input.inputPrice ?? ""}
+                required
+                type="url"
+                value={input.baseUrl}
+                placeholder="https://api.example.com/v1"
                 onChange={(e) =>
-                  setInput({
-                    ...input,
-                    inputPrice:
-                      e.target.value === "" ? null : Number(e.target.value),
-                  })
+                  setInput({ ...input, baseUrl: e.target.value })
                 }
               />
             </Field>
-            <Field label="输出单价 / 百万 tokens（可选）">
+            <Field label="模型名称">
               <Input
-                type="number"
-                min="0"
-                step="any"
-                value={input.outputPrice ?? ""}
-                onChange={(e) =>
-                  setInput({
-                    ...input,
-                    outputPrice:
-                      e.target.value === "" ? null : Number(e.target.value),
-                  })
-                }
+                required
+                value={input.model}
+                placeholder="填写服务商提供的模型标识"
+                onChange={(e) => setInput({ ...input, model: e.target.value })}
               />
             </Field>
-          </div>
-          {error && <ErrorText error={error} />}
+            <Field
+              label="API Key"
+              hint={
+                value
+                  ? "留空保留现有密钥。更新配置会创建新版本。"
+                  : "密钥只会提交到你的 Workers，保存后不会显示明文。"
+              }
+            >
+              <Input
+                autoComplete="new-password"
+                type="password"
+                required={!value}
+                value={input.apiKey}
+                onChange={(e) => setInput({ ...input, apiKey: e.target.value })}
+              />
+            </Field>
+            <FieldGroup className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+              <Field label="输入单价 / 百万 tokens（可选）">
+                <Input
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={input.inputPrice ?? ""}
+                  onChange={(e) =>
+                    setInput({
+                      ...input,
+                      inputPrice:
+                        e.target.value === "" ? null : Number(e.target.value),
+                    })
+                  }
+                />
+              </Field>
+              <Field label="输出单价 / 百万 tokens（可选）">
+                <Input
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={input.outputPrice ?? ""}
+                  onChange={(e) =>
+                    setInput({
+                      ...input,
+                      outputPrice:
+                        e.target.value === "" ? null : Number(e.target.value),
+                    })
+                  }
+                />
+              </Field>
+            </FieldGroup>
+            {error && <ErrorText error={error} />}
+          </FieldGroup>
           <div className="form-footer">
             <Button
               variant="ghost"
@@ -668,7 +663,7 @@ function AccountDialog({
     [busy, setBusy] = useState(false);
   return (
     <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
-      <DialogContent>
+      <DialogContent className="max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>添加站点账号</DialogTitle>
           <DialogDescription>
@@ -676,6 +671,7 @@ function AccountDialog({
           </DialogDescription>
         </DialogHeader>
         <form
+          className="flex flex-col gap-5"
           onSubmit={(e) => {
             e.preventDefault();
             const f = new FormData(e.currentTarget);
@@ -687,28 +683,30 @@ function AccountDialog({
               .finally(() => setBusy(false));
           }}
         >
-          <Field label="账号名称">
-            <Input name="name" required placeholder="例如：我的工作账号" />
-          </Field>
-          <Field label="登录站点">
-            <Input
-              type="url"
-              name="origin"
-              required
-              placeholder="https://example.com"
-            />
-          </Field>
-          <Field label="用户名">
-            <Input name="username" autoComplete="off" />
-          </Field>
-          <Field label="密码（可选）">
-            <Input
-              name="password"
-              type="password"
-              autoComplete="new-password"
-            />
-          </Field>
-          {error && <ErrorText error={error} />}
+          <FieldGroup>
+            <Field label="账号名称">
+              <Input name="name" required placeholder="例如：我的工作账号" />
+            </Field>
+            <Field label="登录站点">
+              <Input
+                type="url"
+                name="origin"
+                required
+                placeholder="https://example.com"
+              />
+            </Field>
+            <Field label="用户名">
+              <Input name="username" autoComplete="off" />
+            </Field>
+            <Field label="密码（可选）">
+              <Input
+                name="password"
+                type="password"
+                autoComplete="new-password"
+              />
+            </Field>
+            {error && <ErrorText error={error} />}
+          </FieldGroup>
           <div className="form-footer">
             <Button type="button" variant="ghost" onClick={onClose}>
               取消

@@ -43,6 +43,27 @@ export const taskInputSchema = z
   })
   .strict();
 export type TaskInput = z.infer<typeof taskInputSchema>;
+export const taskComposeInputSchema = z
+  .object({
+    modelId: idSchema,
+    messages: z
+      .array(
+        z
+          .object({
+            role: z.enum(["user", "assistant"]),
+            content: z.string().min(1).max(6000),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(20),
+    current: taskInputSchema.nullable().default(null),
+  })
+  .strict();
+export interface TaskProposal {
+  reply: string;
+  task: TaskInput | null;
+}
 export interface TaskDefinition extends TaskInput {
   id: string;
   version: number;

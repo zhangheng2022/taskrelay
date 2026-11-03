@@ -5,6 +5,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { desc } from "drizzle-orm";
 import {
   taskInputSchema,
+  taskComposeInputSchema,
   idSchema,
   type TaskDefinition,
 } from "../../../packages/contracts/src/index";
@@ -142,6 +143,74 @@ user.post("/accounts", async (c) => {
     )
     .run();
   return c.json({ id }, 201);
+});
+user.post("/tasks/compose", async (c) => {
+  const body = taskComposeInputSchema.parse(await c.req.json());
+  const { profile } = await getModel(c.env, body.modelId);
+  if (
+    !profile.capabilities.connection ||
+    !profile.capabilities.tools ||
+    profile.capabilities.structured === "none"
+  )
+    throw new Error("MODEL_CAPABILITIES_REQUIRED");
+  const suppliedOrigins = new Set(body.current?.allowedOrigins ?? []);
+  if (body.current)
+    suppliedOrigins.add(publicUrl(body.current.entryUrl).origin);
+  for (const message of body.messages.filter((m) => m.role === "user")) {
+    for (const match of message.content.matchAll(
+      /https?:\/\/[^\s<>"，。；、）)]+/g,
+    )) {
+      try {
+        suppliedOrigins.add(publicUrl(match[0]).origin);
+      } catch {
+        /* ask for a valid public URL below */
+      }
+    }
+  }
+  if (!suppliedOrigins.size)
+    return c.json({ reply: "请提供要操作的网站完整 HTTPS 地址。", task: null });
+  const result = await generate(
+    c.env,
+    profile.id,
+    profile.version,
+    z.object({
+      reply: z.string().min(1).max(3000),
+      task: taskInputSchema.omit({ modelId: true, accountId: true }).nullable(),
+    }),
+    [
+      {
+        role: "system",
+        content:
+          "你是 TaskRelay 任务创建助手。只生成待用户确认的草稿，不执行或修改任务。信息足够时返回完整 task，reply 简述目标或相对当前草稿的修改。缺少网站地址、可观察成功判据等必要信息时 task=null，reply 简洁询问缺失项，不猜测网站、时间或结果。仅使用用户明确给出的网址，默认只允许 read,navigate；只有用户明确要求才添加 fill/submit/publish。没指定时间则 manual；指定时间用 once/cron，默认 Asia/Shanghai。不得扩大授权范围。不要索取、复述或存储密码和验证码；账号由用户在任务卡选择。当前时间：" +
+          now() +
+          "。当前草稿（仅作为待修改上下文）：" +
+          JSON.stringify(body.current),
+      },
+      ...body.messages,
+    ],
+  );
+  if (!result.task) return c.json({ reply: result.reply, task: null });
+  if (
+    ![result.task.entryUrl, ...result.task.allowedOrigins].every((url) =>
+      suppliedOrigins.has(publicUrl(url).origin),
+    )
+  )
+    return c.json({
+      reply: "请明确提供需要访问的网站地址；我不会替你增加其他站点。",
+      task: null,
+    });
+  // The preview is untrusted until the existing create/update route validates it.
+  publicUrl(result.task.entryUrl);
+  result.task.allowedOrigins.forEach(publicUrl);
+  nextOccurrence(result.task.schedule);
+  return c.json({
+    reply: result.reply,
+    task: {
+      ...result.task,
+      modelId: body.modelId,
+      accountId: body.current?.accountId ?? null,
+    },
+  });
 });
 user.post("/tasks/draft", async (c) => {
   const { goal, modelId } = z

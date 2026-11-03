@@ -16,7 +16,7 @@ TaskRelay 面向个人：网站描述并配置浏览器任务，Cloudflare 统�
 
 | 要修改的行为 | 优先阅读 |
 | --- | --- |
-| 任务卡、成功判据、授权范围、时间规则 | `packages/contracts/src/{index,policy,schedule}.ts`，`packages/ui/src/task-editor.tsx`，`apps/cloud/src/user.ts` |
+| 任务创建对话、确认卡、成功判据、授权范围、时间规则 | `packages/contracts/src/{index,policy,schedule}.ts`，`packages/ui/src/{task-compose,task-editor,task-summary}.tsx`，`apps/cloud/src/user.ts` |
 | 调度、领取、取消、租约、账号锁、只读核查 | `apps/cloud/src/{store,runner,user}.ts`，`tests/{reliability,api}.test.ts` |
 | 模型配置、能力测试、协议与地区出站 | `apps/cloud/src/{models,egress,egress-state,model-egress}.ts`，`packages/model/src/index.ts`，`tests/{model,egress}.test.ts` |
 | 验证码、扫码、确认、敏感回复 | `apps/cloud/src/{challenges,user,runner}.ts`，`apps/desktop/src/executor/runtime.ts`，`packages/ui/src/conversation.tsx` |
@@ -37,7 +37,7 @@ TaskRelay 面向个人：网站描述并配置浏览器任务，Cloudflare 统�
 | --- | --- |
 | 架构分析、module 深化 | [improve-codebase-architecture](.agents/skills/improve-codebase-architecture/SKILL.md) 配合 [codebase-design](.agents/skills/codebase-design/SKILL.md)：先事实、deletion test、实际 adapter，再给候选；不提前设计新 interface |
 | React 行为或性能变更 | [vercel-react-best-practices](.agents/skills/vercel-react-best-practices/SKILL.md)：选与当前问题相关的规则 |
-| shadcn/ui 增改、表单、对话、可访问性 | [shadcn](.agents/skills/shadcn/SKILL.md)，同时遵循 TaskRelay 自己的 UI 设计 |
+| shadcn/ui 增改、表单、对话、可访问性 | [shadcn](.agents/skills/shadcn/SKILL.md)：Web/桌面统一默认中性色、组件 variants 和语义 tokens；应用层仅编排布局，不恢复旧的品牌色全局覆盖 |
 | Hono 路由和中间件实现 | [hono](.agents/skills/hono/SKILL.md)；当前 UI 是 React，不因 Hono 后端而启用 `hono-jsx` 或 `hono-void` |
 | Workers、D1、R2、Durable Objects、部署 | 使用会话中可用的 Cloudflare、workers-best-practices、durable-objects、wrangler 等对应技能；从当前技能目录获取路径，不硬编码另一台机器的插件版本目录 |
 | 动画或 UI 原语迁移 | 仅在任务实际涉及时使用 `vercel-react-view-transitions` 或 `migrate-radix-to-base`；不要把迁移当作架构分析的默认动作 |
@@ -60,6 +60,8 @@ TaskRelay 面向个人：网站描述并配置浏览器任务，Cloudflare 统�
 - **窗口与退出**：关主窗口保留托盘，明确退出时停止领取并关闭自有进程；自启动默认关闭。不要因 UI 重载重启任务。
 
 ## 数据、认证和安全
+
+任务创建使用 `POST /tasks/compose` 多轮补全草稿，模型返回草稿本身不得创建或执行任务。确认卡明确展示授权范围；仅在用户确认后调用原有创建/更新入口。详细表单只编辑草稿，普通任务对话不会直接修改授权或调度。
 
 - 网站用 Cloudflare Access 校验 owner；设备使用可吊销 bearer token。开发绕过仅限本机 `DEV_MODE=1`，生产关闭。
 - 设备令牌由 Main 用系统 `safeStorage` 保存。模型密钥、账号凭据、敏感协助回复按上下文加密；普通日志、聊天、诊断包不能包含这些明文。
