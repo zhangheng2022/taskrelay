@@ -23,7 +23,7 @@ import {
   finish,
   type Row,
 } from "./store";
-import { generate, invoke, getModel } from "./models";
+import { generate, generateStructured, invoke } from "./models";
 import { seal, unseal } from "./crypto";
 import { challengeFrom } from "./challenges";
 export const runner = new Hono<{ Bindings: AppEnv; Variables: Variables }>();
@@ -183,58 +183,40 @@ runner.post("/runs/:id/stagehand", async (c) => {
       content: parts.map((p) => p.text).join("\n"),
     });
   }
-  const { profile } = await getModel(
-    c.env,
-    run.task.modelId,
-    run.task.modelVersion,
-  );
-  let result = await invoke(
-    c.env,
-    profile.id,
-    profile.version,
-    {
-      messages,
-      ...(request.responseFormat
-        ? profile.capabilities.structured === "schema"
-          ? { schema: request.responseFormat.schema }
-          : { jsonMode: true }
-        : {}),
-    },
-    run.id,
-  );
+  let result: import("../../../packages/model/src/index").ModelResponse;
   let parsed: unknown;
   if (request.responseFormat) {
-    // Validate the browser-supplied schema locally. One repair attempt only.
     const { default: Ajv } = await import("ajv");
     const ajv = new Ajv({ strict: false, validateFormats: false });
-    const validate = ajv.compile(request.responseFormat.schema);
-    for (let i = 0; i < 2; i++) {
-      try {
-        parsed = JSON.parse(result.text);
-        if (validate(parsed)) break;
-      } catch {
-        /* repair below */
-      }
-      if (i === 1) throw new Error("STAGEHAND_SCHEMA_INVALID");
-      result = await invoke(
-        c.env,
-        profile.id,
-        profile.version,
-        {
-          messages: [
-            ...messages,
-            {
-              role: "user",
-              content:
-                "Return JSON matching this schema: " +
-                JSON.stringify(request.responseFormat.schema),
-            },
-          ],
-          jsonMode: true,
-        },
-        run.id,
-      );
+    let validate;
+    try {
+      validate = ajv.compile(request.responseFormat.schema);
+    } catch {
+      throw new Error("STAGEHAND_SCHEMA_INVALID");
     }
+    const output = await generateStructured(
+      c.env,
+      run.task.modelId,
+      run.task.modelVersion,
+      request.responseFormat.schema,
+      (value) => {
+        if (!validate(value)) throw new Error("STAGEHAND_SCHEMA_INVALID");
+        return value;
+      },
+      messages,
+      run.id,
+      "STAGEHAND_SCHEMA_INVALID",
+    );
+    result = output.response;
+    parsed = output.data;
+  } else {
+    result = await invoke(
+      c.env,
+      run.task.modelId,
+      run.task.modelVersion,
+      { messages },
+      run.id,
+    );
   }
   return c.json({
     role: "assistant",

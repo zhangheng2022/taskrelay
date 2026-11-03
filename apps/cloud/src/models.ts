@@ -115,19 +115,25 @@ export async function performInference(
   await recordUsage(env, profile, result, runId);
   return result;
 }
-export async function generate<T>(
+// Only received, invalid output can spend the repair budget. Transport failures
+// propagate without retry; every attempt retains the US alarm egress and usage path.
+export async function generateStructured<T>(
   env: AppEnv,
   id: string,
   version: number,
-  schema: z.ZodType<T>,
+  schema: Record<string, unknown>,
+  validate: (value: unknown) => T,
   messages: Inference["messages"],
   runId: string | null = null,
-) {
-  const { profile, key } = await getModel(env, id, version);
-  await validateEndpoint(profile.baseUrl);
+  invalidCode = "MODEL_INVALID_JSON",
+): Promise<{ data: T; response: ModelResponse }> {
+  const { profile } = await getModel(env, id, version);
   if (profile.capabilities.structured === "none")
     throw new Error("STRUCTURED_OUTPUT_REQUIRED");
-  const json = z.toJSONSchema(schema) as Record<string, unknown>;
+  const format =
+    profile.capabilities.structured === "schema"
+      ? { schema }
+      : { jsonMode: true };
   for (let attempt = 0; attempt < 2; attempt++) {
     const response = await invoke(
       env,
@@ -140,24 +146,41 @@ export async function generate<T>(
               {
                 role: "user",
                 content:
-                  "输出未通过格式校验，仅返回符合 JSON Schema 的 JSON：" +
-                  JSON.stringify(json),
+                  "输出未通过格式校验。仅返回符合以下 JSON Schema 的 JSON，不要改写原始输入中的密码或验证码：" +
+                  JSON.stringify(schema),
               },
             ]
           : messages,
-        ...(profile.capabilities.structured === "schema"
-          ? { schema: json }
-          : { jsonMode: true }),
+        ...format,
       },
       runId,
     );
     try {
-      return schema.parse(JSON.parse(response.text));
+      return { data: validate(JSON.parse(response.text)), response };
     } catch {
-      if (attempt) throw new Error("MODEL_INVALID_JSON");
+      if (attempt) throw new Error(invalidCode);
     }
   }
-  throw new Error("MODEL_INVALID_JSON");
+  throw new Error(invalidCode);
+}
+export async function generate<T>(
+  env: AppEnv,
+  id: string,
+  version: number,
+  schema: z.ZodType<T>,
+  messages: Inference["messages"],
+  runId: string | null = null,
+) {
+  const result = await generateStructured(
+    env,
+    id,
+    version,
+    z.toJSONSchema(schema) as Record<string, unknown>,
+    (value) => schema.parse(value),
+    messages,
+    runId,
+  );
+  return result.data;
 }
 export async function probe(
   env: AppEnv,

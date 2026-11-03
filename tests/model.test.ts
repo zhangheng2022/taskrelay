@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { infer, structured } from "../packages/model/src/index";
+import { infer } from "../packages/model/src/index";
 import type { ModelProfile } from "../packages/contracts/src/index";
 const profile: ModelProfile = {
   id: "test",
@@ -84,28 +84,6 @@ test("Responses 正确映射请求、调用结果与实际用量", async () => {
   assert.equal(r.text, '{"ok":true}');
   assert.deepEqual(r.usage, { input: 18, output: 5 });
 });
-test("JSON 格式失败最多修正一次，绝不自动切换模型", async () => {
-  let calls = 0;
-  await assert.rejects(
-    () =>
-      structured(
-        profile,
-        "key",
-        [{ role: "user", content: "test" }],
-        { type: "object" },
-        (x) => x,
-        async () => {
-          calls++;
-          return Response.json({
-            choices: [{ message: { content: "invalid json" } }],
-          });
-        },
-      ),
-    /MODEL_INVALID_JSON/,
-  );
-  assert.equal(calls, 2);
-});
-
 test("供应商错误仅暴露白名单分类，不泄露上游正文或密钥", async () => {
   for (const [code, expected] of [
     [

@@ -122,4 +122,4 @@ npm run make
 
 修改事实归属、执行顺序、协议、状态或打包规则时同步更新 `docs/ARCHITECTURE.md`；修改协作约定时更新本文，避免维护第二份 agent 指南。验收证据变动更新验收台账，产品目标变动更新 `PRODUCT.md`。
 
-当前架构报告中的四项候选尚未成为实施决定。不要自动创建新 interface、接入未使用的 `assertTransition`，或把仅测试使用的 `structured()` 当作已被生产采用。先核对实际调用链和已有行为，再在用户选定范围内推进。
+结构化输出候选已获授权并落地：生产统一使用 `models.generateStructured`，通过 `invoke` 保留美国出站；Zod 与 Ajv 仅负责校验适配。其余运行状态、恢复、协助生命周期候选仍未实施。不要直接接入未使用的 `assertTransition`。

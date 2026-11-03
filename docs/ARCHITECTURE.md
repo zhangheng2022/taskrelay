@@ -1,6 +1,6 @@
 # TaskRelay 架构现状与改进候选
 
-分析日期：2026-11-03（Asia/Shanghai）。源码基线：`923143af8276a36a7d59a11a7d1916d591d860f1`，版本 0.1.0。本文结合 `improve-codebase-architecture`、`codebase-design` 和独立源码走读，描述当前 implementation；候选建议尚未实施。
+分析日期：2026-11-03（Asia/Shanghai）。源码基线：`923143af8276a36a7d59a11a7d1916d591d860f1`，版本 0.1.0。本文结合 `improve-codebase-architecture`、`codebase-design` 和独立源码走读。2026-11-03 后续实施已统一结构化输出；其余候选仍未实施。
 
 仓库仅有一个初始提交，不能根据提交频率推断热点。本次围绕运行状态、执行器恢复、人工协助与模型出站分析；未发现 `GLOSSARY.md` 或 `docs/adr/`，领域名称沿用共享协议。验收结论引用现有记录，不表示本次重新执行了模型、安装或现场测试。
 
@@ -151,15 +151,9 @@ flowchart LR
 
 模型名不限制 GPT，默认 Chat Completions，可选 Responses。连接、工具调用、结构化输出是必需能力，图像输入独立测试。支持 JSON Schema 时使用严格输出；仅 JSON 模式时本地校验；格式修复预算最多一次。用量来自响应，没有 token 或价格时显示未知。
 
-目前结构化输出有三套 implementation：
+结构化输出已统一到 `models.generateStructured`：能力选择、JSON 解析、本地校验及一次修复预算由同一 module 拥有。`generate` 是 Zod adapter；Stagehand 路由预先编译 Ajv Schema 后调用同一 interface。两次调用保持能力所选模式及模型版本，传输/未知结果错误在校验 catch 外传播，不触发格式修复。每次调用仍经 invoke、美国 alarm、performInference 记录实际用量。
 
-| 位置 | 实际用途 |
-| --- | --- |
-| `apps/cloud/src/models.ts` 的 `generate` | 生产 Zod Schema 校验与一次修复；修复保持能力所选的输出模式 |
-| `apps/cloud/src/runner.ts` 的 Stagehand 路由 | 生产 Ajv 校验与一次修复；修复使用 JSON mode，行为与上行存在差异 |
-| `packages/model/src/index.ts` 的 `structured` | 只被 `tests/model.test.ts` 调用，没有生产调用 |
-
-第三套的测试通过不能证明前两套的修复预算、模式和错误处理。首选改进是让生产与测试共享同一结构化输出 interface，保留 Zod/Ajv 的校验差异和地区出站 seam。
+删除了 `packages/model` 中仅用于测试的 `structured`。`tests/structured-production.test.ts` 直接调用 Hono plan/Stagehand 路由，经过真实 egress 与 EgressState；仅替换平台存储和外部 HTTP，覆盖两种协议、两种输出能力、修复预算、版本固定、用量、地区不可用及错误不重放。这是生产路径的隔离测试，不是新的真实云端验收。
 
 ## 6. 存储、认证和设备生命周期
 
@@ -189,7 +183,7 @@ Stagehand 固定 4.3.0，Executor 打包保持原生动态 import。Forge Squirr
 | 26 项源码测试 | 协议转换、状态/幂等、策略、协助绑定和清理、出站加密及未知结果不重放 | 所有生产路径或整机故障都已覆盖 |
 | D1 stand-in | `tests/helpers.ts` 用 Node SQLite 加载真实迁移，并模拟 prepare/batch | Cloudflare D1 的真实并发、网络、部署一致性 |
 | EgressState 测试 | 内存 storage adapter、alarm 状态和中断恢复；本地 jurisdiction 不支持时拒绝旁路 | 真实请求地理位置或提供方可用性 |
-| 模型协议测试 | Chat / Responses 转换、未知用量、错误分类、重定向拒绝 | 生产两套结构化修复行为全部正确；非 GPT 实际闭环 |
+| 模型协议测试 | Chat / Responses 转换、未知用量、错误分类、重定向拒绝 | 非 GPT 实际闭环；隔离测试不能证明云端网络可用 |
 | 已记录真实模型能力 | `gpt-6-luna / Responses` 的连接、工具、严格 Schema；独立出站 trace 美国地区 | 真实浏览器任务成功、真实 Chat、非 GPT 或图像能力 |
 | 打包及安装目录 smoke | 实际 Electron utilityProcess 加载 Stagehand/内置 Chrome，自建站四类操作和 `0012aB` 原样输入 | `runtime.execute`、ExecutorHost、云端调度及恢复的完整流程 |
 | UI 检查 | 手机、桌面、窄窗口及独立修复批次记录 | 所有桌面原生交互现场验收 |
@@ -200,9 +194,9 @@ smoke 走 `executor/entry.ts` 中独立手写流程，没有调用 `RuntimePort`
 
 ## 8. 架构改进候选（未实施）
 
-以下使用技能中的 module / interface / implementation / depth / seam / adapter / leverage / locality 定义。先收拢重复知识，再判断是否需要新抽象；不把文件短或转发少自动判为 shallow。本节不定义新方法、类型或调用签名。
+以下使用技能中的 module / interface / implementation / depth / seam / adapter / leverage / locality 定义。先收拢重复知识，再判断是否需要新抽象；不把文件短或转发少自动判为 shallow。A 的实际 implementation 见第 5 节；B/C/D 不定义新方法、类型或调用签名。
 
-### A. 结构化模型输出 module — Strong，首选
+### A. 结构化模型输出 module — 已实施（以下保留原分析依据）
 
 - **事实**：`models.ts:118` 与 `runner.ts:206` 有两套生产修复循环；`packages/model/src/index.ts:231` 的第三套仅供测试。
 - **深化方向**：集中能力模式、解析、校验、一次修复预算及错误结果；生产调用和测试经过同一 interface，Zod/Ajv 差异留在 implementation 内，保留现有出站 seam。
@@ -234,7 +228,7 @@ smoke 走 `executor/entry.ts` 中独立手写流程，没有调用 `RuntimePort`
 - **现有 seam / adapter**：复用 D1/SQLite 与模型出站 adapter；网页回复者与设备消费者是不同参与者，不是同一 interface 的两个 adapter。
 - **收益与验证**：协助约束获得 locality，新验证类型获得 leverage；保留已有绑定/消费行为测试，补解析期间过期/取消、交付后崩溃、确认目标变化与扫码实际复核。
 
-优先选择 A：证据明确、范围较小，可以直接对齐生产与测试。B/C/D 涉及可靠性与责任归属，需要在选定范围后进一步设计，当前不进行实现。
+A 已按用户选择完成；B/C/D 涉及可靠性与责任归属，仍需选定范围后进一步设计。
 
 ## 9. 应保留的设计与文档维护
 
