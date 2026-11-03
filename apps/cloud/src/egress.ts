@@ -27,26 +27,23 @@ export async function egress<T>(env: AppEnv, job: EgressJob): Promise<T> {
     throw error;
   }
   const stub = region.getByName(id);
-  await stub.submit(
+  // A single RPC begins before the alarm; do not poll the object with new RPCs.
+  const result = await stub.submitAndWait(
     id,
     await seal(job, env.MASTER_KEY, `egress:${id}:request`),
   );
-  const deadline = Date.now() + 90_000;
-  while (Date.now() < deadline) {
-    const result = await stub.wait();
-    if (result.status === "pending" || result.status === "running") continue;
-    try {
-      if (result.status !== "done" || !result.cipher)
-        throw new Error(result.error ?? "MODEL_EGRESS_FAILED");
-      return await unseal<T>(
-        result.cipher,
-        env.MASTER_KEY,
-        `egress:${id}:response`,
-      );
-    } finally {
-      // A failed acknowledgement must not discard an already received model result.
+  try {
+    if (result.status !== "done" || !result.cipher)
+      throw new Error(result.error ?? "MODEL_EGRESS_FAILED");
+    return await unseal<T>(
+      result.cipher,
+      env.MASTER_KEY,
+      `egress:${id}:response`,
+    );
+  } finally {
+    // Only acknowledge terminal results; never re-enter an executing alarm.
+    // A failed acknowledgement must not discard an already received model result.
+    if (result.status !== "pending" && result.status !== "running")
       await stub.ack().catch(() => {});
-    }
   }
-  throw new Error("MODEL_EGRESS_TIMEOUT");
 }

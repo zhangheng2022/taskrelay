@@ -3,6 +3,14 @@ import { randomBytes, createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
+// Do not send a temporary device credential to an arbitrary diagnostic URL.
+const origin =
+  process.argv.find((arg) => arg.startsWith("--origin="))?.slice(9) ??
+  "https://tr.zhangheng.eu.org";
+if (
+  !["https://tr.zhangheng.eu.org", "https://taskrelay.zhangheng.workers.dev"].includes(origin)
+)
+  throw new Error("DIAGNOSTIC_ORIGIN_NOT_ALLOWED");
 const root = path.resolve(import.meta.dirname, ".."),
   id = "diagnostic_" + randomUUID().replaceAll("-", ""),
   token = randomBytes(32).toString("hex");
@@ -29,7 +37,7 @@ try {
   );
   const request = async (p, body) => {
     const r = await fetch(
-      "https://taskrelay.zhangheng.workers.dev/api/device/user/" + p,
+      origin + "/api/device/user/" + p,
       {
         method: body ? "POST" : "GET",
         headers: {
@@ -41,6 +49,7 @@ try {
       },
     );
     return {
+      origin,
       status: r.status,
       placement: r.headers.get("cf-placement"),
       data: await r.json(),

@@ -38,7 +38,7 @@ npm run deploy
 
 ## 模型出站实现
 
-最新部署版本为 `99ca685e-e277-431a-aa2e-0c4260f770e2`。新域名的真实草稿推理仍有地区拒绝，原 workers.dev 相同请求成功，详见 [ACCEPTANCE.md](ACCEPTANCE.md)。域名/Access 检查通过不等于模型请求通过；现阶段 AI 操作使用原入口。两处使用同一 D1 和模型配置。
+最新部署版本为 `84bacc38-c361-400a-8675-d4bc86d7ec94`。新域名和原 workers.dev 的相同真实模型草稿请求均返回 200，新域名已登录网页也成功生成任务确认卡，详见 [ACCEPTANCE.md](ACCEPTANCE.md)。两处使用同一 D1 和模型配置。
 
 所有能力测试、任务解析、Stagehand 模型回调及人工协助解析统一经过 `MODEL_EGRESS`，由美国区域 Durable Object 的 alarm 发起上游请求。网页和设备请求只提交加密的推理作业，不转发原始 Request、IP 或地区头。API Key 仍由云端从 D1 解密，网站和客户端均拿不到明文。缺少出站绑定会明确失败，不回退到带访问者上下文的直接请求。
 
@@ -46,9 +46,11 @@ npm run deploy
 
 作业及结果短期加密并分块保存；领取结果确认后删除密文，未确认的记录在 3 分钟后清理。alarm 在上游请求前持久化 running 状态；中断后返回 `MODEL_CALL_OUTCOME_UNKNOWN`，不会自动再次调用供应商。任务状态和调度仍以 D1 为权威。
 
-诊断命令：`node scripts/cloud-self-check.mjs --egress --probe-existing`。`--egress` 只从固定官方 trace 地址保留状态、国家和机房，不保留 IP 或完整响应；`--probe-existing` 会通过云端使用已有模型配置进行真实能力测试，可能产生供应商用量。原始密钥不离开 Workers。
+2026-11-03 修复自定义域名地区拒绝：旧实现先 `submit`，再由访客请求反复 RPC `wait`。Durable Object 共享 I/O 上下文，后进入的等待请求会成为当前入站请求；在模型配置/DNS 异步准备期间可能重新带入访客上下文。现在 `submitAndWait` 一次 RPC 同时提交并等待，内部最多等待 90 秒；alarm 期间没有新的读取 RPC，终态才 ack。没有新增 Worker、改动 DNS/Access、伪造地区头或更换密钥/模型。不要恢复外部 RPC 轮询，也不要仅凭独立 trace 判定真实推理成功。
 
-参考：[Cloudflare 数据区域约束](https://developers.cloudflare.com/durable-objects/reference/data-location/)、[alarm 执行语义](https://developers.cloudflare.com/durable-objects/api/alarms/)。区域出站不能替代供应商的账号、项目或模型权限检查。
+诊断命令：`node scripts/cloud-self-check.mjs --egress --probe-existing`，默认检查新域名。对照原地址使用 `--origin=https://taskrelay.zhangheng.workers.dev`，仅允许这两个已部署入口，输出包含 origin。`--egress` 只从固定官方 trace 地址保留状态、国家和机房，不保留 IP 或完整响应；`--probe-existing` 会通过云端使用已有模型配置进行真实能力测试，可能产生供应商用量。原始密钥不离开 Workers。
+
+参考：[Cloudflare 数据区域约束](https://developers.cloudflare.com/durable-objects/reference/data-location/)、[alarm 执行语义](https://developers.cloudflare.com/durable-objects/api/alarms/)、[workerd I/O 上下文实现](https://github.com/cloudflare/workerd/blob/main/src/workerd/io/io-context.h)（`getIoChannelFactory` 使用当前入站请求，`incomingRequests` 按最近开始排序）。区域出站不能替代供应商的账号、项目或模型权限检查。
 
 ## 数据与执行恢复
 

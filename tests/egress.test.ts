@@ -67,3 +67,81 @@ test("模型调用中断后的 alarm 不重复请求，过期记录被清理", a
   await state.alarm();
   assert.equal(values.size, 0);
 });
+
+for (const failure of [false, true]) {
+  test(`单次 RPC 等待 alarm ${failure ? "失败" : "成功"}，模型准备期间不重入对象`, async () => {
+    const rpc: string[] = [];
+    let calls = 0;
+    const state = new EgressState(
+      fakeStorage(() => {
+        void state.alarm();
+      }).storage,
+      key,
+      async (job) => {
+        assert.deepEqual(job, { kind: "trace" });
+        // In production these awaits include D1, decryption and endpoint DNS.
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        assert.deepEqual(rpc, ["submitAndWait"]);
+        calls++;
+        if (failure) throw new Error("MODEL_HTTP_403_UNSUPPORTED_REGION");
+        return { ok: true };
+      },
+    );
+    const env = {
+      MASTER_KEY: key,
+      MODEL_EGRESS: {
+        jurisdiction(region: string) {
+          assert.equal(region, "us");
+          return {
+            getByName() {
+              return {
+                submitAndWait(id: string, cipher: string) {
+                  rpc.push("submitAndWait");
+                  return state.submitAndWait(id, cipher);
+                },
+                async ack() {
+                  rpc.push("ack");
+                  assert.equal(
+                    (await state.read()).status,
+                    failure ? "failed" : "done",
+                  );
+                  await state.ack();
+                  // A cleanup transport failure cannot lose the received result.
+                  throw new Error("ACK_CONNECTION_LOST");
+                },
+              };
+            },
+          };
+        },
+      },
+    } as unknown as AppEnv;
+    if (failure)
+      await assert.rejects(() => egress(env, { kind: "trace" }), {
+        message: "MODEL_HTTP_403_UNSUPPORTED_REGION",
+      });
+    else assert.deepEqual(await egress(env, { kind: "trace" }), { ok: true });
+    assert.deepEqual(rpc, ["submitAndWait", "ack"]);
+    assert.equal(calls, 1);
+    assert.equal((await state.read()).status, "consumed");
+  });
+}
+
+test("对象内等待超过 90 秒明确超时，不执行或重放作业", async (t) => {
+  let clock = Date.now(),
+    calls = 0;
+  t.mock.method(Date, "now", () => clock);
+  const state = new EgressState(fakeStorage().storage, key, async () => {
+    calls++;
+  });
+  t.mock.method(state, "wait", async () => {
+    clock += 15_000;
+    return { status: "pending" as const };
+  });
+  const id = crypto.randomUUID();
+  const cipher = await seal({ kind: "trace" }, key, `egress:${id}:request`);
+  await assert.rejects(() => state.submitAndWait(id, cipher), {
+    message: "MODEL_EGRESS_TIMEOUT",
+  });
+  assert.equal(calls, 0);
+  assert.equal((await state.read()).status, "pending");
+});

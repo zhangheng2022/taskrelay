@@ -8,9 +8,13 @@
 
 默认主题与聊天复验见 [UI-REVIEW.md](UI-REVIEW.md)：1280 桌面、390 手机、760 窄窗口，补充信息、确认卡、编辑、错误重试、敏感回复清理、离线和键盘操作。没有把演示 Transport 的结果记为真实云端模型/设备闭环。构建仍提示客户端单包约 587 KB（gzip 183 KB）及已有共享协议动态导入未拆包警告，构建成功。
 
-部署及真实模型追加复验：当前 Worker 版本 `99ca685e-e277-431a-aa2e-0c4260f770e2`。严格 Schema 兼容修复后 **65/65 测试、typecheck、build、check:repo 通过**。原 workers.dev 设备 API 经实际 `gpt-6-luna / Responses` 成功生成“验收草稿”（HTTP 200），只生成预览，未创建或执行任务。能力复验于 `2026-11-03T07:31:44.933Z` 通过连接、工具和严格 Schema。
+严格 Schema 部署及真实模型复验：Worker 版本 `99ca685e-e277-431a-aa2e-0c4260f770e2`。严格 Schema 兼容修复后 **65/65 测试、typecheck、build、check:repo 通过**。原 workers.dev 设备 API 经实际 `gpt-6-luna / Responses` 成功生成“验收草稿”（HTTP 200），只生成预览，未创建或执行任务。能力复验于 `2026-11-03T07:31:44.933Z` 通过连接、工具和严格 Schema。
 
-**当前限制：** `tr.zhangheng.eu.org` 页面/Access/health/设备鉴权正常，已登录浏览器可见新版 UI；但在新域名发起相同模型草稿请求仍返回 `MODEL_HTTP_403_UNSUPPORTED_REGION`（浏览器和设备入口均复现），原地址同一配置返回 200。独立后台 trace 为 jurisdiction `us`、`US/ATL`、`US/LAX`，新域名已登录请求 trace 为 `US/ORD`。这些 trace 并非失败推理请求本身的地区证据，不能据此声称原因已定位或新域名 AI 已通过。当前建议 AI 任务使用原入口，保留此差异待排查；没有修改美国出站或绕过失败重放。
+**新域名地区拒绝已修复：** 此前新域名在浏览器和设备入口均返回 `MODEL_HTTP_403_UNSUPPORTED_REGION`，相同配置在原地址返回 200；独立后台 trace 虽为美国，不能证明推理请求成功。排查发现 `submit` 后从访客链路反复 RPC `wait`，可能在模型配置/DNS 异步准备期间替换 Durable Object 当前 I/O 上下文。现改为单次 `submitAndWait`，对象内部等待，不在 alarm 执行期间发起新 RPC；仍只由美国 jurisdiction 的 alarm 调用模型。未伪造地区头、换模型或绕过失败重放。
+
+当前 Worker 版本 **`84bacc38-c361-400a-8675-d4bc86d7ec94`**。2026-11-03 07:53 UTC 新旧域名设备 API 的同一 `gpt-6-luna / Responses` 草稿请求均返回 **200**；随后新域名通过 Access 的真实浏览器对话生成“新域名验收草稿”确认卡。新域名网页能力测试于 **`2026-11-03T07:54:57.672Z`** 通过连接、工具、严格 Schema，模型仍为原 v2。图像未测试。没有点击“创建并试运行”，未创建或执行任务。证据为 `out/region-check.json` 和 `out/ui-review/production-region-fixed.png`；诊断设备已清理。
+
+本次 **68/68 源码测试、typecheck、build、check:repo 通过**。新增单次 RPC 等待成功/失败、终态确认失败不丢结果、90 秒超时用例，原生产路由测试改用真实 `submitAndWait` 状态路径。内存 adapter 不模拟 Cloudflare 的实际 I/O 上下文；新域名浏览器/设备请求的真实结果单独记录如上。自检脚本默认新域名，支持白名单内的 `--origin` 对照旧地址。本次仅修改云端出站及诊断，无桌面重新打包。
 
 本轮产物记录：`out/ui-release-manifest.json`（UI 源码 `995ba8b`；后续修复仅云端模型代码），安装包 SHA-256 `3917d7aa0853773a824e4665c77386e3e02c339b146e82b46b20a2d8072bfb1c`。`out/production-compose-check.json` 保存两入口的脱敏结果；临时诊断设备与模型配置均已清理。旧 `out/release-manifest.json` 属于此前基线。
 

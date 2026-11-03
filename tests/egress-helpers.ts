@@ -3,7 +3,7 @@ import { EgressState } from "../apps/cloud/src/egress-state";
 import type { EgressJob } from "../apps/cloud/src/egress";
 import { performInference } from "../apps/cloud/src/models";
 
-export function fakeStorage() {
+export function fakeStorage(onDueAlarm?: () => void) {
   const values = new Map<string, unknown>();
   let alarm = 0;
   const storage = {
@@ -25,6 +25,7 @@ export function fakeStorage() {
     },
     async setAlarm(time: number) {
       alarm = time;
+      if (time <= Date.now() && onDueAlarm) setTimeout(onDueAlarm, 0);
     },
   } as unknown as DurableObjectStorage;
   return { storage, values, getAlarm: () => alarm };
@@ -36,7 +37,9 @@ export function attachTestEgress(env: AppEnv) {
       return {
         getByName() {
           const state = new EgressState(
-            fakeStorage().storage,
+            fakeStorage(() => {
+              void state.alarm();
+            }).storage,
             env.MASTER_KEY,
             async (value) => {
               const job = value as EgressJob;
@@ -52,11 +55,8 @@ export function attachTestEgress(env: AppEnv) {
             },
           );
           return {
-            submit: (id: string, cipher: string) => state.submit(id, cipher),
-            wait: async () => {
-              await state.alarm();
-              return state.read();
-            },
+            submitAndWait: (id: string, cipher: string) =>
+              state.submitAndWait(id, cipher),
             ack: () => state.ack(),
           };
         },

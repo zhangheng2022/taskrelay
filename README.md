@@ -4,7 +4,7 @@
 
 工作空间：https://tr.zhangheng.eu.org （Cloudflare Access，仅配置的本人邮箱可访问）。原地址 https://taskrelay.zhangheng.workers.dev 继续可用；已配对客户端可继续使用原地址。
 
-当前联调限制：新域名页面及登录正常，但真实模型草稿请求仍遇到地区拒绝；同一配置在原 workers.dev 入口已生成草稿成功。AI 操作暂用原入口，差异和证据见 [验收记录](docs/ACCEPTANCE.md)。美国区域出站流程保持不变。
+新旧域名均已通过真实模型草稿生成验证。自定义域名的地区拒绝已修复，美国区域出站流程保留；范围和证据见 [验收记录](docs/ACCEPTANCE.md)。
 
 ## 使用
 

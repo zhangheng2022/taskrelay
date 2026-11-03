@@ -145,7 +145,8 @@ flowchart LR
   CALL[能力测试 / 任务解析 / 规划 / 协助 / Stagehand] --> INV[models.invoke]
   INV --> EGR[egress: 加密作业]
   EGR --> US[MODEL_EGRESS.jurisdiction us]
-  US --> JOB[EgressState: pending / running / done]
+  US --> RPC[submitAndWait 单次 RPC]
+  RPC --> JOB[EgressState: pending / running / done]
   JOB --> ALARM[独立 alarm]
   ALARM --> PERF[performInference]
   PERF --> INF[packages/model.infer]
@@ -156,6 +157,8 @@ flowchart LR
 所有生产模型 HTTP 请求在这条后台链路末端发起。普通 Worker 的访客请求上下文不传给模型提供方；不能以普通 HTTP 转发或 placement hint 代替当前 alarm 出站。当前固定的是美国 jurisdiction，不固定某一个 colo，也不构成提供方永远接受请求的保证。
 
 `EgressState` 在发请求前持久化 running；中断恢复后返回 `MODEL_CALL_OUTCOME_UNKNOWN`，不再次调用提供方。请求和分块结果使用 `MASTER_KEY` 与上下文加密，ACK 后删除，超时作业清理。测试通过存储 adapter 验证状态，不用于证明实际地区。
+
+提交与等待使用一次 `submitAndWait` RPC；90 秒等待期限与内部唤醒由 `EgressState` 拥有。alarm 期间没有新的外部查询 RPC，返回终态后才 ack。这样避免 DO 共享 I/O 上下文被新进入的访客等待请求替换；原来的 `submit → RPC wait` 在新域名实际触发地区拒绝，修复后新旧域名和网页真实推理通过。`ModelEgress` 继续作为平台 adapter，不增加并行的出站通道。诊断 trace 与真实推理必须分别验收。
 
 模型名不限制 GPT，默认 Chat Completions，可选 Responses。连接、工具调用、结构化输出是必需能力，图像输入独立测试。支持 JSON Schema 时使用严格输出；仅 JSON 模式时本地校验；格式修复预算最多一次。用量来自响应，没有 token 或价格时显示未知。
 
@@ -188,9 +191,9 @@ Stagehand 固定 4.3.0，Executor 打包保持原生动态 import。Forge Squirr
 
 | 验证 | 已有证据覆盖 | 不能据此证明 |
 | --- | --- | --- |
-| 65 项源码测试 | 协议、状态/幂等、策略、协助、出站；实际 plan/Stagehand/草稿/聊天/验证回复路由的修复与美国出站；多轮确认与创建幂等；严格 Schema 投影和 JSON 指令 | 所有故障交错或整机故障都已覆盖 |
+| 68 项源码测试 | 协议、状态/幂等、策略、协助、出站；实际 plan/Stagehand/草稿/聊天/验证回复路由的修复与美国出站；多轮确认与创建幂等；严格 Schema 投影和 JSON 指令；单次 RPC 等待及超时 | 所有故障交错或整机故障都已覆盖 |
 | D1 stand-in | `tests/helpers.ts` 用 Node SQLite 加载真实迁移，并模拟 prepare/batch | Cloudflare D1 的真实并发、网络、部署一致性 |
-| EgressState 测试 | 内存 storage adapter、alarm 状态和中断恢复；本地 jurisdiction 不支持时拒绝旁路 | 真实请求地理位置或提供方可用性 |
+| EgressState 测试 | 内存 storage adapter、alarm 状态和中断恢复；单次提交等待、终态确认失败不丢结果、90 秒超时；本地 jurisdiction 不支持时拒绝旁路 | Cloudflare 的实际 I/O 上下文行为、真实请求地理位置或提供方可用性 |
 | 模型协议测试 | Chat / Responses 转换、未知用量、错误分类、重定向拒绝 | 非 GPT 实际闭环；隔离测试不能证明云端网络可用 |
 | 已记录真实模型能力 | `gpt-6-luna / Responses` 的连接、工具、严格 Schema；独立出站 trace 美国地区 | 真实浏览器任务成功、真实 Chat、非 GPT 或图像能力 |
 | 打包及安装目录 smoke | 实际 Electron utilityProcess 加载 Stagehand/内置 Chrome，自建站四类操作和 `0012aB` 原样输入 | `runtime.execute`、ExecutorHost、云端调度及恢复的完整流程 |

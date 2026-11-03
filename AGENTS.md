@@ -49,6 +49,7 @@ TaskRelay 面向个人：网站描述并配置浏览器任务，Cloudflare 统�
 - **云端权威**：任务配置、模型版本、调度、租约及运行状态由云端管理。离线仅查看缓存和停止本机执行，不新增本地调度器。
 - **进程隔离**：Main 管理云端连接、SQLite、令牌和进程；Preload 仅暴露受校验的命名入口；Renderer 不访问文件、明文设备令牌或执行进程；Stagehand 留在独立 `utilityProcess`。
 - **模型出站**：所有生产模型请求经过 `models.invoke → egress → ModelEgress` 的美国 jurisdiction 与 alarm，再调用提供方。不要在 Renderer、Main、Executor 或普通请求处理中增加直连模型的旁路。
+- **出站等待**：提交和等待结果合并在 `submitAndWait` 一次 RPC 中，等待循环留在对象内部。alarm 执行期间不能再次 RPC 轮询同一对象，否则最新访客请求可能替换它的 I/O 上下文。只在取得终态结果后 ack。
 - **本地限制**：本地 workerd 的 `MODEL_REGION_REQUIRES_DEPLOYMENT` 是明确限制，不得用本地直连或改回访客请求链来“修复”。测试可使用隔离 adapter；真实地区证据来自部署环境。
 - **兼容模型**：模型名自由输入，不限定 GPT；保留 Chat Completions 与 Responses。缺少必需能力时阻止使用，不暗换模型或提供方。运行使用任务快照中的模型配置版本。
 - **副作用先记事实**：本地检查点和云端动作意图先于执行；动作后重新观察。模型宣称成功不能替代程序核验。

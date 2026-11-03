@@ -41,11 +41,8 @@ export class ModelEgress extends DurableObject<AppEnv> {
       );
     });
   }
-  submit(id: string, cipher: string) {
-    return this.jobs.submit(id, cipher);
-  }
-  wait() {
-    return this.jobs.wait();
+  submitAndWait(id: string, cipher: string) {
+    return this.jobs.submitAndWait(id, cipher);
   }
   ack() {
     return this.jobs.ack();

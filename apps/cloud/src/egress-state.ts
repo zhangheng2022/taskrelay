@@ -29,6 +29,18 @@ export class EgressState {
     private execute: (job: unknown) => Promise<unknown>,
   ) {}
 
+  async submitAndWait(id: string, cipher: string): Promise<EgressResult> {
+    await this.submit(id, cipher);
+    const deadline = Date.now() + 90_000;
+    // Keep the wait inside the original RPC. A new RPC during alarm execution
+    // can replace the DO's current I/O context with visitor request metadata.
+    while (Date.now() < deadline) {
+      const result = await this.wait();
+      if (result.status !== "pending" && result.status !== "running")
+        return result;
+    }
+    throw new Error("MODEL_EGRESS_TIMEOUT");
+  }
   async submit(id: string, cipher: string) {
     if (!/^[a-f0-9-]{36}$/.test(id) || cipher.length > 4_000_000)
       throw new Error("MODEL_EGRESS_INPUT_INVALID");
