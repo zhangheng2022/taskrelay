@@ -1,0 +1,394 @@
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  Menu,
+  Tray,
+  nativeImage,
+  shell,
+  protocol,
+  net as electronNet,
+  powerMonitor,
+  dialog,
+} from "electron";
+import squirrelStartup from "electron-squirrel-startup";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { writeFile } from "node:fs/promises";
+import { realpathSync } from "node:fs";
+import { z } from "zod";
+import { Journal } from "./journal";
+import { Cloud } from "./cloud";
+import { OwnedBrowser } from "./browser";
+import { ExecutorHost } from "./executor-host";
+import { cloudUrlSchema, requestSchema } from "../shared/ipc";
+import type {
+  DesktopStatus,
+  Snapshot,
+  TaskRun,
+} from "../../../../packages/contracts/src/index";
+import { packagedSmoke } from "./smoke";
+declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
+declare const MAIN_WINDOW_VITE_NAME: string;
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: "taskrelay",
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+    },
+  },
+]);
+let window: BrowserWindow | null = null,
+  tray: Tray | null = null,
+  quitting = false,
+  polling = false,
+  online = false,
+  lastError: string | null = null;
+let journal: Journal,
+  cloud: Cloud,
+  host: ExecutorHost,
+  pairing: { id: string; pollToken: string } | null = null;
+let claimRequest: string | null = null;
+function status(): DesktopStatus {
+  return {
+    paired: cloud.paired,
+    cloudUrl: cloud.url,
+    paused: journal.get<boolean>("paused") ?? false,
+    online: cloud.online,
+    activeRunId: host.active,
+    version: app.getVersion(),
+    autoStart: app.getLoginItemSettings().openAtLogin,
+    error: lastError,
+  };
+}
+function notify() {
+  window?.webContents.send("taskrelay:changed");
+}
+function show() {
+  if (window) {
+    window.show();
+    window.focus();
+  } else createWindow();
+}
+function createWindow() {
+  window = new BrowserWindow({
+    width: 1200,
+    height: 820,
+    minWidth: 420,
+    minHeight: 600,
+    title: "TaskRelay",
+    backgroundColor: "#f7f8f6",
+    show: false,
+    autoHideMenuBar: true,
+    icon: path.join(
+      app.isPackaged
+        ? process.resourcesPath
+        : path.resolve(__dirname, "../../../../resources"),
+      "icon.png",
+    ),
+    webPreferences: {
+      preload: path.join(__dirname, "preload.cjs"),
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: true,
+    },
+  });
+  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  window.webContents.on("will-navigate", (event, url) => {
+    const origin = MAIN_WINDOW_VITE_DEV_SERVER_URL
+      ? new URL(MAIN_WINDOW_VITE_DEV_SERVER_URL).origin
+      : "taskrelay://app";
+    if (!url.startsWith(`${origin}/`)) event.preventDefault();
+  });
+  window.webContents.session.setPermissionRequestHandler(
+    (_webContents, _permission, callback) => callback(false),
+  );
+  window.on("close", (event) => {
+    if (!quitting) {
+      event.preventDefault();
+      window?.hide();
+    }
+  });
+  window.on("closed", () => {
+    window = null;
+  });
+  window.once("ready-to-show", () => window?.show());
+  if (MAIN_WINDOW_VITE_DEV_SERVER_URL)
+    void window.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
+  else void window.loadURL("taskrelay://app/index.html");
+}
+function registerIpc() {
+  const handle = (name: string, fn: (...args: any[]) => unknown) =>
+    ipcMain.handle(`taskrelay:${name}`, async (event, ...args) => {
+      if (
+        event.sender !== window?.webContents ||
+        event.senderFrame !== window.webContents.mainFrame
+      )
+        throw new Error("IPC_SENDER_REJECTED");
+      return fn(...args);
+    });
+  handle("request", async (value: unknown) => {
+    const b = requestSchema.parse(value);
+    if (!cloud.paired && b.method === "GET" && b.path === "/api/user/snapshot")
+      return (
+        journal.cached<Snapshot>(b.path) ?? {
+          tasks: [],
+          runs: [],
+          models: [],
+          accounts: [],
+          devices: [],
+          challenges: [],
+          serverTime: new Date().toISOString(),
+        }
+      );
+    try {
+      return await cloud.user(b.method, b.path, b.body);
+    } catch (e) {
+      if ((e as Error).message === "OFFLINE") {
+        online = false;
+        notify();
+      }
+      throw e;
+    }
+  });
+  handle("status", () => status());
+  handle("configure", async (input: unknown) => {
+    if (host.active) throw new Error("STOP_RUN_BEFORE_PAIRING");
+    const url = cloudUrlSchema.parse(input);
+    journal.set("cloudUrl", url);
+    journal.set("token", null);
+    const result = await cloud.request<{
+      id: string;
+      pollToken: string;
+      url: string;
+      code: string;
+    }>(
+      "POST",
+      "/api/pair/start",
+      { name: require("node:os").hostname(), protocolVersion: 1 },
+      true,
+    );
+    if (new URL(result.url).origin !== url)
+      throw new Error("PAIRING_URL_MISMATCH");
+    pairing = { id: result.id, pollToken: result.pollToken };
+    await shell.openExternal(result.url);
+    notify();
+    return { url: result.url, code: result.code };
+  });
+  handle("pairPoll", async () => {
+    if (!pairing) return cloud.paired;
+    const result = await cloud.request<{ approved: boolean; token?: string }>(
+      "POST",
+      "/api/pair/poll",
+      pairing,
+      true,
+    );
+    if (result.approved && result.token) {
+      cloud.storeToken(result.token);
+      pairing = null;
+      online = true;
+      notify();
+      return true;
+    }
+    return false;
+  });
+  handle("pause", (v: unknown) => {
+    journal.set("paused", z.boolean().parse(v));
+    notify();
+  });
+  handle("autoStart", (v: unknown) => {
+    app.setLoginItemSettings({
+      openAtLogin: z.boolean().parse(v),
+      path: app.getPath("exe"),
+    });
+    notify();
+  });
+  handle("stop", () => host.stop(true));
+  handle("diagnostics", async () => {
+    const result = await dialog.showSaveDialog(window!, {
+      defaultPath: `TaskRelay-diagnostics-${new Date().toISOString().slice(0, 10)}.json`,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (result.canceled || !result.filePath) return "已取消导出";
+    await writeFile(
+      result.filePath,
+      JSON.stringify(
+        {
+          version: app.getVersion(),
+          platform: process.platform,
+          arch: process.arch,
+          state: { online, active: host.active, paused: status().paused },
+          ...journal.diagnostic(),
+        },
+        null,
+        2,
+      ),
+    );
+    return `诊断已保存：${result.filePath}`;
+  });
+}
+async function poll() {
+  if (polling || quitting || !cloud.paired) return;
+  polling = true;
+  try {
+    await host.flush();
+    if (!host.active && !status().paused) {
+      claimRequest ??= crypto.randomUUID();
+      const { run } = await cloud.request<{ run: TaskRun | null }>(
+        "POST",
+        "/api/runner/claim",
+        { requestId: claimRequest, protocolVersion: 1 },
+      );
+      claimRequest = null;
+      if (run && ["running", "waiting_user", "verifying"].includes(run.status))
+        await host.start(run);
+    }
+    online = true;
+    lastError = null;
+  } catch (e) {
+    online = false;
+    lastError = (e as Error).message;
+  } finally {
+    polling = false;
+    notify();
+  }
+}
+async function quit() {
+  if (quitting) return;
+  quitting = true;
+  try {
+    await host?.stop(true);
+  } catch {
+    quitting = false;
+    lastError = "PROCESS_CLEANUP_FAILED";
+    show();
+    return;
+  }
+  journal?.close();
+  tray?.destroy();
+  app.exit(0);
+}
+if (squirrelStartup || !app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on("second-instance", show);
+  app.on("before-quit", (event) => {
+    if (!quitting) {
+      event.preventDefault();
+      void quit();
+    }
+  });
+  app.on("window-all-closed", () => {});
+  void app
+    .whenReady()
+    .then(async () => {
+      // Resolve Windows filesystem virtualization before native child-process launches.
+      // A redirected path can be readable by fs while CreateProcess rejects it.
+      const root = realpathSync.native(
+        app.isPackaged
+          ? process.resourcesPath
+          : path.resolve(__dirname, "../../../../resources"),
+      );
+      const smokeIndex = process.argv.indexOf("--taskrelay-smoke");
+      if (smokeIndex >= 0) {
+        const output = process.argv[smokeIndex + 1];
+        if (!output || !path.isAbsolute(output)) {
+          app.exit(1);
+          return;
+        }
+        try {
+          app.exit(
+            (await packagedSmoke(
+              root,
+              path.join(__dirname, "executor.cjs"),
+              output,
+            ))
+              ? 0
+              : 1,
+          );
+        } catch (e) {
+          await writeFile(
+            output,
+            JSON.stringify(
+              { passed: false, error: (e as Error).message },
+              null,
+              2,
+            ),
+          );
+          app.exit(1);
+        }
+        return;
+      }
+      const userData = app.getPath("userData");
+      journal = new Journal(userData);
+      cloud = new Cloud(journal);
+      const browser = new OwnedBrowser(
+        path.join(root, "browser"),
+        path.join(userData, "profiles"),
+        journal,
+      );
+      host = new ExecutorHost(
+        cloud,
+        journal,
+        browser,
+        path.join(__dirname, "executor.cjs"),
+        path.join(root, "stagehand-extension"),
+        notify,
+      );
+      await host.recover();
+      const rendererRoot = path.resolve(
+        __dirname,
+        `../renderer/${MAIN_WINDOW_VITE_NAME}`,
+      );
+      protocol.handle("taskrelay", (request) => {
+        const u = new URL(request.url);
+        if (u.host !== "app") return new Response(null, { status: 403 });
+        const target = path.resolve(
+          rendererRoot,
+          "." + decodeURIComponent(u.pathname),
+        );
+        if (!target.startsWith(rendererRoot + path.sep))
+          return new Response(null, { status: 403 });
+        return electronNet.fetch(pathToFileURL(target).toString());
+      });
+      registerIpc();
+      const icon = nativeImage.createFromPath(path.join(root, "icon.png"));
+      tray = new Tray(icon);
+      tray.setToolTip("TaskRelay");
+      tray.setContextMenu(
+        Menu.buildFromTemplate([
+          { label: "打开 TaskRelay", click: show },
+          {
+            label: "暂停 / 继续领取",
+            click: () => {
+              journal.set("paused", !status().paused);
+              notify();
+            },
+          },
+          { type: "separator" },
+          { label: "退出 TaskRelay", click: () => void quit() },
+        ]),
+      );
+      tray.on("double-click", show);
+      powerMonitor.on("suspend", () => {
+        void host.stop(true).catch(() => {});
+      });
+      powerMonitor.on("resume", () => void poll());
+      createWindow();
+      setInterval(() => void poll(), 4000);
+      void poll();
+    })
+    .catch((error) => {
+      dialog.showErrorBox(
+        "TaskRelay 启动失败",
+        /^[A-Z_]+$/.test(error.message)
+          ? error.message
+          : "请检查安装完整性，并重新安装 TaskRelay。",
+      );
+      app.exit(1);
+    });
+}

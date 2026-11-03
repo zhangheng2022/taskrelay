@@ -1,0 +1,40 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "taskrelay",
+  "workers_dev": true,
+  "preview_urls": false,
+  "main": "../cloud/src/worker.ts",
+  "compatibility_date": "2026-11-03",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [{ "name": "MODEL_EGRESS", "class_name": "ModelEgress" }],
+  },
+  "migrations": [
+    { "tag": "model-egress-v1", "new_sqlite_classes": ["ModelEgress"] },
+  ],
+  "assets": {
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"],
+  },
+  "account_id": "b3a410496c5e49e582b4af19d2f2eec6",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "taskrelay",
+      "database_id": "9d387f48-6e34-4af4-a2a0-10f958d65a16",
+      "migrations_dir": "../cloud/migrations",
+    },
+  ],
+  "r2_buckets": [
+    { "binding": "EVIDENCE", "bucket_name": "taskrelay-evidence" },
+  ],
+  "triggers": { "crons": ["* * * * *"] },
+  "vars": {
+    "OWNER_EMAIL": "962271461@qq.com",
+    "ACCESS_TEAM_DOMAIN": "zhangheng.cloudflareaccess.com",
+    "ACCESS_AUD": "14ace9836bc55fd84ab8f089c1a35a7361d46ffb0b729c4d47ade7b432a8b194",
+    "DEV_MODE": "0",
+  },
+  "observability": { "enabled": true, "head_sampling_rate": 0.1 },
+}
