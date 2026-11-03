@@ -1,6 +1,28 @@
-# TaskRelay 0.1.0 验收记录
+# TaskRelay 验收记录
 
 日期：2026-11-03。以下区分源代码测试、开发机安装产物测试与尚未完成的外部验收，不将构建通过视为完整交付验收。
+
+## 最新批次：AI Elements 与 Windows 0.1.1
+
+- 源码：桌面构建提交 `7f9646f`；AI Elements 分阶段提交 `0f7c042`、`b8e5836`，焦点与保存状态修复 `380f44b`、`99c265b`。最后的文档/清单路径补充不改变安装产物。
+- 检查：**82 项测试通过，其中 14 项真实 React UI 组件测试**；typecheck、Web/Worker build、check:repo 通过。组件测试验证实际 Transport 请求、确认边界、敏感回复绑定/清理及轮询竞态；JSDOM 不代表布局或 Electron IPC 验收。
+- 浏览器：390×844 手机、760×700 窄窗口、键盘输入、失败重试、确认/拒绝、验证码等待、离线、24 条历史滚动与 Trace 结果展示已检查，详见 [UI-REVIEW.md](UI-REVIEW.md)。实体输入法候选框未测试。
+- 生产：Worker **`9ab1a0cb-49d9-474b-9956-dc2cbd5384d0`**，Web 界面源码 `99c265b`、资源 `index-JYn3oFKh.js`。新域名真实 `taskrelay v2 / gpt-6-luna / Responses` 生成待确认任务卡，未创建或执行生产任务；`2026-11-03T08:31:32.195Z` 连接、工具和严格 Schema 通过，图像未测。
+- 出站：`cloud-self-check --egress --probe-existing` 通过；普通请求 trace 为 `CN/AMS`，美国 jurisdiction 后台请求为 **`US/DFW`**。本轮未修改云端模型/出站/认证/调度或 wrangler 配置，临时诊断设备与配置已清理。
+- Windows：Forge Squirrel **0.1.1** 构建通过，安装包 `TaskRelay Setup.exe` 为 **363033600 字节**，SHA-256 **`f5da2a325c4bb36f5b5a6ce02ad0356c341c01738f1ef754f519f7ef8162a56e`**。新 `app.asar` SHA-256 为 `44e8b7568156ada8aeb159e7f2e803f16d0bb4ca74c8be04c12b2d52eac6cc27`。
+- 原生依赖：本次 packaged/installed smoke 均通过，实际 Electron 45.2.1、Node 24.22.1、Stagehand 4.3.0 原生 ESM 和内置 Chromium；四类自建站、错误验证码、前导零、签到/表单各一次。使用确定性模型回调，仍未覆盖 `runtime.execute` / `ExecutorHost` 的完整流程。
+
+用户指出仍出现绿色旧界面后，核对发现已安装 ASAR 的哈希与最早旧版一致；此前直接打开新构建不能证明系统入口已升级。现已提升版本、重新构建并安装 0.1.1。Codex MSIX 宿主内的安装实际重定向到 `LocalCache`，因此另从 Windows 运行入口安装同一包，再通过桌面 `TaskRelay.lnk` 启动。原生窗口清单确认进程为系统目录 `C:/Users/96227/AppData/Local/TaskRelay/app-0.1.1/TaskRelay.exe`，实际窗口的任务侧栏和设置已是新版共享 UI。
+
+宿主内升级前本地 unfinished/outbox 均为 0；已备份 SQLite，升级后 schema 1 和配置摘要一致。**该备份与配置比较仅覆盖 Codex 重定向的数据目录**，不据此宣称系统 Roaming 数据已做相同比较。`out/release-manifest.json` 记录本次产物、报告新鲜度和解析后的安装路径；旧的 `ui-release-manifest.json` / `ai-elements-release-manifest.json` 属于历史批次。
+
+系统入口最终复验：通过 Windows 运行入口执行 `Get-FileHash`，实际系统 ASAR 与上方新构建哈希完全一致（`out/system-hash.json`）。再从该目录直接启动带独立测试数据目录的 `--taskrelay-smoke`，`out/system-installed-smoke.json` 本次新报告 `passed=true`、submissions/checkins/wrongCodes 均为 1。该结果独立于 Codex 宿主重定向副本。最终线上界面截图为 `out/ui-review/ai-elements-production-final.png`。
+
+构建保留约 605 KB 的客户端 chunk 及既有动态/静态 import 提示；Graphify 已更新，缺少 SQL parser 的警告不代表 SQL 被解析。真实 GPT/非 GPT 浏览器任务闭环、真实 Chat 服务、托盘/完整 IPC 故障、干净 Windows、中文/空格安装路径及七天观察仍未完成，下方现场表保持待执行。
+
+## 历史批次：0.1.0
+
+以下版本、测试数量、安装哈希和窗口限制属于各自记录时点；当前结果以上方最新批次为准。
 
 结构化输出重构复验：48 项源码测试通过。新增 23 项生产路由测试，删除 1 项只测试未接入 helper 的用例。覆盖 plan/Zod 与 Stagehand/Ajv、Chat/Responses、Schema/JSON、单次修复、版本固定、实际/未知用量、地区约束和传输错误不重试；经过真实 egress/EgressState，外部 HTTP 与平台存储使用隔离 adapter，未重新调用真实模型或部署。
 

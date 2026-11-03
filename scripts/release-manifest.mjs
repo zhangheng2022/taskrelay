@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { createReadStream, realpathSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { readFile, writeFile, stat } from "node:fs/promises";
 import path from "node:path";
@@ -61,6 +61,7 @@ const manifest = {
   stagehand: "4.3.0",
   artifacts,
   reports,
+  installedAsarPath: realpathSync.native(installedAsar),
   installedAsarMatches: true,
 };
 await writeFile(

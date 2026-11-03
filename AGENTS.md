@@ -139,6 +139,8 @@ npm run make
 
 交付桌面更新必须提升 `apps/desktop/package.json` 的版本并同步锁文件，不能用同版本新包代替已安装更新。若用户实际从桌面/开始菜单启动，检查该入口指向的安装版本，并比对安装目录与构建产物的 `app.asar` 哈希；运行 `scripts/release-manifest.mjs` 时要求安装/打包 smoke 均新于本次产物。不要把直接启动 `out/` 中 exe 的验证描述为系统入口已经更新。
 
+Codex MSIX 宿主可能把 AppData 重定向到自身 `LocalCache`。核对清单中的 `installedAsarPath`；若发生重定向，宿主内的安装/测试只证明该副本。还需从 Windows 系统入口安装、通过实际桌面快捷方式启动，并核对外部进程路径与安装哈希，才能声称用户安装入口已更新。
+
 现有 smoke 在安装产物中运行独立 Stagehand 流程，**不调用 `runtime.execute()` 或 `ExecutorHost`**。它证明原生依赖和自建站操作可用，不能证明完整调度、恢复与租约流程。Node SQLite 的 D1 stand-in 也不能代替真实 D1 并发验证。
 
 结果报告分别说明：源码测试、构建、打包/安装目录、干净 Windows、真实模型、真实网站和连续观察。以 [ACCEPTANCE.md](docs/ACCEPTANCE.md) 为验收台账；未执行不得改成通过。当前真实 Responses 能力测试通过不等于 GPT/非 GPT 浏览器闭环完成。

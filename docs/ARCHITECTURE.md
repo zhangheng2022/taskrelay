@@ -76,7 +76,7 @@ flowchart TB
 
 ### 共享界面与任务草稿
 
-交互约定：网站与 Windows 客户端的 AI 交互以 [shadcn/ui AI Elements](https://ui.shadcn.com/docs/ai-elements) 为准，组件选用、状态呈现和验证要求统一维护在 [AGENTS.md 的 UI 交互基准](../AGENTS.md#ui-交互基准)。“Codex 式”仅作为整体布局描述。此约定是后续 UI 实施与审查的准绳，不表示现有所有交互已经完成逐项对齐。
+交互约定：网站与 Windows 客户端的 AI 交互以 [shadcn/ui AI Elements](https://ui.shadcn.com/docs/ai-elements) 为准，组件选用、状态呈现和验证要求统一维护在 [AGENTS.md 的 UI 交互基准](../AGENTS.md#ui-交互基准)。“Codex 式”仅作为整体布局描述。当前共享入口已覆盖 Chat、Message、Prompt Input、Suggestion、Model Selector、Tool 和 Confirmation 的组合；没有接通的附件、流式输出、思考强度或停止生成能力不展示控件，具体检查范围见 UI-REVIEW。
 
 `app.tsx` 负责任务侧栏、导航、主题及宿主状态；`chat-parts.tsx` 组合官方 Message/MessageScroller/Bubble/InputGroup/Marker，`model-selector.tsx` 按实际能力呈现可选配置。`conversation.tsx` 协调消息、轮询与绑定协助；`run-report.tsx` 通过 Trace/CodeBlock 呈现实际事件、证据与结果，`challenge-panel.tsx` 通过 Confirmation 的 Item 组合呈现操作与选择。网站与桌面使用同一套默认 shadcn/ui 中性色 tokens，桌面能力仍通过 Transport/Preload/Main。
 

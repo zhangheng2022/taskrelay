@@ -1,4 +1,6 @@
-# 共享默认主题与聊天交互复验
+# 共享默认主题与 AI Elements 交互复验
+
+最新批次为下方「AI Elements 改造」各阶段；前面的检查表是早先默认主题基线，不能替代最新包的安装、IPC 或真实网站验收。
 
 日期：2026-11-03。以本地 Vite `/ui-fixture.html` 渲染真实共享 App，演示 Transport 不连接真实网站或模型。此前独立审查的旧布局记录保留在 Git 历史中，不能代替本次布局证据。
 
@@ -48,3 +50,33 @@
 协助输入按绑定与状态隔离，切步骤、租约或过期即清空；已成功提交的步骤在刷新期间也不能再次提交。敏感内容不加入消息，普通聊天失败保留同一请求标识；旧轮询响应不能覆盖刚完成的对话。
 
 已通过 13 项 UI 组件测试，其中 9 项覆盖执行与协助行为。此前全套 80 项通过，新增的执行报告测试单独通过；最终全套数量以交付验收为准。Web 构建通过，390×844 浏览器确认卡无横向溢出，拒绝操作显示“已请求取消，等待执行器停止”。演示 Transport 不代表真实网站验证。
+
+## AI Elements 改造 · 第三阶段（2026-11-03）
+
+最终源码检查：82 项测试通过，其中 14 项挂载真实共享 UI 的行为测试；typecheck、Web/Worker build、check:repo 通过。键盘复验发现发送期间 disabled 会丢失焦点，已改为只读，发送/模型按钮仍禁用；补充测试确认 IME、不重复发送及回复完成后继续输入。协助输入上限与后端 4000 字符一致，保存中与失败后的重试使用不同文案。
+
+| 场景 | 本轮证据 |
+| --- | --- |
+| 手机 390×844 | 超时保留输入 → Enter 重试 → 编辑标题 → 更新确认卡 → 明确创建 → 进入任务对话；DOM 宽度与 scrollWidth 同为 390 |
+| Confirmation 手机布局 | 完整显示操作、确认和拒绝；拒绝后仅显示取消请求，不宣称执行器已经停止 |
+| 窄窗口 760×700 | 验证码错误可修正，正确回复清空输入并进入等待实际核验；普通输入与执行结果布局可用 |
+| 历史滚动 | 24 条消息，上翻后经过轮询仍保持 scrollTop=1440；点击“回到最新消息”返回尾部 |
+| Trace / CodeBlock | 逐条展开事件；失败事件默认展开；结果为可复制纯文本；用量为真实数值或未知 |
+| 离线 | 缓存结果可读；输入和调整任务禁用，显示恢复/重试提示 |
+| 模型菜单 / 键盘 | 显示真实非固定名称、Responses/v2/能力；菜单 Escape 关闭；Shift+Enter 不发送，Enter 发送；IME 组合态由组件测试验证，未测试实体候选框 |
+| 线上模型 | `tr.zhangheng.eu.org` 的真实 `gpt-6-luna / Responses` 生成待确认卡；没有点击生产“创建并试运行”，没有新增生产任务 |
+| 真实 Electron 窗口 | 独立未配对数据目录启动打包 TaskRelay.exe，默认深色共享界面、设备设置、默认关闭自启动正常呈现；未配对、未启动任务。原生点击被系统输入保护中断，暂停开关、托盘等未记为通过 |
+
+证据：`out/ui-review/ai-elements-production-proposal.png`、`ai-elements-mobile-confirmation.png`、`ai-elements-mobile-created.png`、`ai-elements-narrow-run.png`、`ai-elements-native-desktop.png`。除线上草稿外，浏览器场景使用明确标记的演示 Transport。打包/模型地区详情以 ACCEPTANCE 的最新批次为准。
+
+本轮沿用 shadcn 与 React 最佳实践技能；文档基准为 [AI Elements](https://ui.shadcn.com/docs/ai-elements) 及对应 Radix patterns。保留美国 jurisdiction → 单次 submitAndWait → alarm 出站链路，云端模型、协议、认证和调度代码无变更。Graphify 源码图已更新；SQL parser 缺失警告不代表 SQL 已被图工具解析。现有 Vite 大 chunk 与静态/动态混合 import 提示未被掩盖，不影响本次构建通过。
+
+## 已安装界面与交付入口修正
+
+用户截图仍显示绿色旧首页。检查已安装 `app.asar` 后，确认它与旧基线哈希一致；新 Web 或直接运行构建 exe 的结果并未更新该入口。桌面版本已提升为 0.1.1，暂存运行包同步版本，重新构建 Squirrel 并安装。
+
+Codex 宿主中 `%LOCALAPPDATA%` 会重定向到自己的 `LocalCache`。另通过 Windows 系统运行入口安装、从桌面 `TaskRelay.lnk` 启动后，原生窗口清单确认路径为 `C:/Users/96227/AppData/Local/TaskRelay/app-0.1.1/TaskRelay.exe`，没有 `LocalCache`。实际窗口的任务侧栏、模型设置已显示新版默认中性主题。系统版本未配对，未启动生产任务；不把该检查描述为真实任务执行或托盘验收。
+
+版本、产物哈希、安装 smoke 及数据目录的验证范围见 ACCEPTANCE。发布规则已增加版本递增、实际快捷方式、解析路径和安装 ASAR 比对，防止把构建目录或重定向副本误报为用户安装版本。
+
+最后从 Windows 系统入口获取的 ASAR 哈希与构建一致，系统安装目录的独立 smoke 也通过；两份记录分别为 `out/system-hash.json`、`out/system-installed-smoke.json`。线上最终聊天主页为 `out/ui-review/ai-elements-production-final.png`。

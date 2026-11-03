@@ -38,7 +38,7 @@ npm run deploy
 
 ## 模型出站实现
 
-最新部署版本为 `84bacc38-c361-400a-8675-d4bc86d7ec94`。新域名和原 workers.dev 的相同真实模型草稿请求均返回 200，新域名已登录网页也成功生成任务确认卡，详见 [ACCEPTANCE.md](ACCEPTANCE.md)。两处使用同一 D1 和模型配置。
+最新部署版本为 `9ab1a0cb-49d9-474b-9956-dc2cbd5384d0`（AI Elements 界面源码 `99c265b`）。新域名和原 workers.dev 使用同一 Worker、D1 和模型配置；新域名已登录网页再次通过真实模型生成待确认任务卡。2026-11-03 08:31 UTC 能力复验通过，后台出站 trace 为 `US/DFW`，详见 [ACCEPTANCE.md](ACCEPTANCE.md)。本轮 UI 改造未修改美国出站实现。
 
 所有能力测试、任务解析、Stagehand 模型回调及人工协助解析统一经过 `MODEL_EGRESS`，由美国区域 Durable Object 的 alarm 发起上游请求。网页和设备请求只提交加密的推理作业，不转发原始 Request、IP 或地区头。API Key 仍由云端从 D1 解密，网站和客户端均拿不到明文。缺少出站绑定会明确失败，不回退到带访问者上下文的直接请求。
 
@@ -63,3 +63,11 @@ Main 在产生浏览器副作用前记录 SQLite 检查点。云端也先记录�
 未知结果可能长期阻止账号继续运行，这是保守恢复的预期行为；首版没有绕过核查的强制解锁入口。复杂 iframe/新标签页工作流、不能通过输入/扫码/确认完成的验证可能不受支持，并应保留明确失败记录。
 
 升级通过新安装包，保留 userData。客户端拒绝读取高于自身支持版本的 SQLite。首版不含自动更新。常规卸载是否保留用户数据、干净机器升级及代码签名状态必须按验收表实际记录。
+
+## Windows 更新交付
+
+先提升 `apps/desktop/package.json` 版本并同步锁文件，再运行 `npm run make` 和本次产物的 smoke。暂存运行时包使用桌面应用版本，Squirrel 的版本目录和 nupkg 必须一致。交付不能停留在直接运行 `out/TaskRelay-win32-x64/TaskRelay.exe`。
+
+安装前保存本地数据并检查未完成运行；安装后从桌面或开始菜单的实际入口启动，核对进程路径、版本和 `resources/app.asar` 的 SHA-256，再验证安装目录 smoke。`node scripts/release-manifest.mjs` 会拒绝旧 smoke 报告或不匹配的安装 ASAR，并记录实际解析的安装路径。
+
+在 Codex MSIX 环境中，逻辑上的 `%LOCALAPPDATA%/TaskRelay` 可能实际位于 Codex 的 `LocalCache/Local/TaskRelay`；Roaming 数据也可能重定向。该副本的安装成功不证明 Windows 桌面快捷方式对应的系统安装已更新。若清单出现重定向路径，应从 Windows 的运行/资源管理器入口执行同一安装包，并单独验证系统安装与快捷方式。不要把另一数据目录的备份或配置一致性结论套用到系统目录。
