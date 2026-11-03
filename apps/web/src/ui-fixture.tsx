@@ -12,6 +12,14 @@ import type {
 } from "../../../packages/contracts/src/index";
 const options = new URLSearchParams(location.search),
   state = options.get("state") ?? "new";
+const assistance = [
+  "challenge",
+  "approval",
+  "scan",
+  "expired",
+  "unsupported",
+  "answered",
+].includes(state);
 const definition: TaskDefinition = {
   id: "demo_task",
   version: 1,
@@ -66,11 +74,12 @@ if (state !== "new")
     id: "demo_run",
     taskId: definition.id,
     task: definition,
-    status:
-      state === "challenge"
-        ? "waiting_user"
-        : state === "failed"
-          ? "unknown"
+    status: assistance
+      ? "waiting_user"
+      : state === "failed"
+        ? "unknown"
+        : state === "error"
+          ? "failed"
           : state === "running"
             ? "running"
             : "succeeded",
@@ -82,11 +91,17 @@ if (state !== "new")
     cancelRequested: false,
     writePending: false,
     result:
-      state === "challenge" || state === "running"
+      assistance || state === "running"
         ? null
         : {
             summary: "演示结果：页面信息已整理。",
             outcome: "read_result",
+            data: {
+              title: "页面公告",
+              content: "这是用于验证结果布局的演示数据。",
+              checked: true,
+            },
+            ...(state === "error" ? { errorCode: "MODEL_EGRESS_TIMEOUT" } : {}),
             evidence: [
               {
                 url: "https://example.com/",
@@ -98,20 +113,46 @@ if (state !== "new")
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   });
-if (state === "challenge")
+if (assistance)
   snapshot.challenges.push({
     id: "demo_challenge",
     runId: "demo_run",
     leaseEpoch: 1,
     version: 1,
     stepId: "demo_step",
-    kind: "code",
-    instruction: "演示验证：请输入 0012aB。此页面不连接真实网站。",
-    expiresAt: new Date(Date.now() + 300000).toISOString(),
-    status: "pending",
+    kind:
+      state === "approval"
+        ? "approval"
+        : state === "scan"
+          ? "scan"
+          : state === "unsupported"
+            ? "unsupported"
+            : "code",
+    instruction:
+      state === "approval"
+        ? "演示操作：删除 example.com 中标题为“临时草稿”的内容。仅模拟确认，不连接真实网站。"
+        : state === "scan"
+          ? "请在站点应用完成扫码或外部确认，再检查状态。本演示不会访问真实站点。"
+          : state === "unsupported"
+            ? "此步骤要求现场生物识别，无法在当前对话中完成。"
+            : "演示验证：请输入 0012aB。此页面不连接真实网站。",
+    expiresAt: new Date(
+      Date.now() + (state === "expired" ? -1000 : 300000),
+    ).toISOString(),
+    status: state === "answered" ? "answered" : "pending",
   });
 const messages: { id: string; role: string; content: string; at: string }[] =
-  [];
+  options.has("history")
+    ? Array.from({ length: 24 }, (_, i) => ({
+        id: `history-${i}`,
+        role: i % 2 ? "assistant" : "user",
+        content:
+          i % 2
+            ? `第 ${i + 1} 条演示回复：这里是已记录的执行情况。\n详情会随真实事件回传更新。`
+            : `第 ${i + 1} 条任务询问`,
+        at: new Date().toISOString(),
+      }))
+    : [];
 const created = new Map<string, string>();
 let failed = false;
 const desktop: DesktopStatus = {
@@ -183,11 +224,27 @@ const transport: Transport = {
           },
         );
         result = { ok: true };
-      } else result = messages;
+      } else result = structuredClone(messages);
     } else if (path.includes("/challenges/")) {
-      snapshot.challenges[0].status = "consumed";
-      snapshot.runs[0].status = "running";
+      const current = snapshot.challenges[0];
+      if (
+        current.status !== "pending" ||
+        current.version !== body.version ||
+        current.leaseEpoch !== body.leaseEpoch ||
+        current.stepId !== body.stepId ||
+        current.runId !== body.runId ||
+        Date.parse(current.expiresAt) <= Date.now()
+      )
+        throw new Error("CHALLENGE_STALE");
+      if (current.kind === "code" && body.text !== "0012aB")
+        throw new Error("CHALLENGE_REPLY_INVALID");
+      current.status = "answered";
       result = { ok: true };
+    } else if (path.endsWith("/cancel")) {
+      snapshot.runs[0].cancelRequested = true;
+      result = { ok: true };
+    } else if (path.endsWith("/reconcile")) {
+      result = { id: "demo_readonly_check" };
     } else if (path.startsWith("/api/user/runs/"))
       result = {
         events: [
@@ -199,6 +256,18 @@ const transport: Transport = {
             message: "已打开授权网站并读取页面。",
             at: new Date().toISOString(),
           },
+          ...(state === "error"
+            ? [
+                {
+                  id: "demo_error",
+                  runId: "demo_run",
+                  sequence: 2,
+                  kind: "error",
+                  message: "模型请求未在允许时间内完成；未执行写操作。",
+                  at: new Date().toISOString(),
+                },
+              ]
+            : []),
         ],
         usage: [{ input: 11, output: 7, cost: null }],
       };

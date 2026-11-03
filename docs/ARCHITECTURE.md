@@ -78,11 +78,13 @@ flowchart TB
 
 交互约定：网站与 Windows 客户端的 AI 交互以 [shadcn/ui AI Elements](https://ui.shadcn.com/docs/ai-elements) 为准，组件选用、状态呈现和验证要求统一维护在 [AGENTS.md 的 UI 交互基准](../AGENTS.md#ui-交互基准)。“Codex 式”仅作为整体布局描述。此约定是后续 UI 实施与审查的准绳，不表示现有所有交互已经完成逐项对齐。
 
-`app.tsx` 负责任务侧栏、导航、主题及宿主状态；`chat-parts.tsx` 组合官方 Message/MessageScroller/Bubble/InputGroup，`conversation.tsx` 展示实际运行事件、结果和绑定协助。网站与桌面使用同一套默认 shadcn/ui 中性色 tokens，桌面能力仍通过 Transport/Preload/Main。
+`app.tsx` 负责任务侧栏、导航、主题及宿主状态；`chat-parts.tsx` 组合官方 Message/MessageScroller/Bubble/InputGroup/Marker，`model-selector.tsx` 按实际能力呈现可选配置。`conversation.tsx` 协调消息、轮询与绑定协助；`run-report.tsx` 通过 Trace/CodeBlock 呈现实际事件、证据与结果，`challenge-panel.tsx` 通过 Confirmation 的 Item 组合呈现操作与选择。网站与桌面使用同一套默认 shadcn/ui 中性色 tokens，桌面能力仍通过 Transport/Preload/Main。
 
 `task-compose.tsx` 持有当前草稿和短期补全对话。`POST /tasks/compose` 使用统一 `generate`，缺网址直接追问，信息不足返回 `task: null`；模型新增站点必须出现在用户输入或当前草稿中。草稿不落库、不排队。`task-summary.tsx` 展示确认卡，`task-editor.tsx` 仅修改草稿。确认后才调用原有创建/版本更新路由，保留能力、账号、授权和试运行校验。创建失败保留相同 requestId 与载荷，版本更新冲突要求核对新版本。旧 `/tasks/draft` 保留兼容。
 
 运行对话和修改配置是不同操作；普通聊天不修改任务。敏感协助回复不回显为消息，步骤或版本切换时清空输入；UI 禁止离线、已回复、不支持或过期挑战的提交，最终绑定校验仍由后端负责。
+
+确认按钮仍向 `/challenges/:id/reply` 提交显式确认文本及原绑定；拒绝按钮向 `/runs/:id/cancel` 请求取消整次运行，不伪造协助消费结果。扫码完成只是请求实际网站核查。已提交但快照尚未更新时，当前协助按钮保持禁用；过期计时会主动清空输入。轮询使用请求代次隔离，发送前启动的旧查询不能覆盖本轮对话结果。
 
 ## 3. 任务执行与事实顺序
 
