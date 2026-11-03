@@ -277,11 +277,13 @@ export function TaskCompose({
                       data-icon="inline-start"
                     />
                   )}
-                  {attempt.current
-                    ? "重试确认"
-                    : initial
-                      ? "保存并重新试运行"
-                      : "创建并试运行"}
+                  {saving
+                    ? "正在保存…"
+                    : attempt.current
+                      ? "重试确认"
+                      : initial
+                        ? "保存并重新试运行"
+                        : "创建并试运行"}
                 </Button>
                 <Button
                   variant="outline"
