@@ -1,6 +1,6 @@
 # TaskRelay 验收记录
 
-## 2026-11-04 第二批 Windows 更新交付验收（本机安装通过，线上自动更新待验收）
+## 2026-11-04 第二批 Windows 更新交付验收（已公开预览，本机空闲自动升级通过）
 
 - 首批修复及记录已提交 `08eb9b8`；0.4.9 候选 `4d06c40` 从干净源码构建，已推送 master。make、packaged smoke、类型检查、11 项更新相关测试、仓库检查通过；候选不能直接视为自动更新通过。
 - 0.4.8 原生窗口关闭后主进程仍存活，MainWindowHandle=0；通过系统 Explorer 执行实际桌面 `TaskRelay.lnk` 后唤回同一系统进程。最初自动化截图错误，显式 Raise 恢复后才取证，未把错误截图记为通过。
@@ -10,10 +10,15 @@
 - 修复接入 Main 的正式 `loginSettings`，按本用户、本应用、无额外参数的 launchItems.enabled 读状态，保护系统禁用偏好与已有稳定入口。新增 4 项生产模块回归；版本提升 0.4.10，不用同版本包替换已安装 0.4.9。宿主原生探针确认系统禁用/启用分别读为 false/true，并恢复探针开始时设置；此证据与系统安装 UI 分开记录。
 - 最终 0.4.10 从干净提交 `7489ec151848b0e56037c8c3b3ae67b450a1a191` 构建；165 项完整测试、typecheck、check:repo、make、packaged/installed smoke 通过。GitHub [Windows/Ubuntu CI](https://github.com/zhangheng2022/taskrelay/actions/runs/41772407499) 全部成功（包括 Web build）；源码图更新为 4297 节点/6776 边/370 社区，既有 SQL/TSX 提取限制保留。
 - 系统 Explorer 完成 0.4.9 → 0.4.10 安装。暂停领取、全部 config 字节、Local State 保留，schema=3，outbox/unfinished=0；比较只输出布尔结果，不输出令牌或密文。随后从实际桌面 `TaskRelay.lnk` 冷启动，系统进程 PID 16084、路径 `AppData/Local/TaskRelay/app-0.4.10/TaskRelay.exe`，原配对有效。
-- 0.4.10 原生 UI 明确开启登录启动后，停止空闲进程并从桌面快捷方式冷启动，开关仍为开启；证据 `.cache/acceptance-0410/startup-preserved.png`。为诊断执行的两次进程终止均在暂停领取、本地无 outbox/unfinished 时进行，不冒充托盘正常退出或 Windows 注销登录。结束通过 UI 将登录启动恢复关闭、暂停领取恢复关闭，窗口在线等待；截图 `final-installed.png`。跨 Windows 登录和跨版本保留“已开启”状态仍待独立验证。
+- 0.4.10 原生 UI 明确开启登录启动后，停止空闲进程并从桌面快捷方式冷启动，开关仍为开启；证据 `.cache/acceptance-0410/startup-preserved.png`。为诊断执行的两次进程终止均在暂停领取、本地无 outbox/unfinished 时进行，不冒充托盘正常退出或 Windows 注销登录。此前手动安装验收结束恢复两个开关关闭；后续为下述自动升级重新开启并核对截图，最终仍恢复原偏好。真正的 Windows 注销登录尚未验证。
 - 构建与物理系统安装 ASAR SHA-256 都为 `0491f73ab5c7565754ba708fa4285ab68f43b1d5ac5b56beb1a45702581252ec`；Setup 为 `87b5623bde9f5fac23dbece4a120df32c64d8125013644b8c6e5f981e9368a6d`，nupkg 为 `6a4c2d3835e447ebf249f05cbfd86dd20a916503a473bf1a1561c714da6448d9`。新清单 sourceDirty=false，installedAsarPath 为系统目录，无 LocalCache；源码图/日志/数据库备份/原始清单均未上传。
-- 已生成 `out/desktop-release.json`，[GitHub v0.4.10 预览草稿](https://github.com/zhangheng2022/taskrelay/releases/tag/untagged-eaee2f87bb28c08ec9d5) 已上传（isDraft=true、isPrerelease=true，未发布），目标源码为 `7489ec1`；仅有 Setup（GitHub 规范化名称为 `TaskRelay.Setup.exe`，363068416 字节）、完整 nupkg（362501140 字节）、SHA256SUMS。GitHub 两个包的 digest 与上述本地 SHA-256 一致，校验文件使用实际附件名称。包内文件名检查未发现 .env、.dev.vars、taskrelay.sqlite、Local State 或 profiles。生产更新目录仍为空，未启用通道、未新增模型调用或任务、未调整额度。
-- 未完成：公开包经 Cloudflare 真实下载、确认/拒绝更新、活动任务/人工等待/回传未完成时的真实安装阻断、自动安装重启；干净 Windows、真正的 Windows 登录、卸载和连续观察。本轮手动跨版本安装与隔离 updater 测试不替代这些验收。
+- 用户明确批准后，[GitHub v0.4.10 预览版](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.4.10) 于 `2026-11-04T04:29:51Z` 公开（isDraft=false、isPrerelease=true），目标源码为 `7489ec1`；仅有 Setup（GitHub 规范化名称为 `TaskRelay.Setup.exe`，363068416 字节）、完整 nupkg（362501140 字节）、SHA256SUMS。GitHub 两个包的 digest 与上述本地 SHA-256 一致，校验文件使用实际附件名称。包内文件名检查未发现 .env、.dev.vars、taskrelay.sqlite、Local State 或 profiles。生产更新目录已指向 0.4.10，Worker 版本 `724b3d18-4ccd-43ef-be08-bbdcaa5c8335`；未新增模型调用或任务、未调整额度。
+- 真实 Cloudflare 下载：生产 `DesktopUpdater` 完整取得 362501140 字节，大小、SHA-256、SHA-1 均通过，HEAD/GET=200、无 Location，生成本地 RELEASES。busy=true 时保持 waiting、原生安装调用为 0。此处仅版本、busy 和原生安装器为适配器，不能代替系统安装自动升级；报告 `.cache/acceptance-0410/live-download.json`。
+- 为验证真实自动升级，在忽略目录的独立 worktree 从 `4d06c40` 重建 0.4.9 验收基线，make 通过，系统安装 ASAR 与该次构建一致（`7789946a7a6fc27135b1643f19373ff5e0d11c04bda3efa77c828c1eeecc861e`）。这是未发布的测试基线，不是原 0.4.9 产物；未替换公开 0.4.10 附件。安装前后原生截图均确认暂停领取、登录启动开启，journal 无未完成项、outbox=0。
+- 系统 0.4.9 识别正式目录中的 0.4.10。点击“下载并安装”显示具体版本和等待空闲规则；选择“暂不更新”后仍为 available，物理系统 updates 目录不存在，未下载。再次确认后观察 1%/21%/48%/81%/99% 下载进度，经正式 CF 路径下载、完整性校验与 Squirrel 安装后自动退出旧进程并启动 0.4.10。没有手动运行新 Setup 代替该升级。证据：`update-declined.png`、`update-confirm-screenshot-1.png`、`update-downloading.png`。
+- 自动重启后 Main PID=25512，物理系统路径为 `AppData/Local/TaskRelay/app-0.4.10/TaskRelay.exe`，ASAR SHA-256 与上述公开产物一致；暂停领取和登录启动均保持开启（`auto-updated-settings.png`）。config（不计临时 paused）、Local State 与首份备份一致，schema=3、outbox/unfinished=0；新安装 smoke 通过（`auto-installed-smoke.json`），此 smoke 仍仅覆盖独立执行依赖与自建站，不替代业务执行。实际桌面快捷方式唤回同一新版进程；最终 UI 恢复两个开关关闭，在线等待、当前已是最新版本（`auto-update-final.png`、`auto-update-preservation.json`）。
+- 发布目录变更后的 11 项更新相关测试通过；源码图更新成功，4298 节点/6778 边/374 社区，既有提取限制保留。自动升级通过后同步公开说明，最终 Worker 版本 `0fee0cd1-fcff-455b-a2e6-495c871bacac`，包和校验值未变。本轮没有新增真实模型调用、任务或额度变更。
+- 未完成：活动任务/人工等待/回传未完成时的真实安装阻断；干净 Windows、真正的 Windows 登录、卸载、断网/休眠与连续观察。本轮本机空闲自动升级及隔离 busy 测试不替代这些验收。
 
 ## 2026-11-04 第一批业务闭环验收（已完成：本机与虚构站范围）
 
