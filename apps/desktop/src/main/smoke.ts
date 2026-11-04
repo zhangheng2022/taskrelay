@@ -1,9 +1,12 @@
 import { app, utilityProcess } from "electron";
 import http from "node:http";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, realpath, writeFile } from "node:fs/promises";
+import { promises as originalFs } from "original-fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { Journal } from "./journal";
 import { OwnedBrowser } from "./browser";
+import { prepareExtension } from "./extension";
 export async function packagedSmoke(
   resources: string,
   executorPath: string,
@@ -11,6 +14,20 @@ export async function packagedSmoke(
 ) {
   const directory = path.join(path.dirname(output), "中文 路径 smoke");
   await mkdir(directory, { recursive: true });
+  const extensionPath = await prepareExtension(path.join(resources, "stagehand-extension"), path.join(directory, "runtime-extensions"));
+  const report: Record<string, unknown> = {
+    version: app.getVersion(),
+    executablePath: await realpath(process.execPath),
+    resourcesPath: await realpath(resources),
+    extensionPath,
+    // Electron's patched fs treats app.asar as a directory; hash the actual archive bytes.
+    asarSha256: app.isPackaged ? createHash("sha256").update(await originalFs.readFile(path.join(resources, "app.asar"))).digest("hex") : null,
+    packaged: app.isPackaged,
+    electron: process.versions.electron,
+    node: process.versions.node,
+    platform: process.platform,
+    arch: process.arch,
+  };
   const journal = new Journal(directory),
     browser = new OwnedBrowser(
       path.join(resources, "browser"),
@@ -73,44 +90,42 @@ export async function packagedSmoke(
         "</html>",
     );
   });
-  await new Promise<void>((resolve) =>
-    server.listen(0, "127.0.0.1", () => resolve()),
-  );
-  const fixturePort = (server.address() as import("node:net").AddressInfo).port;
-  // Fixed test server only. This path never accepts tasks, credentials, or a cloud token.
-  const launched = await browser.launch("smoke_fixture", fixturePort);
-  const child = utilityProcess.fork(executorPath, [], {
-    stdio: "pipe",
-    serviceName: "TaskRelay Packaging Smoke",
-  });
-  const report: Record<string, unknown> = {
-    packaged: app.isPackaged,
-    electron: process.versions.electron,
-    node: process.versions.node,
-    platform: process.platform,
-    arch: process.arch,
-  };
+  let child: ReturnType<typeof utilityProcess.fork> | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const fixturePort = (server.address() as import("node:net").AddressInfo).port;
+    await browser.recover();
+    // Fixed test server only. Never accepts tasks, credentials, or a cloud token.
+    const launched = await browser.launch("smoke_fixture", fixturePort);
+    child = utilityProcess.fork(executorPath, [], {
+      stdio: "pipe",
+      serviceName: "TaskRelay Packaging Smoke",
+    });
+    const executor = child;
     const result = await new Promise<Record<string, unknown>>(
       (resolve, reject) => {
-        const timer = setTimeout(
+        timer = setTimeout(
           () => reject(new Error("PACKAGED_SMOKE_TIMEOUT")),
           60000,
         );
-        child.on("message", (data) => {
+        executor.on("message", (data) => {
           if (data.type === "smoke-result") {
             clearTimeout(timer);
             data.error ? reject(new Error(data.error)) : resolve(data.result);
           }
         });
-        child.once("exit", (code) => {
-          if (code) reject(new Error(`SMOKE_EXECUTOR_EXIT_${code}`));
+        executor.once("exit", (code) => {
+          reject(new Error(`SMOKE_EXECUTOR_EXIT_${code}`));
         });
-        child.postMessage({
+        executor.postMessage({
           type: "smoke",
           cdpUrl: launched.cdpUrl,
           url: `http://127.0.0.1:${fixturePort}`,
-          extensionPath: path.join(resources, "stagehand-extension"),
+          extensionPath,
         });
       },
     );
@@ -123,11 +138,15 @@ export async function packagedSmoke(
   } catch (e) {
     Object.assign(report, { passed: false, error: (e as Error).message });
   } finally {
-    child.kill();
-    await browser.close();
-    server.close();
-    journal.close();
-    await writeFile(output, JSON.stringify(report, null, 2));
+    clearTimeout(timer);
+    child?.kill();
+    try { await browser.close(); } catch {
+      Object.assign(report, { passed: false, error: "SMOKE_BROWSER_CLEANUP_FAILED" });
+    } finally {
+      server.close();
+      journal.close();
+      await writeFile(output, JSON.stringify(report, null, 2));
+    }
   }
   return report.passed === true;
 }

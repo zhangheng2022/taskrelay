@@ -272,6 +272,10 @@ Stagehand 固定 4.3.0，Executor 打包保持原生动态 import。Forge Squirr
 
 smoke 走 `executor/entry.ts` 中独立手写流程，没有调用 `RuntimePort` 对应的生产 `execute`。`RuntimePort` 目前只有 entry 中的生产 adapter；不能把 smoke 计作第二个 adapter。
 
+Windows 扩展加载由 Main 的 `extension.ts` 管理：正式启动与 smoke 都将 ASAR 外的 Stagehand 扩展逐文件读取，按文件名与 SHA-256 生成内容目录，写入应用拥有的 runtime-extensions，完整核对后再传给独立 Executor。缓存缺失时原子准备，已存在但内容被改动或出现额外文件时拒绝加载，符号链接不作为扩展文件接受。此 adapter 处理安装目录下 Chromium 将内容脚本加载为空的现场问题，不修改 SDK、Chromium 权限或模型/页面工具边界。原安装扩展的固定公钥仍用于 CDP origin 限制。
+
+自检报告记录实际客户端版本、程序/资源/扩展路径与 ASAR 哈希；验收清单同时检查报告新鲜度、版本、构建 ASAR 和实际安装文件，安装目录来自报告，不按 LOCALAPPDATA 猜测。`sourceDirty` 标记生成清单时工作区是否含未提交改动，`sourceCommit` 仍只是当时 Git 基线，不能把未提交构建冒充干净 tag 构建。原始清单含本机路径，仅供本地验收。
+
 仍待执行：真实 GPT/非 GPT 任务闭环、真实 Chat、扫码/外部确认、提交前后强杀与断网、休眠/锁屏恢复、干净 Windows 安装/升级/卸载、中文及空格安装路径和连续七天观察。没有源码事实可以替代这些现场证据。
 
 ## 8. 架构改进候选（未实施）

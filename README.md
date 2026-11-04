@@ -1,10 +1,42 @@
-# TaskRelay
+# TaskRelay · 任务接力
+
+**交代一次，按时执行。**
+
+[![CI](https://github.com/zhangheng2022/taskrelay/actions/workflows/ci.yml/badge.svg)](https://github.com/zhangheng2022/taskrelay/actions/workflows/ci.yml)
+[更新记录](CHANGELOG.md) · [验收范围](docs/ACCEPTANCE.md) · [部署说明](docs/DEPLOYMENT.md) · [问题反馈](https://github.com/zhangheng2022/taskrelay/issues)
 
 浏览器任务工作台：用户在网站管理各自的任务，Cloudflare 统一调度，管理员授权的 Windows 执行器在专用 Chromium 中执行。所有验证码、扫码和操作确认都通过网站任务对话处理。
 
-工作空间：https://tr.zhangheng.eu.org （应用会话认证与用户隔离，公开注册当前关闭）。原地址 https://taskrelay.zhangheng.workers.dev 继续可用；已配对客户端可继续使用原地址。
+## 当前状态
 
-新旧域名均已通过真实模型草稿生成验证。自定义域名的地区拒绝已修复，美国区域出站流程保留；范围和证据见 [验收记录](docs/ACCEPTANCE.md)。
+- **开发验收阶段**：客户端 **0.4.6**，尚未发布 GitHub Release。版本记录不代表已有稳定安装包；发布后可从 [Releases](https://github.com/zhangheng2022/taskrelay/releases) 获取。
+- 工作空间：[tr.zhangheng.eu.org](https://tr.zhangheng.eu.org)，公开注册当前关闭。原 `taskrelay.zhangheng.workers.dev` 地址继续兼容已配对客户端。
+- Windows 是独立执行器；任务编辑、聊天、历史与模型设置在网站完成。当前通过安装包手动升级，尚未接入自动更新。
+- 已有源码测试、开发机打包及部分真实任务证据。干净 Windows、更多模型提供方、完整故障闭环和连续观察仍需补齐，以 [验收台账](docs/ACCEPTANCE.md) 为准。
+- Cloudflare 按 Free 约束运行，预算耗尽后拒绝新工作；**模型服务费用由提供方单独计算**。
+
+## 可以做什么
+
+| 能力 | 行为与边界 |
+| --- | --- |
+| 自然语言创建 | 多轮补全网站、目标和成功判据；确认任务卡后才保存或试运行 |
+| 手动与定时执行 | 调度、版本、领取和租约由云端管理；离线不新增本地调度 |
+| 浏览器操作 | 在授权站点内读取、导航、填写和提交，仅执行任务卡允许的动作 |
+| 人工协助 | 回复绑定运行、步骤和租约；敏感回复不进入普通聊天历史 |
+| 结果与报告 | 展示实际步骤、程序核验与所选运行的报告；未知结果先只读核查，不自动重提 |
+| 模型兼容 | Chat Completions / Responses，自由填写模型名；必须通过所需能力测试，不静默换模型 |
+| 用户与设备 | 用户工作空间隔离，管理员维护共享模型与可信 Windows 设备池 |
+
+文字成功判据目前要求一段连续页面原文，不把多个独立条件拼接。共享设备须由可信管理员维护，浏览器 Profile 隔离不对设备管理员隐藏数据。TaskRelay 不提供任意 JavaScript、Shell、主机文件操作或远程浏览器接管工具。
+
+```mermaid
+flowchart LR
+  U[用户：描述并确认任务] --> W[网站：任务对话与人工协助]
+  W <--> C[Cloudflare：身份、调度、租约与结果]
+  C <--> E[Windows：独立执行器]
+  E <--> S[授权网站：专用 Chromium]
+  C --> M[美国区域模型出站服务]
+```
 
 ## 使用
 
@@ -33,6 +65,13 @@ npm run dev
 
 网站本地地址 `http://127.0.0.1:5173`。仅本机 DEV_MODE 允许开发身份绕过；生产固定关闭。不要将开发服务器暴露到网络。
 
+`setup-local` 仅在缺失时写入本地密钥，不覆盖现有 `MASTER_KEY`；`db:migrate` 只迁移本地 D1。不要提交 `.dev.vars`、凭据或数据库。首次运行桌面前准备浏览器，再另开终端启动：
+
+```powershell
+npm run prepare:browser
+npm run desktop
+```
+
 本地 workerd 不实现地区约束，真实模型调用会明确返回 `MODEL_REGION_REQUIRES_DEPLOYMENT`。真实模型联调请使用已部署的 Cloudflare 环境；本地协议/状态测试使用隔离模拟，不静默回退到本地网络发送密钥。
 
 ```powershell
@@ -46,18 +85,27 @@ npm run check:repo
 
 界面验收也可打开 `/ui-fixture.html`：只在开发模式渲染共享 App，使用演示 Transport，不访问生产服务。可用 `?state=challenge`、`?state=failed`、`?state=offline`、`?desktop=1`、`?fail=1` 检查协助、未知结果、离线、桌面和首次请求失败。详情见 [UI-REVIEW.md](docs/UI-REVIEW.md)。
 
+### GitHub 自动检查
+
+[CI 工作流](.github/workflows/ci.yml) 在 PR、`master` 推送及手动触发时，分别在 Ubuntu 和 Windows 上使用 Node.js 24，执行 `npm ci`、类型检查、完整测试、Web 构建与仓库检查。Actions 固定到提交 SHA，仓库令牌只有读取权限，不携带生产密钥，不部署或发布 Release。
+
+`npm test` 已包含 UI 测试；只检查界面时可运行 `npm run test:ui`。`npm run build` 仅构建 Web。CI 的隔离测试不等于真实模型、Windows 安装或完整调度恢复验收。
+
 ## Windows 构建
+
+需要 Windows x64 构建环境。
 
 品牌图形的矢量源文件为 `resources/brand-mark.svg`，共享 UI 使用同一图形并随主题着色。修改后运行 `npm run icons`，生成网站 favicon、Apple Touch Icon 和 Windows PNG/多尺寸 ICO；生成资源随源码保存，普通构建不需要重新生成。桌面窗口、托盘、EXE 和安装器沿用 `resources/icon.png` / `resources/icon.ico` 路径。
 
 ```powershell
 npm run prepare:browser
-npm run package
-npm run test:smoke
 npm run make
+npm run test:smoke
 ```
 
 `prepare:browser` 从官方 Chrome for Testing 下载 Windows x64 浏览器，固定到生成的版本/哈希清单。资源在 ASAR 外；构建验证浏览器文件哈希。Stagehand 固定 4.3.0，执行器保留原生 `import()` 并单独暂存生产依赖。
+
+先完成最终 `make`，再生成该产物的新 smoke 报告；重新打包后旧报告不能复用。只需要解包程序时可用 `npm run package`。启动时将扩展原始字节写入应用自身的内容寻址运行目录，核对完整文件集合与 SHA-256 后加载，避免安装目录中的内容脚本被 Chromium 加载为空；缓存篡改会拒绝启动，不关闭校验。
 
 - 安装包：`apps/desktop/out/make/squirrel.windows/x64/TaskRelay Setup.exe`
 - 解包程序：`apps/desktop/out/TaskRelay-win32-x64/TaskRelay.exe`
@@ -65,6 +113,15 @@ npm run make
 - 安装目录测试：`out/installed-smoke.json`
 - 安装包 SHA-256 与测试结果：`out/release-manifest.json`
 - 本机状态：Electron 的 `app.getPath('userData')`，通常 `%APPDATA%/TaskRelay`。SQLite 为 WAL/FULL，设备令牌使用 Windows 系统加密，账号 Profile 分离。
+
+从 Windows 系统入口安装，并从实际桌面或开始菜单快捷方式启动，核对版本、进程路径和 ASAR 哈希，再对实际安装的版本运行：
+
+```powershell
+node scripts/smoke.mjs "$env:LOCALAPPDATA\TaskRelay\app-0.4.6\TaskRelay.exe" out/installed-smoke.json
+node scripts/release-manifest.mjs
+```
+
+版本目录须与本次安装一致。Codex MSIX 可能将 AppData 重定向到独立 `LocalCache`；宿主内测试只证明报告中的副本，不能代替系统快捷方式验证，详见 [Windows 更新交付](docs/DEPLOYMENT.md#windows-更新交付)。本地清单含绝对路径，不应直接作为公开附件。
 
 `test:smoke` 在打包后的 Electron utilityProcess 中加载实际 Stagehand/Chromium，使用独立自建站与确定性模型回调检查读取、提取、监测、错误验证码、前导零、登录签到和表单提交。它走独立 smoke 流程，不调用 `runtime.execute()` 或 `ExecutorHost`；不能替代完整任务恢复、真实模型或真实网站验收。
 
@@ -80,6 +137,8 @@ npm run make
 | packages/ui        | 自行设计的 React + shadcn/ui 共享界面                          |
 
 架构现状与改进候选见 [ARCHITECTURE.md](docs/ARCHITECTURE.md)，开发及技能指引见 [AGENTS.md](AGENTS.md)。部署说明见 [DEPLOYMENT.md](docs/DEPLOYMENT.md)，实际验证范围见 [ACCEPTANCE.md](docs/ACCEPTANCE.md)。
+
+报告问题时请附版本、系统、脱敏错误和复现步骤，不上传设备令牌、模型密钥、密码、验证码、浏览器 Profile 或数据库。项目尚未选择开源许可证；第三方组件说明见 [NOTICE](resources/NOTICE.txt)，公开源码不代表已授予任意再分发许可。
 
 
 ### LangChain 与 Cloudflare 免费运行架构

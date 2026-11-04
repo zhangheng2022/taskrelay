@@ -36,13 +36,19 @@ for (const name of ["packaged-smoke", "installed-smoke"]) {
     await readFile(path.join(root, `out/${name}.json`), "utf8"),
   );
   if (!reports[name].passed) throw new Error(`${name} has not passed`);
+  if (reports[name].version !== desktop.version || reports[name].asarSha256 !== packagedAsar.sha256)
+    throw new Error(`${name} does not identify this version and ASAR`);
 }
+const installedReport = reports["installed-smoke"];
+if (typeof installedReport.resourcesPath !== "string" || !path.isAbsolute(installedReport.resourcesPath) ||
+    typeof installedReport.executablePath !== "string" || !path.isAbsolute(installedReport.executablePath))
+  throw new Error("Installed smoke must identify its actual executable and resources");
 const installedAsar = path.join(
-  process.env.LOCALAPPDATA,
-  "TaskRelay",
-  `app-${desktop.version}`,
-  "resources/app.asar",
+  installedReport.resourcesPath,
+  "app.asar",
 );
+if (realpathSync.native(path.join(path.dirname(installedReport.executablePath), "resources")) !== realpathSync.native(installedReport.resourcesPath))
+  throw new Error("Installed executable and resources do not belong together");
 const installedHash = createHash("sha256");
 for await (const chunk of createReadStream(installedAsar))
   installedHash.update(chunk);
@@ -55,6 +61,7 @@ const manifest = {
     windowsHide: true,
     encoding: "utf8",
   }).trim(),
+  sourceDirty: !!execFileSync("git", ["status", "--porcelain"], { cwd: root, windowsHide: true, encoding: "utf8" }).trim(),
   generatedAt: new Date().toISOString(),
   platform: "Windows x64",
   signed: false,

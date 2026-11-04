@@ -1,5 +1,16 @@
 # TaskRelay 验收记录
 
+## 2026-11-04 0.4.6 安装自检修复与 GitHub 工程入口
+
+- 复现 0.4.5 安装自检：页面已经载入，DOM 中存在查询文字，但 Stagehand locator 仍在 20 秒后超时。调试证据显示安装资源的 content-script.js 磁盘 SHA-256 正确，Chromium 的 scriptParsed 却为 length=0、空内容哈希；同一浏览器读取构建目录或新建运行目录的同字节扩展可正常返回。已定位到安装路径下内容脚本加载行为，未据此断言 Windows/Chromium 更底层原因。
+- 新增 Main 的 prepareExtension：按完整文件集合与 SHA-256 准备应用自有内容目录，原子发布并校验，缓存损坏/额外文件/符号链接拒绝加载。正式启动和 smoke 共用此流程，保持 Stagehand 4.3.0，不改 SDK、不延长 locator 超时、不改系统 ACL 或关闭浏览器保护。
+- smoke 增加实际版本/程序/资源/扩展路径及原始 ASAR 哈希；使用 Electron original-fs 读取归档字节，启动失败/子进程提前退出时也清理测试资源，重启前核对并恢复自有测试浏览器。发布清单校验报告版本与 ASAR，不再按 LOCALAPPDATA 猜安装路径，并显式记录 sourceDirty。
+- typecheck、**144 项完整测试**（含三项正式扩展准备回归）、Web build、check:repo、0.4.6 make、最终打包及实际安装 smoke 通过。最终两份报告均记录读取、提取、监测、前导零与错误码拒绝，表单提交/签到/错误验证码次数各为 1。初次自检因新增 ASAR 哈希读取方式错误失败，已改用 original-fs 并重新完整打包；只采用最终新报告。
+- 通过系统 Explorer 安装，并从实际桌面 TaskRelay.lnk 打开，原生窗口确认系统 `AppData/Local/TaskRelay/app-0.4.6/TaskRelay.exe`、在线等待、0.4.6 与一屏展示；不是 LocalCache 副本。系统物理路径（本机 UNC 读取）与构建 ASAR 均为 `5a5fea6cf2fe6933ee3d6840d6eadfe0cde0f4ac5b847d0d07cf42985b0096d9`。安装包 SHA-256：`658d72d57a31f3407bb70c8fd5eb0183f4ef7025ab82b3b7493b567ae9b90c9a`。
+- 新清单 `out/release-manifest.json` 指向系统安装；生成时源码尚未提交，sourceDirty=true，不冒充干净 tag 构建。日志、对照探针和截图在忽略目录 `.cache/release-046/`；源码图为 4248 节点/6599 边/375 社区，保留既有 SQL 解析器缺失与 TSX 部分抽取限制。
+- README 补齐功能边界、架构图、开发/手动更新/验收入口，新增 CHANGELOG；CI 配置 Ubuntu/Windows + Node 24，固定 Actions SHA，最小读取权限，无生产密钥。首次云端运行结果以推送后的 GitHub Actions 为准，不能用本机测试替代。
+- 本轮没有发布 GitHub Release 或云端版本，没有恢复业务验收、增加真实模型请求、改额度或处理旧 unknown。干净 Windows、非 GPT、现场完整故障流程和长期观察仍待验收。
+
 ## 2026-11-04 0.4.5 执行器一屏展示
 
 - 用户补充要求完整内容一屏展示。ExecutorApp 收紧 Card、FieldGroup 和页面间距，暂停说明放入对应 FieldContent，保留字号、控件和异常内容的滚动兜底。

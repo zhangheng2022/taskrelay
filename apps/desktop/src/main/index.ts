@@ -21,6 +21,7 @@ import { z } from "zod";
 import { Journal } from "./journal";
 import { Cloud } from "./cloud";
 import { OwnedBrowser } from "./browser";
+import { prepareExtension } from "./extension";
 import { ExecutorHost } from "./executor-host";
 import { cloudUrlSchema } from "../shared/ipc";
 import type {
@@ -303,6 +304,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
         return;
       }
       const userData = app.getPath("userData");
+      const extensionPath = await prepareExtension(path.join(root, "stagehand-extension"), path.join(userData, "runtime-extensions"));
       journal = new Journal(userData);
       cloud = new Cloud(journal);
       const browser = new OwnedBrowser(
@@ -315,7 +317,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
         journal,
         browser,
         path.join(__dirname, "executor.cjs"),
-        path.join(root, "stagehand-extension"),
+        extensionPath,
         notify,
         utilityProcess.fork,
       );

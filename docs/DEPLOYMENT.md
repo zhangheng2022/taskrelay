@@ -1,5 +1,7 @@
 # 部署与恢复
 
+0.4.6 最新补充：安装路径下 Chromium 将 Stagehand 内容脚本加载为空的问题已通过应用自有、完整哈希校验的运行扩展目录修复。源码检查、144 项测试、构建、最终打包和实际系统安装 smoke 通过；系统桌面入口确认 0.4.6 在线，一屏展示保留。新清单指向系统安装且记录 sourceDirty=true；本轮没有发布 Release 或部署云端。下方 0.4.5 超时记录保留为历史，具体证据见 ACCEPTANCE 最新节。
+
 0.4.5 界面补充：执行器已调整为默认窗口一屏完整展示，经系统 Explorer 安装、实际桌面快捷方式启动和原生截图确认，系统安装 ASAR 与构建哈希一致。类型检查、UI 测试、构建、打包及 packaged smoke 通过；安装 smoke 在工具环境副本中遇到页面读取超时，系统入口复测未产生新报告，尚未通过，不生成 0.4.5 发布清单。现有清单仍为 0.4.4；详细证据及边界见 ACCEPTANCE 最新节。云端和业务验收状态未改变。
 
 0.4.4 构建补充：Forge 的 Electron 下载校验使用已安装 `electron/checksums.json`（与实际打包 Electron 版本同步）。缓存 ZIP 仍做官方 SHA-256 校验，避免每次打包依赖在线获取 SHASUMS256.txt；没有启用 unsafelyDisableChecksums。0.4.4 已完成系统安装、实际快捷方式启动、安装 smoke 与 ASAR 哈希核对；云端版本不变，上一轮暂停的业务验收未恢复。详见 ACCEPTANCE 最新记录。
@@ -100,9 +102,15 @@ Main 在产生浏览器副作用前记录 SQLite 检查点。云端也先记录�
 
 先提升 `apps/desktop/package.json` 版本并同步锁文件，再运行 `npm run make` 和本次产物的 smoke。暂存运行时包使用桌面应用版本，Squirrel 的版本目录和 nupkg 必须一致。交付不能停留在直接运行 `out/TaskRelay-win32-x64/TaskRelay.exe`。
 
-安装前保存本地数据并检查未完成运行；安装后从桌面或开始菜单的实际入口启动，核对进程路径、版本和 `resources/app.asar` 的 SHA-256，再验证安装目录 smoke。`node scripts/release-manifest.mjs` 会拒绝旧 smoke 报告或不匹配的安装 ASAR，并记录实际解析的安装路径。
+安装前保存本地数据并检查未完成运行；安装后从桌面或开始菜单的实际入口启动，核对进程路径、版本和 `resources/app.asar` 的 SHA-256，再验证安装目录 smoke。`node scripts/release-manifest.mjs` 会拒绝旧报告、错误版本或不匹配的 ASAR；安装路径取自实际自检报告，不按环境变量猜测。报告同时记录执行程序、资源目录与运行扩展路径。0.4.6 起扩展从应用自有内容寻址目录加载，文件集合和字节哈希必须与安装资源一致，不修改原始安装文件或系统访问控制。
 
 在 Codex MSIX 环境中，逻辑上的 `%LOCALAPPDATA%/TaskRelay` 可能实际位于 Codex 的 `LocalCache/Local/TaskRelay`；Roaming 数据也可能重定向。该副本的安装成功不证明 Windows 桌面快捷方式对应的系统安装已更新。若清单出现重定向路径，应从 Windows 的运行/资源管理器入口执行同一安装包，并单独验证系统安装与快捷方式。不要把另一数据目录的备份或配置一致性结论套用到系统目录。
+
+## GitHub 源码检查与发布边界
+
+`.github/workflows/ci.yml` 在 PR、master 推送与手动触发时运行 Ubuntu / Windows、Node.js 24 的矩阵检查。使用 npm ci、完整测试、类型检查、Web 构建与仓库检查；Actions 固定提交 SHA，GITHUB_TOKEN 仅 contents:read，检出后不保留凭据。CI 不生成本地开发密钥、不迁移生产、不请求真实模型、不自动安装客户端或发布 Release。跨平台源码检查不是干净 Windows 安装验收。
+
+README 负责使用入口与状态，CHANGELOG 记录客户端版本的变更，ACCEPTANCE 保留逐项证据。0.4.6 仍为未发布候选；需要发布时从明确、干净的源码提交构建，先完成 make，再取得本次打包/实际安装 smoke 和系统入口证明，整理脱敏附件后发布预览版。不得将含本机绝对路径的原始清单、Profile 或诊断数据库上传为公开附件，也不得复用另一版本的报告。当前没有自动更新服务，用户通过安装包手动升级。
 
 ## 0.2.0 本次安装与单域名 DNS 记录
 
