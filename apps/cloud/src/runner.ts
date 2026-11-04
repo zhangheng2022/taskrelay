@@ -26,8 +26,8 @@ import {
   finish,
   type Row,
 } from "./store";
-import { generate, generateStructured, invoke } from "./models";
-import { seal, unseal } from "./crypto";
+import { generateStructured, invoke } from "./models";
+import { unseal } from "./crypto";
 import { challengeFrom } from "./challenges";
 export const runner = new Hono<{ Bindings: AppEnv; Variables: Variables }>();
 const lease = z.object({ epoch: z.number().int().positive() });

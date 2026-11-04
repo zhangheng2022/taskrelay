@@ -1,24 +1,18 @@
 # 部署与恢复
 
-0.4.6 最新补充：安装路径下 Chromium 将 Stagehand 内容脚本加载为空的问题已通过应用自有、完整哈希校验的运行扩展目录修复。源码检查、144 项测试、构建、最终打包和实际系统安装 smoke 通过；系统桌面入口确认 0.4.6 在线，一屏展示保留。新清单指向系统安装且记录 sourceDirty=true；本轮没有发布 Release 或部署云端。下方 0.4.5 超时记录保留为历史，具体证据见 ACCEPTANCE 最新节。
+## 版本与验收入口
 
-0.4.5 界面补充：执行器已调整为默认窗口一屏完整展示，经系统 Explorer 安装、实际桌面快捷方式启动和原生截图确认，系统安装 ASAR 与构建哈希一致。类型检查、UI 测试、构建、打包及 packaged smoke 通过；安装 smoke 在工具环境副本中遇到页面读取超时，系统入口复测未产生新报告，尚未通过，不生成 0.4.5 发布清单。现有清单仍为 0.4.4；详细证据及边界见 ACCEPTANCE 最新节。云端和业务验收状态未改变。
+客户端源码版本以 `apps/desktop/package.json` 为准，当前为 0.4.7；验收台账最近确认的系统安装为 0.4.6。0.4.7 已有本地构建和 packaged smoke，系统安装、真实跨版本更新、生产更新通道及 GitHub Release 尚待验收。本节依据仓库记录，不代表重新查询了线上或本机安装状态。
 
-0.4.4 构建补充：Forge 的 Electron 下载校验使用已安装 `electron/checksums.json`（与实际打包 Electron 版本同步）。缓存 ZIP 仍做官方 SHA-256 校验，避免每次打包依赖在线获取 SHASUMS256.txt；没有启用 unsafelyDisableChecksums。0.4.4 已完成系统安装、实际快捷方式启动、安装 smoke 与 ASAR 哈希核对；云端版本不变，上一轮暂停的业务验收未恢复。详见 ACCEPTANCE 最新记录。
+历史部署版本、哈希、测试数量和失败过程统一见 [ACCEPTANCE](ACCEPTANCE.md)，界面证据见 [UI-REVIEW](UI-REVIEW.md)。本文件维护操作与恢复规则，避免多个“最新补充”覆盖不同版本。
 
-最新补充：2026-11-04 最终 Worker 为 `dfdaf69c-d9e9-4c58-ad91-0d084bf14167`，客户端源码/安装包为 0.4.3，修复人工协助缺少输入目标。系统安装进程已更新至 0.4.3，但用户按 Esc 停止界面操作，最终快捷方式、安装 smoke 与哈希复验尚待完成；下方 0.4.2 清单不能用于 0.4.3。临时 owner 日启动 8 已恢复 5，保留一个 unknown 等待只读核查。详见验收台账最新节。
+- 已有 D1 迁移至 `0008_report_run.sql`；报告必须绑定用户选中的 runId。协议与本地 SQLite schema 保持 3。
+- 常规发布先应用 additive 迁移，再部署已构建的 Web/Worker，最后安装递增版本客户端。不能重复执行已完成的 epoch 3 历史清理。
+- 保留 Free、美国模型出站、生产无 R2、`REGISTRATION_OPEN=0` 和 `DEV_MODE=0`；不得重新生成 MASTER_KEY、模型密钥或设备令牌。
+- 回滚保留新增列与密文，不能退回普通 Worker 同步图计算、旧协议或旧出站链路。异常时先暂停领取，保留 unknown 与账号锁，不重放未知提交。
+- Forge 使用同版本 Electron 包中的 `checksums.json` 校验缓存 ZIP，不关闭下载完整性检查。正式启动与 smoke 共用哈希校验的运行扩展目录，流程见下方 Windows 更新交付。
 
-## 当前发布基线（2026-11-04，0.4.2）
-
-本节覆盖下方阶段记录中的旧版本号与暂停状态；下方日期明确的记录保留作历史证据。
-
-- Worker `ee191cf7-e7cc-4a3c-a934-a308367ebc06`；D1 已应用 `0008_report_run.sql`，为 AI 回合增加可空 run_id，旧消息与历史数据保留。报告必须绑定用户选中的运行；旧客户端缺少 runId 的报告会明确拒绝，应刷新网页。
-- Windows 0.4.2 已通过系统资源管理器更新，并从桌面快捷方式打开，进程在系统 `AppData/Local/TaskRelay/app-0.4.2`。系统安装 ASAR 与本次构建一致，原配对保留；协议和 SQLite schema 仍为 3。
-- Free 套餐、六类 SQLite DO、美国模型出站、生产无 R2、`REGISTRATION_OPEN=0`、`DEV_MODE=0` 均保留；没有更换 MASTER_KEY、模型密钥、设备令牌或提高额度。发布前没有活动运行/unknown/AI 回合；领取开关保持原开启状态。
-- 发布先执行 additive 迁移，再部署已构建的 Web/Worker，再安装递增版本客户端。执行了匿名及 bearer 权限检查、本次 packaged/installed smoke。完整验收边界见 [ACCEPTANCE](ACCEPTANCE.md)。
-- 回滚应保留新增列和既有密文，不回滚到旧普通 Worker 同步模型链路。若遇执行异常，先暂停领取并保留 unknown 与账号锁；不可重放未知提交。
-
-## 多人网站部署（2026-11-03，公开注册仍关闭）
+## 认证与迁移记录（2026-11-03）
 
 本轮认证邮件改用 Brevo。Resend 添加 `mail.zhangheng.eu.org` 时拒绝免费公共域名；用户选择保留现有域名，`huiyunda.pl` 不用于 TaskRelay。
 
@@ -32,7 +26,7 @@
 
 首次真实 D1 迁移被拒绝（已有数据表不能新增带非空默认值的 REFERENCES 列），D1 整体回滚后修复为兼容归属列与成员完整性触发器，重新迁移成功，`foreign_key_check` 无异常；新增带旧数据的回归测试。
 
-## 当前资源
+## 资源配置与已记录部署
 
 - Cloudflare account：`b3a410496c5e49e582b4af19d2f2eec6`
 - Worker：`taskrelay`，每分钟 Cron
@@ -42,7 +36,7 @@
 - Access：`TaskRelay` / `6cd2c9dc-ba3c-4969-9aaf-83ea360c398f`
 - 主站：`https://tr.zhangheng.eu.org`；旧入口：`https://taskrelay.zhangheng.workers.dev`
 
-两个域名统一通过应用自身会话认证。原 Access 应用与 owner allow 策略保留，新增 `TaskRelay application authentication` bypass 策略 `1ad2c9f8-cee7-427a-8f9e-39409a68422b` 允许到达 Worker；它不是 Worker 内部权限旁路。切换后两个域名均验证：匿名 user/admin 为 401，Bearer 访问 user/admin 为 403，旧 device/user 为 403，无令牌 device/status 为 401。设备 v2 仍校验令牌和租约；配对批准只允许应用管理员。预览 URL 关闭。
+两个域名统一通过应用自身会话认证。原 Access 应用与 owner allow 策略保留，新增 `TaskRelay application authentication` bypass 策略 `1ad2c9f8-cee7-427a-8f9e-39409a68422b` 允许到达 Worker；它不是 Worker 内部权限旁路。切换后两个域名均验证：匿名 user/admin 为 401，Bearer 访问 user/admin 为 403，旧 device/user 为 403，无令牌 device/status 为 401。当前设备协议 3 仍校验令牌和租约；配对批准只允许应用管理员。预览 URL 关闭。
 
 故障时首先保持 `REGISTRATION_OPEN=0`、将 D1 settings 的 `claimsEnabled` 设为 `0`；如需外层收紧，删除上述新增 bypass 策略即可恢复原 Access owner 限制。不要回退到旧设备管理接口，也不要重新生成 `MASTER_KEY`。
 
@@ -129,18 +123,18 @@ README 负责使用入口与状态，CHANGELOG 记录客户端版本的变更，
 
 实现依据：[Electron autoUpdater](https://www.electronjs.org/docs/latest/api/auto-updater)、[Squirrel 本地更新源](https://github.com/Squirrel/Squirrel.Windows/blob/develop/src/Squirrel/UpdateManager.DownloadReleases.cs)、[Cloudflare Streams](https://developers.cloudflare.com/workers/runtime-apis/streams/)。
 
-## 0.2.0 本次安装与单域名 DNS 记录
+## 0.2.0 历史安装与单域名 DNS 记录
 
 安装包位于 `apps/desktop/out/make/squirrel.windows/x64/TaskRelay Setup.exe`，实际安装于 `C:/Users/96227/AppData/Local/TaskRelay/app-0.2.0`。桌面快捷方式启动、安装/构建 ASAR 哈希、两份新 smoke 均已核对；具体哈希和真实执行证据见 [验收](ACCEPTANCE.md)。不将本机安装证明当作干净 Windows 验收。
 
 本机 Clash Fake-IP 会触发执行器非公网地址保护。经用户许可，本次仅将 `example.com` 加入全局扩展脚本 `profiles/Script.js` 的 `dns.fake-ip-filter`，保留 blacklist 模式和其他条目；通过正在运行的服务模式本机接口重载，未放宽 TaskRelay 的 DNS/IP 检查。原文件备份为 Clash 配置目录中的 `profiles/Script.taskrelay-before-20261103.js.bak` 与 `clash-verge.taskrelay-before-20261103.yaml.bak`。如需撤销，恢复原全局脚本并在 Clash 中重新应用配置；不要把完整代理配置或订阅密钥复制进 TaskRelay 仓库。扩展语义参考 [Clash Verge 官方说明](https://www.clashverge.dev/guide/script.html)。其他任务站点未自动加入真实 DNS 名单。
 
-最终状态：公开注册关闭、任务领取暂停；管理员已验证，设备已授权在线，真实只读执行与取消已通过。完成验收台账中剩余现场项目后，再决定开放注册与领取。
+以上为 0.2.0 当时的安装与 DNS 调整记录，不代表当前安装或领取开关。后续客户端已改用固定 HTTPS DNS；保留此处的外部配置撤销说明。
 
 
 ## LangChain 0.3.0 一次性切换
 
-本轮实现不迁移旧会话内容。清理范围包括任务/版本、运行/动作/事件/报告/证据、协助、旧聊天、新 AI 会话/摘要/记忆/检查点/结果缓存和任务幂等记录。保留登录用户/角色/会话、站点账号及密文/设备绑定/Profile、模型配置及密钥、设备及 token、MASTER_KEY、认证/邮件/Turnstile 等部署密钥。当天已消费的模型/聊天额度保留，运行次数转存 `quota_carry`，不因清理返还额度。
+此为已完成的一次性切换流程，保留用于恢复与审计；现有部署不得再次执行 apply。该版本不迁移旧会话内容。清理范围包括任务/版本、运行/动作/事件/报告/证据、协助、旧聊天、新 AI 会话/摘要/记忆/检查点/结果缓存和任务幂等记录。保留登录用户/角色/会话、站点账号及密文/设备绑定/Profile、模型配置及密钥、设备及 token、MASTER_KEY、认证/邮件/Turnstile 等部署密钥。当天已消费的模型/聊天额度保留，运行次数转存 `quota_carry`，不因清理返还额度。
 
 切换必须按以下顺序，不能先删数据库再处理执行器：
 
@@ -157,9 +151,9 @@ README 负责使用入口与状态，CHANGELOG 记录客户端版本的变更，
 
 ### 0.3.0 现场阻断记录（历史）
 
-2026-11-03 现场发现 Workers Free 的请求 CPU 限制会中断本次 LangGraph 业务链路（1102 / exceededCpu）。`limits.cpu_ms=1000` 的发布被 Cloudflare 以 100328 拒绝，只有升级 Workers Paid 后才能重新发布该配置；不能通过删除限制配置声称业务已恢复。订阅由用户决定并开通，不能自动购买。官方说明：[CPU 限制](https://developers.cloudflare.com/workers/platform/limits/)、[套餐费用](https://developers.cloudflare.com/workers/platform/pricing/)。
+2026-11-03 现场发现 Workers Free 的请求 CPU 限制会中断本次 LangGraph 业务链路（1102 / exceededCpu）。`limits.cpu_ms=1000` 的发布被 Cloudflare 以 100328 拒绝，只有升级 Workers Paid 后才能重新发布该配置；不能通过删除限制配置声称业务已恢复。该历史阻断已由后续 DO 架构处理，当前约束仍为 Free，不能自动购买。官方说明：[CPU 限制](https://developers.cloudflare.com/workers/platform/limits/)、[套餐费用](https://developers.cloudflare.com/workers/platform/pricing/)。
 
-历史切换已执行为 epoch 3，不应再次执行 apply，也不能降回协议 2。CPU 优化复测移除了从未生效的 `cpu_ms=1000` 配置，以便在现有 Free 套餐发布；这本身不增加额度。后续须以真实请求结果判断是否仍需调整套餐，完成模型及任务闭环后再开放领取。为测试用户写操作，切换后核对数据与设备即可退出维护，但领取仍需保持关闭；完成试运行前不得当作全量上线通过。
+历史切换已执行为 epoch 3，不应再次执行 apply，也不能降回协议 2。CPU 优化复测移除了从未生效的 `cpu_ms=1000` 配置，以便在现有 Free 套餐发布；这本身不增加额度。后续以 Free 架构的真实请求和任务闭环记录为准，不能把历史 CPU 优化当作验收通过。为测试用户写操作，切换后核对数据与设备即可退出维护，但领取仍需保持关闭；完成试运行前不得当作全量上线通过。
 
 本机从 Codex 重定向目录迁到系统 Roaming 时，既有 safeStorage 密文依赖原 Local State 的 OS 加密上下文。仅复制 SQLite 会导致 decryptString 失败。应停机检查无 outbox/未完成 journal，保留原数据与 Profile，迁移完整的同应用加密上下文，保持数据库版本不回退；不能重新生成令牌或修改 MASTER_KEY 代替恢复。实际系统入口、ASAR 和目录 evidence 见验收台账。
 

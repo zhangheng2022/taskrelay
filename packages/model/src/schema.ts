@@ -1,4 +1,4 @@
-// Provider strict-output syntax is narrower than the schema used by Zod/Ajv.
+// Provider strict-output syntax is narrower than the schema validated by callers.
 // Only the wire schema is projected; callers still validate the original schema.
 // https://developers.openai.com/api/docs/guides/structured-outputs
 export function outputSchema(

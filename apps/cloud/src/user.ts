@@ -1,7 +1,7 @@
 import {getEvidence} from './evidence';
 import { platformBudget } from './free-budget';
 import {Buffer} from 'node:buffer';
-import { quotaSummary, reserve } from './tenancy';
+import { quotaSummary } from './tenancy';
 import { Hono } from "hono";
 import { z } from "zod";
 import { egress } from "./egress";
@@ -38,7 +38,6 @@ import {
 } from "./models";
 import { seal, unseal } from "./crypto";
 import { challengeFrom, exactReply } from "./challenges";
-import { suppliedTaskUrls } from "./task-sites";
 import { ownedThread } from './ai/conversations';
 export const user = new Hono<{ Bindings: AppEnv; Variables: Variables }>();
 export const admin = new Hono<{ Bindings: AppEnv; Variables: Variables }>();

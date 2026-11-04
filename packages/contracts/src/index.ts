@@ -247,28 +247,3 @@ export interface Transport {
     subscribe(fn: () => void): () => void;
   };
 }
-export const terminalStatuses: RunStatus[] = [
-  "succeeded",
-  "failed",
-  "unknown",
-  "cancelled",
-  "expired",
-];
-export function isTerminal(status: RunStatus) {
-  return terminalStatuses.includes(status);
-}
-export function assertTransition(from: RunStatus, to: RunStatus) {
-  const transitions: Record<RunStatus, RunStatus[]> = {
-    queued: ["running", "cancelled", "expired"],
-    running: ["waiting_user", "verifying", "failed", "unknown", "cancelled"],
-    waiting_user: ["running", "failed", "unknown", "cancelled"],
-    verifying: ["succeeded", "unknown", "failed", "cancelled"],
-    succeeded: [],
-    failed: [],
-    unknown: [],
-    cancelled: [],
-    expired: [],
-  };
-  if (from !== to && !transitions[from].includes(to))
-    throw new Error("INVALID_TRANSITION");
-}

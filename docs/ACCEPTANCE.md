@@ -1,5 +1,15 @@
 # TaskRelay 验收记录
 
+## 2026-11-04 冗余与过时内容清理（本地源码）
+
+- 通过 graphify 查询、全仓引用搜索和 TypeScript 诊断核对删除依据。移除无调用的 terminalStatuses/isTerminal/assertTransition、devicesTable、闲置导入和 generate 的未使用 graphId 参数；实际状态事务、账号锁和数据库迁移保持不变。
+- 删除已由 Zod 校验替代的根 Ajv 依赖，同步锁文件；保留 Better Auth 所需的 jose、实际使用的 langchain 与平台 adapter。未删除历史迁移、旧协议拒绝逻辑、一次性切换工具或安全校验。
+- DESIGN 改为当前设计入口，删除过时绿色主题/双端工作台说明；架构文档统一协议 3、应用会话、独立执行器、异步 DO 与加密证据事实。部署文档收拢重复版本摘要，README 区分源码 0.4.7 与最近已验收系统安装 0.4.6；历史验收证据保留。
+- `npm run typecheck`、158 项 `npm test`（含 UI）、`npm run build`、`npm run check:repo`、`git diff --check` 通过，已核对修改文档的相对文件链接。构建保留大 chunk 与 contracts 同时静态/动态导入提示；未以本次清理展开性能重构。
+- `graphify update .` 成功更新源码图：4282 节点、6752 边、373 社区。仍缺少 tree_sitter_sql，admin-panel/auth-gate 两个 TSX 存在部分提取警告；未执行文档语义重新提取，不声称图覆盖全部文档或 SQL。
+- 本轮没有修改 UI 行为、执行器实现或数据库，没有重新打包、安装、部署、调用真实模型或操作真实任务；上述检查不扩展此前现场验收范围。
+
+
 ## 2026-11-04 0.4.7 版本检查与空闲更新（本地候选）
 
 - 实现启动 15 秒/每 6 小时检查、手动检查、Windows 提醒、Main 原生确认、CF 下载、大小和 SHA-256/SHA-1 校验、空闲 Squirrel 安装重启。安装器只接收应用自有本地 feed；更新地址固定，不使用配对地址或远程文件内的任意 URL。自启动使用 Squirrel 的稳定启动入口，迁移已有启用偏好，避免指向旧版本目录。

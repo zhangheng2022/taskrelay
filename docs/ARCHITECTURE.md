@@ -1,5 +1,7 @@
 # TaskRelay 架构现状与改进候选
 
+本文描述当前源码；部署、安装和现场验证状态分别见 [DEPLOYMENT](DEPLOYMENT.md) 与 [ACCEPTANCE](ACCEPTANCE.md)。历史实现可从 Git 追溯，不再与当前拓扑并列。
+
 ## 2026-11-04 执行器版本更新
 
 - Main `DesktopUpdater` 管理版本元数据、确认后的下载、哈希校验、等待与本地 Squirrel 安装。Renderer 只展示 `DesktopUpdateStatus`，Preload 只增加命名检查/下载入口；Main 原生确认框绑定当前版本，模型和任务网页不能触发更新或指定下载地址。
@@ -10,7 +12,7 @@
 
 ## 2026-11-04 可靠性修复：当前基线
 
-当前产品为多用户网站与管理员设备池，网站使用应用会话鉴权，Windows Renderer 仅运行 ExecutorApp。协议和 SQLite schema 仍为 3；D1 新增兼容迁移 `0008_report_run.sql`。下方明确标注的旧版本分析只保留决策依据，不作为当前入口、拓扑或部署状态说明。
+当前产品为多用户网站与管理员设备池，网站使用应用会话鉴权，Windows Renderer 仅运行 ExecutorApp。协议和 SQLite schema 仍为 3；D1 新增兼容迁移 `0008_report_run.sql`。状态转移以生产实现及只读核查行为为准。
 
 - ExecutorHost 的每个异步心跳返回后重验 child、generation 和停止状态。停止期间拒绝新 RPC；浏览器清理失败保留占用，阻止新执行并允许再次清理。Main 显式提供 Electron fork adapter，测试直接调用同一 Host implementation。
 - OwnedBrowser 对整个启动过程持有代次与 pending promise；close 先使启动失效，再等待并清理。读取资源期间停止不再产生迟到浏览器。execute 在迟到凭据、人工消费检查点之后再次检查取消；未知消费保留不确定性。
@@ -25,7 +27,7 @@
 
 2026-11-04 协助补充：0.4.3 对 code/information/scan 强制非空目标，生产规划允许一次结构化修复；云端拒绝无目标挑战，执行器在请求协助前检查目标存在，避免消费回复后才发现缺少填写位置。批准点击由具体 high_impact 动作生成绑定摘要的批准请求。验证及用户暂停位置见 ACCEPTANCE 最新节。
 
-本节优先于下方历史版本。继续使用 LangChain/LangGraph、D1 和原模型 API，不启用 Workers Paid、Queues、Workflows、Vectorize 或 LangSmith。协议与本地 schema 保持 3，D1 新增 `0007_free_runtime.sql`。
+继续使用 LangChain/LangGraph、D1 和原模型 API，不启用 Workers Paid、Queues、Workflows、Vectorize 或 LangSmith。协议与本地 schema 保持 3，D1 新增 `0007_free_runtime.sql`。
 
 - `worker.ts` 仅处理静态资源、health 和路由；认证凭据的哈希选择 8 个 `RequestCoordinator` 分片，原始请求进入 DO 内的 Hono 完整鉴权。哈希不代表身份；不能缓存或共享权限结果。业务不再受普通 Worker 的 10 ms 请求 CPU 路径约束，仍受 DO 自身资源限制。
 - 创建消息事务同时保存回合、用户消息和 `ai_dispatch` outbox，立即返回 202。每回合一个 `AiTurn` 对象，alarm 在 D1 原子领取后运行图；通知丢失由每分钟 Scheduler 补唤醒。领取后中断保持不确定，180 秒清理标为 unknown，不重放模型调用。终态通知客户端重新读取事实。
@@ -59,76 +61,54 @@
 旧 `/tasks/compose`、`/tasks/draft`、`/tasks/:id/chat` 已移除。新入口为 `/threads`、`/threads/:id/messages`、`/threads/:id/draft`、`/memories`。客户端通过 `x-taskrelay-protocol: 3` 与设备记录共同校验版本；升级沿用原 bearer token，旧协议不得继续领取或上传。
 
 
-## 2026-11-03 多人网站与公共执行器实施
-
-本节覆盖下方 0.1.0 分析中已变更的事实。网站使用 Better Auth 与独立 `auth_*` D1 表，Brevo 发送验证/重置邮件；只有验证过的 owner 邮箱绑定 `legacy_owner` 管理员。网站分为个人任务/账号/对话/结果/用量与管理员模型/设备/配额/运维。管理员运维列表不返回其他用户的任务、对话、凭据或结果正文。
-
-协议已升级至 v2。设备令牌只访问状态、领取和租约绑定的执行接口；`/api/device/user/*` 固定拒绝，Preload 不再暴露通用管理请求。桌面 Renderer 使用独立 `ExecutorApp`，仅显示连接、运行编号、忙闲、暂停、停止、自启动及诊断。Main/utilityProcess 隔离、代次检查、检查点、未知写入锁和恢复规则保持。
-
-`0005_multiuser.sql` 保留旧 ID 和密文，将旧数据归属原 owner。D1 不接受 populated table 上带非空默认值的 REFERENCES 新列，因此四个历史表使用非空归属列加成员存在/删除/改名触发器；新认证表和配额表保留声明式外键。认证 adapter 关闭交互事务；密码写入触发器原子撤销会话。重置先消费令牌，中断不会复用；用户需重新申请链接。异常交由固定错误映射，避免认证库打印带参数的 SQL 错误。
-
-云端领取同时守卫设备并发 1、用户并发 1（含人工等待），按最久未领取用户、再按任务队列时间分配。站点账号首次领取原子绑定设备，离线等待；迁移必须确认旧执行停止，且无活动/未知运行及账号锁，创建新浏览器环境并提示重新登录。无账号任务用独立任务环境。共享设备属于管理员可信环境，Profile 不构成对设备管理员的保密边界。
-
-上海日额度：启动 5、启用周期任务 3、排队 5、对话请求 50、模型请求 200/用户及 2000/全站。启动在领取时计数，重试不重复扣减；模型出站前预占，修复也计数，未知不重放。模型仍唯一通过美国区域 ModelEgress alarm 出站。
-
-本地 SQLite schema 升至 2，清空旧管理缓存，保留 config/journal/outbox；恢复所需 Profile 映射保留。0.2.0 已打包、安装并验证桌面入口。当前上线仍关闭公开注册和领取；已验证及未完成现场项目见 [验收记录](ACCEPTANCE.md)。下方历史共享 UI、Access owner 校验、通用 Preload、协议 1 和 schema 1 描述不再代表当前实现。
-
-分析日期：2026-11-03（Asia/Shanghai）。源码基线：`923143af8276a36a7d59a11a7d1916d591d860f1`，版本 0.1.0。本文结合 `improve-codebase-architecture`、`codebase-design` 和独立源码走读。2026-11-03 后续实施已统一结构化输出；其余候选仍未实施。
-
-初始分析时仓库只有一个提交，不能据此推断热点。后续已分阶段提交文档、结构化输出，并实现共享默认主题和聊天式任务创建。未发现 `GLOSSARY.md` 或 `docs/adr/`，领域名称沿用共享协议。本轮验证范围见第 7 节及验收记录，历史模型和安装证据不自动代表本次复验。
-
-## 历史 0.1.0 分析（以下第 1–9 节不代表当前拓扑）
-
 ## 1. 运行拓扑与职责
 
 ```mermaid
 flowchart TB
-  UI[共享 React UI] --> WEB[Web Transport adapter]
-  UI --> RENDER[Desktop Renderer]
-  WEB --> ACCESS[Cloudflare Access]
-  ACCESS --> WORKER[Hono user routes]
-  RENDER --> PRELOAD[受限 Preload]
-  PRELOAD --> MAIN[Electron Main]
-  MAIN --> DEVICE[设备令牌校验与 runner routes]
-  DEVICE --> STORE[运行与调度 implementation]
-  WORKER --> STORE
-  CRON[每分钟 Cron] --> STORE
-  STORE --> D1[(D1)]
-  WORKER --> R2[(私有 R2)]
-  DEVICE --> R2
-  WORKER --> MODEL[模型调用与能力校验]
-  DEVICE --> MODEL
-  MODEL --> EGRESS[美国 jurisdiction ModelEgress]
-  EGRESS --> ALARM[alarm 与 EgressState]
-  ALARM --> INFER[Chat / Responses implementation]
-  INFER --> PROVIDER[公网模型提供方]
+  WEB[网站 React UI] --> WORKER[Worker 静态资源与路由]
+  MAIN[Windows Main] --> WORKER
+  WORKER --> REQUEST[RequestCoordinator / Hono 鉴权]
+  CRON[每分钟 Cron] --> SCHED[Scheduler]
+  REQUEST --> D1[(D1)]
+  SCHED --> D1
+  REQUEST --> TURN[AiTurn / LangGraph]
+  TURN --> D1
+  REQUEST --> EVIDENCE[加密 Evidence DO]
+  REQUEST --> NOTICE[NotificationHub]
+  REQUEST --> MODEL[models.invoke]
+  TURN --> MODEL
+  MODEL --> EGRESS[美国 ModelEgress alarm]
+  EGRESS --> PROVIDER[模型提供方]
+  RENDER[ExecutorApp] --> PRELOAD[命名 Preload 入口]
+  PRELOAD --> MAIN
   MAIN --> SQLITE[(SQLite / safeStorage)]
   MAIN --> HOST[ExecutorHost]
   HOST --> CHILD[utilityProcess / runtime.execute]
-  CHILD --> STAGE[Stagehand 4.3.0]
-  STAGE --> CHROME[专用 Chromium / 账号 Profile]
-  CHROME --> PROXY[本地受限代理]
-  PROXY --> SITE[已授权网站]
+  CHILD --> BROWSER[Stagehand / 专用 Chromium]
+  BROWSER --> PROXY[受限公网代理]
+  PROXY --> SITE[授权网站]
 ```
-
-图中的 module 不必对应一个文件。尤其运行状态和人工协助目前跨多个文件实现；图不意味着这些规则已经集中。
 
 | 位置 | 当前责任与关键入口 |
 | --- | --- |
-| `apps/web` | Vite 站点；`src/main.tsx` 为共享 UI 提供同源 fetch adapter。`wrangler.jsonc` 同时配置静态资源、Worker、D1、R2、ModelEgress 和 Cron |
-| `packages/ui` | 自行设计的 React/shadcn/ui 界面：任务、对话、运行、设置及桌面状态；通过 `Transport` 使用宿主能力 |
-| `packages/contracts` | Zod 数据校验、领域类型、限额、动作策略、成功判据、调度和公共地址检查；不拥有云端数据库状态 |
-| `apps/cloud/src/index.ts` | Hono 入口、中间件、认证路由挂载与定时入口；`worker.ts` 额外导出 Durable Object |
-| `user.ts` / `pairing.ts` | 任务、模型、账号、设备、设置、对话、取消、只读核查和设备配对 |
-| `runner.ts` / `store.ts` | 领取、心跳、意图、事件、模型规划、协助消费、终结、调度及账号锁；状态 SQL 目前分布在二者及 `user.ts` |
-| `models.ts` / `egress*.ts` / `model-egress.ts` | 模型配置解密、能力探测、结构化生成、用量记录，以及美国区域后台出站 |
-| `packages/model` | Chat Completions 与 Responses 的请求/响应转换、用量与错误分类；不自行选择模型或管理任务 |
-| `apps/desktop/src/main` | 生命周期、托盘、自启动、云端连接、令牌、SQLite、浏览器所有权与 ExecutorHost；保持 UI 重载和执行生命周期独立 |
-| `apps/desktop/src/preload` / `shared/ipc.ts` | 向 Renderer 暴露有限命名入口；Main 另校验来源、参数与请求路径 |
-| `apps/desktop/src/executor` | 独立 utilityProcess 中的任务循环、Stagehand、公共网络代理与页面证据；通过 Main 中转云端请求 |
-| `scripts` / `forge.config.mts` | 浏览器资源准备、哈希验证、运行依赖暂存、Squirrel.Windows 打包、产物 smoke 和验收清单 |
+| `apps/web` / `packages/ui` | 网站 Transport、任务/对话/结果/设置；独立 ExecutorApp 只展示设备状态和执行控制 |
+| `packages/contracts` | Zod 协议、限额、动作策略、成功判据、调度和公共地址检查 |
+| `worker.ts` / `request-coordinator.ts` / `index.ts` | 静态与更新路由、请求分片、业务鉴权与路由；Scheduler 管理队列与维护 |
+| `user.ts` / `admin.ts` / `pairing.ts` | 用户归属、管理员控制、任务确认、取消、只读核查和配对 |
+| `runner.ts` / `store.ts` | 领取、租约、动作意图、协助消费、终结及账号锁 |
+| `ai/` | 异步回合、图、检查点、摘要与明确确认的用户记忆 |
+| `models.ts` / `egress*.ts` / `model-egress.ts` | 能力探测、结构化生成、实际用量及唯一美国后台出站 |
+| `packages/model` | Chat Completions / Responses 转换、Schema 投影、用量和错误分类 |
+| `apps/desktop/src/main` | 生命周期、令牌、SQLite、浏览器、Host 与空闲更新；UI 重载不重启执行 |
+| `preload` / `shared/ipc.ts` | 命名执行器入口；Main 校验来源和参数，无通用用户管理请求 |
+| `executor` | 独立进程中的任务循环、Stagehand、网络代理与证据；通过 Main 中转云端请求 |
+| `scripts` / `forge.config.mts` | 资源准备、哈希验证、运行依赖暂存、打包、smoke 和发布清单 |
 
-`Transport` 已有 Web fetch 与 Desktop Preload 两种实际 adapter，值得保留。Preload 的 `request(method, path, body)` 仍是通用请求入口，权限依赖 Main 的允许列表和后端 Schema，不应描述成每项业务均有独立强类型 IPC。
+网站使用 Better Auth 会话与已验证邮箱。设备 bearer token 只访问设备和租约绑定入口；`/api/device/user/*` 固定拒绝。Access 只作为可选外层限制。管理员运维列表不返回其他用户的任务、对话、凭据或结果正文。
+
+云端同时守卫设备并发 1、用户并发 1（含人工等待），按最久未领取用户、再按队列时间分配。账号首次领取绑定设备；迁移要求旧执行停止且无活动/unknown 运行或账号锁，创建新浏览器环境并重新登录。无账号任务用独立任务环境；共享设备必须可信，Profile 不对设备管理员保密。
+
+上海日默认额度为启动 5、启用周期任务 3、排队 5、对话请求 50、模型请求 200/用户及 2000/全站；还受上文更严格的 UTC 平台预算约束。启动在领取时计数，模型出站前预占，重试不重复扣启动额度，未知调用不重放。
 
 ## 2. 领域与协议
 
@@ -145,25 +125,21 @@ flowchart TB
 | `writePending` / `mayHaveWritten` | 当前未核实的写入意图 / 本次执行曾可能产生写入；后者不会因单个动作完成就清除 |
 | `reconciliationOf` | 新的只读运行与原 `unknown` 运行的关联，不是重新执行原写操作 |
 
-实际协议常量为 `PROTOCOL_VERSION = 1`。配对、领取等入口检查版本，设备类型使用 `protocolVersion`；并非每个对象都含 `protocol_version`。`RunEvent` 本身不含 generation/epoch，epoch 位于上传请求，generation 位于本机 IPC。
+实际协议常量为 `PROTOCOL_VERSION = 3`。配对、领取等入口检查版本，设备类型使用 `protocolVersion`；并非每个对象都含 `protocol_version`。`RunEvent` 本身不含 generation/epoch，epoch 位于上传请求，generation 位于本机 IPC。
 
 时间规则的底层表示只有 `manual`、`once`、`cron`；每日/每周由创建对话转换成 cron，确认卡展示可读时间并允许详细编辑。默认时区为 `Asia/Shanghai`。共享限额为自动执行 5 分钟/40 动作、协助等待 5 分钟、心跳 15 秒、租约 90 秒、迟到 1 小时；自动执行计时扣除人工等待。全机并发 1 由云端领取及 Main/Host 守卫实现。
 
-### 共享界面与任务草稿
+### 界面与任务草稿
 
-交互约定：网站与 Windows 客户端的 AI 交互以 [shadcn/ui AI Elements](https://ui.shadcn.com/docs/ai-elements) 为准，组件选用、状态呈现和验证要求统一维护在 [AGENTS.md 的 UI 交互基准](../AGENTS.md#ui-交互基准)。“Codex 式”仅作为整体布局描述。当前共享入口已覆盖 Chat、Message、Prompt Input、Suggestion、Model Selector、Tool 和 Confirmation 的组合；没有接通的附件、流式输出、思考强度或停止生成能力不展示控件，具体检查范围见 UI-REVIEW。
+网站 AI 交互规则见 [AGENTS.md](../AGENTS.md#ui-专项要求)，实际检查见 [UI-REVIEW](UI-REVIEW.md)。共享组合位于 `packages/ui`，网站用 `App`，Windows 用独立 `ExecutorApp`；共享主题不意味着桌面拥有任务编辑和聊天入口。
 
-`app.tsx` 负责任务侧栏、导航、主题及宿主状态；`chat-parts.tsx` 组合官方 Message/MessageScroller/Bubble/InputGroup/Marker，`model-selector.tsx` 按实际能力呈现可选配置。`conversation.tsx` 协调消息、轮询与绑定协助；`run-report.tsx` 通过 Trace/CodeBlock 呈现实际事件、证据与结果，`challenge-panel.tsx` 通过 Confirmation 的 Item 组合呈现操作与选择。网站与桌面使用同一套默认 shadcn/ui 中性色 tokens，桌面能力仍通过 Transport/Preload/Main。
+`task-compose.tsx` / `use-thread.ts` 经 `/threads`、`/threads/:id/messages` 持久化多轮草稿；`task-summary.tsx` 展示确认卡，`task-editor.tsx` 只修改草稿。确认后才创建/更新任务或试运行，保留模型版本、授权、能力和幂等校验。旧 `/tasks/compose`、`/tasks/draft` 与任务 chat 入口已移除。
 
-`task-compose.tsx` 持有当前草稿和短期补全对话。`POST /tasks/compose` 使用统一 `generate`，缺网址直接追问，信息不足返回 `task: null`；模型新增站点必须出现在用户输入或当前草稿中。草稿不落库、不排队。`task-summary.tsx` 展示确认卡，`task-editor.tsx` 仅修改草稿。确认后才调用原有创建/版本更新路由，保留能力、账号、授权和试运行校验。创建失败保留相同 requestId 与载荷，版本更新冲突要求核对新版本。旧 `/tasks/draft` 保留兼容。
-
-运行对话和修改配置是不同操作；普通聊天不修改任务。敏感协助回复不回显为消息，步骤或版本切换时清空输入；UI 禁止离线、已回复、不支持或过期挑战的提交，最终绑定校验仍由后端负责。
-
-确认按钮仍向 `/challenges/:id/reply` 提交显式确认文本及原绑定；拒绝按钮向 `/runs/:id/cancel` 请求取消整次运行，不伪造协助消费结果。扫码完成只是请求实际网站核查。已提交但快照尚未更新时，当前协助按钮保持禁用；过期计时会主动清空输入。轮询使用请求代次隔离，发送前启动的旧查询不能覆盖本轮对话结果。
+`conversation.tsx` 处理历史、当前回合和绑定协助；`run-report.tsx` 展示真实事件与选中运行的报告。敏感回复不回显，过期或绑定切换清空输入；离线、已回复、过期或不支持的挑战不能提交。批准提交显式确认及原绑定，拒绝取消整次运行；扫码完成仍要求实际网站复核。请求代次防止旧查询覆盖新状态。
 
 ## 3. 任务执行与事实顺序
 
-1. 用户描述任务，模型产生可编辑任务卡。云端校验模型能力、网站及授权，创建待验证任务和试运行；成功核验且任务版本仍匹配后才开启周期调度。
+1. 用户描述任务，模型产生可编辑任务卡；用户明确确认后，云端校验模型能力、网站及授权，创建待验证任务和试运行；成功核验且任务版本仍匹配后才开启周期调度。
 2. Cron 扫描到期任务。幂等键避免重复排队，迟到窗口只补最近一次；存在未结束或 `unknown` 运行时不继续安排同任务的周期运行。
 3. 桌面主动领取。D1 batch 将运行租约、设备领取记录和账号锁协调写入；同一领取请求可幂等返回，设备忙碌或账号被锁时不分配。
 4. Main 保存 claimed 检查点，创建带 generation 的 utilityProcess，启动专用浏览器并载入账号 Profile。
@@ -195,7 +171,7 @@ sequenceDiagram
 
 `store.finish`、租约超时和动作意图共同维护写入不确定性。只读核查领取时转移原账号锁；成功可将原 `unknown` 标记 `succeeded/already_done`，未核实则把锁还给原运行。
 
-当前 `assertTransition` 只有定义，没有生产调用，且把 `unknown` 声明为无后继。它与实际只读核查成功的转移不一致，**不能当作权威状态机直接接入**。
+无调用且与只读核查冲突的旧 `assertTransition` 状态表已删除。实际转移仍由 store/runner/user 的事务条件共同守卫，尚未集中为单一状态机。
 
 ## 4. 所有人工协助共用对话通道
 
@@ -213,7 +189,7 @@ flowchart LR
 
 状态为 `pending → answered → consuming → consumed`，超时或运行结束进入 `expired` 并清理。创建、回复、消费、确认分别校验 live run、步骤、版本、租约和有效期；重复交付必须匹配同一个 deliveryId，不能换一次编号重复填写。
 
-验证码由模型给出原文区间，程序从用户原始字符串截取，保留前导零、大小写和字符；敏感回复不写普通聊天。扫码图片短期放私有 R2；“已扫码”或“已确认”只允许继续核查，不代表站点已经通过。`unsupported` 明确终止该协助路径，不提供远程桌面或本地浏览器接管。
+验证码由模型给出原文区间，程序从用户原始字符串截取，保留前导零、大小写和字符；敏感回复不写普通聊天。扫码图片短期放加密 Evidence DO；“已扫码”或“已确认”只允许继续核查，不代表站点已经通过。`unsupported` 明确终止该协助路径，不提供远程桌面或本地浏览器接管。
 
 approval 还绑定具体操作摘要与目标事实，防止用户确认后页面变化导致批准另一项动作。Cloud 拥有协助与敏感内容生命周期，Executor 拥有填写及站点观察；这条 seam 需要保留。
 
@@ -241,7 +217,7 @@ flowchart LR
 
 模型名不限制 GPT，默认 Chat Completions，可选 Responses。连接、工具调用、结构化输出是必需能力，图像输入独立测试。支持 JSON Schema 时使用严格输出；仅 JSON 模式时本地校验；格式修复预算最多一次。用量来自响应，没有 token 或价格时显示未知。
 
-结构化输出已统一到 `models.generateStructured`：能力选择、JSON 解析、本地校验及一次修复预算由同一 module 拥有。`generate` 是 Zod adapter；Stagehand 路由预先编译 Ajv Schema 后调用同一 interface。两次调用保持能力所选模式及模型版本，传输/未知结果错误在校验 catch 外传播，不触发格式修复。每次调用仍经 invoke、美国 alarm、performInference 记录实际用量。
+结构化输出已统一到 `models.generateStructured`：能力选择、JSON 解析、本地校验及一次修复预算由同一 module 拥有。`generate` 是 Zod adapter；Stagehand 路由使用 `stagehandSchema` 的 Zod 校验调用同一 interface。两次调用保持能力所选模式及模型版本，传输/未知结果错误在校验 catch 外传播，不触发格式修复。每次调用仍经 invoke、美国 alarm、performInference 记录实际用量。
 
 删除了 `packages/model` 中仅用于测试的 `structured`。`tests/structured-production.test.ts` 直接调用 Hono plan/Stagehand 路由，经过真实 egress 与 EgressState；仅替换平台存储和外部 HTTP，覆盖两种协议、两种输出能力、修复预算、版本固定、用量、地区不可用及错误不重放。这是生产路径的隔离测试，不是新的真实云端验收。
 
@@ -250,92 +226,43 @@ flowchart LR
 | 存储/位置 | 权威范围与保留事实 |
 | --- | --- |
 | D1 | 任务版本、运行快照、租约、账号锁、事件、挑战、设备、模型配置/用量和证据索引。密钥、账号凭据和敏感回复加密保存 |
-| Durable Object storage | 单次模型出站的短期加密请求、运行事实与分块结果；不承担任务调度 |
-| 私有 R2 | 人工协助所需短期图片等证据，由元数据约束访问与清理 |
-| 本地 SQLite | `config/cache/journal/outbox`；WAL、FULL、busy timeout，当前 schema version 1，拒绝读取未来版本作为可写库 |
+| SQLite Durable Objects | 请求分片、Scheduler 唤醒、AI 回合、模型出站、短期加密证据及休眠通知；任务/租约事实仍在 D1 |
+| 本地 SQLite | `config/cache/journal/outbox`；WAL、FULL、busy timeout，当前 schema version 3，拒绝读取未来版本作为可写库 |
 | Windows safeStorage | Main 持有的设备令牌加密；Renderer 只读脱敏状态 |
 | Chromium Profile | 按账号隔离的站点会话；不上传到云端或诊断包 |
 
-完整 D1 结构在 `apps/cloud/migrations/0001` 至 `0004`。`schema.ts` 仅有 tasks/devices 的 Drizzle 声明，`user.ts` 的部分读取实际使用 Drizzle；大部分状态修改使用直接 D1 SQL。不能宣称 ORM 已统一管理所有表或迁移。
+完整 D1 结构以 `apps/cloud/migrations/` 的 SQL 迁移为准（目前 0001 至 0008）。`schema.ts` 仅保留实际查询使用的 tasks 声明，认证表另在 `auth-schema.ts`，`user.ts` 的部分读取实际使用 Drizzle；大部分状态修改使用直接 D1 SQL。不能宣称 ORM 已统一管理所有表或迁移。
 
-网站由 Access JWT 的 issuer、audience 与 owner 邮箱校验身份。桌面打开系统浏览器完成配对，取回可吊销设备令牌；云端校验哈希、撤销状态和协议版本。公开的配对开始/轮询入口另有有效期、轮询凭据和数量限制，不等于公开设备访问。
+网站通过 Better Auth 会话与已验证邮箱校验身份，服务端实施用户归属与管理员角色隔离。桌面打开系统浏览器完成配对，取回可吊销设备令牌；云端校验哈希、撤销状态和协议版本。公开的配对开始/轮询入口另有有效期、轮询凭据和数量限制，不等于公开设备访问。
 
 Main 控制应用生命周期，关窗口隐藏至托盘，退出停止领取并清理自有进程。浏览器恢复清理检查可执行文件和 Profile 的命令行身份，不能仅凭旧 PID 杀进程。安装环境下原生资源路径使用 `realpathSync.native` 处理 MSIX 文件重定向。
 
-Stagehand 固定 4.3.0，Executor 打包保持原生动态 import。Forge Squirrel 生成 Windows x64 安装包，Electron 内置运行时；浏览器/扩展在 ASAR 外，构建前验证清单与哈希。首版升级走新安装包，尚无自动更新。
+Stagehand 固定 4.3.0，Executor 打包保持原生动态 import。Forge Squirrel 生成 Windows x64 安装包，Electron 内置运行时；浏览器/扩展在 ASAR 外，构建前验证清单与哈希。0.4.7 起实现确认下载与空闲更新；发布通道和真实升级验收状态见验收台账。
 
-## 7. 当前测试证据与缺口
+## 7. 验证与交付边界
 
-详见 [ACCEPTANCE.md](ACCEPTANCE.md)。下表区分实际测试 surface，避免把相邻路径的通过当作生产行为的证明。
+测试数量、版本与现场证据统一见 [ACCEPTANCE](ACCEPTANCE.md)，不在架构文档重复维护阶段统计。D1 的 Node SQLite stand-in 不证明真实 D1 并发；EgressState 的隔离测试不证明实际地区；模型能力通过不等于浏览器任务闭环。
 
-| 验证 | 已有证据覆盖 | 不能据此证明 |
-| --- | --- | --- |
-| 68 项源码测试 | 协议、状态/幂等、策略、协助、出站；实际 plan/Stagehand/草稿/聊天/验证回复路由的修复与美国出站；多轮确认与创建幂等；严格 Schema 投影和 JSON 指令；单次 RPC 等待及超时 | 所有故障交错或整机故障都已覆盖 |
-| D1 stand-in | `tests/helpers.ts` 用 Node SQLite 加载真实迁移，并模拟 prepare/batch | Cloudflare D1 的真实并发、网络、部署一致性 |
-| EgressState 测试 | 内存 storage adapter、alarm 状态和中断恢复；单次提交等待、终态确认失败不丢结果、90 秒超时；本地 jurisdiction 不支持时拒绝旁路 | Cloudflare 的实际 I/O 上下文行为、真实请求地理位置或提供方可用性 |
-| 模型协议测试 | Chat / Responses 转换、未知用量、错误分类、重定向拒绝 | 非 GPT 实际闭环；隔离测试不能证明云端网络可用 |
-| 已记录真实模型能力 | `gpt-6-luna / Responses` 的连接、工具、严格 Schema；独立出站 trace 美国地区 | 真实浏览器任务成功、真实 Chat、非 GPT 或图像能力 |
-| 打包及安装目录 smoke | 实际 Electron utilityProcess 加载 Stagehand/内置 Chrome，自建站四类操作和 `0012aB` 原样输入 | `runtime.execute`、ExecutorHost、云端调度及恢复的完整流程 |
-| UI 检查 | 共享 App 演示 Transport 下的桌面/手机/窄窗口、创建、错误恢复、协助和默认主题，见 UI-REVIEW | 真实模型联调、桌面 IPC、所有原生交互现场验收 |
-
-smoke 走 `executor/entry.ts` 中独立手写流程，没有调用 `RuntimePort` 对应的生产 `execute`。`RuntimePort` 目前只有 entry 中的生产 adapter；不能把 smoke 计作第二个 adapter。
+打包 smoke 使用 `executor/entry.ts` 的独立流程，不调用生产 `runtime.execute` 或 ExecutorHost。生产执行与恢复另有 `executor-runtime.test.ts` / `executor-host.test.ts` 的隔离故障 adapter；这些测试也不替代真实整机故障、安装和长期观察。
 
 Windows 扩展加载由 Main 的 `extension.ts` 管理：正式启动与 smoke 都将 ASAR 外的 Stagehand 扩展逐文件读取，按文件名与 SHA-256 生成内容目录，写入应用拥有的 runtime-extensions，完整核对后再传给独立 Executor。缓存缺失时原子准备，已存在但内容被改动或出现额外文件时拒绝加载，符号链接不作为扩展文件接受。此 adapter 处理安装目录下 Chromium 将内容脚本加载为空的现场问题，不修改 SDK、Chromium 权限或模型/页面工具边界。原安装扩展的固定公钥仍用于 CDP origin 限制。
 
 自检报告记录实际客户端版本、程序/资源/扩展路径与 ASAR 哈希；验收清单同时检查报告新鲜度、版本、构建 ASAR 和实际安装文件，安装目录来自报告，不按 LOCALAPPDATA 猜测。`sourceDirty` 标记生成清单时工作区是否含未提交改动，`sourceCommit` 仍只是当时 Git 基线，不能把未提交构建冒充干净 tag 构建。原始清单含本机路径，仅供本地验收。
 
-仍待执行：真实 GPT/非 GPT 任务闭环、真实 Chat、扫码/外部确认、提交前后强杀与断网、休眠/锁屏恢复、干净 Windows 安装/升级/卸载、中文及空格安装路径和连续七天观察。没有源码事实可以替代这些现场证据。
+## 8. 架构候选与保留决定
 
-## 8. 架构改进候选（未实施）
+以下采用 codebase-design 的 module、interface、depth、seam、adapter、leverage 与 locality 术语。候选不代表授权重构；现有改动及测试不能被描述成整体收敛已经完成。
 
-以下使用技能中的 module / interface / implementation / depth / seam / adapter / leverage / locality 定义。先收拢重复知识，再判断是否需要新抽象；不把文件短或转发少自动判为 shallow。A 的实际 implementation 见第 5 节；B/C/D 不定义新方法、类型或调用签名。
+| 候选 | 当前事实与 deletion test | 状态及后续验证 |
+| --- | --- | --- |
+| 结构化模型输出 module | 修复预算、校验和错误传播已集中到 `generateStructured` interface；删除重复循环提高 locality，调用方复用产生 leverage | 已实施；保留唯一出站 seam 和生产路由测试 |
+| 运行状态与账号锁 module | store/runner/user 共同修改状态和锁；删除 store 会使事务知识扩散到调用方，已有 depth 应保留 | Worth exploring；收拢规则前核对取消/超时/终结交错与只读核查锁转移，复用 D1/SQLite adapter |
+| 执行器恢复 module | Host recover/retire 仍解释 runtime 检查点；删除 Journal 会扩散 SQLite implementation | unknown 恢复与 finish outbox 幂等已修复，故障 adapter 已使用；整体收敛仍为候选，保持进程 seam 和代次/租约守卫 |
+| 人工协助生命周期 module | 映射/原文截取在 challenges，回复/消费/清理跨 user/runner/store；删除 exactReply 会重复原文校验 | Worth exploring；云端生命周期可改善 locality，页面填写保留在 Executor；验证解析时过期、消费后崩溃与批准目标变化 |
 
-### A. 结构化模型输出 module — 已实施（以下保留原分析依据）
+`packages/model/src/schema.ts` 仅投影提供方支持的严格输出语法，原始约束仍在 `generateStructured` 校验，不能把投影后的宽松 Schema 当作任务授权校验。
 
-- **事实**：`models.ts:118` 与 `runner.ts:206` 有两套生产修复循环；`packages/model/src/index.ts:231` 的第三套仅供测试。
-- **深化方向**：集中能力模式、解析、校验、一次修复预算及错误结果；生产调用和测试经过同一 interface，Zod/Ajv 差异留在 implementation 内，保留现有出站 seam。
-- **Deletion test**：删除测试专用 `structured` 不影响生产，说明它未提供生产 leverage；须先让实际生产 interface 的行为被测试，再替换这套重复 implementation。
-- **现有 adapter**：真实 fetch 与测试 fetcher；ModelEgress 与测试出站 adapter。Chat/Responses 是当前函数内部两条协议 implementation，不虚构成两个 adapter 类。
-- **收益与验证**：修复政策获得 locality，多个调用方获得 leverage，增加 depth；覆盖无效 JSON、Schema 不符、修复次数、输出模式、用量及未知结果不重放，替换偏离生产的测试。
-
-### B. 运行状态与账号锁 module — Worth exploring
-
-- **事实**：`store.ts` 的领取/终结/超时，与 `runner.ts` 的意图/协助、`user.ts` 的取消/核查共同修改状态和锁；声明中的状态图未参与执行。
-- **深化方向**：深化现有 store module，将运行、写入不确定性、账号锁和只读核查规则收回同一 interface；保留 D1 原子操作和快照语义。
-- **Deletion test**：删除 store 只会把复杂度散回路由，说明已有 depth；它不是需要删除的 shallow 转发。
-- **现有 seam / adapter**：D1 与 SQLite stand-in 已支持替换依赖；不新增只有一个实现的通用存储 module。
-- **收益与验证**：状态规则提升 locality，各路由获得 leverage；保留行为测试，补终结/超时/取消交错和核查锁转移。先澄清实际状态语义，不能直接接入现有 `assertTransition`。
-
-### C. 执行器恢复 module — 局部可靠性修复与测试已落地，整体收敛仍为候选
-
-2026-11-04 更新：下列原分析中的 recover unknown 差异已修复，终结与恢复统一使用 finish outbox 键；正式 ExecutorHost/execute 已引入并使用进程/SDK/网络故障 adapter，相关测试见本文件顶部与验收台账。没有新建通用 Journal 转发层，也没有把完整恢复语义集中为新 module。
-
-- **事实**：runtime 产生检查点，`ExecutorHost.recover` 和 `retire` 分别解释，Journal 接收通用载荷。`retire` 识别 `payload.status === "unknown"`，`recover` 未做同一判断；云端写入事实通常再次保守纠正，不能据此直接断言已误放锁。
-- **深化方向**：集中检查点语义、终结事实保留、恢复判断和 outbox 规则；保留 Main/utilityProcess seam、generation/lease 守卫和先停止本机进程的顺序。
-- **Deletion test**：删除 Journal 会扩散 SQLite implementation；需要补足的是恢复含义的 depth，不是再添加通用存取转发。
-- **adapter 状态**：RuntimePort 只有一个生产 adapter；故障注入 adapter 是待建设建议，不能假称已有测试 seam 被使用。
-- **收益与验证**：恢复知识获得 locality，同一 interface 覆盖停止/重启/异常带来 leverage；验证提交后强杀、终结事实排队后崩溃、离线停止及旧代次消息。保留 smoke 的打包验证用途。
-
-### D. 人工协助生命周期 module — Worth exploring
-
-- **事实**：`challenges.ts` 只有映射与原文截取；回复、加密、消费、ACK、清理在 user/runner/store，多轮填写与复核在 runtime。
-- **深化方向**：集中云端 HumanChallenge 的状态、绑定和敏感内容清理；网站填写留在执行 implementation。运行状态通过候选 B 的 module 协作，避免双重拥有相同规则。
-- **Deletion test**：删除映射只会移动字段，删除 exactReply 会重复原文校验；继续拆小函数不能自动增加整段流程的 depth。
-- **现有 seam / adapter**：复用 D1/SQLite 与模型出站 adapter；网页回复者与设备消费者是不同参与者，不是同一 interface 的两个 adapter。
-- **收益与验证**：协助约束获得 locality，新验证类型获得 leverage；保留已有绑定/消费行为测试，补解析期间过期/取消、交付后崩溃、确认目标变化与扫码实际复核。
-
-A 已完成；C 的具体缺陷与故障测试已实施。B/C/D 的整体 module 收敛仍为设计候选，不能将本轮修复描述为三个架构重构全部完成。
-
-后续真实联调补充：`packages/model/src/schema.ts` 只转换发送给兼容服务的严格输出 Schema：oneOf 转 anyOf、const 转 enum、去除未支持的 URI format 和字符串长度限制等；原始 Zod/Ajv 约束仍在 `generateStructured` 校验，校验失败最多修复一次。JSON 模式首个请求明确包含 JSON 指令及完整原始 Schema。不能把投影后的宽松约束当作任务授权校验。
-
-## 9. 应保留的设计与文档维护
-
-- 共享 UI 的 Transport seam 有两种实际 adapter；无需为减少文件数而合并宿主。
-- EgressState 已集中持久化 running、加密分块、清理及未知结果不重放，具有 depth；ModelEgress 虽薄，承担平台 adapter 职责，不因方法少而删除。
-- 云端/本机、Main/utilityProcess、授权策略/不可信页面之间的 seam 承担安全与恢复责任，应明确保留。
-- 已确认的产品选型不在本轮重新争论；待选建议不写成 ADR 或现行强制规范。
-
-协作与技能入口见 [AGENTS.md](../AGENTS.md)。未来行为变更同步本文；证据变动同步验收记录。本文的文件位置和行号是分析快照，后续以符号及实际源码为准。
+应保留的平台 adapter：Web Transport、命名 Preload、ModelEgress、RelayChatModel、D1Checkpointer、D1MemoryStore 和 Journal。删除它们会把宿主、地区、加密或持久化知识扩散到调用方；文件短不等于冗余。云端/本机、Main/utilityProcess、可信策略/不可信页面的 seam 继续承担安全与恢复责任。
 
 ## 2026-11-03 创建对话的无协议域名识别
 

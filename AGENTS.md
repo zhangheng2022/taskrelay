@@ -26,11 +26,11 @@ Git 提交信息使用中文：标题和正文均用中文描述改动，代码�
 - **统一协助**：验证码、扫码、外部确认、高影响操作均通过任务对话，不新增本地浏览器接管入口。回复原文截取须保留前导零和大小写，绑定运行、步骤、版本、租约和消费编号，并经后端校验；填写或收到“已完成”后仍核查站点状态，敏感回复不进入普通消息历史。
 - **默认限额**：全机并发 1、心跳 15 秒、租约 90 秒、自动执行 5 分钟/40 动作、人工等待 5 分钟、迟到窗口 1 小时且只补最近一次。常量在 `packages/contracts/src/index.ts`；领取及 Main/Host 共同守卫并发。
 - **窗口与退出**：关主窗口保留托盘，明确退出时停止领取并关闭自有进程；自启动默认关闭，UI 重载不得重启任务。
-- **状态变更**：不要直接接入未使用的 `assertTransition`；先核对实际转移与只读核查行为，候选及实施状态见架构文档。
+- **状态变更**：以生产状态转移与只读核查行为为准；`unknown` 可经核查完成，不得套用禁止其后续转移的简化状态表。候选及实施状态见架构文档。
 
 ### 模型与出站
 
-- **唯一生产链路**：所有生产模型请求经过 `models.invoke → egress → ModelEgress` 的美国 jurisdiction 与 alarm，再调用提供方；Renderer、Main、Executor 和普通请求处理均不得增加直连旁路。结构化输出统一使用 `models.generateStructured`，经 `invoke` 出站；Zod/Ajv 仅负责校验适配。
+- **唯一生产链路**：所有生产模型请求经过 `models.invoke → egress → ModelEgress` 的美国 jurisdiction 与 alarm，再调用提供方；Renderer、Main、Executor 和普通请求处理均不得增加直连旁路。结构化输出统一使用 `models.generateStructured`，经 `invoke` 出站；Zod 仅负责校验适配。
 - **单次 RPC 等待**：`submitAndWait` 合并提交和等待，循环留在对象内部。alarm 期间不能再次 RPC 轮询同一对象，避免新访客请求替换 I/O 上下文；取得终态结果后才 ack。
 - **本地限制**：不得绕过 workerd 的 `MODEL_REGION_REQUIRES_DEPLOYMENT`，或改回访客请求链。测试可用隔离 adapter，真实模型联调与地区证据必须来自部署环境。
 - **兼容与版本**：模型名自由输入，不限定 GPT；保留 Chat Completions 与 Responses。缺少必需能力时阻止使用，不暗换模型或提供方；运行使用任务快照中的模型配置版本。

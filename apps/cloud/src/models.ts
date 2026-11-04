@@ -230,7 +230,6 @@ export async function generate<T>(
   messages: Inference["messages"],
   runId: string | null = null,
   operationId?: string,
-  graphId?: string,
 ) {
   const result = await generateStructured(
     env,

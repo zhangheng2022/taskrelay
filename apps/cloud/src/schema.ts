@@ -9,10 +9,3 @@ export const tasksTable = sqliteTable("tasks", {
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });
-export const devicesTable = sqliteTable("devices", {
-  id: text("id").primaryKey(),
-  name: text("name").notNull(),
-  lastSeen: text("last_seen"),
-  revoked: integer("revoked").notNull(),
-  protocolVersion: integer("protocol_version").notNull(),
-});

@@ -9,7 +9,7 @@
 
 ## 当前状态
 
-- **开发验收阶段**：客户端 **0.4.6**，尚未发布 GitHub Release。版本记录不代表已有稳定安装包；发布后可从 [Releases](https://github.com/zhangheng2022/taskrelay/releases) 获取。
+- **开发验收阶段**：客户端源码为 **0.4.7**；验收台账最近确认的系统安装为 **0.4.6**，0.4.7 尚待安装与真实升级验收。尚未发布 GitHub Release。版本记录不代表已有稳定安装包；发布后可从 [Releases](https://github.com/zhangheng2022/taskrelay/releases) 获取。
 - 工作空间：[tr.zhangheng.eu.org](https://tr.zhangheng.eu.org)，公开注册当前关闭。原 `taskrelay.zhangheng.workers.dev` 地址继续兼容已配对客户端。
 - Windows 是独立执行器；任务编辑、聊天、历史与模型设置在网站完成。0.4.7 起支持版本检查、新版提醒、确认下载与空闲自动安装；更新网络经过 Cloudflare，客户端不直连 GitHub。旧版首次启用需安装新包，发布通道状态见验收台账。
 - 已有源码测试、开发机打包及部分真实任务证据。干净 Windows、更多模型提供方、完整故障闭环和连续观察仍需补齐，以 [验收台账](docs/ACCEPTANCE.md) 为准。
