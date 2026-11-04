@@ -1,5 +1,14 @@
 # TaskRelay 验收记录
 
+## 2026-11-04 第二批 Windows 更新交付验收（进行中）
+
+- 首批修复及记录已提交 `08eb9b8`；0.4.9 候选 `4d06c40` 从干净源码构建，已推送 master。make、packaged smoke、类型检查、11 项更新相关测试、仓库检查通过；候选不能直接视为自动更新通过。
+- 0.4.8 原生窗口关闭后主进程仍存活，MainWindowHandle=0；通过系统 Explorer 执行实际桌面 `TaskRelay.lnk` 后唤回同一系统进程。最初自动化截图错误，显式 Raise 恢复后才取证，未把错误截图记为通过。
+- 安装前从物理系统 Roaming 保存 SQLite 一致备份、Local State 和 profiles 到忽略目录 `.cache/acceptance-049/private-backup/`；不输出或上传敏感内容。schema=3、historyEpoch=3、outbox/unfinished=0。暂时开启暂停领取和登录启动，供升级保留验证，验收后须恢复原偏好。
+- 系统 Explorer 运行本次 Setup，0.4.8 → 0.4.9 跨版本安装完成，Main PID 从 20476 变为 30764，进程路径为系统 `AppData/Local/TaskRelay/app-0.4.9/TaskRelay.exe`；构建/系统 ASAR 均为 `62c70c9afe16a94426bc577f6ddd72ecf9cec7e2cf6ead734a8a6a66613d0ae9`。暂停领取保留。
+- 现场发现登录启动显示错误：注册表中本应用条目仍为稳定 `TaskRelay/TaskRelay.exe`，系统批准未禁用，但 0.4.9 窗口显示关闭。Electron 45.2.1 隔离原生探针证实同一路径仅大小写不同即可使 openAtLogin=false，而 launchItems 与 executableWillLaunchAtLogin 仍正确为开启；不能只凭 openAtLogin 作系统启动状态。原生源码依据：[Electron Windows 登录项实现](https://github.com/electron/electron/blob/v45.2.1/shell/browser/browser_win.cc)。
+- 修复接入 Main 的正式 `loginSettings`，按本用户、本应用、无额外参数的 launchItems.enabled 读状态，保护系统禁用偏好与已有稳定入口。新增 4 项生产模块回归；版本提升 0.4.10，不用同版本包替换已安装 0.4.9。最终安装、原生复验和发布候选证据待补充。
+
 ## 2026-11-04 第一批业务闭环验收（已完成：本机与虚构站范围）
 
 - 结论：修复后人工信息与批准、拒绝取消、提交后进程中断与只读核查、一次性与周期真实调度均通过。旧 unknown 的失败核查和修复前失败如实保留，不能把本轮完成扩展为全量预览版发布验收。

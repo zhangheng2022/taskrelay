@@ -27,6 +27,7 @@ import { prepareExtension } from "./extension";
 import { ExecutorHost } from "./executor-host";
 import { DesktopUpdater } from './updater';
 import { RunnerPoller } from './runner-poller';
+import { loginSettings } from './login';
 import { releaseSchema } from '../../../../packages/contracts/src/updates';
 import { cloudUrlSchema } from "../shared/ipc";
 import type {
@@ -59,6 +60,7 @@ let journal: Journal,
 let poller: RunnerPoller;
 let updater: DesktopUpdater;
 let updatePrompt = false;
+let login: ReturnType<typeof loginSettings>;
 function loginLaunchPath() {
   const stub=path.resolve(process.execPath,'../../TaskRelay.exe');
   return app.isPackaged && existsSync(path.resolve(process.execPath,'../../Update.exe')) && existsSync(stub)
@@ -77,7 +79,7 @@ function status(): DesktopStatus {
     online: cloud.online,
     activeRunId: host.active,
     version: app.getVersion(),
-    autoStart: app.getLoginItemSettings({path:loginLaunchPath()}).openAtLogin,
+    autoStart: login.enabled(),
     error: lastError,
   };
 }
@@ -194,10 +196,7 @@ function registerIpc() {
     notify();
   });
   handle("autoStart", (v: unknown) => {
-    app.setLoginItemSettings({
-      openAtLogin: z.boolean().parse(v),
-      path: loginLaunchPath(),
-    });
+    login.setEnabled(z.boolean().parse(v));
     notify();
   });
   handle("stop", () => host.stop(true));
@@ -340,13 +339,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
         result:(connected,error)=>{online=connected;lastError=error;},
         settled:()=>{notify();updater.tryInstall();},
       });
-      // Preserve an existing login preference while moving off a version-specific EXE.
-      const legacyLogin=app.getLoginItemSettings();
-      if(legacyLogin.openAtLogin)app.setLoginItemSettings({openAtLogin:false});
-      app.setAppUserModelId('com.squirrel.TaskRelay.TaskRelay');
-      if(legacyLogin.openAtLogin)app.setLoginItemSettings({
-        openAtLogin:true,path:loginLaunchPath(),enabled:legacyLogin.executableWillLaunchAtLogin,
-      });
+      login = loginSettings(app, loginLaunchPath());
       updater = new DesktopUpdater({
         version:app.getVersion(),
         supported:process.platform==='win32' && process.arch==='x64' && app.isPackaged &&

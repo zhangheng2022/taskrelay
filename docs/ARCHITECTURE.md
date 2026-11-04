@@ -10,6 +10,7 @@
 
 ## 2026-11-04 执行器版本更新
 
+- Main 的 `loginSettings` 统一读取、迁移与修改登录启动项。读取 Electron 针对稳定启动器返回的 `launchItems`，仅接受本用户、固定 AppUserModelId、无额外参数且 enabled 的条目；不依赖 `openAtLogin` 对注册命令的大小写敏感比较，也不把系统已禁用的条目展示为开启。旧入口迁移保留启用偏好，已有稳定条目优先，默认不新增启动项。
 - Main `DesktopUpdater` 管理版本元数据、确认后的下载、哈希校验、等待与本地 Squirrel 安装。Renderer 只展示 `DesktopUpdateStatus`，Preload 只增加命名检查/下载入口；Main 原生确认框绑定当前版本，模型和任务网页不能触发更新或指定下载地址。
 - 所有更新网络固定经过 CF 的 `/api/updates/windows-x64`。Worker 在进入业务 DO 前路由公开发布元数据和固定资产的流式代理；无数据库变更、R2 或模型请求。发布目录保留版本、大小及 SHA-256/SHA-1，客户端拒绝降级、预发行/不合法版本、重定向和校验失败。源文件在 CF 代理内限定到本仓库 Release 及 GitHub 资产域名；普通用户输入不能改变源地址。
 - Main 下载校验后才给 Squirrel 一个应用自有本地 feed；因此 Squirrel 不读取远程 RELEASES、不直连 GitHub，也不会在活动任务期间提前解包/应用更新。安装只在同步门闩关闭新领取后启动。`RunnerPoller` 持久化领取 requestId，丢失响应须按原编号解决；等待中的 connect/flush 返回后重新检查更新门闩。
