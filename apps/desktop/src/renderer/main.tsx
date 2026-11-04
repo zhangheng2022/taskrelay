@@ -1,11 +1,12 @@
+import "../../../../packages/ui/src/styles.css";
 import { createRoot } from "react-dom/client";
-import { App } from "../../../../packages/ui/src/app";
+import { ExecutorApp } from "../../../../packages/ui/src/executor-app";
 import type { Transport } from "../../../../packages/contracts/src/index";
 declare global {
   interface Window {
-    taskrelay: Transport;
+    taskrelay: NonNullable<Transport['desktop']>;
   }
 }
 createRoot(document.getElementById("root")!).render(
-  <App transport={window.taskrelay} />,
+  <ExecutorApp executor={window.taskrelay} />,
 );

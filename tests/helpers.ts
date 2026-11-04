@@ -8,6 +8,9 @@ export function testDb() {
     "0002_conversations.sql",
     "0003_reconciliation.sql",
     "0004_write_recovery.sql",
+    "0005_multiuser.sql",
+    "0006_ai.sql",
+    "0007_free_runtime.sql",
   ])
     sql.exec(
       readFileSync(
@@ -26,8 +29,12 @@ export function testDb() {
       const row = sql.prepare(this.query).get(...this.args) as any;
       return row ? (column ? row[column] : row) : null;
     }
+    async raw() {
+      const stmt=sql.prepare(this.query);stmt.setReturnArrays(true);
+      return stmt.all(...this.args);
+    }
     execute() {
-      if (/^\s*(SELECT|PRAGMA|WITH)/i.test(this.query))
+      if (/^\s*(SELECT|PRAGMA|WITH)/i.test(this.query) || /RETURNING/i.test(this.query))
         return {
           success: true,
           results: sql.prepare(this.query).all(...this.args),

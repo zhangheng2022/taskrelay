@@ -21,7 +21,7 @@ export async function productionModelFixture(
   await enqueue(db, task, "model_fixture");
   await db
     .prepare(
-      "INSERT INTO devices(id,name,token_hash,protocol_version) VALUES(?,?,?,1)",
+      "INSERT INTO devices(id,name,token_hash,protocol_version) VALUES(?,?,?,3)",
     )
     .bind("device_test", "fixture", await hash(token))
     .run();
@@ -111,16 +111,18 @@ export async function productionModelFixture(
     replies: (...values: (string | Error | Response)[]) => {
       replies = values;
     },
-    async request(path: string, body: unknown) {
+    async request(path: string, body: unknown, method='POST') {
+      if(path.endsWith('/stagehand')&&body&&typeof body==='object')body={requestId:'sdk_test',...body};
+      if(path.endsWith('/plan') && body && typeof body==='object' && 'observation' in body)body={...body,stepId:'test_step',observationId:await hash(String(body.observation))};
       const response = await app.request(
         "http://127.0.0.1" + path,
         {
-          method: "POST",
+          method,
           headers: {
             "content-type": "application/json",
-            Authorization: `Bearer ${token}`,
+            ...((path.startsWith("/api/runner/")||path.startsWith("/api/device/"))?{"x-taskrelay-protocol":"3", Authorization: `Bearer ${token}`}:{ }),
           },
-          body: JSON.stringify(body),
+          body: method==='GET'?undefined:JSON.stringify(body),
         },
         env,
       );

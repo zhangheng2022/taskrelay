@@ -44,7 +44,7 @@ const eventNames: Record<string, string> = {
   failed: "执行失败",
 };
 const summaries: Record<TaskRun["status"], string> = {
-  queued: "等待执行设备上线并领取任务。",
+  queued: "等待可用的执行设备和执行额度。已暂停的设备不会领取任务。",
   running: "执行器正在处理任务。",
   waiting_user: "执行已暂停，需要你完成下面的协助。",
   verifying: "正在核验页面实际结果。",
@@ -133,12 +133,12 @@ export function RunReport({
           );
         })}
         {(!events.length || active) && (
-          <TraceLine status={working ? "running" : "pending"}>
+          <TraceLine status={working ? "running" : active ? "pending" : undefined}>
             <TraceIcon>
               {working ? <Loader2 className="animate-spin" /> : <Activity />}
             </TraceIcon>
             <TraceTitle>
-              {run.cancelRequested
+              {!active ? "本次运行没有步骤记录" : run.cancelRequested
                 ? "等待取消确认"
                 : events.length
                   ? summaries[run.status]

@@ -1,16 +1,4 @@
 import { z } from "zod";
-export const requestSchema = z
-  .object({
-    method: z.enum(["GET", "POST", "PUT"]),
-    path: z
-      .string()
-      .max(500)
-      .regex(
-        /^\/api\/user\/(snapshot|tasks|runs|models|accounts|devices|challenges|artifacts|settings)(\/[a-zA-Z0-9_-]+)*(\?format=data)?$/,
-      ),
-    body: z.unknown().optional(),
-  })
-  .strict();
 export const cloudUrlSchema = z
   .string()
   .url()

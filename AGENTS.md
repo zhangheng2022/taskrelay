@@ -41,7 +41,8 @@ Git 提交信息使用中文：标题和正文均用中文描述改动，代码�
 - 网站通过 Cloudflare Access 校验 owner，设备使用可吊销 bearer token；开发绕过仅限本机 `DEV_MODE=1`，生产关闭，不向公网暴露开发服务器。
 - Main 用系统 `safeStorage` 保存设备令牌；模型密钥、账号凭据、敏感协助回复按上下文加密，普通日志、聊天、诊断包不得包含明文。
 - **不得重新生成或覆盖现有 `MASTER_KEY`**：D1 和出站作业的密文依赖它；轮换必须有迁移与恢复方案。
-- R2 为私有证据存储；协助完成或过期时清理敏感回复及短期图片；诊断包不得包含 Profile、SQLite 或 API Key。
+- 短期证据由私有 SQLite Durable Object 分块加密保存，协助完成或过期后清理；生产不绑定 R2，避免超出免费额度后计费。诊断包不得包含 Profile、SQLite 或 API Key。
+- Cloudflare 保持 Free；普通 Worker 仅路由，业务计算进入 DO，长 AI 回合通过持久化 outbox 与 alarm 执行。达到平台预算时拒绝新工作，不自动购买或切换付费服务；具体预算、保留期与验证范围见架构和部署文档。
 - 数据库变更添加迁移并兼容已安装客户端数据；SQLite 拒绝高于支持版本的 schema，不得覆盖重建。数据库结构以 SQL 迁移为准，`schema.ts` 仅覆盖部分 Drizzle 查询。
 
 ## 任务导航与技能

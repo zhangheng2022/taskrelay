@@ -1,11 +1,13 @@
+import {getEvidence} from './evidence';
+import {Buffer} from 'node:buffer';
+import { quotaSummary, reserve } from './tenancy';
 import { Hono } from "hono";
 import { z } from "zod";
 import { egress } from "./egress";
 import { drizzle } from "drizzle-orm/d1";
-import { desc } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import {
   taskInputSchema,
-  taskComposeInputSchema,
   idSchema,
   type TaskDefinition,
 } from "../../../packages/contracts/src/index";
@@ -34,7 +36,27 @@ import {
 } from "./models";
 import { seal, unseal } from "./crypto";
 import { challengeFrom, exactReply } from "./challenges";
+import { suppliedTaskUrls } from "./task-sites";
+import { ownedThread } from './ai/conversations';
 export const user = new Hono<{ Bindings: AppEnv; Variables: Variables }>();
+export const admin = new Hono<{ Bindings: AppEnv; Variables: Variables }>();
+user.use('*', async (c,next) => {
+ const path=c.req.path.replace('/api/user','');
+ const match=/^\/(tasks|runs|challenges|artifacts)\/([^/]+)/.exec(path);
+ if(match && !(match[1]==='tasks' && ['compose','draft'].includes(match[2]))) {
+  const id=decodeURIComponent(match[2]);
+  const queries:Record<string,string>={
+   tasks:'SELECT id FROM tasks WHERE id=? AND user_id=?',
+   runs:'SELECT id FROM runs WHERE id=? AND user_id=?',
+   challenges:'SELECT c.id FROM challenges c JOIN runs r ON r.id=c.run_id WHERE c.id=? AND r.user_id=?',
+   artifacts:'SELECT a.id FROM artifacts a JOIN runs r ON r.id=a.run_id WHERE a.id=? AND r.user_id=?',
+  };
+  if(!await c.env.DB.prepare(queries[match[1]]).bind(id,c.get('userId')).first()) return c.json({error:'RESOURCE_NOT_FOUND'},404);
+ }
+
+ return next();
+});
+user.get('/me', async c=>c.json({id:c.get('userId'),email:c.get('member').email,role:c.get('member').role,quota:await quotaSummary(c.env.DB,c.get('userId'),c.get('member'))}));
 user.get("/snapshot", async (c) => {
   if (
     c.env.DEV_MODE === "1" &&
@@ -43,34 +65,37 @@ user.get("/snapshot", async (c) => {
     await tick(c.env.DB);
   const db = c.env.DB;
   const results = await db.batch([
-    db.prepare("SELECT * FROM tasks ORDER BY created_at DESC LIMIT 200"),
-    db.prepare("SELECT * FROM runs ORDER BY created_at DESC LIMIT 200"),
+    db.prepare("SELECT * FROM tasks WHERE user_id=? ORDER BY created_at DESC LIMIT 200").bind(c.get("userId")),
+    db.prepare("SELECT * FROM runs WHERE user_id=? ORDER BY created_at DESC LIMIT 200").bind(c.get("userId")),
     db.prepare(
-      "SELECT m.* FROM model_profiles m WHERE version=(SELECT MAX(version) FROM model_profiles x WHERE x.id=m.id) ORDER BY created_at DESC",
+      "SELECT m.id,m.version,m.config,m.capabilities FROM model_profiles m WHERE version=(SELECT MAX(version) FROM model_profiles x WHERE x.id=m.id) ORDER BY created_at DESC",
     ),
-    db.prepare("SELECT id,name,origin,username_hint,created_at FROM accounts"),
+    db.prepare("SELECT id,name,origin,username_hint,created_at,assigned_device_id,login_reset FROM accounts WHERE user_id=?").bind(c.get("userId")),
     db.prepare(
       "SELECT id,name,last_seen,revoked,protocol_version FROM devices",
     ),
     db
       .prepare(
-        "SELECT * FROM challenges WHERE status IN ('pending','answered','consuming') AND expires_at>? ORDER BY expires_at",
+        "SELECT c.* FROM challenges c JOIN runs r ON r.id=c.run_id WHERE r.user_id=? AND c.status IN ('pending','answered','consuming') AND c.expires_at>? ORDER BY c.expires_at",
       )
-      .bind(now()),
+      .bind(c.get("userId"),now()),
   ]);
   const r = results.map((x) => x.results as Row[]);
   return c.json({
     tasks: r[0].map(taskFrom),
     runs: r[1].map(runFrom),
-    models: r[2].map(modelFrom),
+    models: r[2].map(modelFrom).map(m=>c.get("actor")==="owner"?m:{...m,baseUrl:"",hasKey:false}),
+    me: {id:c.get("userId"),role:c.get("member").role,email:c.get("member").email},
+    quota: await quotaSummary(db,c.get("userId"),c.get("member")),
     accounts: r[3].map((x) => ({
       id: x.id,
       name: x.name,
       origin: x.origin,
       usernameHint: x.username_hint,
+      assignedDeviceId:x.assigned_device_id,loginReset:!!x.login_reset,
       createdAt: x.created_at,
     })),
-    devices: r[4].map((x) => ({
+    devices: (c.get("actor")==="owner"?r[4]:[]).map((x) => ({
       id: x.id,
       name: x.name,
       lastSeen: x.last_seen,
@@ -87,6 +112,7 @@ user.get("/tasks", async (c) =>
       await drizzle(c.env.DB)
         .select()
         .from(tasksTable)
+        .where(eq(tasksTable.userId,c.get("userId")))
         .orderBy(desc(tasksTable.createdAt))
     ).map((row) => ({
       ...JSON.parse(row.definition),
@@ -95,10 +121,10 @@ user.get("/tasks", async (c) =>
     })),
   ),
 );
-user.post("/models", async (c) =>
+admin.post("/models", async (c) =>
   c.json(await storeModel(c.env, await c.req.json()), 201),
 );
-user.put("/models/:id", async (c) =>
+admin.put("/models/:id", async (c) =>
   c.json(
     await storeModel(
       c.env,
@@ -107,11 +133,11 @@ user.put("/models/:id", async (c) =>
     ),
   ),
 );
-user.post("/models/:id/test", async (c) => {
+admin.post("/models/:id/test", async (c) => {
   const { profile } = await getModel(c.env, c.req.param("id"));
   return c.json(await probe(c.env, profile.id, profile.version));
 });
-user.post("/models/:id/vision", async (c) =>
+admin.post("/models/:id/vision", async (c) =>
   c.json(await probeVision(c.env, c.req.param("id"))),
 );
 user.post("/accounts", async (c) => {
@@ -127,7 +153,7 @@ user.post("/accounts", async (c) => {
   const origin = publicUrl(body.origin).origin,
     id = uid("account");
   await c.env.DB.prepare(
-    "INSERT INTO accounts(id,name,origin,username_hint,secret,created_at) VALUES(?,?,?,?,?,?)",
+    "INSERT INTO accounts(id,name,origin,username_hint,secret,created_at,user_id,profile_id) VALUES(?,?,?,?,?,?,?,?)",
   )
     .bind(
       id,
@@ -139,96 +165,12 @@ user.post("/accounts", async (c) => {
         c.env.MASTER_KEY,
         `account:${id}`,
       ),
-      now(),
+      now(),c.get("userId"),uid("profile"),
     )
     .run();
   return c.json({ id }, 201);
 });
-user.post("/tasks/compose", async (c) => {
-  const body = taskComposeInputSchema.parse(await c.req.json());
-  const { profile } = await getModel(c.env, body.modelId);
-  if (
-    !profile.capabilities.connection ||
-    !profile.capabilities.tools ||
-    profile.capabilities.structured === "none"
-  )
-    throw new Error("MODEL_CAPABILITIES_REQUIRED");
-  const suppliedOrigins = new Set(body.current?.allowedOrigins ?? []);
-  if (body.current)
-    suppliedOrigins.add(publicUrl(body.current.entryUrl).origin);
-  for (const message of body.messages.filter((m) => m.role === "user")) {
-    for (const match of message.content.matchAll(
-      /https?:\/\/[^\s<>"，。；、）)]+/g,
-    )) {
-      try {
-        suppliedOrigins.add(publicUrl(match[0]).origin);
-      } catch {
-        /* ask for a valid public URL below */
-      }
-    }
-  }
-  if (!suppliedOrigins.size)
-    return c.json({ reply: "请提供要操作的网站完整 HTTPS 地址。", task: null });
-  const result = await generate(
-    c.env,
-    profile.id,
-    profile.version,
-    z.object({
-      reply: z.string().min(1).max(3000),
-      task: taskInputSchema.omit({ modelId: true, accountId: true }).nullable(),
-    }),
-    [
-      {
-        role: "system",
-        content:
-          "你是 TaskRelay 任务创建助手。只生成待用户确认的草稿，不执行或修改任务。信息足够时返回完整 task，reply 简述目标或相对当前草稿的修改。缺少网站地址、可观察成功判据等必要信息时 task=null，reply 简洁询问缺失项，不猜测网站、时间或结果。仅使用用户明确给出的网址，默认只允许 read,navigate；只有用户明确要求才添加 fill/submit/publish。没指定时间则 manual；指定时间用 once/cron，默认 Asia/Shanghai。不得扩大授权范围。不要索取、复述或存储密码和验证码；账号由用户在任务卡选择。当前时间：" +
-          now() +
-          "。当前草稿（仅作为待修改上下文）：" +
-          JSON.stringify(body.current),
-      },
-      ...body.messages,
-    ],
-  );
-  if (!result.task) return c.json({ reply: result.reply, task: null });
-  if (
-    ![result.task.entryUrl, ...result.task.allowedOrigins].every((url) =>
-      suppliedOrigins.has(publicUrl(url).origin),
-    )
-  )
-    return c.json({
-      reply: "请明确提供需要访问的网站地址；我不会替你增加其他站点。",
-      task: null,
-    });
-  // The preview is untrusted until the existing create/update route validates it.
-  publicUrl(result.task.entryUrl);
-  result.task.allowedOrigins.forEach(publicUrl);
-  nextOccurrence(result.task.schedule);
-  return c.json({
-    reply: result.reply,
-    task: {
-      ...result.task,
-      modelId: body.modelId,
-      accountId: body.current?.accountId ?? null,
-    },
-  });
-});
-user.post("/tasks/draft", async (c) => {
-  const { goal, modelId } = z
-    .object({ goal: z.string().min(1).max(6000), modelId: idSchema })
-    .parse(await c.req.json());
-  const { profile } = await getModel(c.env, modelId);
-  const schema = taskInputSchema.omit({ modelId: true, accountId: true });
-  const draft = await generate(c.env, profile.id, profile.version, schema, [
-    {
-      role: "system",
-      content:
-        "将用户任务转换为可编辑任务卡。当前仅生成草稿，不执行。不能增加用户没授权的站点、写操作或成功目标。默认允许read,navigate；只有用户明确要求填写、提交或发布才添加fill/submit/publish。用户明确时间时生成once或cron（默认Asia/Shanghai）；没指定时间则manual，不能猜测执行时间。allowedOrigins只包含明确目标网站的HTTPS origin。缺少网站地址时不得猜测，请让用户补充。成功判据必须可观察。",
-    },
-    { role: "user", content: goal },
-  ]);
-  return c.json({ ...draft, modelId, accountId: null });
-});
-async function validatedTask(env: AppEnv, input: unknown) {
+async function validatedTask(env: AppEnv, input: unknown,version?:number) {
   const data = taskInputSchema.parse(input);
   const origin = publicUrl(data.entryUrl).origin;
   data.allowedOrigins = [
@@ -237,7 +179,7 @@ async function validatedTask(env: AppEnv, input: unknown) {
   if (!data.allowedOrigins.includes(origin))
     throw new Error("ENTRY_ORIGIN_NOT_ALLOWED");
   if (data.schedule.kind !== "manual") nextOccurrence(data.schedule);
-  const { profile } = await getModel(env, data.modelId);
+  const { profile } = await getModel(env, data.modelId,version);
   if (
     !profile.capabilities.connection ||
     !profile.capabilities.tools ||
@@ -245,8 +187,8 @@ async function validatedTask(env: AppEnv, input: unknown) {
   )
     throw new Error("MODEL_CAPABILITIES_REQUIRED");
   if (data.accountId) {
-    const a = await env.DB.prepare("SELECT origin FROM accounts WHERE id=?")
-      .bind(data.accountId)
+    const a = await env.DB.prepare("SELECT origin FROM accounts WHERE id=? AND user_id=?")
+      .bind(data.accountId,env.requestUserId)
       .first<{ origin: string }>();
     if (!a || !data.allowedOrigins.includes(a.origin))
       throw new Error("ACCOUNT_ORIGIN_MISMATCH");
@@ -255,10 +197,10 @@ async function validatedTask(env: AppEnv, input: unknown) {
 }
 user.post("/tasks", async (c) => {
   const body = z
-    .object({ task: taskInputSchema, requestId: idSchema })
+    .object({ task: taskInputSchema, requestId: idSchema, threadId:idSchema, draftVersion:z.number().int().nonnegative() })
     .strict()
     .parse(await c.req.json());
-  const key = `create:${body.requestId}`,
+  const key = `create:${c.get("userId")}:${body.requestId}`,
     digest = await hash(JSON.stringify(body.task));
   const existing = await c.env.DB.prepare(
     "SELECT * FROM idempotency WHERE key=?",
@@ -279,8 +221,10 @@ user.post("/tasks", async (c) => {
       );
     return c.json({ id: existing.resource_id });
   }
-  const { data, modelVersion } = await validatedTask(c.env, body.task),
-    id = `task_${body.requestId}`,
+  const draftThread=await ownedThread(c.env,body.threadId);
+  if(draftThread.kind!=='compose'||draftThread.task_id||draftThread.version!==body.draftVersion||draftThread.active_turn||!draftThread.draft||JSON.stringify(taskInputSchema.parse(JSON.parse(draftThread.draft)))!==JSON.stringify(body.task))throw new Error('DRAFT_VERSION_CONFLICT');
+  const { data, modelVersion } = await validatedTask(c.env, body.task,draftThread.model_version),
+    id = `task_${(await hash(c.get("userId")+":"+body.requestId)).slice(0,40)}`,
     at = now();
   const task: TaskDefinition = {
     ...data,
@@ -293,26 +237,42 @@ user.post("/tasks", async (c) => {
   };
   await c.env.DB.batch([
     c.env.DB.prepare(
-      "INSERT OR IGNORE INTO idempotency(key,digest,resource_id) VALUES(?,?,?)",
-    ).bind(key, digest, id),
+      "INSERT OR IGNORE INTO idempotency(key,digest,resource_id) SELECT ?,?,? FROM ai_threads WHERE id=? AND version=? AND active_turn IS NULL AND closed=0",
+    ).bind(key, digest, id,body.threadId,body.draftVersion),
     c.env.DB.prepare(
-      "INSERT OR IGNORE INTO tasks(id,version,definition,status,created_at,updated_at) SELECT ?,1,?,'pending_validation',?,? WHERE EXISTS(SELECT 1 FROM idempotency WHERE key=? AND digest=?)",
-    ).bind(id, JSON.stringify(task), at, at, key, digest),
+      "INSERT OR IGNORE INTO tasks(id,version,definition,status,created_at,updated_at,user_id) SELECT ?,1,?,'pending_validation',?,?,? WHERE EXISTS(SELECT 1 FROM idempotency WHERE key=? AND digest=?)",
+    ).bind(id, JSON.stringify(task), at, at, c.get("userId"), key, digest),
     c.env.DB.prepare(
       "INSERT OR IGNORE INTO task_versions(task_id,version,definition) SELECT id,version,definition FROM tasks WHERE id=?",
     ).bind(id),
+    c.env.DB.prepare('UPDATE ai_threads SET closed=1,version=version+1 WHERE id=? AND EXISTS(SELECT 1 FROM tasks WHERE id=?)').bind(body.threadId,id),
   ]);
+  if(!await c.env.DB.prepare('SELECT id FROM tasks WHERE id=?').bind(id).first())throw new Error('DRAFT_VERSION_CONFLICT');
   await enqueue(c.env.DB, task, `trial:${id}:1`);
   return c.json({ id }, 201);
 });
 user.put("/tasks/:id", async (c) => {
-  const { task: input, expectedVersion } = z
+  const { task: input, expectedVersion, threadId, draftVersion,requestId } = z
     .object({
       task: taskInputSchema,
       expectedVersion: z.number().int().positive(),
+      requestId:idSchema,
+      threadId:idSchema,
+      draftVersion:z.number().int().nonnegative(),
     })
     .parse(await c.req.json());
-  const { data, modelVersion } = await validatedTask(c.env, input),
+  const key=`update:${c.get('userId')}:${requestId}`,digest=await hash(JSON.stringify({input,expectedVersion,threadId,draftVersion}));
+  const prior=await c.env.DB.prepare('SELECT digest,resource_id FROM idempotency WHERE key=?').bind(key).first<Row>();
+  if(prior) {
+    if(prior.digest!==digest)throw new Error('IDEMPOTENCY_CONFLICT');
+    const saved=await c.env.DB.prepare('SELECT definition FROM task_versions WHERE task_id=? AND version=?').bind(prior.resource_id,expectedVersion+1).first<{definition:string}>();
+    if(!saved)throw new Error('VERSION_CONFLICT');
+    await enqueue(c.env.DB,JSON.parse(saved.definition),`trial:${prior.resource_id}:${expectedVersion+1}`);
+    return c.json({id:prior.resource_id,version:expectedVersion+1});
+  }
+  const draftThread=await ownedThread(c.env,threadId);
+  if(draftThread.kind!=='compose'||draftThread.task_id!==c.req.param('id')||draftThread.version!==draftVersion||draftThread.active_turn||!draftThread.draft||JSON.stringify(taskInputSchema.parse(JSON.parse(draftThread.draft)))!==JSON.stringify(input))throw new Error('DRAFT_VERSION_CONFLICT');
+  const { data, modelVersion } = await validatedTask(c.env, input,draftThread.model_version),
     id = c.req.param("id");
   const old = await c.env.DB.prepare("SELECT * FROM tasks WHERE id=?")
     .bind(id)
@@ -327,18 +287,14 @@ user.put("/tasks/:id", async (c) => {
     createdAt: old.created_at,
     nextRunAt: null,
   };
-  const changed = await c.env.DB.prepare(
-    "UPDATE tasks SET version=?,definition=?,status='pending_validation',next_run_at=NULL,updated_at=? WHERE id=? AND version=?",
-  )
-    .bind(task.version, JSON.stringify(task), now(), id, expectedVersion)
-    .run();
-  if (changed.meta.changes !== 1) throw new Error("VERSION_CONFLICT");
-  await c.env.DB.prepare(
-    "INSERT INTO task_versions(task_id,version,definition) VALUES(?,?,?)",
-  )
-    .bind(id, task.version, JSON.stringify(task))
-    .run();
-  await enqueue(c.env.DB, task, `trial:${id}:${task.version}`);
+  const committed=await c.env.DB.batch([
+    c.env.DB.prepare('INSERT OR IGNORE INTO idempotency(key,digest,resource_id) SELECT ?,?,? WHERE EXISTS(SELECT 1 FROM tasks WHERE id=? AND version=?) AND EXISTS(SELECT 1 FROM ai_threads WHERE id=? AND version=? AND active_turn IS NULL AND closed=0)').bind(key,digest,id,id,expectedVersion,threadId,draftVersion),
+    c.env.DB.prepare("UPDATE tasks SET version=?,definition=?,status='pending_validation',next_run_at=NULL,updated_at=? WHERE id=? AND version=? AND EXISTS(SELECT 1 FROM idempotency WHERE key=? AND digest=?)").bind(task.version,JSON.stringify(task),now(),id,expectedVersion,key,digest),
+    c.env.DB.prepare('INSERT OR IGNORE INTO task_versions(task_id,version,definition) SELECT id,version,definition FROM tasks WHERE id=? AND version=? AND EXISTS(SELECT 1 FROM idempotency WHERE key=? AND digest=?)').bind(id,task.version,key,digest),
+    c.env.DB.prepare('UPDATE ai_threads SET closed=1,version=version+1 WHERE id=? AND closed=0 AND EXISTS(SELECT 1 FROM idempotency WHERE key=? AND digest=?)').bind(threadId,key,digest),
+  ]);
+  if(!committed[1].meta.changes)throw new Error('VERSION_CONFLICT');
+  await enqueue(c.env.DB,task,`trial:${id}:${task.version}`);
   return c.json({ id, version: task.version });
 });
 user.post("/tasks/:id/state", async (c) => {
@@ -463,67 +419,6 @@ user.post("/runs/:id/reconcile", async (c) => {
     .run();
   return c.json({ ...run, reconciliationOf: original.id });
 });
-user.get("/tasks/:id/chat", async (c) =>
-  c.json(
-    (
-      await c.env.DB.prepare(
-        "SELECT * FROM conversations WHERE task_id=? ORDER BY at LIMIT 200",
-      )
-        .bind(c.req.param("id"))
-        .all()
-    ).results,
-  ),
-);
-user.post("/tasks/:id/chat", async (c) => {
-  const { content, requestId } = z
-      .object({
-        content: z.string().trim().min(1).max(6000),
-        requestId: idSchema,
-      })
-      .parse(await c.req.json()),
-    taskId = c.req.param("id");
-  const pending = await c.env.DB.prepare(
-    "SELECT c.id FROM challenges c JOIN runs r ON r.id=c.run_id WHERE r.task_id=? AND c.status='pending' AND c.expires_at>?",
-  )
-    .bind(taskId, now())
-    .first();
-  if (pending) throw new Error("USE_CHALLENGE_REPLY");
-  const row = await c.env.DB.prepare("SELECT * FROM tasks WHERE id=?")
-    .bind(taskId)
-    .first<Row>();
-  if (!row) throw new Error("TASK_NOT_FOUND");
-  const task = taskFrom(row);
-  const prior = await c.env.DB.prepare(
-    "SELECT id FROM conversations WHERE id=?",
-  )
-    .bind(requestId)
-    .first();
-  if (prior) return c.json({ ok: true });
-  const answer = await generate(
-    c.env,
-    task.modelId,
-    task.modelVersion,
-    z.object({ reply: z.string().max(6000) }),
-    [
-      {
-        role: "system",
-        content:
-          "你是 TaskRelay 任务助手。说明或澄清任务，不执行操作，也不能修改授权或调度。若用户补充目标，提醒其通过编辑任务卡保存并重新试运行。不要索取或复述密码/验证码。当前任务：" +
-          JSON.stringify(task),
-      },
-      { role: "user", content },
-    ],
-  );
-  await c.env.DB.batch([
-    c.env.DB.prepare(
-      "INSERT OR IGNORE INTO conversations(id,task_id,role,content,at) VALUES(?,?,?,?,?)",
-    ).bind(requestId, taskId, "user", content, now()),
-    c.env.DB.prepare(
-      "INSERT OR IGNORE INTO conversations(id,task_id,role,content,at) VALUES(?,?,?,?,?)",
-    ).bind(`reply_${requestId}`, taskId, "assistant", answer.reply, now()),
-  ]);
-  return c.json({ ok: true });
-});
 user.post("/challenges/:id/reply", async (c) => {
   const body = z
     .object({
@@ -595,13 +490,13 @@ user.post("/challenges/:id/reply", async (c) => {
   if (result.meta.changes !== 1) throw new Error("CHALLENGE_STALE");
   return c.json({ ok: true });
 });
-user.post("/devices/:id/revoke", async (c) => {
+admin.post("/devices/:id/revoke", async (c) => {
   await c.env.DB.prepare("UPDATE devices SET revoked=1 WHERE id=?")
     .bind(c.req.param("id"))
     .run();
   return c.json({ ok: true });
 });
-user.get("/pairings/:code", async (c) => {
+admin.get("/pairings/:code", async (c) => {
   if (c.get("actor") !== "owner")
     return c.json({ error: "OWNER_REQUIRED" }, 403);
   const r = await c.env.DB.prepare(
@@ -612,7 +507,7 @@ user.get("/pairings/:code", async (c) => {
   if (!r) throw new Error("PAIRING_EXPIRED");
   return c.json(r);
 });
-user.post("/pairings/:code/approve", async (c) => {
+admin.post("/pairings/:code/approve", async (c) => {
   if (c.get("actor") !== "owner")
     return c.json({ error: "OWNER_REQUIRED" }, 403);
   const r = await c.env.DB.prepare(
@@ -628,7 +523,7 @@ user.post("/pairings/:code/approve", async (c) => {
   );
   await c.env.DB.batch([
     c.env.DB.prepare(
-      "INSERT OR IGNORE INTO devices(id,name,token_hash,protocol_version) VALUES(?,?,?,1)",
+      "INSERT OR IGNORE INTO devices(id,name,token_hash,protocol_version) VALUES(?,?,?,2)",
     ).bind(r.device_id, r.name, await hash(token)),
     c.env.DB.prepare("UPDATE pairings SET approved=1 WHERE id=?").bind(r.id),
   ]);
@@ -641,17 +536,15 @@ user.get("/artifacts/:id", async (c) => {
     .bind(c.req.param("id"), now())
     .first<Row>();
   if (!row) return c.json({ error: "ARTIFACT_EXPIRED" }, 404);
-  const object = await c.env.EVIDENCE.get(row.object_key);
+  const object = await getEvidence(c.env,row.object_key);
   if (!object) return c.json({ error: "ARTIFACT_EXPIRED" }, 404);
   if (c.req.query("format") === "data") {
-    const bytes = new Uint8Array(await object.arrayBuffer());
-    let binary = "";
-    for (const byte of bytes) binary += String.fromCharCode(byte);
+    const bytes = Buffer.from(object);
     return c.json({
-      dataUrl: `data:${row.content_type};base64,${btoa(binary)}`,
+      dataUrl: `data:${row.content_type};base64,${bytes.toString("base64")}`,
     });
   }
-  return new Response(object.body, {
+  return new Response(object, {
     headers: {
       "Content-Type": row.content_type,
       "Cache-Control": "no-store",
@@ -659,7 +552,7 @@ user.get("/artifacts/:id", async (c) => {
     },
   });
 });
-user.get("/settings", async (c) =>
+admin.get("/settings", async (c) =>
   c.json({
     retentionDays: Number(
       (
@@ -670,7 +563,7 @@ user.get("/settings", async (c) =>
     ),
   }),
 );
-user.get("/settings/check", async (c) => {
+admin.get("/settings/check", async (c) => {
   const checks: Record<string, string> = {};
   for (const [name, check] of Object.entries({
     database: () => c.env.DB.prepare("SELECT 1 AS ok").first(),
@@ -720,7 +613,7 @@ user.get("/settings/check", async (c) => {
   }
   return c.json(checks);
 });
-user.put("/settings", async (c) => {
+admin.put("/settings", async (c) => {
   const { retentionDays } = z
     .object({ retentionDays: z.number().int().min(1).max(365) })
     .parse(await c.req.json());

@@ -1,6 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { productionModelFixture } from "./production-model-fixture";
+import {z} from 'zod';
+
+test('Stagehand 2020-12 原始 Schema 走生产路由，类型错误修复一次',async t=>{
+  const s=await productionModelFixture(t,'responses');
+  const request=body('stagehand',s.run.leaseEpoch) as any;
+  request.request.responseFormat.schema=z.toJSONSchema(z.strictObject({extraction:z.string()}));
+  s.replies('{"extraction":3}','{"extraction":"页面正文"}');
+  const r=await s.request(`/api/runner/runs/${s.run.id}/stagehand`,request);
+  assert.equal(r.status,200,JSON.stringify(r.data));
+  assert.deepEqual(r.data.structuredContent,{extraction:'页面正文'});
+  assert.equal(s.jobs(),2);
+});
 
 const action = {
   kind: "finish",

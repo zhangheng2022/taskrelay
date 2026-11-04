@@ -10,6 +10,8 @@ for (const name of [
   "document",
   "navigator",
   "HTMLElement",
+  "HTMLInputElement",
+  "NodeFilter",
   "Element",
   "Node",
   "MutationObserver",

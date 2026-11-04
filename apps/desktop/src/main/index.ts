@@ -21,10 +21,9 @@ import { Journal } from "./journal";
 import { Cloud } from "./cloud";
 import { OwnedBrowser } from "./browser";
 import { ExecutorHost } from "./executor-host";
-import { cloudUrlSchema, requestSchema } from "../shared/ipc";
+import { cloudUrlSchema } from "../shared/ipc";
 import type {
   DesktopStatus,
-  Snapshot,
   TaskRun,
 } from "../../../../packages/contracts/src/index";
 import { packagedSmoke } from "./smoke";
@@ -75,11 +74,11 @@ function show() {
 }
 function createWindow() {
   window = new BrowserWindow({
-    width: 1200,
-    height: 820,
+    width: 520,
+    height: 680,
     minWidth: 420,
     minHeight: 600,
-    title: "TaskRelay",
+    title: "TaskRelay 执行器",
     backgroundColor: "#f7f8f6",
     show: false,
     autoHideMenuBar: true,
@@ -131,30 +130,6 @@ function registerIpc() {
         throw new Error("IPC_SENDER_REJECTED");
       return fn(...args);
     });
-  handle("request", async (value: unknown) => {
-    const b = requestSchema.parse(value);
-    if (!cloud.paired && b.method === "GET" && b.path === "/api/user/snapshot")
-      return (
-        journal.cached<Snapshot>(b.path) ?? {
-          tasks: [],
-          runs: [],
-          models: [],
-          accounts: [],
-          devices: [],
-          challenges: [],
-          serverTime: new Date().toISOString(),
-        }
-      );
-    try {
-      return await cloud.user(b.method, b.path, b.body);
-    } catch (e) {
-      if ((e as Error).message === "OFFLINE") {
-        online = false;
-        notify();
-      }
-      throw e;
-    }
-  });
   handle("status", () => status());
   handle("configure", async (input: unknown) => {
     if (host.active) throw new Error("STOP_RUN_BEFORE_PAIRING");
@@ -169,7 +144,7 @@ function registerIpc() {
     }>(
       "POST",
       "/api/pair/start",
-      { name: require("node:os").hostname(), protocolVersion: 1 },
+      { name: require("node:os").hostname(), protocolVersion: 3 },
       true,
     );
     if (new URL(result.url).origin !== url)
@@ -235,13 +210,15 @@ async function poll() {
   if (polling || quitting || !cloud.paired) return;
   polling = true;
   try {
+    const connection=await cloud.connect(!host.active);
+    if(connection.maintenance){online=true;lastError="云端维护中，暂不领取任务";return;}
     await host.flush();
     if (!host.active && !status().paused) {
       claimRequest ??= crypto.randomUUID();
       const { run } = await cloud.request<{ run: TaskRun | null }>(
         "POST",
         "/api/runner/claim",
-        { requestId: claimRequest, protocolVersion: 1 },
+        { requestId: claimRequest, protocolVersion: 3 },
       );
       claimRequest = null;
       if (run && ["running", "waiting_user", "verifying"].includes(run.status))
@@ -260,6 +237,7 @@ async function poll() {
 async function quit() {
   if (quitting) return;
   quitting = true;
+    cloud?.close();
   try {
     await host?.stop(true);
   } catch {
@@ -379,7 +357,8 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
       });
       powerMonitor.on("resume", () => void poll());
       createWindow();
-      setInterval(() => void poll(), 4000);
+      cloud.watch(()=>void poll());
+      setInterval(() => void poll(), 60000);
       void poll();
     })
     .catch((error) => {

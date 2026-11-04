@@ -12,11 +12,13 @@ export class Journal {
     const version = (
       this.db.prepare("PRAGMA user_version").get() as { user_version: number }
     ).user_version;
-    if (version > 1) throw new Error("CLIENT_UPGRADE_REQUIRED");
+    if (version > 3) { this.db.close(); throw new Error("CLIENT_UPGRADE_REQUIRED"); }
     if (version === 0)
       this.db.exec(
         `BEGIN;CREATE TABLE config(key TEXT PRIMARY KEY,value TEXT NOT NULL);CREATE TABLE cache(key TEXT PRIMARY KEY,value TEXT NOT NULL);CREATE TABLE journal(run_id TEXT PRIMARY KEY,generation TEXT NOT NULL,epoch INTEGER NOT NULL,state TEXT NOT NULL,payload TEXT NOT NULL,updated_at TEXT NOT NULL);CREATE TABLE outbox(id TEXT PRIMARY KEY,path TEXT NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL);PRAGMA user_version=1;COMMIT;`,
       );
+    if(version<2) this.db.exec("BEGIN;DELETE FROM cache;PRAGMA user_version=2;COMMIT;");
+    if(version<3)this.db.exec("PRAGMA user_version=3;");
   }
   get<T>(key: string): T | null {
     const row = this.db
@@ -92,9 +94,14 @@ export class Journal {
   remove(id: string) {
     this.db.prepare("DELETE FROM outbox WHERE id=?").run(id);
   }
+  clearHistory() {
+    if(this.pending().length||this.incomplete().length)throw new Error('LOCAL_HISTORY_UNRESOLVED');
+    this.db.exec("BEGIN IMMEDIATE;DELETE FROM cache;DELETE FROM journal;COMMIT;");
+    this.set('historyEpoch',3);
+  }
   diagnostic() {
     return {
-      schema: 1,
+      schema: 3,
       journal: this.db
         .prepare(
           "SELECT run_id,state,updated_at FROM journal ORDER BY updated_at DESC LIMIT 30",

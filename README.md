@@ -48,6 +48,8 @@ npm run check:repo
 
 ## Windows 构建
 
+品牌图形的矢量源文件为 `resources/brand-mark.svg`，共享 UI 使用同一图形并随主题着色。修改后运行 `npm run icons`，生成网站 favicon、Apple Touch Icon 和 Windows PNG/多尺寸 ICO；生成资源随源码保存，普通构建不需要重新生成。桌面窗口、托盘、EXE 和安装器沿用 `resources/icon.png` / `resources/icon.ico` 路径。
+
 ```powershell
 npm run prepare:browser
 npm run package
@@ -71,10 +73,23 @@ npm run make
 | 路径               | 职责                                                           |
 | ------------------ | -------------------------------------------------------------- |
 | apps/web           | Vite 网站和 Cloudflare 部署配置                                |
-| apps/cloud         | Hono API、D1 调度/租约/幂等、加密、R2、美国区域模型网关        |
+| apps/cloud         | DO 内的 Hono API、D1 调度/租约/幂等、加密短期证据、美国区域模型网关 |
 | apps/desktop       | Electron Main、受限 Preload、独立 utilityProcess 执行器、Forge |
 | packages/contracts | Zod 协议、授权策略、时区调度                                   |
 | packages/model     | Chat Completions / Responses 适配                              |
 | packages/ui        | 自行设计的 React + shadcn/ui 共享界面                          |
 
 架构现状与改进候选见 [ARCHITECTURE.md](docs/ARCHITECTURE.md)，开发及技能指引见 [AGENTS.md](AGENTS.md)。部署说明见 [DEPLOYMENT.md](docs/DEPLOYMENT.md)，实际验证范围见 [ACCEPTANCE.md](docs/ACCEPTANCE.md)。
+
+
+### LangChain 与 Cloudflare 免费运行架构
+
+普通 Worker 只处理静态资源和轻量路由，Hono 业务进入 SQLite Durable Objects；对话通过 D1 outbox 异步执行，网站与客户端使用休眠 WebSocket 通知和低频兜底。短期图片在 DO 加密保存，生产已移除 R2 绑定。模型 API 保持现有配置与美国 alarm 出站链路，模型提供方费用不属于 Cloudflare 免费承诺。免费预算耗尽时停止接收新工作，不自动开通付费服务；详见 [免费部署](docs/DEPLOYMENT.md#cloudflare-free-运行架构)。
+
+`node scripts/test-free-runtime.mjs` 验证隔离 workerd 的真实 DO 路由、异步 alarm、加密分块证据及 WebSocket 撤销；不调用真实模型。
+
+本机 CPU 对照采样：`node scripts/profile-worker.mjs .cache/ai-profile/current`。脚本在本机 workerd 使用隔离 D1、合成账号和模型响应，输出 CPU profile 与统计；不读取生产密钥，不验证真实模型地区。统计含本地 D1 绑定开销，不能等同 Cloudflare 计费 CPU 或免费套餐达标证明。保留某次构建后可加 `--reuse-bundle` 重跑同一版本。
+
+云端已接入 LangChain.js、LangGraph 与 D1 持久化。创建对话和任务聊天支持云端恢复、游标历史和滚动摘要；设置中的“我的记忆”管理明确确认的偏好。任务卡确认版本、设备租约和美国模型出站约束保持有效。
+
+本地迁移使用 `npm run db:migrate`；现有生产已完成 [0.3.0 一次性切换](docs/DEPLOYMENT.md#langchain-030-一次性切换)，不得重复清理。免费架构新增 `0007_free_runtime.sql`，保留协议 3 和 SQLite schema 3。源码、安装包与生产验证范围分别记录在 [验收](docs/ACCEPTANCE.md)。

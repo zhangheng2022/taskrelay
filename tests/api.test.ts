@@ -15,7 +15,7 @@ async function setup() {
   await enqueue(db, t, "test");
   await db
     .prepare(
-      "INSERT INTO devices(id,name,token_hash,protocol_version) VALUES(?,?,?,1)",
+      "INSERT INTO devices(id,name,token_hash,protocol_version) VALUES(?,?,?,3)",
     )
     .bind("device_test", "test", await hash(token))
     .run();
@@ -61,7 +61,7 @@ async function setup() {
         method: body ? "POST" : "GET",
         headers: {
           "Content-Type": "application/json",
-          ...(authenticated ? { Authorization: `Bearer ${token}` } : {}),
+          ...(authenticated && (p.startsWith("/api/runner/") || p.startsWith("/api/device/")) ? { "x-taskrelay-protocol":"3", Authorization: `Bearer ${token}` } : {}),
         },
         body: body ? JSON.stringify(body) : undefined,
       },
@@ -75,9 +75,10 @@ test("设备 API 必须验证设备令牌，网页身份头不能代替设备授
   const s = await setup();
   assert.equal(
     (await s.request("/api/device/user/snapshot", undefined, false)).status,
-    401,
+    403,
   );
-  assert.equal((await s.request("/api/device/user/snapshot")).status, 200);
+  assert.equal((await s.request("/api/device/user/snapshot")).status, 403);
+  assert.equal((await s.request("/api/device/status")).status, 200);
 });
 test("生产环境缺少 Access JWT 时关闭访问", async () => {
   const s = await setup();
@@ -208,7 +209,7 @@ test("旧租约动作被拒绝；取消后不能开始新的动作", async () =>
       await s.request(path + "/plan", {
         epoch: s.run.leaseEpoch,
         url: "https://example.com/",
-        observation: "test",
+        observation: "test",stepId:"step_test",observationId:await hash("test"),
         history: [],
       })
     ).data.error,

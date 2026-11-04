@@ -71,7 +71,7 @@ const snapshot: Snapshot = {
 };
 if (state !== "new")
   snapshot.runs.push({
-    id: "demo_run",
+    id: "demo_run",userId:"demo",profileId:"profile_demo",
     taskId: definition.id,
     task: definition,
     status: assistance
@@ -154,6 +154,8 @@ const messages: { id: string; role: string; content: string; at: string }[] =
       }))
     : [];
 const created = new Map<string, string>();
+const threads=new Map<string,any>();
+const memories=new Map<string,any>();
 let failed = false;
 const desktop: DesktopStatus = {
   paired: true,
@@ -170,27 +172,23 @@ const transport: Transport = {
     await new Promise((r) => setTimeout(r, 200));
     let result: unknown;
     if (path === "/api/user/snapshot") result = structuredClone(snapshot);
-    else if (path === "/api/user/tasks/compose") {
-      if (options.has("fail") && !failed) {
-        failed = true;
-        throw new Error("MODEL_EGRESS_TIMEOUT");
-      }
-      const last = body.messages.at(-1).content;
-      result =
-        !body.current &&
-        !body.messages.some((m: any) => m.content.includes("https://"))
-          ? { reply: "请提供要操作的网站完整 HTTPS 地址。", task: null }
-          : {
-              reply: "已整理好任务，请核对范围后试运行。",
-              task: {
-                ...taskInputSchema.strip().parse(definition),
-                ...body.current,
-                modelId: body.modelId,
-                title: "演示 · 新建任务",
-                goal: body.current?.goal ?? last,
-              },
-            };
-    } else if (path === "/api/user/tasks" && method === "POST") {
+    else if(path==='/api/user/threads') {
+      if(method==='GET')result=[...threads.values()].map(t=>({...t,model_id:t.modelId,task_id:t.taskId??null}));
+      else {const id=crypto.randomUUID();const page={id,kind:body.kind,taskId:body.taskId,modelId:body.modelId,version:0,draft:null,partial:{},messages:body.kind==='chat'?messages.map((m,i)=>({...m,seq:i+1})):[],activeTurn:null,nextCursor:null};threads.set(id,page);result=structuredClone(page);}
+    } else if(path.startsWith('/api/user/threads/')) {
+      const id=path.split('/')[4],page=threads.get(id);
+      if(method==='DELETE'){threads.delete(id);result={ok:true};}
+      else if(path.endsWith('/messages')) {
+        if(options.has('fail')&&!failed){failed=true;throw new Error('MODEL_EGRESS_TIMEOUT');}
+        page.version++;
+        if(page.kind==='compose'&&/https:\/\//.test(body.content))page.draft={...taskInputSchema.strip().parse(definition),title:'演示 · 新建任务',goal:body.content};
+        page.messages.push({id:crypto.randomUUID(),seq:page.messages.length+1,role:'user',content:body.content},{id:crypto.randomUUID(),seq:page.messages.length+2,role:'assistant',content:page.kind==='chat'?'这是界面演示回复。':page.draft?'已整理好任务，请核对范围后试运行。':'请提供要操作的网站地址。'});
+        result={...structuredClone(page),status:'done'};
+      } else if(path.endsWith('/draft')){page.draft=body.draft;page.version++;result=structuredClone(page);}
+      else result=structuredClone(page);
+    } else if(path==='/api/user/memories')result=[...memories.values()];
+    else if(path.startsWith('/api/user/memories/')){const key=path.split('/').at(-1)!;if(method==='DELETE')memories.delete(key);else memories.set(key,{key,value:{text:body.text}});result={ok:true};}
+     else if (path === "/api/user/tasks" && method === "POST") {
       let id = created.get(body.requestId);
       if (!id) {
         id = "demo_created_" + created.size;

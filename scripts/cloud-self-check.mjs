@@ -1,106 +1,21 @@
-// Short-lived, isolated production smoke identity. Never print a token or model key.
-import { randomBytes, createHash, randomUUID } from "node:crypto";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import path from "node:path";
-// Do not send a temporary device credential to an arbitrary diagnostic URL.
-const origin =
-  process.argv.find((arg) => arg.startsWith("--origin="))?.slice(9) ??
-  "https://tr.zhangheng.eu.org";
-if (
-  !["https://tr.zhangheng.eu.org", "https://taskrelay.zhangheng.workers.dev"].includes(origin)
-)
-  throw new Error("DIAGNOSTIC_ORIGIN_NOT_ALLOWED");
-const root = path.resolve(import.meta.dirname, ".."),
-  id = "diagnostic_" + randomUUID().replaceAll("-", ""),
-  token = randomBytes(32).toString("hex");
-const digest = createHash("sha256").update(token).digest("hex");
-async function sql(command) {
-  await promisify(execFile)(
-    process.execPath,
-    [
-      path.join(root, "node_modules/wrangler/bin/wrangler.js"),
-      "d1",
-      "execute",
-      "taskrelay",
-      "--remote",
-      "--command",
-      command,
-    ],
-    { cwd: path.join(root, "apps/web"), windowsHide: true, timeout: 60000 },
-  );
+// Deployment checks never mint devices or use device tokens for administration.
+const origin = process.argv.find(arg => arg.startsWith('--origin='))?.slice(9) ?? 'https://tr.zhangheng.eu.org';
+if (!['https://tr.zhangheng.eu.org', 'https://taskrelay.zhangheng.workers.dev'].includes(origin)) throw new Error('DIAGNOSTIC_ORIGIN_NOT_ALLOWED');
+if (process.argv.includes('--egress') || process.argv.includes('--probe-existing')) throw new Error('USE_AUTHENTICATED_ADMIN_MODEL_CHECK');
+const checks = [
+  ['/api/health', 200, ''], ['/api/device/status', 401, ''],
+  ['/api/device/user/snapshot', 403, ''], ['/api/user/snapshot', 401, ''],
+  ['/api/admin/operations', 401, ''],
+  ['/api/user/snapshot', 403, 'Bearer ' + 'a'.repeat(64)],
+  ['/api/admin/operations', 403, 'Bearer ' + 'a'.repeat(64)],
+];
+let gated = false;
+for (const [path, expected, authorization] of checks) {
+  const response = await fetch(origin + path, {redirect:'manual', headers:authorization ? {Authorization:authorization} : {}, signal:AbortSignal.timeout(15000)});
+  const access = response.status === 302 && (response.headers.get('location') ?? '').includes('zhangheng.cloudflareaccess.com');
+  gated ||= access;
+  if (!access && response.status !== expected) throw new Error(`CHECK_FAILED ${path} ${response.status}`);
+  if (path === '/api/health' && (await response.json()).protocolVersion !== 3) throw new Error('PROTOCOL_MISMATCH');
+  console.log(JSON.stringify({origin,path,status:response.status,accessGate:access,passed:!access}));
 }
-let modelId;
-try {
-  await sql(
-    `INSERT INTO devices(id,name,token_hash,protocol_version) VALUES('${id}','Temporary self-check','${digest}',1)`,
-  );
-  const request = async (p, body) => {
-    const r = await fetch(
-      origin + "/api/device/user/" + p,
-      {
-        method: body ? "POST" : "GET",
-        headers: {
-          Authorization: "Bearer " + token,
-          "Content-Type": "application/json",
-        },
-        body: body ? JSON.stringify(body) : undefined,
-        signal: AbortSignal.timeout(180000),
-      },
-    );
-    return {
-      origin,
-      status: r.status,
-      placement: r.headers.get("cf-placement"),
-      data: await r.json(),
-    };
-  };
-  console.log(
-    JSON.stringify(
-      await request(
-        "settings/check" +
-          (process.argv.includes("--egress") ? "?egress=1" : ""),
-      ),
-    ),
-  );
-  if (process.argv.includes("--probe-existing")) {
-    const snapshot = await request("snapshot");
-    for (const profile of snapshot.data.models ?? []) {
-      if (profile.name.startsWith("diagnostic_")) continue;
-      const tested = await request(`models/${profile.id}/test`, {});
-      console.log(
-        JSON.stringify({
-          stage: "existing-model-test",
-          placement: tested.placement,
-          name: profile.name,
-          baseUrl: profile.baseUrl,
-          protocol: profile.protocol,
-          model: profile.model,
-          result: tested.data,
-        }),
-      );
-    }
-  }
-  const saved = await request("models", {
-    name: id,
-    baseUrl: "https://api.openai.com/v1/responses",
-    protocol: "responses",
-    model: "diagnostic-only-no-inference",
-    apiKey: "invalid-diagnostic-key",
-  });
-  modelId = saved.data.id;
-  console.log(
-    JSON.stringify({
-      stage: "save",
-      status: saved.status,
-      error: saved.data.error ?? null,
-      normalized: saved.data.baseUrl ?? null,
-    }),
-  );
-} finally {
-  if (typeof modelId === "string" && /^model_[a-z0-9]+$/.test(modelId))
-    await sql(
-      `DELETE FROM model_profiles WHERE id='${modelId}' AND json_extract(config,'$.name')='${id}'`,
-    );
-  await sql(`DELETE FROM devices WHERE id='${id}' AND token_hash='${digest}'`);
-}
+console.log(JSON.stringify({origin,complete:!gated,note:gated?'Access still gates user/admin checks; application authorization checks pending':'Anonymous and bearer scope checks passed'}));

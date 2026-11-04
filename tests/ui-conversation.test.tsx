@@ -10,10 +10,38 @@ import {
 } from "@testing-library/react";
 import { Conversation } from "../packages/ui/src/conversation";
 import { RunReport } from "../packages/ui/src/run-report";
-import { task, run, challenge, transportWith } from "./ui-fixtures";
+import { task, run, challenge, transportWith, threadPage } from "./ui-fixtures";
 import type { HumanChallenge } from "../packages/contracts/src/index";
 
 afterEach(cleanup);
+test("cancelled queued run never claims it is still waiting for cancellation", () => {
+  const view=render(<RunReport run={{...run,status:'cancelled',cancelRequested:true}} events={[]} usage={[]} disabled={false} onCancel={()=>{}} onReconcile={()=>{}}/>);
+  assert.ok(view.getByText('本次运行已取消。'));
+  assert.ok(view.getByText('本次运行没有步骤记录'));
+  assert.equal(view.queryByText('等待取消确认'),null);
+  assert.equal(view.queryByRole('button',{name:'取消本次运行'}),null);
+});
+test("chat keeps pending feedback after acceptance until asynchronous completion", async () => {
+  let page: any = {...threadPage};
+  const listeners = new Set<()=>void>();
+  const transport = {...transportWith(async (method,path) => {
+    if(path==='/api/user/threads')return [{id:page.id,kind:'chat',model_id:task.modelId,task_id:task.id}];
+    if(path.endsWith('/messages'))page={...page,version:1,status:'running',activeTurn:'async-turn',latestTurn:{status:'running'}};
+    return page;
+  }),subscribe(fn:()=>void){listeners.add(fn);return()=>{listeners.delete(fn);};}};
+  const view=render(<Conversation transport={transport} task={task} run={null} challenges={[]} refresh={async()=>{}} onEdit={()=>{}} offline={false}/>);
+  await waitFor(()=>assert.equal(view.getByRole('textbox').hasAttribute('disabled'),false));
+  fireEvent.change(view.getByRole('textbox'),{target:{value:'请读取已确认偏好'}});
+  fireEvent.click(view.getByRole('button',{name:'发送消息'}));
+  await waitFor(()=>assert.equal((view.getByRole('textbox') as HTMLTextAreaElement).value,''));
+  assert.match(view.getByRole('status').textContent??'',/正在回复/);
+  assert.equal(view.getByRole('textbox').hasAttribute('disabled'),true);
+  page={...page,activeTurn:null,latestTurn:{status:'done'},messages:[{id:'reply',seq:2,role:'assistant',content:'已确认的报告格式'}]};
+  await act(async()=>{for(const fn of listeners)fn();});
+  await view.findByText('已确认的报告格式');
+  assert.equal(view.queryByRole('status'),null);
+  assert.equal(view.getByRole('textbox').hasAttribute('disabled'),false);
+});
 test("run trace expands actual events, keeps unknown usage, and renders results as inert text", () => {
   const view = render(
     <RunReport
@@ -61,6 +89,8 @@ test("run trace expands actual events, keeps unknown usage, and renders results 
 function setup(current: HumanChallenge = challenge) {
   const writes: { path: string; body: any }[] = [];
   const transport = transportWith(async (method, path, body) => {
+    if(path==='/api/user/threads')return method==='GET'?[{id:threadPage.id,kind:'chat',model_id:task.modelId,task_id:task.id}]:threadPage;
+    if(path.includes('/threads/'))return threadPage;
     if (method === "POST") {
       writes.push({ path, body });
       return { ok: true };
@@ -192,43 +222,22 @@ test("unsupported, answered, expired and offline challenges cannot submit", asyn
 });
 
 test("a late polling response cannot replace a just-sent chat response", async () => {
-  let resolveOld!: (value: unknown) => void,
-    reads = 0;
-  const fresh = [
-    {
-      id: "answer",
-      role: "assistant",
-      content: "新的回复",
-      at: new Date().toISOString(),
-    },
-  ];
-  const transport = transportWith(async (method, path) => {
-    if (method === "POST") return { ok: true };
-    if (!path.endsWith("/chat")) return { events: [], usage: [] };
-    if (reads++ === 0)
-      return new Promise((r) => {
-        resolveOld = r;
-      });
-    return fresh;
+  let resolveOld!: (value: unknown) => void;
+  const transport=transportWith(async(method,path)=>{
+    if(path==='/api/user/threads')return method==='GET'?[]:threadPage;
+    if(path.endsWith('/messages'))return {...threadPage,version:1,status:'done',messages:[{id:'answer',seq:2,role:'assistant',content:'新的回复'}]};
+    if(path.includes('/threads/'))return new Promise(r=>{resolveOld=r;});
+    return {events:[],usage:[]};
   });
-  const view = render(
-    <Conversation
-      transport={transport}
-      task={task}
-      run={null}
-      challenges={[]}
-      refresh={async () => {}}
-      onEdit={() => {}}
-      offline={false}
-    />,
-  );
-  fireEvent.change(view.getByRole("textbox"), {
-    target: { value: "状态如何" },
-  });
-  fireEvent.click(view.getByRole("button", { name: "发送消息" }));
-  await view.findByText("新的回复");
-  await act(async () => {
-    resolveOld([]);
-  });
-  assert.ok(view.getByText("新的回复"));
+  const props={transport,task,run:null,challenges:[],refresh:async()=>{},onEdit:()=>{},offline:false};
+  const view=render(<Conversation {...props}/>);
+  await waitFor(()=>assert.equal(view.getByRole('textbox').hasAttribute('disabled'),false));
+  // Changing run starts a real refresh after the initial thread has loaded.
+  view.rerender(<Conversation {...props} run={run}/>);
+  await waitFor(()=>assert.ok(resolveOld));
+  fireEvent.change(view.getByRole('textbox'),{target:{value:'状态如何'}});
+  fireEvent.click(view.getByRole('button',{name:'发送消息'}));
+  await view.findByText('新的回复');
+  await act(async()=>{resolveOld(threadPage);});
+  assert.ok(view.getByText('新的回复'));
 });

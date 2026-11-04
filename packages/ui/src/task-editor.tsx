@@ -8,6 +8,7 @@ import {
 } from "react";
 import type { Snapshot, TaskInput } from "../../contracts/src/index";
 import { taskInputSchema } from "../../contracts/src/index";
+import { allowedNavigation, publicUrl } from "../../contracts/src/security";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Textarea } from "./components/ui/textarea";
@@ -93,22 +94,22 @@ export function TaskEditor({
           onSubmit={(e) => {
             e.preventDefault();
             try {
-              onApply(
-                taskInputSchema.parse({
+              const next = taskInputSchema.parse({
                   ...draft,
                   allowedOrigins: [
                     ...new Set([
-                      new URL(draft.entryUrl).origin,
                       ...origins
                         .split("\n")
                         .map((s) => s.trim())
-                        .filter(Boolean),
+                        .filter(Boolean).map((value) => publicUrl(value).origin),
                     ]),
                   ],
-                }),
-              );
-            } catch {
-              setError("请检查网站、时间和必填内容。");
+                });
+              allowedNavigation(next.entryUrl, next.allowedOrigins);
+              onApply(next);
+            } catch (e) {
+              const code = (e as Error).message;
+              setError(['PUBLIC_HTTPS_REQUIRED','PRIVATE_ADDRESS_BLOCKED','ORIGIN_NOT_AUTHORIZED'].includes(code) ? code : "请检查网站、时间和必填内容。");
             }
           }}
         >

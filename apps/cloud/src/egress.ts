@@ -10,8 +10,10 @@ export type EgressJob =
       version: number;
       request: Inference;
       runId: string | null;
+      userId: string;
+      reservationId: string;
     };
-export async function egress<T>(env: AppEnv, job: EgressJob): Promise<T> {
+export async function egress<T>(env: AppEnv, job: EgressJob, persist?: (result:T)=>Promise<void>): Promise<T> {
   if (!env.MODEL_EGRESS) throw new Error("MODEL_EGRESS_NOT_CONFIGURED");
   const id = crypto.randomUUID();
   // This jurisdiction constrains the execution itself, unlike a placement hint.
@@ -32,18 +34,22 @@ export async function egress<T>(env: AppEnv, job: EgressJob): Promise<T> {
     id,
     await seal(job, env.MASTER_KEY, `egress:${id}:request`),
   );
+  let persisted = false;
   try {
     if (result.status !== "done" || !result.cipher)
       throw new Error(result.error ?? "MODEL_EGRESS_FAILED");
-    return await unseal<T>(
+    const value = await unseal<T>(
       result.cipher,
       env.MASTER_KEY,
       `egress:${id}:response`,
     );
+    if(persist) await persist(value);
+    persisted = true;
+    return value;
   } finally {
     // Only acknowledge terminal results; never re-enter an executing alarm.
     // A failed acknowledgement must not discard an already received model result.
-    if (result.status !== "pending" && result.status !== "running")
+    if ((result.status !== 'done' || persisted) && result.status !== "pending" && result.status !== "running")
       await stub.ack().catch(() => {});
   }
 }

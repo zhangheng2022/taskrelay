@@ -1,3 +1,4 @@
+import { quotaDay } from './tenancy';
 import {
   limits,
   type TaskRun,
@@ -16,6 +17,9 @@ export const uid = (prefix: string) =>
 export function runFrom(row: Row): TaskRun {
   return {
     id: row.id,
+    userId: row.user_id,
+    profileId: row.profile_id,
+    queueReason:row.queue_reason,
     taskId: row.task_id,
     task: JSON.parse(row.task_snapshot),
     status: row.status,
@@ -54,6 +58,10 @@ export async function enqueue(
   key: string,
   scheduled = now(),
 ) {
+  const owner=await db.prepare('SELECT user_id FROM tasks WHERE id=?').bind(task.id).first<{user_id:string}>();
+  if(!owner) throw new Error('TASK_NOT_FOUND');
+  const account=task.accountId ? await db.prepare('SELECT profile_id FROM accounts WHERE id=? AND user_id=?').bind(task.accountId,owner.user_id).first<{profile_id:string}>():null;
+  const profileId=account?.profile_id ?? (task.accountId ?? `task_${task.id}`);
   const id = uid("run"),
     at = now(),
     deadline = new Date(
@@ -61,7 +69,7 @@ export async function enqueue(
     ).toISOString();
   await db
     .prepare(
-      "INSERT OR IGNORE INTO runs(id,task_id,task_snapshot,status,scheduled_for,deadline,account_key,idempotency_key,created_at,updated_at) VALUES(?,?,?,'queued',?,?,?,?,?,?)",
+      "INSERT OR IGNORE INTO runs(id,task_id,task_snapshot,status,scheduled_for,deadline,account_key,idempotency_key,created_at,updated_at,user_id,profile_id) VALUES(?,?,?,'queued',?,?,?,?,?,?,?,?)",
     )
     .bind(
       id,
@@ -72,7 +80,7 @@ export async function enqueue(
       task.accountId ?? `task:${task.id}`,
       key,
       at,
-      at,
+      at,owner.user_id,profileId,
     )
     .run();
   return runFrom(
@@ -87,13 +95,14 @@ export async function claim(
   deviceId: string,
   requestId: string,
 ): Promise<TaskRun | null> {
+  if((await db.prepare("SELECT value FROM settings WHERE key='claimsEnabled'").first<{value:string}>())?.value==='0') return null;
   const prior = await db
     .prepare(
       "SELECT r.* FROM claims c JOIN runs r ON r.id=c.run_id WHERE c.device_id=? AND c.request_id=?",
     )
     .bind(deviceId, requestId)
     .first<Row>();
-  if (prior) return runFrom(prior);
+  if (prior) return ["running","waiting_user","verifying"].includes(prior.status) && prior.lease_expires_at>now() && !prior.cancel_requested ? runFrom(prior) : null;
   const at = now();
   const busy = await db
     .prepare(
@@ -104,13 +113,13 @@ export async function claim(
   if (busy) return null;
   const candidate = await db
     .prepare(
-      "SELECT r.* FROM runs r JOIN tasks t ON r.task_id=t.id WHERE r.status='queued' AND r.deadline>? AND (t.status IN ('active','pending_validation') OR r.idempotency_key LIKE 'manual:%' OR r.reconciliation_of IS NOT NULL) AND (NOT EXISTS(SELECT 1 FROM account_locks l WHERE l.account_key=r.account_key) OR EXISTS(SELECT 1 FROM account_locks l JOIN runs old ON old.id=l.run_id WHERE l.account_key=r.account_key AND old.id=r.reconciliation_of AND old.status='unknown')) ORDER BY r.created_at LIMIT 1",
+      "SELECT r.* FROM runs r JOIN tasks t ON r.task_id=t.id JOIN members m ON m.id=r.user_id WHERE m.disabled=0 AND NOT EXISTS(SELECT 1 FROM runs active WHERE active.user_id=r.user_id AND active.status IN ('running','waiting_user','verifying')) AND ((SELECT COUNT(*) FROM runs used WHERE used.user_id=r.user_id AND used.started_day=?) + COALESCE((SELECT runs FROM quota_carry WHERE user_id=r.user_id AND day=?),0))<m.daily_runs AND NOT EXISTS(SELECT 1 FROM accounts a WHERE a.id=json_extract(r.task_snapshot,'$.accountId') AND a.assigned_device_id IS NOT NULL AND a.assigned_device_id<>?) AND r.status='queued' AND r.deadline>? AND (t.status IN ('active','pending_validation') OR r.idempotency_key LIKE 'manual:%' OR r.reconciliation_of IS NOT NULL) AND (NOT EXISTS(SELECT 1 FROM account_locks l WHERE l.account_key=r.account_key) OR EXISTS(SELECT 1 FROM account_locks l JOIN runs old ON old.id=l.run_id WHERE l.account_key=r.account_key AND old.id=r.reconciliation_of AND old.status='unknown')) ORDER BY COALESCE(m.last_claim_at,''),r.created_at,r.id LIMIT 1",
     )
-    .bind(at)
+    .bind(quotaDay(),quotaDay(),deviceId,at)
     .first<Row>();
   if (!candidate) return null;
   const lease = new Date(Date.now() + limits.leaseMs).toISOString();
-  await db.batch([
+  try { await db.batch([
     db
       .prepare(
         "UPDATE account_locks SET run_id=? WHERE run_id=? AND EXISTS(SELECT 1 FROM runs WHERE id=? AND status='queued' AND reconciliation_of=?) AND NOT EXISTS(SELECT 1 FROM runs WHERE device_id=? AND status IN ('running','waiting_user','verifying'))",
@@ -129,9 +138,9 @@ export async function claim(
       .bind(candidate.id, deviceId),
     db
       .prepare(
-        "UPDATE runs SET status='running',device_id=?,lease_epoch=lease_epoch+1,lease_expires_at=?,updated_at=? WHERE id=? AND status='queued' AND EXISTS(SELECT 1 FROM account_locks WHERE run_id=runs.id) AND NOT EXISTS(SELECT 1 FROM runs r WHERE r.device_id=? AND r.status IN ('running','waiting_user','verifying'))",
+        "UPDATE runs SET status='running',device_id=?,lease_epoch=lease_epoch+1,lease_expires_at=?,updated_at=?,started_day=?,profile_id=COALESCE((SELECT profile_id FROM accounts WHERE id=json_extract(runs.task_snapshot,'$.accountId')),profile_id) WHERE id=? AND status='queued' AND EXISTS(SELECT 1 FROM account_locks WHERE run_id=runs.id) AND NOT EXISTS(SELECT 1 FROM runs r WHERE r.device_id=? AND r.status IN ('running','waiting_user','verifying'))",
       )
-      .bind(deviceId, lease, at, candidate.id, deviceId),
+      .bind(deviceId, lease, at, quotaDay(), candidate.id, deviceId),
     db
       .prepare(
         "INSERT OR IGNORE INTO claims(device_id,request_id,run_id) SELECT ?,?,id FROM runs WHERE id=? AND device_id=? AND status='running'",
@@ -142,7 +151,10 @@ export async function claim(
         "DELETE FROM account_locks WHERE run_id=? AND NOT EXISTS(SELECT 1 FROM runs WHERE id=? AND status IN ('running','waiting_user','verifying','unknown'))",
       )
       .bind(candidate.id, candidate.id),
-  ]);
+  ]); } catch(e) {
+    if(/CLAIM_BUSY|RUN_QUOTA_EXCEEDED|USER_DISABLED|ACCOUNT_DEVICE_MISMATCH/.test((e as Error).message)) return null;
+    throw e;
+  }
   const row = await db
     .prepare(
       "SELECT r.* FROM claims c JOIN runs r ON r.id=c.run_id WHERE c.device_id=? AND c.request_id=?",
@@ -246,6 +258,7 @@ export async function finish(
   await db.batch(statements);
 }
 export async function tick(db: D1Database) {
+  if((await db.prepare("SELECT value FROM settings WHERE key='maintenance'").first<{value:string}>())?.value==='1') return;
   const at = now();
   await db.batch([
     db
@@ -295,13 +308,12 @@ export async function tick(db: D1Database) {
       )
       .bind(task.id)
       .first();
-    if (slot && !active)
-      await enqueue(
+    if (slot && !active) { try { await enqueue(
         db,
         task,
         `schedule:${task.id}:${task.version}:${slot}`,
         slot,
-      );
+      ); } catch(e) { if(!/QUEUE_LIMIT|USER_DISABLED/.test((e as Error).message)) throw e; } }
     await db
       .prepare(
         "UPDATE tasks SET next_run_at=? WHERE id=? AND version=? AND next_run_at=?",

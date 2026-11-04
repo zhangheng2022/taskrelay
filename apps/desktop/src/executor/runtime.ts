@@ -69,11 +69,11 @@ export async function execute(run: TaskRun, port: RuntimePort) {
     await port.checkpoint("starting", { run });
     const launch = await port.rpc<{ cdpUrl: string }>("local:browser", {
       proxyPort: proxy.port,
-      accountId: run.task.accountId ?? `task_${run.taskId}`,
+      accountId: run.profileId,
     });
     const browser = await sdk.localBrowser.connect({ cdpUrl: launch.cdpUrl });
     const model: ClientLLM = {
-      generate: async (request) => api("stagehand", { request }),
+      generate: async (request) => api("stagehand", { request,requestId:crypto.randomUUID() }),
     };
     stagehand = await sdk.Stagehand.create({
       browser,
@@ -90,10 +90,12 @@ export async function execute(run: TaskRun, port: RuntimePort) {
     await page.goto(run.task.entryUrl);
     await event("started", "已加载当前任务的独立账号环境");
     const history: string[] = [];
+    let planStep=0;
     let extraction: unknown;
     async function observe() {
       guard();
       const url = await page.url();
+      if(url.startsWith('chrome-error:'))throw new Error('PAGE_NETWORK_FAILED');
       allowedNavigation(url, run.task.allowedOrigins);
       const text = await page.locator("body").innerText();
       // Values are excluded, including password and OTP fields.
@@ -309,6 +311,8 @@ export async function execute(run: TaskRun, port: RuntimePort) {
       const action = browserActionSchema.parse(
         await api("plan", {
           observation: JSON.stringify(before),
+          observationId: await hash(JSON.stringify(before)),
+          stepId: `step_${++planStep}`,
           url: before.url,
           history,
         }),

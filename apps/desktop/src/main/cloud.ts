@@ -1,12 +1,15 @@
 import { safeStorage } from "electron";
 import { Journal } from "./journal";
+import WebSocket from 'ws';
 export class Cloud {
   online = false;
+  private readyUntil=0;
+  private stopEvents:(()=>void)|null=null;
   constructor(readonly journal: Journal) {}
   get url() {
     return (
       this.journal.get<string>("cloudUrl") ??
-      "https://taskrelay.zhangheng.workers.dev"
+      "https://tr.zhangheng.eu.org"
     );
   }
   get paired() {
@@ -25,6 +28,42 @@ export class Cloud {
     if (!encrypted) throw new Error("DEVICE_UNAUTHORIZED");
     return safeStorage.decryptString(Buffer.from(encrypted, "base64"));
   }
+  async connect(executorIdle:boolean) {
+    type Status={maintenance:boolean;historyEpoch:number};
+    let status:Status;
+    try {status=await this.request<Status>('GET','/api/device/status');}
+    catch(error) {
+      if((error as Error).message!=='DEVICE_UPGRADE_REQUIRED')throw error;
+      if(!executorIdle||this.journal.pending().length||this.journal.incomplete().length)throw new Error('LOCAL_HISTORY_UNRESOLVED');
+      await this.request('POST','/api/device/upgrade',{protocolVersion:3,localReady:true});
+      status=await this.request<Status>('GET','/api/device/status');
+    }
+    if(!status.maintenance)this.readyUntil=0;
+    if(status.maintenance&&Date.now()>this.readyUntil&&executorIdle&&!this.journal.pending().length&&!this.journal.incomplete().length){
+      await this.request('POST','/api/device/upgrade',{protocolVersion:3,localReady:true});
+      this.readyUntil=Date.now()+180000;
+    }
+    if(status.historyEpoch===3&&this.journal.get('historyEpoch')!==3){if(!executorIdle)throw new Error('EXECUTOR_BUSY');this.journal.clearHistory();}
+    return status;
+  }
+  watch(fn:()=>void){
+    this.stopEvents?.();
+    let stopped=false,socket:WebSocket|undefined,timer:ReturnType<typeof setTimeout>|undefined,failures=0;
+    const start=()=>{
+      if(stopped)return;
+      if(!this.paired){timer=setTimeout(start,30000);return;}
+      const url=new URL('/api/device/events',this.url);url.protocol=url.protocol==='https:'?'wss:':'ws:';
+      try{
+        socket=new WebSocket(url,{headers:{Authorization:`Bearer ${this.token()}`,'x-taskrelay-protocol':'3'},handshakeTimeout:12000,followRedirects:false});
+        socket.on('open',()=>{failures=0;fn();});
+        socket.on('message',()=>fn());
+        socket.on('error',()=>socket?.close());
+        socket.on('close',()=>{if(!stopped)timer=setTimeout(start,Math.min(60000,3000*2**Math.min(failures++,5)));});
+      }catch{if(!stopped)timer=setTimeout(start,30000);}
+    };
+    start();this.stopEvents=()=>{stopped=true;clearTimeout(timer);socket?.close();};
+  }
+  close(){this.stopEvents?.();this.stopEvents=null;}
   async request<T>(
     method: string,
     p: string,
@@ -35,6 +74,7 @@ export class Cloud {
     const response = await fetch(`${this.url}${p}`, {
       method,
       headers: {
+        "x-taskrelay-protocol":"3",
         ...(publicCall ? {} : { Authorization: `Bearer ${this.token()}` }),
         ...(binary
           ? {
@@ -69,25 +109,5 @@ export class Cloud {
         data,
       });
     return data;
-  }
-  async user<T>(method: string, p: string, body?: unknown): Promise<T> {
-    const cachedAllowed =
-      method === "GET" &&
-      /\/(snapshot|runs\/[^/]+|tasks\/[^/]+\/chat|settings)$/.test(p);
-    try {
-      const result = await this.request<T>(
-        method,
-        p.replace("/api/user/", "/api/device/user/"),
-        body,
-      );
-      if (cachedAllowed) this.journal.cache(p, result);
-      return result;
-    } catch (e) {
-      if ((e as Error).message === "OFFLINE" && cachedAllowed) {
-        const cached = this.journal.cached<T>(p);
-        if (cached) return cached;
-      }
-      throw e;
-    }
   }
 }

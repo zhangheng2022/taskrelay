@@ -2,6 +2,11 @@
 @import "tw-animate-css";
 @source "./**/*.{ts,tsx}";
 @custom-variant dark (&:is(.dark *));
+.brand-mark {
+  aspect-ratio: 23 / 15;
+  background-color: currentColor;
+  mask: url("../../../resources/brand-mark.svg") center / contain no-repeat;
+}
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);

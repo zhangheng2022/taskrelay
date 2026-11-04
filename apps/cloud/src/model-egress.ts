@@ -37,7 +37,7 @@ export class ModelEgress extends DurableObject<AppEnv> {
         job.modelId,
         job.version,
         job.request,
-        job.runId,
+        job.runId,job.userId,job.reservationId,
       );
     });
   }

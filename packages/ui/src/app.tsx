@@ -4,7 +4,6 @@ import {
   Check,
   Ellipsis,
   MessageSquare,
-  Monitor,
   Moon,
   Plus,
   Settings as SettingsIcon,
@@ -18,7 +17,6 @@ import type {
 } from "../../contracts/src/index";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
-import { Alert, AlertTitle, AlertDescription } from "./components/ui/alert";
 import { Skeleton } from "./components/ui/skeleton";
 import { TooltipProvider } from "./components/ui/tooltip";
 import {
@@ -57,6 +55,8 @@ import {
   EmptyDescription,
 } from "./components/ui/empty";
 import { Settings } from "./settings";
+import { PairingNotice } from "./pairing-notice";
+import { BrandMark } from "./brand-mark";
 import { Conversation } from "./conversation";
 import { TaskCompose } from "./task-compose";
 import { TaskSummary, scheduleLabel } from "./task-summary";
@@ -95,12 +95,7 @@ function Workspace({ transport }: { transport: Transport }) {
     [detail, setDetail] = useState(false),
     [search, setSearch] = useState(""),
     [draftKey, setDraftKey] = useState(0);
-  const [desktop, setDesktop] = useState<DesktopStatus | null>(null),
-    [pair, setPair] = useState<{
-      name: string;
-      code: string;
-      approved: boolean;
-    } | null>(null);
+  const [desktop, setDesktop] = useState<DesktopStatus | null>(null);
   const [theme, setTheme] = useState(() => {
     try {
       return localStorage.getItem("taskrelay.theme") ?? "system";
@@ -155,11 +150,13 @@ function Workspace({ transport }: { transport: Transport }) {
   useEffect(() => {
     mounted.current = true;
     void load();
-    const timer = setInterval(() => void load(), 5000);
+    const timer = setInterval(() => {if(!document.hidden)void load();}, transport.subscribe ? 60000 : 15000);
+    const updates=transport.subscribe?.(()=>void load());
     const unsub = transport.desktop?.subscribe(() => void load());
     return () => {
       mounted.current = false;
       clearInterval(timer);
+      updates?.();
       unsub?.();
     };
   }, [load, transport]);
@@ -177,25 +174,6 @@ function Workspace({ transport }: { transport: Transport }) {
     } catch {}
     return () => media.removeEventListener("change", update);
   }, [theme]);
-  useEffect(() => {
-    let live = true;
-    const code = new URLSearchParams(location.search).get("pair");
-    if (code)
-      void transport
-        .request<typeof pair>(
-          "GET",
-          `/api/user/pairings/${encodeURIComponent(code)}`,
-        )
-        .then((x) => {
-          if (live) setPair(x);
-        })
-        .catch((e) => {
-          if (live) setActionError(e.message);
-        });
-    return () => {
-      live = false;
-    };
-  }, [transport]);
   async function act(path: string, body?: unknown) {
     setBusy(true);
     setActionError("");
@@ -240,8 +218,8 @@ function Workspace({ transport }: { transport: Transport }) {
       <Sidebar>
         <SidebarHeader>
           <div className="flex items-center justify-between px-2 py-2">
-            <span className="text-sm font-semibold">TaskRelay</span>
-            <span className="text-xs text-muted-foreground">个人空间</span>
+            <span className="flex items-center gap-2 text-sm font-semibold"><BrandMark />TaskRelay</span>
+            <span className="text-xs text-muted-foreground">我的任务</span>
           </div>
           <Button variant="outline" onClick={newTask}>
             <Plus data-icon="inline-start" />
@@ -372,6 +350,7 @@ function Workspace({ transport }: { transport: Transport }) {
       <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
         <header className="flex h-14 shrink-0 items-center gap-2 border-b px-3 md:px-6">
           <SidebarTrigger />
+          <BrandMark className="w-6 md:hidden" />
           <div className="min-w-0 flex-1">
             <h1 className="truncate text-sm font-medium">
               {page === "settings"
@@ -434,6 +413,7 @@ function Workspace({ transport }: { transport: Transport }) {
             </>
           )}
         </header>
+        {data.quota && <div className="border-b px-4 py-2 text-xs text-muted-foreground" role="status">今日启动 {data.quota.used.runs}/{data.quota.limits.runs} · 模型请求 {data.quota.used.models}/{data.quota.limits.models} · 对话 {data.quota.used.chat}/{data.quota.limits.chat} · {formatDate(data.quota.resetAt)} 重置</div>}
         {error && (
           <div className="flex shrink-0 items-center gap-2 px-4 py-2">
             <div className="min-w-0 flex-1">
@@ -463,34 +443,7 @@ function Workspace({ transport }: { transport: Transport }) {
             <ErrorText error={actionError} />
           </div>
         )}
-        {pair && (
-          <div className="px-4 py-3">
-            <Alert>
-              <Monitor />
-              <AlertTitle>
-                {pair.approved ? "设备已授权" : "授权连接这台设备"}
-              </AlertTitle>
-              <AlertDescription>
-                <p>
-                  {pair.name} · 校验码 {pair.code}。请与客户端核对一致。
-                </p>
-                <Button
-                  size="sm"
-                  disabled={busy || pair.approved}
-                  onClick={() =>
-                    void act(`/api/user/pairings/${pair.code}/approve`).then(
-                      (ok) => {
-                        if (ok) setPair({ ...pair, approved: true });
-                      },
-                    )
-                  }
-                >
-                  {pair.approved ? "已授权" : "授权设备"}
-                </Button>
-              </AlertDescription>
-            </Alert>
-          </div>
-        )}
+        <PairingNotice transport={transport} refresh={refresh} />
         {pending.length > 0 &&
           !(task && pending.some((c) => c.runId === run?.id)) && (
             <div className="px-4 py-2">

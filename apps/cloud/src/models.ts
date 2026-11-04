@@ -1,3 +1,5 @@
+import {admit} from './free-budget';
+import { reserve } from './tenancy';
 import { z } from "zod";
 import {
   infer,
@@ -14,6 +16,7 @@ import { seal, unseal } from "./crypto";
 import { now, uid, type Row } from "./store";
 import { visionFixture } from "./vision-fixture";
 import { egress } from "./egress";
+import { hash } from '../../../packages/contracts/src/security';
 
 export async function validateEndpoint(baseUrl: string) {
   return publicEndpoint(baseUrl, async (host) => {
@@ -66,14 +69,23 @@ export async function getModel(env: AppEnv, id: string, version?: number) {
     ),
   };
 }
+/** Configuration checks do not need to read or decrypt provider credentials. */
+export async function getModelProfile(env: AppEnv, id: string, version?: number) {
+  const row = await env.DB.prepare(
+    `SELECT id,version,config,capabilities FROM model_profiles WHERE id=? ${version ? "AND version=?" : ""} ORDER BY version DESC LIMIT 1`,
+  ).bind(...(version ? [id,version] : [id])).first<Row>();
+  if(!row)throw new Error("MODEL_NOT_FOUND");
+  return {profile:modelFrom(row)};
+}
 export async function recordUsage(
   env: AppEnv,
   profile: ModelProfile,
   response: ModelResponse,
   runId: string | null,
+  userId: string,
 ) {
   await env.DB.prepare(
-    "INSERT INTO model_usage(id,run_id,model_id,model_version,input_tokens,output_tokens,at) VALUES(?,?,?,?,?,?,?)",
+    "INSERT INTO model_usage(id,run_id,model_id,model_version,input_tokens,output_tokens,at,user_id) VALUES(?,?,?,?,?,?,?,?)",
   )
     .bind(
       uid("usage"),
@@ -82,7 +94,7 @@ export async function recordUsage(
       profile.version,
       response.usage.input,
       response.usage.output,
-      now(),
+      now(),userId,
     )
     .run();
 }
@@ -92,14 +104,41 @@ export async function invoke(
   version: number,
   request: Inference,
   runId: string | null = null,
+  operationId?: string,
+  graphId?: string,
 ) {
-  return egress<ModelResponse>(env, {
-    kind: "inference",
+  const userId=runId ? (await env.DB.prepare('SELECT user_id FROM runs WHERE id=?').bind(runId).first<{user_id:string}>())?.user_id : env.requestUserId;
+  if(!userId) throw new Error('MODEL_ACTOR_REQUIRED');
+  const callId=operationId ?? crypto.randomUUID();
+  const digest=await hash(JSON.stringify({userId,id,version,request,runId}));
+  const inserted=await env.DB.prepare(`INSERT OR IGNORE INTO ai_calls(id,user_id,graph_id,digest,status,created_at,updated_at) SELECT ?,?,?,?,'reserved',?,? ${graphId?"WHERE EXISTS(SELECT 1 FROM ai_graph_inputs g WHERE owner=? AND id=? AND active=1 AND (parent_turn IS NULL OR EXISTS(SELECT 1 FROM ai_turns t WHERE t.id=g.parent_turn AND t.status IN ('running','done'))))":''}`).bind(callId,userId,graphId??null,digest,now(),now(),...(graphId?[userId,graphId]:[])).run();
+  if(!inserted.meta.changes) {
+    const prior=await env.DB.prepare('SELECT * FROM ai_calls WHERE id=?').bind(callId).first<Row>();
+    if(!prior || prior.user_id!==userId || prior.digest!==digest) throw new Error('MODEL_CALL_CONFLICT');
+    if(prior.status==='done' && prior.result) return unseal<ModelResponse>(prior.result,env.MASTER_KEY,`ai-call:${callId}`);
+    throw new Error(prior.status==='failed' ? prior.error : 'MODEL_CALL_OUTCOME_UNKNOWN');
+  }
+  try {
+  await admit(env,'model');
+  const reservationId=await reserve(env,userId,'model',callId);
+  await env.DB.prepare("UPDATE ai_calls SET status='running',updated_at=? WHERE id=?").bind(now(),callId).run();
+  return await egress<ModelResponse>(env, {
+    kind: "inference",userId,reservationId,
     modelId: id,
     version,
     request,
     runId,
+  }, async result=>{
+    const saved=await env.DB.prepare("UPDATE ai_calls SET status='done',result=?,updated_at=? WHERE id=? AND status='running'").bind(await seal(result,env.MASTER_KEY,`ai-call:${callId}`),now(),callId).run();
+    if(!saved.meta.changes)throw new Error('MODEL_CALL_DISCARDED');
   });
+  } catch(error) {
+    const code=/^[A-Z][A-Z0-9_]+$/.test((error as Error).message)?(error as Error).message:'MODEL_CALL_OUTCOME_UNKNOWN';
+    await env.DB.prepare("UPDATE ai_calls SET status=?,error=?,updated_at=? WHERE id=? AND status<>'done'").bind(code.includes('QUOTA')||code==='PLATFORM_DAILY_LIMIT'||code==='MODEL_REGION_REQUIRES_DEPLOYMENT'?'failed':'unknown',code,now(),callId).run();
+    throw error;
+  } finally {
+    if(!operationId)await env.DB.prepare('UPDATE ai_calls SET result=NULL WHERE id=?').bind(callId).run();
+  }
 }
 // Called exclusively by the region-bound Durable Object's alarm.
 export async function performInference(
@@ -108,11 +147,14 @@ export async function performInference(
   version: number,
   request: Inference,
   runId: string | null = null,
+  userId: string,
+  reservationId: string,
 ) {
+  if(!await env.DB.prepare("SELECT id FROM quota_reservations WHERE id=? AND user_id=? AND kind='model'").bind(reservationId,userId).first()) throw new Error('MODEL_RESERVATION_REQUIRED');
   const { profile, key } = await getModel(env, id, version);
   await validateEndpoint(profile.baseUrl);
   const result = await infer(profile, key, request);
-  await recordUsage(env, profile, result, runId);
+  await recordUsage(env, profile, result, runId,userId);
   return result;
 }
 // Only received, invalid output can spend the repair budget. Transport failures
@@ -126,8 +168,10 @@ export async function generateStructured<T>(
   messages: Inference["messages"],
   runId: string | null = null,
   invalidCode = "MODEL_INVALID_JSON",
+  operationId?: string,
+  graphId?: string,
 ): Promise<{ data: T; response: ModelResponse }> {
-  const { profile } = await getModel(env, id, version);
+  const { profile } = await getModelProfile(env, id, version);
   if (profile.capabilities.structured === "none")
     throw new Error("STRUCTURED_OUTPUT_REQUIRED");
   const format =
@@ -164,8 +208,11 @@ export async function generateStructured<T>(
             ]
           : instructions,
         ...format,
+        maxTokens: profile.outputTokens ?? 4096,
       },
       runId,
+      operationId ? `${operationId}:${attempt}` : undefined,
+      graphId,
     );
     try {
       return { data: validate(JSON.parse(response.text)), response };
@@ -182,6 +229,8 @@ export async function generate<T>(
   schema: z.ZodType<T>,
   messages: Inference["messages"],
   runId: string | null = null,
+  operationId?: string,
+  graphId?: string,
 ) {
   const result = await generateStructured(
     env,
@@ -191,6 +240,8 @@ export async function generate<T>(
     (value) => schema.parse(value),
     messages,
     runId,
+    'MODEL_INVALID_JSON',
+    operationId,
   );
   return result.data;
 }
@@ -207,7 +258,7 @@ export async function probe(
     testedAt: now(),
   };
   const errors: string[] = [];
-  const { profile } = await getModel(env, id, version);
+  const { profile } = await getModelProfile(env, id, version);
   caps.tokenParameter =
     profile.capabilities.tokenParameter ?? "max_completion_tokens";
   try {
@@ -353,7 +404,7 @@ export async function storeModel(
   return { id, version, ...config, hasKey: true, capabilities };
 }
 export async function probeVision(env: AppEnv, id: string) {
-  const { profile } = await getModel(env, id);
+  const { profile } = await getModelProfile(env, id);
   let vision = false;
   try {
     const r = await invoke(env, id, profile.version, {

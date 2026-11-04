@@ -1,7 +1,24 @@
 import http from "node:http";
 import net from "node:net";
-import { lookup } from "node:dns/promises";
-import { isPublicIp } from "../../../../packages/contracts/src/security";
+import { isPublicIp, publicUrl } from "../../../../packages/contracts/src/security";
+/** Resolve the origin through authenticated HTTPS DNS, not a local TUN's fake-IP
+ * mapping. Every answer is checked and the selected public IP is pinned below. */
+export async function resolvePublicHost(hostname:string) {
+  publicUrl(`https://${hostname.includes(':')?'['+hostname+']':hostname}`);
+  if(net.isIP(hostname))return [{address:hostname,family:net.isIP(hostname)}];
+  const answers=await Promise.all(['A','AAAA'].map(async type=>{
+    const response=await fetch(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(hostname)}&type=${type}`,{
+      headers:{accept:'application/dns-json'},redirect:'error',signal:AbortSignal.timeout(10000),
+    });
+    if(!response.ok)throw new Error('DNS_LOOKUP_FAILED');
+    const data=await response.json() as {Status:number;Answer?:{type:number;data:string}[]};
+    if(data.Status!==0)throw new Error('DNS_LOOKUP_FAILED');
+    return (data.Answer??[]).filter(a=>a.type===1||a.type===28).map(a=>({address:a.data,family:net.isIP(a.data)}));
+  }));
+  const addresses=answers.flat();
+  if(!addresses.length||addresses.some(a=>!a.family||!isPublicIp(a.address)))throw new Error('PRIVATE_NETWORK_BLOCKED');
+  return addresses;
+}
 // DNS is checked and the returned address is pinned to the outgoing socket.
 // HTTPS credentials stay inside the browser's CONNECT tunnel.
 export async function startProxy() {
@@ -20,7 +37,7 @@ export async function startProxy() {
       if (url.username || url.password || (url.port && url.port !== "443"))
         throw new Error("PORT_BLOCKED");
       const hostname = url.hostname.replace(/^\[|\]$/g, "");
-      const addresses = await lookup(hostname, { all: true, verbatim: true });
+      const addresses = await resolvePublicHost(hostname);
       if (!addresses.length || addresses.some((a) => !isPublicIp(a.address)))
         throw new Error("PRIVATE_NETWORK_BLOCKED");
       const target = net.connect({

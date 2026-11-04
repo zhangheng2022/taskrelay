@@ -204,7 +204,7 @@ export class ExecutorHost {
       const b = z
         .object({ accountId: z.string(), proxyPort: z.number().int() })
         .parse(body);
-      if (b.accountId !== (run.task.accountId ?? `task_${run.taskId}`))
+      if (b.accountId !== run.profileId)
         throw new Error("PROFILE_MISMATCH");
       return this.browser.launch(b.accountId, b.proxyPort);
     }

@@ -1,3 +1,5 @@
+import { useThread } from './use-thread';
+import { Button } from './components/ui/button';
 import { useEffect, useRef, useState } from "react";
 import { Pencil } from "lucide-react";
 import type {
@@ -32,6 +34,7 @@ export function Conversation({
   onEdit: () => void;
   offline: boolean;
 }) {
+  const thread=useThread(transport,'chat',task.modelId,task.id);
   const challenge = challenges.find(
     (c) =>
       c.runId === run?.id &&
@@ -58,12 +61,13 @@ export function Conversation({
   const [error, setError] = useState({ scope, message: "" });
   const [loadError, setLoadError] = useState("");
   const [events, setEvents] = useState<RunEvent[]>([]);
-  const [messages, setMessages] = useState<ChatEntry[]>([]);
+  const messages=thread.page?.messages??[];
   const [usage, setUsage] = useState<Usage[]>([]);
   const [image, setImage] = useState<{
     binding: string;
     dataUrl: string;
   } | null>(null);
+  const [deleteConfirm,setDeleteConfirm]=useState(false);
   const [submitted, setSubmitted] = useState("");
   const [cancelled, setCancelled] = useState(false);
   const flight = useRef(false),
@@ -101,15 +105,12 @@ export function Conversation({
     let live = true,
       loading = false;
     async function load() {
-      if (loading || flight.current) return;
+      if (loading || flight.current || document.hidden) return;
       loading = true;
       const version = revision.current;
       try {
         const [chat, details] = await Promise.all([
-          transport.request<ChatEntry[]>(
-            "GET",
-            `/api/user/tasks/${task.id}/chat`,
-          ),
+          thread.refresh(),
           run
             ? transport.request<{ events: RunEvent[]; usage: Usage[] }>(
                 "GET",
@@ -118,7 +119,7 @@ export function Conversation({
             : Promise.resolve(null),
         ]);
         if (live && version === revision.current) {
-          setMessages(chat);
+
           setEvents(details?.events ?? []);
           setUsage(details?.usage ?? []);
           setLoadError("");
@@ -131,10 +132,12 @@ export function Conversation({
       }
     }
     void load();
-    const timer = setInterval(() => void load(), 5000);
+    const unsubscribe=transport.subscribe?.(()=>void load());
+    const timer = setInterval(() => void load(), transport.subscribe ? 60000 : 5000);
     return () => {
       live = false;
       clearInterval(timer);
+      unsubscribe?.();
     };
   }, [transport, task.id, run?.id]);
   useEffect(() => {
@@ -157,7 +160,7 @@ export function Conversation({
     };
   }, [binding, scope, challenge?.imageId, expired, transport]);
 
-  async function send(content = text) {
+  async function send(content = text,mode:'chat'|'report'='chat') {
     if (
       flight.current ||
       replyBlocked ||
@@ -184,24 +187,14 @@ export function Conversation({
         );
         setSubmitted(binding);
       } else {
-        if (chatAttempt.current?.content !== content)
-          chatAttempt.current = { content, requestId: crypto.randomUUID() };
-        await transport.request(
-          "POST",
-          `/api/user/tasks/${task.id}/chat`,
-          chatAttempt.current,
-        );
-        chatAttempt.current = null;
+        await thread.send(content,mode);
       }
       setInput({ scope, text: "" });
       const [chat] = await Promise.all([
-        transport.request<ChatEntry[]>(
-          "GET",
-          `/api/user/tasks/${task.id}/chat`,
-        ),
+        thread.refresh(),
         refresh(),
       ]);
-      setMessages(chat);
+
     } catch (e) {
       setError({ scope, message: (e as Error).message });
     } finally {
@@ -241,6 +234,10 @@ export function Conversation({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <Thread>
+        {thread.page?.nextCursor && <MessageScrollerItem messageId="older"><Button variant="ghost" onClick={()=>void thread.older()}>加载更早消息</Button></MessageScrollerItem>}
+        {thread.error && <MessageScrollerItem messageId="thread-error"><ErrorText error={thread.error}/></MessageScrollerItem>}
+        {thread.page?.latestTurn?.error && <MessageScrollerItem messageId="turn-error"><ErrorText error={thread.page.latestTurn.error}/></MessageScrollerItem>}
+
         <MessageScrollerItem messageId="goal">
           <ChatMessage role="user">{task.goal}</ChatMessage>
         </MessageScrollerItem>
@@ -284,9 +281,9 @@ export function Conversation({
             />
           </MessageScrollerItem>
         )}
-        {busy && (
+        {(busy || !!thread.page?.activeTurn) && (
           <MessageScrollerItem messageId="pending">
-            <PendingMessage>{busy}</PendingMessage>
+            <PendingMessage>{busy || "正在回复…"}</PendingMessage>
           </MessageScrollerItem>
         )}
         {((error.scope === scope && error.message) || loadError) && (
@@ -300,8 +297,8 @@ export function Conversation({
       <Composer
         text={text}
         setText={(value) => setInput({ scope, text: value })}
-        busy={!!busy}
-        disabled={replyBlocked}
+        busy={!!busy || (!challenge && !!thread.page?.activeTurn)}
+        disabled={replyBlocked || (!challenge && (!thread.page || !!thread.page.activeTurn))}
         onSend={() => void send()}
         label={challenge ? "当前验证回复" : "任务对话回复"}
         maxLength={challenge ? 4000 : 6000}
@@ -313,6 +310,8 @@ export function Conversation({
             : "询问执行情况，或调整任务修改目标…"
         }
       >
+        {!challenge && run && <InputGroupButton disabled={!!busy||offline||!thread.page||!!thread.page.activeTurn} onClick={()=>void send('请根据当前运行事实生成报告','report')}>生成报告</InputGroupButton>}
+        {!challenge && <InputGroupButton disabled={!!busy||offline||!thread.page} onClick={()=>{if(!deleteConfirm){setDeleteConfirm(true);return;}void thread.clear().then(()=>setDeleteConfirm(false)).catch(e=>setError({scope,message:e.message}));}}>{deleteConfirm?'确认清空聊天记录':'清空聊天记录'}</InputGroupButton>}
         {!challenge && (
           <InputGroupButton
             size="sm"

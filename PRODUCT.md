@@ -9,13 +9,13 @@ web
 React, Vite, TypeScript, shadcn/ui, Tailwind CSS; Electron Forge Windows x64 desktop; Stagehand 4.3.0; Cloudflare Workers, Hono, D1, Drizzle and private R2. npm workspaces.
 
 ## Users
-Personal use by the owner, including remote task management from a phone and execution on a Windows computer.
+Registered users manage their own browser tasks on the website, including from a phone. Administrators maintain a shared pool of trusted Windows execution devices.
 
 ## Product Purpose
-Describe a browser task once, schedule it centrally, execute on an authorized local device, and inspect verifiable results. Human verification always uses the task conversation.
+Describe a browser task once, schedule it centrally, execute on an administrator-authorized shared device, and inspect verifiable results. Human verification always uses the website task conversation.
 
 ## Capabilities and Constraints
-Cloud is authoritative. Desktop shares task management, caches history and can stop execution offline, but does not schedule offline. Public OpenAI-compatible endpoints support Chat Completions and Responses; no GPT-only restriction. Credential and verification parsing may use the configured model. No direct browser takeover or remote desktop. RewardPilot is an architecture reference only; UI and business implementation are independent. No automatic updater in v1. Never infer success from a model claim alone or replay uncertain external writes.
+Cloud is authoritative for identity, ownership, quotas, scheduling and leases. The Windows app only connects, claims, executes, requests assistance, reports results and recovers; its small window and tray expose status, pause, stop, autostart and diagnostics. It has no task editor, chat, model settings, account manager or history browser. Administrators configure shared models; users cannot read keys or change provider settings. Chat Completions and Responses remain supported without a GPT-only restriction. No direct browser takeover or remote desktop, paid plans, user-provided models or user-contributed devices. Never infer success from a model claim alone or replay uncertain external writes. Shared devices are trusted administrator environments; separate browser profiles do not hide data from device administrators.
 
 ## Brand Commitments
 TaskRelay / 任务接力. Chinese UI. React and official shadcn/ui default neutral styles, shared by the Windows client and responsive website. Light, dark and system themes. [shadcn/ui AI Elements](https://ui.shadcn.com/docs/ai-elements) is the authoritative reference for AI interaction patterns across both clients: chat, prompt input, model selection, execution steps, results and confirmation. Codex-like refers to the overall task sidebar, conversation and bottom composer layout. Natural-language task creation asks only for missing information and requires explicit confirmation of the generated task card before saving or running. Detailed forms remain secondary. Implementation rules live in [AGENTS.md](AGENTS.md#ui-交互基准).
@@ -28,3 +28,4 @@ TaskRelay / 任务接力. Chinese UI. React and official shadcn/ui default neutr
 
 ## Evidence on Hand
 Implemented web, Workers and Windows desktop code, with source tests, development-machine packaging/installation smoke evidence, and a real Responses model capability check recorded in docs/ACCEPTANCE.md. The smoke path does not exercise the full task executor or recovery flow. Real GPT/non-GPT browser-task loops, clean-machine acceptance and seven-day observation remain incomplete. RewardPilot was examined only as an architecture reference.
+`2026-11-03`：创建对话支持直接输入 `www.baidu.com`、`example.com/path` 等明确域名，自动补全 HTTPS；确认卡显示完整地址。网站名称、查看内容、时间和成功判据仍需明确，不替用户猜测。

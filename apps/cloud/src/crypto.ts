@@ -1,11 +1,14 @@
+import { Buffer } from "node:buffer";
+
 function encode(a: Uint8Array) {
-  let text = "";
-  for (let offset = 0; offset < a.length; offset += 16_384)
-    text += String.fromCharCode(...a.subarray(offset, offset + 16_384));
-  return btoa(text);
+  return Buffer.from(a.buffer, a.byteOffset, a.byteLength).toString("base64");
 }
 function decode(s: string) {
-  return Uint8Array.from(atob(s), (x) => x.charCodeAt(0));
+  // Buffer's native codec avoids a JavaScript callback for every decoded byte.
+  // Keep the previous decoder's rejection of malformed/non-base64 input.
+  if (typeof s !== "string" || !/^[A-Za-z0-9+/]*={0,2}$/.test(s) || s.length % 4 === 1)
+    throw new Error("INVALID_ENCRYPTED_DATA");
+  return new Uint8Array(Buffer.from(s, "base64"));
 }
 async function key(secret: string) {
   const raw = decode(secret);

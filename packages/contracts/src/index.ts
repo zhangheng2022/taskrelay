@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 3;
 export const limits = {
   durationMs: 300_000,
   actions: 40,
@@ -43,27 +43,6 @@ export const taskInputSchema = z
   })
   .strict();
 export type TaskInput = z.infer<typeof taskInputSchema>;
-export const taskComposeInputSchema = z
-  .object({
-    modelId: idSchema,
-    messages: z
-      .array(
-        z
-          .object({
-            role: z.enum(["user", "assistant"]),
-            content: z.string().min(1).max(6000),
-          })
-          .strict(),
-      )
-      .min(1)
-      .max(20),
-    current: taskInputSchema.nullable().default(null),
-  })
-  .strict();
-export interface TaskProposal {
-  reply: string;
-  task: TaskInput | null;
-}
 export interface TaskDefinition extends TaskInput {
   id: string;
   version: number;
@@ -85,6 +64,9 @@ export const runStatusSchema = z.enum([
 ]);
 export type RunStatus = z.infer<typeof runStatusSchema>;
 export interface TaskRun {
+  userId: string;
+  profileId: string;
+  queueReason?: string;
   id: string;
   taskId: string;
   task: TaskDefinition;
@@ -157,11 +139,13 @@ export const modelInputSchema = z
     baseUrl: z.url().max(2000),
     protocol: z.enum(["chat", "responses"]).default("chat"),
     model: z.string().min(1).max(200),
+    contextTokens: z.number().int().min(8192).max(200000).optional(),
+    outputTokens: z.number().int().min(512).max(8192).optional(),
     apiKey: z.string().max(4000).optional(),
     inputPrice: z.number().nonnegative().nullable().default(null),
     outputPrice: z.number().nonnegative().nullable().default(null),
   })
-  .strict();
+  .strict().refine(v=>(v.contextTokens??16000)-(v.outputTokens??4096)>=4096,'上下文预算须比输出预留至少多4096');
 export type ModelInput = z.infer<typeof modelInputSchema>;
 export interface ModelCapabilities {
   connection: boolean;
@@ -180,6 +164,8 @@ export interface ModelProfile extends Omit<ModelInput, "apiKey"> {
   capabilities: ModelCapabilities;
 }
 export interface SiteAccount {
+  assignedDeviceId?: string | null;
+  loginReset?: boolean;
   id: string;
   name: string;
   origin: string;
@@ -194,6 +180,8 @@ export interface Device {
   protocolVersion: number;
 }
 export interface Snapshot {
+  me?: { id:string;email:string;role:"admin"|"user" };
+  quota?: {resetAt:string;limits:{runs:number;scheduled:number;queued:number;chat:number;models:number};used:{runs:number;chat:number;models:number}};
   tasks: TaskDefinition[];
   runs: TaskRun[];
   models: ModelProfile[];
@@ -237,6 +225,7 @@ export interface DesktopStatus {
 }
 export interface Transport {
   request<T>(method: string, path: string, body?: unknown): Promise<T>;
+  subscribe?(fn:()=>void):()=>void;
   desktop?: {
     status(): Promise<DesktopStatus>;
     configure(url: string): Promise<{ url: string; code: string }>;

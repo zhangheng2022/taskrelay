@@ -1,11 +1,12 @@
-import { useRef, useState } from "react";
+import { useThread } from './use-thread';
+import { allowedNavigation, publicUrl } from "../../contracts/src/security";
+import { useEffect, useRef, useState } from "react";
 import { Loader2, Pencil } from "lucide-react";
 import {
   taskInputSchema,
   type Snapshot,
   type TaskDefinition,
   type TaskInput,
-  type TaskProposal,
   type Transport,
 } from "../../contracts/src/index";
 import { Button } from "./components/ui/button";
@@ -60,10 +61,9 @@ export function TaskCompose({
     }
     return available.length === 1 ? available[0].id : "";
   });
+  const thread=useThread(transport,'compose',modelId,initial?.id);
   const [text, setText] = useState("");
-  const [messages, setMessages] = useState<
-    { id: string; role: "user" | "assistant"; content: string }[]
-  >([]);
+  const messages=thread.page?.messages??[];
   const [draft, setDraft] = useState<TaskInput | null>(
     initial ? taskInputSchema.strip().parse(initial) : null,
   );
@@ -73,14 +73,15 @@ export function TaskCompose({
     [saving, setSaving] = useState(false),
     [error, setError] = useState("");
   // Once sent, retain exactly the same payload/id on an ambiguous network failure.
-  const attempt = useRef<{ task: TaskInput; requestId: string } | null>(null);
+  const attempt = useRef<{ task: TaskInput; requestId: string; threadId:string; draftVersion:number } | null>(null);
   const inFlight = useRef(false);
   const [pending, setPending] = useState<{
     id: string;
     role: "user";
     content: string;
   } | null>(null);
-  const locked = saving || !!attempt.current;
+  useEffect(()=>{setDraft(thread.page?.draft??null);setReady(!!thread.page?.draft);},[thread.page?.id,thread.page?.version,thread.page?.latestTurn?.status]);
+  const locked = saving || !!attempt.current || !!thread.page?.activeTurn || !thread.page;
   const capable = available.some((m) => m.id === modelId);
   async function send(content = text) {
     if (inFlight.current || locked || offline || !content.trim() || !capable)
@@ -90,7 +91,6 @@ export function TaskCompose({
       role: "user" as const,
       content,
     };
-    const history = [...messages, pending];
     inFlight.current = true;
     setPending(pending);
     setText("");
@@ -98,23 +98,9 @@ export function TaskCompose({
     setBusy(true);
     setError("");
     try {
-      const response = await transport.request<TaskProposal>(
-        "POST",
-        "/api/user/tasks/compose",
-        {
-          modelId,
-          messages: history
-            .slice(-20)
-            .map(({ role, content }) => ({ role, content })),
-          current: draft,
-        },
-      );
-      setMessages([
-        ...history,
-        { id: crypto.randomUUID(), role: "assistant", content: response.reply },
-      ]);
-      if (response.task) setDraft(response.task);
-      setReady(!!response.task);
+      const response = await thread.send(content);
+      if (response.draft) setDraft(response.draft);
+      setReady(!!response.draft);
       setText("");
     } catch (e) {
       setError((e as Error).message);
@@ -128,18 +114,19 @@ export function TaskCompose({
   async function confirm() {
     if (!draft || inFlight.current || offline || !capable) return;
     inFlight.current = true;
-    attempt.current ??= {
-      task: { ...draft, modelId },
-      requestId: crypto.randomUUID(),
-    };
     setSaving(true);
     setError("");
     try {
+      if (!attempt.current) {
+        draft.allowedOrigins.forEach((origin) => publicUrl(origin));
+        allowedNavigation(draft.entryUrl, draft.allowedOrigins);
+      }
+      if(!attempt.current){const saved=await thread.saveDraft({...draft,modelId});attempt.current={task:{...draft,modelId},requestId:crypto.randomUUID(),threadId:saved.id,draftVersion:saved.version};}
       const result = await transport.request<{ id: string }>(
         initial ? "PUT" : "POST",
         initial ? `/api/user/tasks/${initial.id}` : "/api/user/tasks",
         initial
-          ? { task: attempt.current.task, expectedVersion: initial.version }
+          ? { ...attempt.current, expectedVersion: initial.version }
           : attempt.current,
       );
       await onSaved(result.id);
@@ -153,6 +140,10 @@ export function TaskCompose({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <Thread>
+        {thread.page?.nextCursor && <MessageScrollerItem messageId="older"><Button variant="ghost" onClick={()=>void thread.older()}>加载更早消息</Button></MessageScrollerItem>}
+        {thread.error && <MessageScrollerItem messageId="load-error"><ErrorText error={thread.error}/></MessageScrollerItem>}
+        {thread.page?.latestTurn?.error && <MessageScrollerItem messageId="turn-error"><ErrorText error={thread.page.latestTurn.error}/></MessageScrollerItem>}
+
         {!messages.length && !pending && (
           <MessageScrollerItem messageId="welcome">
             <Empty className="py-8 md:py-14">
@@ -169,7 +160,7 @@ export function TaskCompose({
               <EmptyContent className="max-w-xl">
                 {!available.length ? (
                   <Button variant="outline" onClick={onSettings}>
-                    配置模型服务
+                    查看设置
                   </Button>
                 ) : (
                   !initial && (
@@ -300,7 +291,7 @@ export function TaskCompose({
             </Card>
           </MessageScrollerItem>
         )}
-        {busy && (
+        {(busy || !!thread.page?.activeTurn) && (
           <MessageScrollerItem messageId="pending">
             <PendingMessage>正在整理任务…</PendingMessage>
           </MessageScrollerItem>
@@ -322,7 +313,7 @@ export function TaskCompose({
         text={text}
         setText={setText}
         onSend={() => void send()}
-        busy={busy}
+        busy={busy || !!thread.page?.activeTurn}
         disabled={offline || locked || !capable}
         placeholder={
           initial ? "例如：改成每周一上午九点" : "描述任务，附上完整网站地址…"
@@ -348,6 +339,7 @@ export function TaskCompose({
           snapshot={snapshot}
           onClose={() => setEditing(false)}
           onApply={(value) => {
+            setError("");
             setDraft(value);
             setModelId(value.modelId);
             setEditing(false);

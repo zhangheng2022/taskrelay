@@ -8,10 +8,12 @@
   "compatibility_date": "2026-11-03",
   "compatibility_flags": ["nodejs_compat"],
   "durable_objects": {
-    "bindings": [{ "name": "MODEL_EGRESS", "class_name": "ModelEgress" }],
+    "bindings": [{ "name": "MODEL_EGRESS", "class_name": "ModelEgress" }, {"name":"REQUESTS","class_name":"RequestCoordinator"}, {"name":"SCHEDULER","class_name":"Scheduler"}, {"name":"AI_TURNS","class_name":"AiTurn"}, {"name":"EVIDENCE_STORE","class_name":"Evidence"}, {"name":"NOTIFICATIONS","class_name":"NotificationHub"}],
   },
   "migrations": [
     { "tag": "model-egress-v1", "new_sqlite_classes": ["ModelEgress"] },
+    { "tag": "free-runtime-v1", "new_sqlite_classes": ["RequestCoordinator", "Scheduler"] },
+    { "tag": "free-turn-v1", "new_sqlite_classes": ["AiTurn", "Evidence", "NotificationHub"] },
   ],
   "assets": {
     "binding": "ASSETS",
@@ -27,15 +29,16 @@
       "migrations_dir": "../cloud/migrations",
     },
   ],
-  "r2_buckets": [
-    { "binding": "EVIDENCE", "bucket_name": "taskrelay-evidence" },
-  ],
   "triggers": { "crons": ["* * * * *"] },
   "vars": {
     "OWNER_EMAIL": "962271461@qq.com",
     "ACCESS_TEAM_DOMAIN": "zhangheng.cloudflareaccess.com",
     "ACCESS_AUD": "14ace9836bc55fd84ab8f089c1a35a7361d46ffb0b729c4d47ade7b432a8b194",
     "DEV_MODE": "0",
+    "AUTH_BASE_URL": "https://tr.zhangheng.eu.org",
+    "REGISTRATION_OPEN": "0",
+    "MAIL_FROM": "noreply@mail.zhangheng.eu.org",
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFxyuphrOg5vcFKc",
   },
   "observability": { "enabled": true, "head_sampling_rate": 0.1 },
 }

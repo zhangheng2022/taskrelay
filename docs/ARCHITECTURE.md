@@ -1,5 +1,55 @@
 # TaskRelay 架构现状与改进候选
 
+## 2026-11-03 Cloudflare Free 运行架构
+
+本节优先于下方历史版本。继续使用 LangChain/LangGraph、D1 和原模型 API，不启用 Workers Paid、Queues、Workflows、Vectorize 或 LangSmith。协议与本地 schema 保持 3，D1 新增 `0007_free_runtime.sql`。
+
+- `worker.ts` 仅处理静态资源、health 和路由；认证凭据的哈希选择 8 个 `RequestCoordinator` 分片，原始请求进入 DO 内的 Hono 完整鉴权。哈希不代表身份；不能缓存或共享权限结果。业务不再受普通 Worker 的 10 ms 请求 CPU 路径约束，仍受 DO 自身资源限制。
+- 创建消息事务同时保存回合、用户消息和 `ai_dispatch` outbox，立即返回 202。每回合一个 `AiTurn` 对象，alarm 在 D1 原子领取后运行图；通知丢失由每分钟 Scheduler 补唤醒。领取后中断保持不确定，180 秒清理标为 unknown，不重放模型调用。终态通知客户端重新读取事实。
+- `Scheduler` 的唯一原子范围是全局任务队列与维护；普通 HTTP 流量不集中到它。Cron 只唤醒 Scheduler，原租约、账号锁与调度规则仍在 D1。
+- `NotificationHub` 使用 Hibernation WebSocket，仅推送 `changed`。连接由原认证路由建立，每次推送检查会话/设备有效性；订阅最多 8 条/对象，授权有效期 1 小时，下一次推送关闭过期连接并触发重新认证。网站隐藏时关闭订阅；快照与运行详情兜底 60 秒，活动 AI 回合 15 秒。客户端领取兜底从 4 秒变为 60 秒，运行中租约心跳仍为 15 秒。
+- 证据每件独立 `Evidence` DO，最大 2 MB，500 KB 分块 AES-GCM，AAD 绑定对象 key 与分块序号；最长 10 分钟，alarm、读取过期校验和原业务清理共同生效。生产没有 R2 绑定；旧桶保留且不再使用。测试专用 DEV adapter 保留原内存 R2 夹具，不是生产回退。
+- `ModelEgress` 的美国 jurisdiction、alarm、单次 submitAndWait 和持久化后 ACK 保持不变；AI 回合 DO 与请求 DO 均不能直接调用模型提供方。
+- Stagehand Schema 使用锁定 Zod 4.6.7 的 `fromJSONSchema` 转换与原始输出校验，兼容 SDK 的 2020-12 Schema；独立 registry 防止 schema ID 累积/碰撞。该 API 尚属上游实验接口，升级须复跑生产路由与 workerd 回归。不在 Workers 中动态编译 Ajv，也不丢弃校验后直接信任模型输出。官方语义见 [Zod JSON Schema](https://zod.dev/json-schema?id=zfromjsonschema)。
+- 项目级 UTC 日预算：100 次模型请求、50 个新 AI 回合、100 件短期证据；每请求分片 8000 次普通请求，运行恢复路径可至 9600。预算先预占、未知不退还。这些是保守的应用准入预算，不是 Cloudflare 账户计量的精确副本；其他应用、异常流量和存储增长仍可能耗尽免费额度。达到上限返回 429，不付费扩容。上海日个人额度另行保留，页面展示的个人额度不能代表平台剩余额度。
+- 保留期清理跳过已失效数据，避免每分钟重复改写墓碑和会话版本。已存在成员读取不再反复更新成员记录；设备 last_seen 至少间隔 60 秒写入。
+- 0.4.1 执行代理通过固定 Cloudflare HTTPS DNS 获取 A/AAAA，拒绝任意非公网答案，连接固定在已校验 IP。避免本机 TUN fake-IP 被误当成目的地址；不放开私网、任意端口或证书校验。真实网站流程和剩余验证限制见 ACCEPTANCE。
+
+删除测试：普通 Worker 不能承载本次图计算；移除 outbox 会使 202 后唤醒丢失无从恢复；移除 ModelEgress 会丢失已验证的地区出站边界。因此这三类 adapter 分别承担运行时、可靠性和地区知识，不能让调用方复制其实现。
+
+## 2026-11-03 LangChain / LangGraph：当前实现
+
+0.3.0 引入协议 3、SQLite schema 3、D1 迁移 `0006_ai.sql`，生产历史切换已执行。其 CPU 阻断及后续免费架构解决情况见上节与验收台账。
+
+- `apps/cloud/src/ai/graph.ts` 编排 compose、chat、plan、report，以及滚动 summary。状态只保存结构化结果；原始输入的 digest 防止相同 graph ID 被替换。检查点可恢复已完成图，结果不确定的模型调用保持 unknown，不自动重发。浏览器动作仍由独立 Executor 执行，图没有 Shell、JavaScript、文件工具或浏览器写操作。
+- `RelayChatModel` 是 LangChain BaseChatModel adapter，结构化生成复用 `models.generateStructured`。生产链路仍为 `invoke → egress → 美国 ModelEgress alarm`；Chat Completions 和 Responses 均保留。关闭框架隐式重试；仅已收到但校验不通过的输出允许一次格式修复。调用 ID、输入 digest、额度预留和加密结果落在 D1，收到结果先保存再 ACK。
+- `D1Checkpointer` 实现 LangGraph saver 的 checkpoint、parent、namespace、metadata、pending writes 和排序；`D1MemoryStore` 实现按用户隔离的 LangGraph store。检查点、pending writes、记忆和模型结果加密。使用 LangGraph 自带序列化器保留消息类型。删除/变更记忆通过事务失效旧图，迟到写入受 SQL 条件约束。
+- CPU 优化后的图版本为 `relay-2`：合并空检查/验证节点，模型调用前后仍执行 guard，结构化输出及恢复结果仍校验，检查点保持同步持久化。typed serializer 字节采用 Base64 字符串保存，读取兼容原数字数组；AES-GCM、AAD 和密钥不变。回退版本必须支持此编码，不可直接回退到只支持数字数组的实现。
+- Better Auth 按 D1 绑定和认证/邮件配置复用实例，不缓存用户会话，角色与撤销仍查询数据库。Zod Schema 仅缓存静态 JSON Schema；只需模型配置的路径不解密 API Key。历史裁剪一次计算各条消息字节，保留原预算规则。性能脚本仅启动隔离的本机 workerd，使用合成模型响应，不接生产数据或出站链路。
+- `ai_threads/ai_turns/ai_messages` 是会话与消息事实源，独立于 LangGraph 检查点。创建草稿、缺失项、原始用户消息、滚动摘要均持久化；历史每页 50 条，按 seq 游标翻页，无固定 200 条截断。站点约束只从原始用户消息和明确编辑的草稿读取，摘要和助手消息不增加授权。
+- 每条消息携带 `requestId/expectedVersion`；同线程只允许一个 active turn。消息、确认卡和任务更新均有版本检查，任务创建/修改确认可幂等重试。任务保存固定确认草稿对应的模型版本。跨用户归属由服务端认证决定，不接受模型提供 owner。
+- 长期记忆仅允许用户在“我的记忆”明确确认后写入，最多 100 条。上下文最多读取最近 30 条偏好；不提供语义搜索，不接 Vectorize/embedding。LangSmith 云追踪和 verbose 环境开关会阻止 AI 调用，不会静默上传。
+- 默认上下文预算 16000、输出预留 4096，可在模型配置调整；采用保守 UTF-8 字节估算，并计算结构化 schema 开销。旧消息按预算分段摘要，原始消息继续分页可读；单条内容无法容纳则明确失败，不静默裁掉授权约束。回合上限 180 秒，未确认结果不重放。
+- 聊天/报告读取已校验归属的任务、最近运行和脱敏事件。报告是解释文本，不能修改真实运行状态；协助进行中普通聊天被拒绝，验证码仍走独立加密回复通道。
+- 已确认完成的 compose 与已删除会话分开标记。保留期清除正文和派生结果，留下无正文的请求 digest 墓碑防止过期请求重新执行。显式偏好不随会话保留期自动删除，可由用户单独删除。
+
+旧 `/tasks/compose`、`/tasks/draft`、`/tasks/:id/chat` 已移除。新入口为 `/threads`、`/threads/:id/messages`、`/threads/:id/draft`、`/memories`。客户端通过 `x-taskrelay-protocol: 3` 与设备记录共同校验版本；升级沿用原 bearer token，旧协议不得继续领取或上传。
+
+
+## 2026-11-03 多人网站与公共执行器实施
+
+本节覆盖下方 0.1.0 分析中已变更的事实。网站使用 Better Auth 与独立 `auth_*` D1 表，Brevo 发送验证/重置邮件；只有验证过的 owner 邮箱绑定 `legacy_owner` 管理员。网站分为个人任务/账号/对话/结果/用量与管理员模型/设备/配额/运维。管理员运维列表不返回其他用户的任务、对话、凭据或结果正文。
+
+协议已升级至 v2。设备令牌只访问状态、领取和租约绑定的执行接口；`/api/device/user/*` 固定拒绝，Preload 不再暴露通用管理请求。桌面 Renderer 使用独立 `ExecutorApp`，仅显示连接、运行编号、忙闲、暂停、停止、自启动及诊断。Main/utilityProcess 隔离、代次检查、检查点、未知写入锁和恢复规则保持。
+
+`0005_multiuser.sql` 保留旧 ID 和密文，将旧数据归属原 owner。D1 不接受 populated table 上带非空默认值的 REFERENCES 新列，因此四个历史表使用非空归属列加成员存在/删除/改名触发器；新认证表和配额表保留声明式外键。认证 adapter 关闭交互事务；密码写入触发器原子撤销会话。重置先消费令牌，中断不会复用；用户需重新申请链接。异常交由固定错误映射，避免认证库打印带参数的 SQL 错误。
+
+云端领取同时守卫设备并发 1、用户并发 1（含人工等待），按最久未领取用户、再按任务队列时间分配。站点账号首次领取原子绑定设备，离线等待；迁移必须确认旧执行停止，且无活动/未知运行及账号锁，创建新浏览器环境并提示重新登录。无账号任务用独立任务环境。共享设备属于管理员可信环境，Profile 不构成对设备管理员的保密边界。
+
+上海日额度：启动 5、启用周期任务 3、排队 5、对话请求 50、模型请求 200/用户及 2000/全站。启动在领取时计数，重试不重复扣减；模型出站前预占，修复也计数，未知不重放。模型仍唯一通过美国区域 ModelEgress alarm 出站。
+
+本地 SQLite schema 升至 2，清空旧管理缓存，保留 config/journal/outbox；恢复所需 Profile 映射保留。0.2.0 已打包、安装并验证桌面入口。当前上线仍关闭公开注册和领取；已验证及未完成现场项目见 [验收记录](ACCEPTANCE.md)。下方历史共享 UI、Access owner 校验、通用 Preload、协议 1 和 schema 1 描述不再代表当前实现。
+
 分析日期：2026-11-03（Asia/Shanghai）。源码基线：`923143af8276a36a7d59a11a7d1916d591d860f1`，版本 0.1.0。本文结合 `improve-codebase-architecture`、`codebase-design` 和独立源码走读。2026-11-03 后续实施已统一结构化输出；其余候选仍未实施。
 
 初始分析时仓库只有一个提交，不能据此推断热点。后续已分阶段提交文档、结构化输出，并实现共享默认主题和聊天式任务创建。未发现 `GLOSSARY.md` 或 `docs/adr/`，领域名称沿用共享协议。本轮验证范围见第 7 节及验收记录，历史模型和安装证据不自动代表本次复验。
@@ -255,3 +305,7 @@ A 已按用户选择完成；B/C/D 涉及可靠性与责任归属，仍需选定
 - 已确认的产品选型不在本轮重新争论；待选建议不写成 ADR 或现行强制规范。
 
 协作与技能入口见 [AGENTS.md](../AGENTS.md)。未来行为变更同步本文；证据变动同步验收记录。本文的文件位置和行号是分析快照，后续以符号及实际源码为准。
+
+## 2026-11-03 创建对话的无协议域名识别
+
+`task-sites.ts` 仅从用户消息识别完整 HTTPS 地址或明确的 ASCII 域名；无协议域名补全 HTTPS，路径和查询保留。规范化地址作为上下文传给模型，原消息不改写；助手消息不贡献站点授权。`publicUrl`、模型输出 origin 集合校验、确认后创建以及执行时 DNS 公网检查继续生效。显式 HTTP/其他协议、邮箱、凭据、私网和非标准端口不通过这一识别入口。国际化域名可使用完整 HTTPS 地址。

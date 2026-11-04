@@ -1,3 +1,6 @@
+import { Memories } from './memories';
+import { AdminPanel } from "./admin-panel";
+import { AccountSecurity } from "./auth-gate";
 import { useEffect, useState } from "react";
 import {
   CheckCircle2,
@@ -55,7 +58,8 @@ export function Settings({
   snapshot: Snapshot;
   refresh: () => Promise<void>;
 }) {
-  const [tab, setTab] = useState("models"),
+  const isAdmin=snapshot.me?.role === "admin";
+  const [tab, setTab] = useState(isAdmin ? "models" : "accounts"),
     [model, setModel] = useState<ModelProfile | true | null>(null),
     [account, setAccount] = useState(false),
     [error, setError] = useState(""),
@@ -88,8 +92,9 @@ export function Settings({
     return transport.desktop.subscribe(update);
   }, [transport]);
   useEffect(() => {
+    if(!isAdmin)return;
     void transport
-      .request<{ retentionDays: number }>("GET", "/api/user/settings")
+      .request<{ retentionDays: number }>("GET", "/api/admin/settings")
       .then((x) => setDays(x.retentionDays))
       .catch(() => {});
   }, [transport]);
@@ -114,21 +119,21 @@ export function Settings({
   }, [pair, transport, refresh]);
   return (
     <Tabs className="settings" value={tab} onValueChange={setTab}>
-      <TabsList className="w-full">
+      <TabsList className="w-full flex-wrap group-data-[orientation=horizontal]/tabs:h-auto">
         {[
-          ["models", "模型服务"],
           ["accounts", "站点账号"],
-          ["devices", "设备"],
-          ["data", "数据保留"],
+          ["security", "登录安全"],
+          ["memories", "我的记忆"],
+          ...(isAdmin?[["models", "模型服务"],["devices", "设备"],["data", "数据保留"],["admin","用户与配额"]]:[]),
         ].map(([id, label]) => (
-          <TabsTrigger key={id} value={id}>
+          <TabsTrigger key={id} value={id} className="h-auto min-h-8">
             {label}
           </TabsTrigger>
         ))}
       </TabsList>
       {error && <ErrorText error={error} />}
       <TabsContent value={tab} className="settings-content">
-        {tab === "models" ? (
+        {tab === "memories" ? <Memories transport={transport}/> : tab === "admin" ? <AdminPanel transport={transport}/> : tab === "security" ? <AccountSecurity/> : tab === "models" ? (
           <>
             <div className="section-heading">
               <div>
@@ -207,7 +212,7 @@ export function Settings({
                         void act(m.id, () =>
                           transport.request(
                             "POST",
-                            `/api/user/models/${m.id}/test`,
+                            `/api/admin/models/${m.id}/test`,
                           ),
                         )
                       }
@@ -226,7 +231,7 @@ export function Settings({
                         void act(m.id + "vision", () =>
                           transport.request(
                             "POST",
-                            `/api/user/models/${m.id}/vision`,
+                            `/api/admin/models/${m.id}/vision`,
                           ),
                         )
                       }
@@ -263,7 +268,7 @@ export function Settings({
               snapshot.accounts.map((a) => (
                 <article className="settings-row" key={a.id}>
                   <div>
-                    <h3>{a.name}</h3>
+                    <h3>{a.name}</h3>{a.loginReset&&<p>执行设备已迁移，下次任务可能需要重新登录。</p>}
                     <p>
                       {a.origin} · {a.usernameHint}
                     </p>
@@ -275,92 +280,6 @@ export function Settings({
           </>
         ) : tab === "devices" ? (
           <>
-            {transport.desktop && (
-              <section className="executor-settings">
-                <div className="section-heading">
-                  <div>
-                    <h2>这台执行器</h2>
-                    <p>
-                      {desktop?.paired
-                        ? "已连接工作空间"
-                        : "连接云端后即可领取任务"}
-                    </p>
-                  </div>
-                  <Monitor size={28} />
-                </div>
-                <Field label="工作空间地址">
-                  <Input
-                    value={url}
-                    onChange={(e) => setUrl(e.target.value)}
-                    type="url"
-                  />
-                </Field>
-                <Button
-                  disabled={!!busy}
-                  onClick={() =>
-                    void act("pair", async () =>
-                      setPair(await transport.desktop!.configure(url)),
-                    )
-                  }
-                >
-                  在系统浏览器中授权
-                  <ExternalLink size={15} />
-                </Button>
-                {pair && (
-                  <p className="pair-code">
-                    请在浏览器核对校验码 <code>{pair.code}</code>
-                    ，等待授权完成。
-                  </p>
-                )}
-                <div className="setting-toggle">
-                  <label htmlFor="pause-claims">
-                    暂停领取任务<small>已开始的任务继续执行</small>
-                  </label>
-                  <Switch
-                    id="pause-claims"
-                    checked={desktop?.paused ?? false}
-                    onCheckedChange={(v) =>
-                      void act("pause", () => transport.desktop!.pause(v))
-                    }
-                  />
-                </div>
-                <div className="setting-toggle">
-                  <label htmlFor="autostart">
-                    登录 Windows 时启动
-                    <small>默认关闭；关闭窗口后保留托盘运行</small>
-                  </label>
-                  <Switch
-                    id="autostart"
-                    checked={desktop?.autoStart ?? false}
-                    onCheckedChange={(v) =>
-                      void act("auto", () => transport.desktop!.autoStart(v))
-                    }
-                  />
-                </div>
-                <div className="row-actions">
-                  <Button
-                    variant="outline"
-                    disabled={!desktop?.activeRunId || !!busy}
-                    onClick={() =>
-                      void act("stop", () => transport.desktop!.stop())
-                    }
-                  >
-                    停止本机执行
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() =>
-                      void act("diagnostics", async () =>
-                        setNote(await transport.desktop!.diagnostics()),
-                      )
-                    }
-                  >
-                    导出诊断
-                  </Button>
-                </div>
-                {note && <p role="status">{note}</p>}
-              </section>
-            )}
             <div className="section-heading">
               <div>
                 <h2>已授权的设备</h2>
@@ -372,7 +291,7 @@ export function Settings({
                 <EmptyHeader>
                   <EmptyTitle>连接 Windows 客户端</EmptyTitle>
                   <EmptyDescription>
-                    安装 TaskRelay，打开“设置 → 设备”，通过系统浏览器完成授权。
+                    安装 TaskRelay 执行器，在状态窗口通过系统浏览器完成管理员授权。
                   </EmptyDescription>
                 </EmptyHeader>
               </Empty>
@@ -394,7 +313,7 @@ export function Settings({
                       void act(d.id, () =>
                         transport.request(
                           "POST",
-                          `/api/user/devices/${d.id}/revoke`,
+                          `/api/admin/devices/${d.id}/revoke`,
                         ),
                       )
                     }
@@ -420,7 +339,7 @@ export function Settings({
               onSubmit={(e) => {
                 e.preventDefault();
                 void act("retention", () =>
-                  transport.request("PUT", "/api/user/settings", {
+                  transport.request("PUT", "/api/admin/settings", {
                     retentionDays: days,
                   }),
                 );
@@ -485,6 +404,8 @@ function ModelDialog({
       protocol: value?.protocol ?? "chat",
       model: value?.model ?? "",
       apiKey: "",
+      contextTokens:value?.contextTokens??16000,
+      outputTokens:value?.outputTokens??4096,
       inputPrice: value?.inputPrice ?? null,
       outputPrice: value?.outputPrice ?? null,
     }),
@@ -497,7 +418,7 @@ function ModelDialog({
     try {
       await transport.request(
         value ? "PUT" : "POST",
-        value ? `/api/user/models/${value.id}` : "/api/user/models",
+        value ? `/api/admin/models/${value.id}` : "/api/admin/models",
         input,
       );
       setInput({ ...input, apiKey: "" });
@@ -574,6 +495,8 @@ function ModelDialog({
                 }
               />
             </Field>
+            <Field label="上下文预算（token，保守估计）"><Input type="number" min={8192} max={200000} value={input.contextTokens} onChange={e=>setInput({...input,contextTokens:Number(e.target.value)})}/></Field>
+            <Field label="输出预留（token）"><Input type="number" min={512} max={8192} value={input.outputTokens} onChange={e=>setInput({...input,outputTokens:Number(e.target.value)})}/></Field>
             <Field label="模型名称">
               <Input
                 required

@@ -1,3 +1,6 @@
+import {putEvidence} from './evidence';
+import {stagehandSchema} from './ai/stagehand-schema';
+import { structuredGraph } from './ai/graph';
 import { Hono } from "hono";
 import { z } from "zod";
 import {
@@ -30,7 +33,7 @@ export const runner = new Hono<{ Bindings: AppEnv; Variables: Variables }>();
 const lease = z.object({ epoch: z.number().int().positive() });
 runner.post("/claim", async (c) => {
   const { requestId } = z
-    .object({ requestId: idSchema, protocolVersion: z.literal(1) })
+    .object({ requestId: idSchema, protocolVersion: z.literal(3) })
     .parse(await c.req.json());
   return c.json({ run: await claim(c.env.DB, c.get("deviceId"), requestId) });
 });
@@ -102,6 +105,8 @@ runner.post("/runs/:id/plan", async (c) => {
   const body = lease
     .extend({
       observation: z.string().max(60000),
+      stepId: idSchema,
+      observationId: z.string().length(64),
       url: z.url(),
       history: z.array(z.string().max(500)).max(40),
     })
@@ -113,12 +118,13 @@ runner.post("/runs/:id/plan", async (c) => {
     body.epoch,
   );
   allowedNavigation(body.url, run.task.allowedOrigins);
-  const action = await generate(
-    c.env,
-    run.task.modelId,
-    run.task.modelVersion,
-    browserActionSchema,
-    [
+  if(await hash(body.observation)!==body.observationId) throw new Error('OBSERVATION_CONFLICT');
+  await c.env.DB.prepare('INSERT OR IGNORE INTO ai_plan_steps(run_id,epoch,step_id,observation_id) VALUES(?,?,?,?)').bind(run.id,body.epoch,body.stepId,body.observationId).run();
+  const step=await c.env.DB.prepare('SELECT observation_id FROM ai_plan_steps WHERE run_id=? AND epoch=? AND step_id=?').bind(run.id,body.epoch,body.stepId).first<{observation_id:string}>();
+  if(step?.observation_id!==body.observationId)throw new Error('OBSERVATION_CONFLICT');
+  const owner=await c.env.DB.prepare('SELECT user_id FROM runs WHERE id=?').bind(run.id).first<{user_id:string}>();
+  const action = await structuredGraph({env:c.env,owner:owner!.user_id,id:`plan_${await hash(JSON.stringify([run.id,body.epoch,body.stepId,body.observationId]))}`,kind:'plan',modelId:run.task.modelId,version:run.task.modelVersion,schema:browserActionSchema,
+    guard:async()=>{const current=await requireLease(c.env.DB,run.id,c.get('deviceId'),body.epoch);if(current.cancelRequested)throw new Error('CANCEL_REQUESTED');},messages:[
       {
         role: "system",
         content:
@@ -133,13 +139,11 @@ runner.post("/runs/:id/plan", async (c) => {
           previousSteps: body.history,
         }),
       },
-    ],
-    run.id,
-  );
+    ],runId:run.id});
   return c.json(action);
 });
 runner.post("/runs/:id/stagehand", async (c) => {
-  const body = lease.extend({ request: z.unknown() }).parse(await c.req.json());
+  const body = lease.extend({ request: z.unknown(),requestId:idSchema }).parse(await c.req.json());
   const run = await requireLease(
     c.env.DB,
     c.req.param("id"),
@@ -184,28 +188,20 @@ runner.post("/runs/:id/stagehand", async (c) => {
     });
   }
   let result: import("../../../packages/model/src/index").ModelResponse;
+  const operationId=`sdk_${await hash(JSON.stringify([run.id,body.epoch,body.requestId]))}`;
   let parsed: unknown;
   if (request.responseFormat) {
-    const { default: Ajv } = await import("ajv");
-    const ajv = new Ajv({ strict: false, validateFormats: false });
-    let validate;
-    try {
-      validate = ajv.compile(request.responseFormat.schema);
-    } catch {
-      throw new Error("STAGEHAND_SCHEMA_INVALID");
-    }
+    const validate = stagehandSchema(request.responseFormat.schema);
     const output = await generateStructured(
       c.env,
       run.task.modelId,
       run.task.modelVersion,
       request.responseFormat.schema,
-      (value) => {
-        if (!validate(value)) throw new Error("STAGEHAND_SCHEMA_INVALID");
-        return value;
-      },
+      validate,
       messages,
       run.id,
       "STAGEHAND_SCHEMA_INVALID",
+      operationId,
     );
     result = output.response;
     parsed = output.data;
@@ -216,8 +212,10 @@ runner.post("/runs/:id/stagehand", async (c) => {
       run.task.modelVersion,
       { messages },
       run.id,
+      operationId,
     );
   }
+  await requireLease(c.env.DB,run.id,c.get("deviceId"),body.epoch);
   return c.json({
     role: "assistant",
     content: [{ type: "text", text: result.text }],
@@ -536,9 +534,7 @@ runner.post("/runs/:id/challenges/:challenge/image", async (c) => {
   if (image.byteLength > 2000000) throw new Error("IMAGE_TOO_LARGE");
   const id = uid("artifact"),
     key = `challenges/${run.id}/${id}.png`;
-  await c.env.EVIDENCE.put(key, image, {
-    httpMetadata: { contentType: "image/png" },
-  });
+  await putEvidence(c.env,key,image,ch.expires_at);
   await c.env.DB.batch([
     c.env.DB.prepare(
       "INSERT INTO artifacts(id,run_id,object_key,content_type,expires_at) VALUES(?,?,?,?,?)",
