@@ -24,7 +24,9 @@ export function useThread(
   taskId?: string,
 ) {
   const [page, setPage] = useState<ThreadPage | null>(null),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [loading, setLoading] = useState(!!modelId),
+    [retryIndex, setRetryIndex] = useState(0);
   const scope = `${kind}:${modelId}:${taskId ?? ""}`,
     generation = useRef(0),
     current = useRef<ThreadPage | null>(null),
@@ -49,6 +51,8 @@ export function useThread(
     current.current = null;
     setPage(null);
     attempt.current = null;
+    setError('');
+    setLoading(!!modelId);
     if (!modelId) return;
     (async () => {
       const list = await transport.request<
@@ -77,11 +81,13 @@ export function useThread(
       }
     })().catch((e) => {
       if (generation.current === g) setError(e.message);
+    }).finally(() => {
+      if (generation.current === g) setLoading(false);
     });
     return () => {
       generation.current++;
     };
-  }, [transport, scope, accept]);
+  }, [transport, scope, accept, retryIndex]);
   const refresh = useCallback(async () => {
     const p = current.current;
     if (!p) return;
@@ -227,5 +233,13 @@ export function useThread(
     );
     if(nextGeneration===generation.current)accept(next);
   }
-  return { page, error, send, saveDraft, refresh, older, clear };
+  function retry() {
+    if(loading)return;
+    if(!current.current){setRetryIndex(x=>x+1);return;}
+    const g=generation.current;
+    setLoading(true);
+    void refresh().catch(e=>{if(g===generation.current)setError(e.message);})
+      .finally(()=>{if(g===generation.current)setLoading(false);});
+  }
+  return { page, error, loading, retry, send, saveDraft, refresh, older, clear };
 }

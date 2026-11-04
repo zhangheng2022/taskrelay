@@ -31,7 +31,7 @@ import { Thread, ChatMessage, Composer, PendingMessage } from "./chat-parts";
 import { canUseModel, ModelSelector } from "./model-selector";
 import { TaskSummary } from "./task-summary";
 import { TaskEditor, Field } from "./task-editor";
-import { ErrorText } from "./feedback";
+import { ErrorText, LoadFeedback } from "./feedback";
 
 export function TaskCompose({
   transport,
@@ -141,10 +141,10 @@ export function TaskCompose({
     <div className="flex min-h-0 flex-1 flex-col">
       <Thread>
         {thread.page?.nextCursor && <MessageScrollerItem messageId="older"><Button variant="ghost" onClick={()=>void thread.older()}>加载更早消息</Button></MessageScrollerItem>}
-        {thread.error && <MessageScrollerItem messageId="load-error"><ErrorText error={thread.error}/></MessageScrollerItem>}
+        {(thread.loading||thread.error) && <MessageScrollerItem messageId="load-error"><LoadFeedback loading={thread.loading} error={thread.error} label="正在加载任务对话…" onRetry={thread.retry}/></MessageScrollerItem>}
         {thread.page?.latestTurn?.error && <MessageScrollerItem messageId="turn-error"><ErrorText error={thread.page.latestTurn.error}/></MessageScrollerItem>}
 
-        {!messages.length && !pending && (
+        {!messages.length && !pending && !thread.loading && !thread.error && (
           <MessageScrollerItem messageId="welcome">
             <Empty className="py-8 md:py-14">
               <EmptyHeader>

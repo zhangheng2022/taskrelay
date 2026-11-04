@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { AuthGate } from "../../../packages/ui/src/auth-gate";
 import { App } from "../../../packages/ui/src/app";
 import type { Transport } from "../../../packages/contracts/src/index";
+import { requestJson } from "../../../packages/ui/src/request";
 const transport: Transport = {
   subscribe(fn){
     let stopped=false,socket:WebSocket|undefined,timer:ReturnType<typeof setTimeout>|undefined,failures=0;
@@ -15,27 +16,13 @@ const transport: Transport = {
       socket.onerror=()=>socket?.close();
     };
     const visibility=()=>{if(document.hidden){clearTimeout(timer);socket?.close();}else{clearTimeout(timer);connect();fn();}};
+    const network=()=>fn();
+    window.addEventListener('online',network);window.addEventListener('offline',network);
     document.addEventListener('visibilitychange',visibility);connect();
-    return()=>{stopped=true;clearTimeout(timer);document.removeEventListener('visibilitychange',visibility);socket?.close();};
+    return()=>{stopped=true;clearTimeout(timer);document.removeEventListener('visibilitychange',visibility);window.removeEventListener('online',network);window.removeEventListener('offline',network);socket?.close();};
   },
-  async request<T>(method: string, path: string, body?: unknown): Promise<T> {
-    let response: Response;
-    try {
-      response = await fetch(path, {
-        method,
-        headers: body ? { "Content-Type": "application/json" } : {},
-        body: body ? JSON.stringify(body) : undefined,
-        redirect: "error",
-        signal: AbortSignal.timeout(180000),
-      });
-    } catch {
-      throw new Error("OFFLINE");
-    }
-    if (!response.headers.get("content-type")?.includes("application/json"))
-      throw new Error("云端暂时返回了异常响应，请稍后刷新。已有请求不会自动重复提交。");
-    const data = (await response.json()) as T & { error?: string };
-    if (!response.ok) throw new Error(data.error ?? `HTTP_${response.status}`);
-    return data;
+  request<T>(method: string, path: string, body?: unknown): Promise<T> {
+    return requestJson<T>(path, {method, body});
   },
 };
 createRoot(document.getElementById("root")!).render(

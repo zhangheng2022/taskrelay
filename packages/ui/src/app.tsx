@@ -60,7 +60,8 @@ import { BrandMark } from "./brand-mark";
 import { Conversation } from "./conversation";
 import { TaskCompose } from "./task-compose";
 import { TaskSummary, scheduleLabel } from "./task-summary";
-import { ErrorText, Status, formatDate } from "./feedback";
+import { ErrorText, Status, formatDate, LoadingState } from "./feedback";
+import { useTheme } from "./use-theme";
 import "./styles.css";
 export { ErrorText, Status, formatDate } from "./feedback";
 const empty: Snapshot = {
@@ -85,7 +86,8 @@ function Workspace({ transport }: { transport: Transport }) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null),
     [error, setError] = useState(""),
     [actionError, setActionError] = useState(""),
-    [busy, setBusy] = useState(false);
+    [busy, setBusy] = useState(false),
+    [refreshing, setRefreshing] = useState(false);
   const [page, setPage] = useState<"tasks" | "runs" | "settings">("tasks"),
     [selected, setSelected] = useState<string | null>(
       () => location.hash.slice(1) || null,
@@ -96,13 +98,7 @@ function Workspace({ transport }: { transport: Transport }) {
     [search, setSearch] = useState(""),
     [draftKey, setDraftKey] = useState(0);
   const [desktop, setDesktop] = useState<DesktopStatus | null>(null);
-  const [theme, setTheme] = useState(() => {
-    try {
-      return localStorage.getItem("taskrelay.theme") ?? "system";
-    } catch {
-      return "system";
-    }
-  });
+  const [theme, setTheme] = useTheme();
   const { setOpenMobile } = useSidebar();
   const loading = useRef<Promise<void> | null>(null),
     mounted = useRef(true);
@@ -113,6 +109,7 @@ function Workspace({ transport }: { transport: Transport }) {
         await loading.current;
         if (!fresh) return;
       }
+      setRefreshing(true);
       const request = (async () => {
         try {
           const status = await transport.desktop?.status();
@@ -142,6 +139,7 @@ function Workspace({ transport }: { transport: Transport }) {
         await request;
       } finally {
         if (loading.current === request) loading.current = null;
+        if (mounted.current) setRefreshing(false);
       }
     },
     [transport],
@@ -160,20 +158,6 @@ function Workspace({ transport }: { transport: Transport }) {
       unsub?.();
     };
   }, [load, transport]);
-  useEffect(() => {
-    const media = matchMedia("(prefers-color-scheme: dark)");
-    const update = () =>
-      document.documentElement.classList.toggle(
-        "dark",
-        theme === "dark" || (theme === "system" && media.matches),
-      );
-    update();
-    media.addEventListener("change", update);
-    try {
-      localStorage.setItem("taskrelay.theme", theme);
-    } catch {}
-    return () => media.removeEventListener("change", update);
-  }, [theme]);
   async function act(path: string, body?: unknown) {
     setBusy(true);
     setActionError("");
@@ -416,12 +400,12 @@ function Workspace({ transport }: { transport: Transport }) {
         {data.quota && <div className="border-b px-4 py-2 text-xs text-muted-foreground" role="status">今日启动 {data.quota.used.runs}/{data.quota.limits.runs} · 模型请求 {data.quota.used.models}/{data.quota.limits.models} · 对话 {data.quota.used.chat}/{data.quota.limits.chat} · {formatDate(data.quota.resetAt)} 重置</div>}
         {data.platformBudget && <div className="border-b px-4 py-2 text-xs text-muted-foreground" role="status">平台共享预算：模型 {data.platformBudget.used.model}/{data.platformBudget.limits.model} · AI 回合 {data.platformBudget.used.turn}/{data.platformBudget.limits.turn} · 短期证据 {data.platformBudget.used.evidence}/{data.platformBudget.limits.evidence} · {formatDate(data.platformBudget.resetAt)} 重置。个人额度与平台预算均有剩余时才能接收对应工作。</div>}
         {error && (
-          <div className="flex shrink-0 items-center gap-2 px-4 py-2">
+          <div className="flex shrink-0 flex-wrap items-center gap-2 px-4 py-2">
             <div className="min-w-0 flex-1">
               <ErrorText error={error} />
             </div>
-            <Button variant="outline" size="sm" onClick={() => void load()}>
-              重试
+            <Button variant="outline" size="sm" disabled={refreshing} onClick={() => void load()}>
+              {refreshing ? "正在重新连接…" : "重新连接"}
             </Button>
             {desktop?.activeRunId && (
               <Button
@@ -470,8 +454,7 @@ function Workspace({ transport }: { transport: Transport }) {
             role="status"
             aria-label="加载工作空间"
           >
-            <Skeleton className="h-8 w-40" />
-            <Skeleton className="h-24 w-full" />
+            {!error && <><LoadingState label="正在加载工作空间…"/><Skeleton className="h-8 w-40" /><Skeleton className="h-24 w-full" /></>}
             {error && (
               <Button variant="outline" onClick={() => setPage("settings")}>
                 打开设置

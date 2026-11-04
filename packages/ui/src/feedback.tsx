@@ -1,5 +1,21 @@
 import { Badge } from "./components/ui/badge";
 import { Alert, AlertDescription } from "./components/ui/alert";
+import { useEffect, useState } from 'react';
+import { Loader2 } from 'lucide-react';
+import { Button } from './components/ui/button';
+export function LoadingState({label}:{label:string}) {
+  const [slow,setSlow]=useState(false);
+  useEffect(()=>{const timer=setTimeout(()=>setSlow(true),8000);return()=>clearTimeout(timer);},[]);
+  return <div role="status" aria-live="polite" className="flex items-start gap-2 text-sm text-muted-foreground">
+    <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin" aria-hidden="true"/>
+    <div><p>{label}</p>{slow&&<p className="mt-1">等待时间较长，连接可能较慢。请稍候，已有请求不会自动重发。</p>}</div>
+  </div>;
+}
+export function LoadFeedback({loading,error,label,onRetry}:{loading:boolean;error:string;label:string;onRetry:()=>void}) {
+  if(loading)return <LoadingState label={label}/>;
+  if(!error)return null;
+  return <div className="flex flex-col gap-2"><ErrorText error={error}/><Button variant="outline" size="sm" className="self-start" onClick={onRetry}>重新加载</Button></div>;
+}
 export const labels: Record<string, string> = {
   pending_validation: "待试运行",
   active: "已启用",
@@ -98,14 +114,17 @@ export function ErrorText({ error }: { error: string }) {
       "未能从回复中提取有效信息，请核对当前验证要求后重新输入。",
     REPLY_INVALID: "回复包含无法填写的字符或过长，请只输入当前步骤需要的信息。",
     CONFIRMATION_REQUIRED: "请先完成扫码或外部确认，再点击“已扫码，检查状态”。",
-    OFFLINE: "暂时无法连接云端。已保留缓存，连接恢复后自动刷新。",
+    OFFLINE: "暂时无法连接云端。请检查网络后重新加载；当前页面已有内容会保留，未确认的操作不会自动重发。",
+    REQUEST_TIMEOUT: "读取超时，服务或网络可能较慢。请稍后重新加载，当前页面已有内容会保留。",
+    REQUEST_UNCONFIRMED: "未收到操作结果，暂时无法确认是否已完成。请保留当前页面，先查看最新状态，不要重复创建或提交。",
+    SERVER_RESPONSE_INVALID: "服务暂时没有返回有效数据，请稍后重新加载。",
     MODEL_INVALID_JSON: "模型返回的格式不正确，请检查模型配置后重试。",
     MODEL_EGRESS_TIMEOUT: "模型回复超时，输入已保留。请稍后重试。",
     MODEL_CALL_OUTCOME_UNKNOWN: "模型请求结果暂时无法确认，请稍后再试。",
     VERSION_CONFLICT: "任务版本已更新，请返回任务对话，核对最新配置后再修改。",
   };
   return (
-    <Alert variant="destructive">
+    <Alert variant={['OFFLINE','REQUEST_TIMEOUT','SERVER_RESPONSE_INVALID'].includes(error)?'default':'destructive'}>
       <AlertDescription>
         {friendly[error] ?? `操作未完成：${error}。请检查配置后重试。`}
       </AlertDescription>

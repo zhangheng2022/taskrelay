@@ -85,6 +85,8 @@ npm run check:repo
 
 界面验收也可打开 `/ui-fixture.html`：只在开发模式渲染共享 App，使用演示 Transport，不访问生产服务。可用 `?state=challenge`、`?state=failed`、`?state=offline`、`?desktop=1`、`?fail=1` 检查协助、未知结果、离线、桌面和首次请求失败。详情见 [UI-REVIEW.md](docs/UI-REVIEW.md)。
 
+`/ui-review.html` 提供手机和窄桌面的独立预览画布：默认检查会话读取失败与执行器断连，`?state=loading` 检查慢加载，`?state=auth` 检查登录主题，`?state=conversation` 检查协助与待核查。单页夹具另支持 `?network=slow`（每次演示请求延迟 12 秒）、`?network=fail-once`（兼容 StrictMode 的首次会话读取失败）和 `?auth`。这些入口仅用于本地开发，不证明真实断网或生产业务通过。
+
 执行器界面使用 `?executor`；可加 `&update=available`、`downloading`、`waiting`、`installing` 或 `error` 检查更新状态，`&state=running` 模拟当前有任务。夹具不会实际下载或安装。发布更新请遵循[自动更新通道](docs/DEPLOYMENT.md#自动更新通道047-起)。
 
 ### GitHub 自动检查

@@ -4,7 +4,9 @@ import { Button } from './components/ui/button';
 import { Input } from './components/ui/input';
 import { Card,CardHeader,CardTitle,CardDescription,CardContent,CardFooter } from './components/ui/card';
 import { Field,FieldLabel,FieldGroup } from './components/ui/field';
-import { ErrorText } from './feedback';
+import { ErrorText, LoadFeedback } from './feedback';
+import { useTheme } from './use-theme';
+import { requestJson } from './request';
 import { BrandMark } from './brand-mark';
 type Turnstile={render:(el:HTMLElement,options:Record<string,unknown>)=>string;remove:(id:string)=>void};
 declare global {interface Window{turnstile?:Turnstile}}
@@ -20,16 +22,15 @@ export function BotCheck({siteKey,onToken}:{siteKey:string;onToken:(token:string
  return <div ref={ref} aria-label="人机验证"/>;
 }
 export async function authRequest(path:string,body:unknown,token?:string) {
- const r=await fetch('/api/auth/'+path,{method:'POST',headers:{'Content-Type':'application/json',...(token?{'x-turnstile-token':token}:{})},body:JSON.stringify(body)});
- const data=await r.json() as {error?:string;code?:string};
- if(!r.ok)throw new Error(typeof data.error==='string'?data.error:data.code??'AUTH_FAILED');
- return data;
+ return requestJson('/api/auth/'+path,{method:'POST',body,headers:token?{'x-turnstile-token':token}:{},timeoutMs:30000});
 }
 export function AuthGate({transport,children}:{transport:Transport;children:ReactNode}) {
  const resetToken=new URLSearchParams(location.search).get('token');
  const [ready,setReady]=useState(false),[loading,setLoading]=useState(true),[mode,setMode]=useState<'login'|'register'|'forgot'|'reset'|'verify'>(resetToken?'reset':'login'),[config,setConfig]=useState({registrationOpen:false,siteKey:''}),[token,setToken]=useState(''),[epoch,setEpoch]=useState(0),[busy,setBusy]=useState(false),[error,setError]=useState(''),[note,setNote]=useState('');
- useEffect(()=>{let live=true;void Promise.allSettled([transport.request('GET','/api/user/me'),fetch('/api/auth/config').then(r=>r.json() as Promise<{registrationOpen:boolean;siteKey:string}>)]).then(([me,cfg])=>{if(!live)return;if(me.status==='fulfilled')setReady(true);else if(!['AUTH_REQUIRED','ACCESS_REQUIRED'].includes(me.reason.message))setError(me.reason.message);if(cfg.status==='fulfilled')setConfig(cfg.value);setLoading(false);});return()=>{live=false;};},[transport]);
- if(loading)return <p className="p-8" role="status">正在加载工作空间…</p>;
+ const [loadError,setLoadError]=useState(''),[retry,setRetry]=useState(0);
+ useTheme(!ready||mode==='reset');
+ useEffect(()=>{let live=true;setLoading(true);setLoadError('');void Promise.allSettled([transport.request('GET','/api/user/me'),requestJson<{registrationOpen:boolean;siteKey:string}>('/api/auth/config',{timeoutMs:15000})]).then(([me,cfg])=>{if(!live)return;if(me.status==='fulfilled')setReady(true);else if(!['AUTH_REQUIRED','ACCESS_REQUIRED'].includes(me.reason.message))setLoadError(me.reason.message);if(cfg.status==='fulfilled')setConfig(cfg.value);else if(me.status!=='fulfilled')setLoadError(cfg.reason.message);setLoading(false);});return()=>{live=false;};},[transport,retry]);
+ if(loading||loadError)return <main className="flex min-h-dvh items-center justify-center p-4"><Card className="w-full max-w-md"><CardHeader><CardTitle className="flex items-center gap-3"><BrandMark/>TaskRelay</CardTitle><CardDescription>正在连接你的工作空间。</CardDescription></CardHeader><CardContent><LoadFeedback loading={loading} error={loadError} label="正在加载工作空间…" onRetry={()=>setRetry(x=>x+1)}/></CardContent></Card></main>;
  if(ready&&mode!=='reset')return <>{children}</>;
  const needsBot=['register','forgot','verify'].includes(mode);
  const title={login:'登录 TaskRelay',register:'创建账号',forgot:'找回密码',reset:'设置新密码',verify:'重新发送验证邮件'}[mode];

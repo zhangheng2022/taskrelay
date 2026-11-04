@@ -3,6 +3,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "../../../packages/ui/src/app";
 import { ExecutorApp } from '../../../packages/ui/src/executor-app';
+import { AuthGate } from '../../../packages/ui/src/auth-gate';
 import { taskInputSchema } from "../../../packages/contracts/src/index";
 import type {
   Snapshot,
@@ -158,6 +159,7 @@ const created = new Map<string, string>();
 const threads=new Map<string,any>();
 const memories=new Map<string,any>();
 let failed = false;
+let threadFailures = 0;
 const desktop: DesktopStatus = {
   update:{phase:'current',release:null,progress:null,checkedAt:null,error:null},
   paired: true,
@@ -175,7 +177,9 @@ if(updatePhase&&['available','downloading','waiting','installing','error'].inclu
 }
 const transport: Transport = {
   async request<T>(method: string, path: string, body?: any): Promise<T> {
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, options.get('network')==='slow'?12000:200));
+    // StrictMode probes the initial effect twice; both probes must see the outage.
+    if(options.get('network')==='fail-once'&&path==='/api/user/threads'&&threadFailures++<2)throw new Error('OFFLINE');
     let result: unknown;
     if (path === "/api/user/snapshot") result = structuredClone(snapshot);
     else if(path==='/api/user/threads') {
@@ -302,6 +306,6 @@ if (options.has("desktop") || options.has('executor') || state === "offline")
 if (import.meta.env.DEV)
   createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
-      {options.has('executor')?<ExecutorApp executor={transport.desktop!}/>:<App transport={transport} />}
+      {options.has('auth')?<AuthGate transport={{request:async()=>{throw new Error('AUTH_REQUIRED');}}}><span>演示工作空间</span></AuthGate>:options.has('executor')?<ExecutorApp executor={transport.desktop!}/>:<App transport={transport} />}
     </React.StrictMode>,
   );

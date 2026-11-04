@@ -12,7 +12,7 @@ import type {
 import { InputGroupButton } from "./components/ui/input-group";
 import { MessageScrollerItem } from "./components/ui/message-scroller";
 import { Thread, Composer, ChatMessage, PendingMessage } from "./chat-parts";
-import { ErrorText } from "./feedback";
+import { ErrorText, LoadFeedback } from "./feedback";
 import { RunReport, type Usage } from "./run-report";
 import { ChallengePanel } from "./challenge-panel";
 
@@ -235,7 +235,7 @@ export function Conversation({
     <div className="flex min-h-0 flex-1 flex-col">
       <Thread>
         {thread.page?.nextCursor && <MessageScrollerItem messageId="older"><Button variant="ghost" onClick={()=>void thread.older()}>加载更早消息</Button></MessageScrollerItem>}
-        {thread.error && <MessageScrollerItem messageId="thread-error"><ErrorText error={thread.error}/></MessageScrollerItem>}
+        {(thread.loading||thread.error) && <MessageScrollerItem messageId="thread-error"><LoadFeedback loading={thread.loading} error={thread.error} label="正在加载任务对话…" onRetry={thread.retry}/></MessageScrollerItem>}
         {thread.page?.latestTurn?.error && <MessageScrollerItem messageId="turn-error"><ErrorText error={thread.page.latestTurn.error}/></MessageScrollerItem>}
 
         <MessageScrollerItem messageId="goal">
