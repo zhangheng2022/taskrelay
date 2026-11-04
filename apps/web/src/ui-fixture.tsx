@@ -2,6 +2,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "../../../packages/ui/src/app";
+import { ExecutorApp } from '../../../packages/ui/src/executor-app';
 import { taskInputSchema } from "../../../packages/contracts/src/index";
 import type {
   Snapshot,
@@ -158,6 +159,7 @@ const threads=new Map<string,any>();
 const memories=new Map<string,any>();
 let failed = false;
 const desktop: DesktopStatus = {
+  update:{phase:'current',release:null,progress:null,checkedAt:null,error:null},
   paired: true,
   cloudUrl: "https://example.com",
   paused: false,
@@ -167,6 +169,10 @@ const desktop: DesktopStatus = {
   autoStart: false,
   error: null,
 };
+const updatePhase=options.get('update');
+if(updatePhase&&['available','downloading','waiting','installing','error'].includes(updatePhase)){
+  desktop.version='0.4.7';desktop.update={phase:updatePhase as DesktopStatus['update']['phase'],release:{version:'0.4.8',sha1:'a'.repeat(40),sha256:'a'.repeat(64),bytes:1024,notes:'改进执行器的稳定性和更新体验。',publishedAt:new Date().toISOString()},progress:42,checkedAt:null,error:updatePhase==='error'?'更新下载或完整性校验失败，请重试。':null};
+}
 const transport: Transport = {
   async request<T>(method: string, path: string, body?: any): Promise<T> {
     await new Promise((r) => setTimeout(r, 200));
@@ -274,7 +280,7 @@ const transport: Transport = {
     return result as T;
   },
 };
-if (options.has("desktop") || state === "offline")
+if (options.has("desktop") || options.has('executor') || state === "offline")
   transport.desktop = {
     status: async () => ({ ...desktop }),
     configure: async () => ({ url: "https://example.com", code: "DEMO" }),
@@ -289,11 +295,13 @@ if (options.has("desktop") || state === "offline")
       desktop.activeRunId = null;
     },
     diagnostics: async () => "演示诊断，不含敏感信息",
+    checkUpdate: async () => {},
+    downloadUpdate: async () => {},
     subscribe: () => () => {},
   };
 if (import.meta.env.DEV)
   createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
-      <App transport={transport} />
+      {options.has('executor')?<ExecutorApp executor={transport.desktop!}/>:<App transport={transport} />}
     </React.StrictMode>,
   );

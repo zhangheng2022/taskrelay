@@ -11,7 +11,7 @@
 
 - **开发验收阶段**：客户端 **0.4.6**，尚未发布 GitHub Release。版本记录不代表已有稳定安装包；发布后可从 [Releases](https://github.com/zhangheng2022/taskrelay/releases) 获取。
 - 工作空间：[tr.zhangheng.eu.org](https://tr.zhangheng.eu.org)，公开注册当前关闭。原 `taskrelay.zhangheng.workers.dev` 地址继续兼容已配对客户端。
-- Windows 是独立执行器；任务编辑、聊天、历史与模型设置在网站完成。当前通过安装包手动升级，尚未接入自动更新。
+- Windows 是独立执行器；任务编辑、聊天、历史与模型设置在网站完成。0.4.7 起支持版本检查、新版提醒、确认下载与空闲自动安装；更新网络经过 Cloudflare，客户端不直连 GitHub。旧版首次启用需安装新包，发布通道状态见验收台账。
 - 已有源码测试、开发机打包及部分真实任务证据。干净 Windows、更多模型提供方、完整故障闭环和连续观察仍需补齐，以 [验收台账](docs/ACCEPTANCE.md) 为准。
 - Cloudflare 按 Free 约束运行，预算耗尽后拒绝新工作；**模型服务费用由提供方单独计算**。
 
@@ -84,6 +84,8 @@ npm run check:repo
 可选 `node scripts/seed-ui.mjs` 向本地 D1 写入明确标记为“演示”的界面检查数据，不连接生产环境。
 
 界面验收也可打开 `/ui-fixture.html`：只在开发模式渲染共享 App，使用演示 Transport，不访问生产服务。可用 `?state=challenge`、`?state=failed`、`?state=offline`、`?desktop=1`、`?fail=1` 检查协助、未知结果、离线、桌面和首次请求失败。详情见 [UI-REVIEW.md](docs/UI-REVIEW.md)。
+
+执行器界面使用 `?executor`；可加 `&update=available`、`downloading`、`waiting`、`installing` 或 `error` 检查更新状态，`&state=running` 模拟当前有任务。夹具不会实际下载或安装。发布更新请遵循[自动更新通道](docs/DEPLOYMENT.md#自动更新通道047-起)。
 
 ### GitHub 自动检查
 

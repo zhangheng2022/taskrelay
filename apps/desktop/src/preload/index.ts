@@ -10,6 +10,8 @@ const transport: NonNullable<Transport["desktop"]> = {
     autoStart: (value) => invoke("autoStart", value),
     stop: () => invoke("stop"),
     diagnostics: () => invoke("diagnostics"),
+    checkUpdate: () => invoke("checkUpdate"),
+    downloadUpdate: (version) => invoke("downloadUpdate", version),
     subscribe: (fn) => {
       const listener = () => fn();
       ipcRenderer.on("taskrelay:changed", listener);

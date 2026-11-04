@@ -96,7 +96,7 @@ Main 在产生浏览器副作用前记录 SQLite 检查点。云端也先记录�
 
 未知结果可能长期阻止账号继续运行，这是保守恢复的预期行为；首版没有绕过核查的强制解锁入口。复杂 iframe/新标签页工作流、不能通过输入/扫码/确认完成的验证可能不受支持，并应保留明确失败记录。
 
-升级通过新安装包，保留 userData。客户端拒绝读取高于自身支持版本的 SQLite。首版不含自动更新。常规卸载是否保留用户数据、干净机器升级及代码签名状态必须按验收表实际记录。
+升级保留 userData。0.4.7 起安装版支持版本检查、提醒、确认后下载及空闲安装，旧客户端首次启用仍需新安装包。客户端拒绝读取高于自身支持版本的 SQLite。常规卸载是否保留用户数据、干净机器升级及代码签名状态必须按验收表实际记录。
 
 ## Windows 更新交付
 
@@ -110,7 +110,24 @@ Main 在产生浏览器副作用前记录 SQLite 检查点。云端也先记录�
 
 `.github/workflows/ci.yml` 在 PR、master 推送与手动触发时运行 Ubuntu / Windows、Node.js 24 的矩阵检查。使用 npm ci、完整测试、类型检查、Web 构建与仓库检查；Actions 固定提交 SHA，GITHUB_TOKEN 仅 contents:read，检出后不保留凭据。CI 不生成本地开发密钥、不迁移生产、不请求真实模型、不自动安装客户端或发布 Release。跨平台源码检查不是干净 Windows 安装验收。
 
-README 负责使用入口与状态，CHANGELOG 记录客户端版本的变更，ACCEPTANCE 保留逐项证据。0.4.6 仍为未发布候选；需要发布时从明确、干净的源码提交构建，先完成 make，再取得本次打包/实际安装 smoke 和系统入口证明，整理脱敏附件后发布预览版。不得将含本机绝对路径的原始清单、Profile 或诊断数据库上传为公开附件，也不得复用另一版本的报告。当前没有自动更新服务，用户通过安装包手动升级。
+README 负责使用入口与状态，CHANGELOG 记录客户端版本的变更，ACCEPTANCE 保留逐项证据。需要发布时从明确、干净的源码提交构建，先完成 make，再取得本次打包/实际安装 smoke 和系统入口证明，整理脱敏附件后发布预览版。不得将含本机绝对路径的原始清单、Profile 或诊断数据库上传为公开附件，也不得复用另一版本的报告。自动更新通道的实际发布状态见验收台账。
+
+### 自动更新通道（0.4.7 起）
+
+- 执行器启动 15 秒后及每 6 小时检查一次，也可从窗口或托盘“检查更新”。更新地址固定为 `https://tr.zhangheng.eu.org/api/updates/windows-x64/latest.json`，不随配对的工作空间地址变化。只有 Windows x64 Squirrel 安装版启用；开发及解压运行明确显示不可用。
+- 新版本显示更新说明并发 Windows 通知。用户确认“下载并安装”后才下载完整 nupkg。下载仅请求同一 Cloudflare 域名，拒绝重定向，不发送设备令牌。大小、SHA-256 和 SHA-1 均验证后生成只含本地文件名的 RELEASES；Squirrel 仅使用该本地目录，没有第二条网络链路。
+- 下载期间原任务继续运行。下载完成后自动暂停新增领取，等待正在领取的请求、执行/人工等待、浏览器与子进程清理、RPC 和结果回传结束，再安装重启。原“暂停领取”偏好不变；回传失败则继续等待，不强停任务或清空 outbox。更新不解锁 unknown 账号、不重放写入。确认不跨应用重启保存；中途关闭后须重新确认，失败支持重试，新下载会清理应用自有旧下载缓存。
+- Worker 只对目录中固定版本/哈希/文件路径提供流式下载。源限定为 `zhangheng2022/taskrelay` 的 `v<版本>` Release；仅在 CF 内跟随 GitHub 的指定资产域名，绝不向客户端返回 Location，不转发用户的 Cookie/Authorization，不启用 R2 或付费服务。
+
+发布步骤：
+
+1. 提升桌面版本并同步锁文件，完成 make、包内/实际安装 smoke 和系统入口/ASAR 核验，执行 `node scripts/release-manifest.mjs`。
+2. 将简短更新说明保存为本地文本，执行 `node scripts/prepare-update.mjs <更新说明文件>`。脚本核对当前版本、验收清单和包哈希，只生成 `out/desktop-release.json`，不上传、不启用通道；不能使用旧版清单。
+3. 将本次 `TaskRelay-<版本>-full.nupkg` 与 Setup 发布到上述仓库可公开下载的 `v<版本>` Release。私有仓库/未发布草稿不能作为此通道来源；不得把 GitHub token 配到客户端。已发布版本的包不可替换，修复必须提升版本。
+4. 将生成条目追加到 `apps/cloud/src/desktop-releases.json` 的 `releases`，更新 `latest`，保留历史条目供已确认的下载继续使用，然后构建并部署 Cloudflare Worker。源码目录初始 `latest:null`，表示尚未发布，客户端不会误报“已是最新版”。
+5. 从 CF 地址检查 latest 和 nupkg：应直接返回 JSON/文件字节，无外部重定向；核对包 SHA-256。在测试安装上检查拒绝更新、确认下载、正在执行/人工等待/断网回传下不重启，以及空闲升级后的系统入口、版本、ASAR、配对和自启动。隔离 adapter 测试、包内 smoke 均不替代此真实升级验证。
+
+实现依据：[Electron autoUpdater](https://www.electronjs.org/docs/latest/api/auto-updater)、[Squirrel 本地更新源](https://github.com/Squirrel/Squirrel.Windows/blob/develop/src/Squirrel/UpdateManager.DownloadReleases.cs)、[Cloudflare Streams](https://developers.cloudflare.com/workers/runtime-apis/streams/)。
 
 ## 0.2.0 本次安装与单域名 DNS 记录
 

@@ -11,18 +11,23 @@ import {
   powerMonitor,
   dialog,
   utilityProcess,
+  autoUpdater,
+  Notification,
 } from "electron";
 import squirrelStartup from "electron-squirrel-startup";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { writeFile } from "node:fs/promises";
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { z } from "zod";
 import { Journal } from "./journal";
 import { Cloud } from "./cloud";
 import { OwnedBrowser } from "./browser";
 import { prepareExtension } from "./extension";
 import { ExecutorHost } from "./executor-host";
+import { DesktopUpdater } from './updater';
+import { RunnerPoller } from './runner-poller';
+import { releaseSchema } from '../../../../packages/contracts/src/updates';
 import { cloudUrlSchema } from "../shared/ipc";
 import type {
   DesktopStatus,
@@ -45,23 +50,34 @@ protocol.registerSchemesAsPrivileged([
 let window: BrowserWindow | null = null,
   tray: Tray | null = null,
   quitting = false,
-  polling = false,
   online = false,
   lastError: string | null = null;
 let journal: Journal,
   cloud: Cloud,
   host: ExecutorHost,
   pairing: { id: string; pollToken: string } | null = null;
-let claimRequest: string | null = null;
+let poller: RunnerPoller;
+let updater: DesktopUpdater;
+let updatePrompt = false;
+function loginLaunchPath() {
+  const stub=path.resolve(process.execPath,'../../TaskRelay.exe');
+  return app.isPackaged && existsSync(path.resolve(process.execPath,'../../Update.exe')) && existsSync(stub)
+    ? stub : app.getPath('exe');
+}
+function updateBusy() {
+  return quitting || poller.unsettled || !host.idleForUpdate ||
+    journal.pending().length > 0 || journal.incomplete().length > 0;
+}
 function status(): DesktopStatus {
   return {
+    update: updater.status,
     paired: cloud.paired,
     cloudUrl: cloud.url,
     paused: journal.get<boolean>("paused") ?? false,
     online: cloud.online,
     activeRunId: host.active,
     version: app.getVersion(),
-    autoStart: app.getLoginItemSettings().openAtLogin,
+    autoStart: app.getLoginItemSettings({path:loginLaunchPath()}).openAtLogin,
     error: lastError,
   };
 }
@@ -134,7 +150,7 @@ function registerIpc() {
     });
   handle("status", () => status());
   handle("configure", async (input: unknown) => {
-    if (host.active) throw new Error("STOP_RUN_BEFORE_PAIRING");
+    if (host.active || poller.unsettled || updater.blocksClaims) throw new Error("STOP_RUN_BEFORE_PAIRING");
     const url = cloudUrlSchema.parse(input);
     journal.set("cloudUrl", url);
     journal.set("token", null);
@@ -180,11 +196,27 @@ function registerIpc() {
   handle("autoStart", (v: unknown) => {
     app.setLoginItemSettings({
       openAtLogin: z.boolean().parse(v),
-      path: app.getPath("exe"),
+      path: loginLaunchPath(),
     });
     notify();
   });
   handle("stop", () => host.stop(true));
+  handle('checkUpdate', () => updater.check());
+  handle('downloadUpdate', async (input: unknown) => {
+    const version = releaseSchema.shape.version.parse(input);
+    const update = updater.status;
+    if (updatePrompt || !['available','error'].includes(update.phase) || update.release?.version !== version) return;
+    updatePrompt = true;
+    try {
+      const answer = await dialog.showMessageBox(window!, {
+        type:'question',title:'更新 TaskRelay 执行器',
+        message:`下载并安装 ${version}？`,
+        detail:'确认后通过 Cloudflare 下载更新。下载完成后暂停领取新任务，等待当前任务（包括人工协助）和结果回传结束，再自动安装并重启。',
+        buttons:['暂不更新','确认下载并安装'],defaultId:0,cancelId:0,noLink:true,
+      });
+      if(answer.response===1)void updater.download(version).catch(()=>{});
+    } finally {updatePrompt=false;}
+  });
   handle("diagnostics", async () => {
     const result = await dialog.showSaveDialog(window!, {
       defaultPath: `TaskRelay-diagnostics-${new Date().toISOString().slice(0, 10)}.json`,
@@ -209,35 +241,14 @@ function registerIpc() {
   });
 }
 async function poll() {
-  if (polling || quitting || !cloud.paired) return;
-  polling = true;
-  try {
-    const connection=await cloud.connect(!host.active);
-    if(connection.maintenance){online=true;lastError="云端维护中，暂不领取任务";return;}
-    await host.flush();
-    if (!host.active && !status().paused) {
-      claimRequest ??= crypto.randomUUID();
-      const { run } = await cloud.request<{ run: TaskRun | null }>(
-        "POST",
-        "/api/runner/claim",
-        { requestId: claimRequest, protocolVersion: 3 },
-      );
-      claimRequest = null;
-      if (run && ["running", "waiting_user", "verifying"].includes(run.status))
-        await host.start(run);
-    }
-    online = true;
-    lastError = null;
-  } catch (e) {
-    online = false;
-    lastError = (e as Error).message;
-  } finally {
-    polling = false;
-    notify();
-  }
+  await poller.poll();
 }
 async function quit() {
   if (quitting) return;
+  if (updater?.status.phase === 'installing') {
+    show();
+    return;
+  }
   quitting = true;
     cloud?.close();
   try {
@@ -249,6 +260,7 @@ async function quit() {
     return;
   }
   journal?.close();
+  updater?.stop();
   tray?.destroy();
   app.exit(0);
 }
@@ -322,6 +334,38 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
         utilityProcess.fork,
       );
       await host.recover();
+      poller = new RunnerPoller(cloud,host,journal,{
+        quitting:()=>quitting,blocksClaims:()=>updater.blocksClaims,
+        installing:()=>updater.status.phase==='installing',
+        result:(connected,error)=>{online=connected;lastError=error;},
+        settled:()=>{notify();updater.tryInstall();},
+      });
+      // Preserve an existing login preference while moving off a version-specific EXE.
+      const legacyLogin=app.getLoginItemSettings();
+      if(legacyLogin.openAtLogin)app.setLoginItemSettings({openAtLogin:false});
+      app.setAppUserModelId('com.squirrel.TaskRelay.TaskRelay');
+      if(legacyLogin.openAtLogin)app.setLoginItemSettings({
+        openAtLogin:true,path:loginLaunchPath(),enabled:legacyLogin.executableWillLaunchAtLogin,
+      });
+      updater = new DesktopUpdater({
+        version:app.getVersion(),
+        supported:process.platform==='win32' && process.arch==='x64' && app.isPackaged &&
+          path.basename(path.dirname(process.execPath))===`app-${app.getVersion()}` &&
+          existsSync(path.resolve(process.execPath,'../../Update.exe')),
+        directory:path.join(userData,'updates'),native:autoUpdater,busy:updateBusy,changed:notify,
+        available:release=>{
+          tray?.setToolTip(`TaskRelay · 发现新版本 ${release.version}`);
+          if(Notification.isSupported()) {
+            const notification=new Notification({title:'TaskRelay 有新版本',body:`${release.version} 已可用，点击查看并确认更新。`});
+            notification.on('click',show);notification.show();
+          }
+        },
+        restart:()=>{
+          // The updater has rechecked quiescence. Do not call host.stop() here.
+          quitting=true;updater.stop();cloud.close();journal.close();tray?.destroy();
+          autoUpdater.quitAndInstall();
+        },
+      });
       const rendererRoot = path.resolve(
         __dirname,
         `../renderer/${MAIN_WINDOW_VITE_NAME}`,
@@ -352,6 +396,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
             },
           },
           { type: "separator" },
+          { label: "检查版本更新", click: () => {show();void updater.check();} },
           { label: "退出 TaskRelay", click: () => void quit() },
         ]),
       );
@@ -363,6 +408,11 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
       createWindow();
       cloud.watch(()=>void poll());
       setInterval(() => void poll(), 60000);
+      setTimeout(() => void updater.check(),15000);
+      setInterval(() => void updater.check(),6*60*60*1000);
+      setInterval(() => {
+        if(updater.status.phase==='waiting') {void poll();updater.tryInstall();}
+      },5000);
       void poll();
     })
     .catch((error) => {

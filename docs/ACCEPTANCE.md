@@ -1,5 +1,15 @@
 # TaskRelay 验收记录
 
+## 2026-11-04 0.4.7 版本检查与空闲更新（本地候选）
+
+- 实现启动 15 秒/每 6 小时检查、手动检查、Windows 提醒、Main 原生确认、CF 下载、大小和 SHA-256/SHA-1 校验、空闲 Squirrel 安装重启。安装器只接收应用自有本地 feed；更新地址固定，不使用配对地址或远程文件内的任意 URL。自启动使用 Squirrel 的稳定启动入口，迁移已有启用偏好，避免指向旧版本目录。
+- 158 项完整测试通过（含 UI）。新增 14 项覆盖真实 Poller/Host/Updater 协作、领取响应丢失后的同编号解析、人工等待、进程清理、在途 RPC、回传失败、重复安装门闩、版本校验、文件损坏/长度/截断/离线/重定向、CF 代理域名限制与凭据剥离、共享 UI 请求。类型检查、Web build、仓库检查与差异格式检查通过；Web 保留既有大 chunk 提醒。
+- 最终 Windows 0.4.7 make 与 packaged smoke 通过，报告版本为 0.4.7，时间晚于最终 ASAR；Setup 为 363063808 字节，路径 `apps/desktop/out/make/squirrel.windows/x64/TaskRelay Setup.exe`。包内 smoke 仅证明独立 Stagehand/资源/原生依赖及自建站操作，不证明自动更新本身。真实本机 Update.exe 仅执行 `--checkForUpdate`，识别本地 feed 的 futureVersion=0.4.7；它报告 currentVersion=0.4.5，属于工具环境可见副本，不能当作系统安装 0.4.6 已升级或真实应用更新证据。
+- 本地 workerd 正式 Worker 路径：latest GET/HEAD=200、POST=405、未知文件=404；初始通道返回 `{release:null}`，无 Location。CF 流式代理和客户端拒绝重定向有隔离网络测试，未发布真实更新文件或执行生产 CF 下载。
+- 浏览器窄窗口/键盘/错误与等待状态检查见 UI-REVIEW。`prepare-update.mjs` 对现存旧版清单明确返回 `RELEASE_ACCEPTANCE_REQUIRED`，没有生成伪造的 0.4.7 发布候选。没有复用 0.4.6 的安装 smoke。
+- 源码图已更新为 4317 节点/6791 边/371 社区；保留既有 SQL 解析器缺失、admin-panel/auth-gate 两个 TSX 部分抽取警告。
+- **未完成的发布验收**：0.4.7 系统安装/快捷方式/ASAR、安装 smoke、真实跨版本安装重启及自启动、生产 CF 更新通道和 GitHub Release、干净 Windows、真实任务运行中升级与连续观察。本轮未部署云端、未替换当前安装、不调用真实模型、不改生产数据；旧客户端首次启用需安装新包。`desktop-releases.json` 保持空目录，不能声称线上更新已启用。
+
 ## 2026-11-04 0.4.6 安装自检修复与 GitHub 工程入口
 
 - 复现 0.4.5 安装自检：页面已经载入，DOM 中存在查询文字，但 Stagehand locator 仍在 20 秒后超时。调试证据显示安装资源的 content-script.js 磁盘 SHA-256 正确，Chromium 的 scriptParsed 却为 length=0、空内容哈希；同一浏览器读取构建目录或新建运行目录的同字节扩展可正常返回。已定位到安装路径下内容脚本加载行为，未据此断言 Windows/Chromium 更底层原因。

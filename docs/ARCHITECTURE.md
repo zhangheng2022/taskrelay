@@ -1,5 +1,13 @@
 # TaskRelay 架构现状与改进候选
 
+## 2026-11-04 执行器版本更新
+
+- Main `DesktopUpdater` 管理版本元数据、确认后的下载、哈希校验、等待与本地 Squirrel 安装。Renderer 只展示 `DesktopUpdateStatus`，Preload 只增加命名检查/下载入口；Main 原生确认框绑定当前版本，模型和任务网页不能触发更新或指定下载地址。
+- 所有更新网络固定经过 CF 的 `/api/updates/windows-x64`。Worker 在进入业务 DO 前路由公开发布元数据和固定资产的流式代理；无数据库变更、R2 或模型请求。发布目录保留版本、大小及 SHA-256/SHA-1，客户端拒绝降级、预发行/不合法版本、重定向和校验失败。源文件在 CF 代理内限定到本仓库 Release 及 GitHub 资产域名；普通用户输入不能改变源地址。
+- Main 下载校验后才给 Squirrel 一个应用自有本地 feed；因此 Squirrel 不读取远程 RELEASES、不直连 GitHub，也不会在活动任务期间提前解包/应用更新。安装只在同步门闩关闭新领取后启动。`RunnerPoller` 持久化领取 requestId，丢失响应须按原编号解决；等待中的 connect/flush 返回后重新检查更新门闩。
+- 空闲条件是无在途/未决领取、Host 无 current/child/stopPromise/stopping/未结束 RPC、本地 journal 无未完成记录且 outbox 已清空。Host `idleForUpdate` 等待已有 RPC 完成，不能只看 activeRunId。安装重启不调用 host.stop；下载和人工等待均不打断原运行。下载失败释放更新门闩，保留用户暂停偏好；unknown 云端锁不因更新而改变。
+- 协议与 SQLite schema 保持 3；旧版首次启用需要手动安装。发布准备脚本与流程见 DEPLOYMENT，实际验证/发布状态见 ACCEPTANCE。
+
 ## 2026-11-04 可靠性修复：当前基线
 
 当前产品为多用户网站与管理员设备池，网站使用应用会话鉴权，Windows Renderer 仅运行 ExecutorApp。协议和 SQLite schema 仍为 3；D1 新增兼容迁移 `0008_report_run.sql`。下方明确标注的旧版本分析只保留决策依据，不作为当前入口、拓扑或部署状态说明。

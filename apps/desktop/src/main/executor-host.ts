@@ -11,6 +11,7 @@ export class ExecutorHost {
   private alive = 0;
   private stopping = false;
   private rpcChain = Promise.resolve();
+  private rpcPending = 0;
   private current: TaskRun | null = null;
   private lastLease = 0;
   private stopPromise: Promise<void> | null = null;
@@ -26,6 +27,9 @@ export class ExecutorHost {
   ) {}
   get active() {
     return this.current?.id ?? null;
+  }
+  get idleForUpdate() {
+    return !this.child && !this.current && !this.stopping && !this.stopPromise && this.rpcPending === 0;
   }
   async recover() {
     await this.browser.recover();
@@ -107,6 +111,7 @@ export class ExecutorHost {
         return;
       }
       if (message.type !== "rpc") return;
+      this.rpcPending++;
       this.rpcChain = this.rpcChain
         .then(async () => {
           if (this.child !== child || this.generation !== gen || this.stopping) return;
@@ -135,7 +140,8 @@ export class ExecutorHost {
               });
           }
         })
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => { this.rpcPending--; });
     });
     child.postMessage({
       type: "start",

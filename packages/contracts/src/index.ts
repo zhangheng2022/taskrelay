@@ -221,6 +221,7 @@ export const browserActionSchema = z
   });
 export type BrowserAction = z.infer<typeof browserActionSchema>;
 export interface DesktopStatus {
+  update: import('./updates').DesktopUpdateStatus;
   paired: boolean;
   cloudUrl: string;
   paused: boolean;
@@ -241,6 +242,8 @@ export interface Transport {
     autoStart(value: boolean): Promise<void>;
     stop(): Promise<void>;
     diagnostics(): Promise<string>;
+    checkUpdate(): Promise<void>;
+    downloadUpdate(version: string): Promise<void>;
     subscribe(fn: () => void): () => void;
   };
 }

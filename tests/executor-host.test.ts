@@ -9,6 +9,10 @@ import { ExecutorHost } from '../apps/desktop/src/main/executor-host';
 import { OwnedBrowser } from '../apps/desktop/src/main/browser';
 import { Journal } from '../apps/desktop/src/main/journal';
 import { run as baseRun } from './ui-fixtures';
+import { RunnerPoller } from '../apps/desktop/src/main/runner-poller';
+import { DesktopUpdater } from '../apps/desktop/src/main/updater';
+import { createHash } from 'node:crypto';
+import type {TaskRun} from '../packages/contracts/src/index';
 
 const settle = () => new Promise<void>(r => setImmediate(r));
 function deferred<T>() {
@@ -37,6 +41,55 @@ function fixture(t: TestContext) {
   t.after(async()=>{await host.stop();journal.close();rmSync(dir,{recursive:true,force:true});});
   return {dir,journal,children,browser,cloud,host,run};
 }
+
+test('真实 Poller + Host + Updater：领取响应丢失、人工等待、清理和回传完成前都不安装',async t=>{
+  const s=fixture(t),claim=deferred<{run:TaskRun}>();
+  const bytes=Buffer.from('update fixture');
+  const release={version:'0.4.8',bytes:bytes.length,sha1:createHash('sha1').update(bytes).digest('hex'),sha256:createHash('sha256').update(bytes).digest('hex'),notes:'',publishedAt:new Date().toISOString()};
+  let checks=0,requests=0,first=true,allowFlush=false;
+  const ids:string[]=[];
+  const native=Object.assign(new EventEmitter(),{setFeedURL:()=>{},checkForUpdates:()=>{checks++;}});
+  let poller:RunnerPoller;
+  const updater=new DesktopUpdater({version:'0.4.7',supported:true,directory:path.join(s.dir,'updates'),native,
+    busy:()=>poller.unsettled||!s.host.idleForUpdate||s.journal.pending().length>0||s.journal.incomplete().length>0,
+    changed:()=>{},available:()=>{},restart:()=>{},fetcher:async url=>String(url).endsWith('latest.json')?Response.json({release}):new Response(bytes,{headers:{'Content-Length':String(bytes.length)}}),
+  });t.after(()=>updater.stop());
+  const cloud={paired:true,connect:async()=>({maintenance:false,historyEpoch:3}),request:async<T>(_method:string,p:string,body?:unknown):Promise<T>=>{
+    if(p.endsWith('/claim')){requests++;ids.push((body as {requestId:string}).requestId);if(first){first=false;throw Error('OFFLINE');}return await claim.promise as T;}
+    return {} as T;
+  }};
+  s.cloud.request=async<T>()=>{if(!allowFlush)throw Error('OFFLINE');return {} as T;};
+  poller=new RunnerPoller(cloud,s.host,s.journal,{quitting:()=>false,blocksClaims:()=>updater.blocksClaims,installing:()=>updater.status.phase==='installing',result:()=>{},settled:()=>updater.tryInstall()});
+  await poller.poll();assert.equal(poller.unsettled,true);
+  await updater.check();await updater.download(release.version);assert.equal(checks,0);
+  // Retry the identical cloud claim even though updates now block fresh claims.
+  const pending=poller.poll();await settle();assert.equal(requests,2);assert.equal(ids[0],ids[1]);
+  claim.resolve({run:{...s.run('waiting'),status:'waiting_user'}});await pending;
+  assert.equal(s.host.active,'waiting');assert.equal(checks,0);assert.equal(s.children[0].killed,false);
+  await poller.poll();assert.equal(requests,2);assert.equal(checks,0);
+  const closing=deferred<void>();s.browser.close=()=>closing.promise;
+  const ending=s.host.stop(false);updater.tryInstall();assert.equal(checks,0);
+  closing.resolve();await ending;assert.equal(s.host.idleForUpdate,true);assert.ok(s.journal.pending().length);
+  await poller.poll();assert.equal(checks,0);
+  allowFlush=true;await poller.poll();assert.equal(checks,1);assert.equal(requests,2);
+});
+
+test('Poller 在 connect 等待后重新检查更新门闩，避免新增租约',async t=>{
+  const s=fixture(t),connection=deferred<{maintenance:boolean;historyEpoch:number}>();let blocked=false,claims=0;
+  const cloud={paired:true,connect:()=>connection.promise,request:async<T>()=>{claims++;return {run:null} as T;}};
+  const poller=new RunnerPoller(cloud,s.host,s.journal,{quitting:()=>false,blocksClaims:()=>blocked,installing:()=>false,result:()=>{},settled:()=>{}});
+  const pending=poller.poll();blocked=true;connection.resolve({maintenance:false,historyEpoch:3});await pending;
+  assert.equal(claims,0);assert.equal(poller.unsettled,false);
+});
+
+test('Host 更新空闲状态等待已进入 RPC 的云端请求结束',async t=>{
+  const s=fixture(t),response=deferred<unknown>();
+  s.cloud.request=async<T>()=>await response.promise as T;
+  await s.host.start(s.run('rpc'));
+  s.children[0].rpc('/api/runner/runs/rpc/events',{epoch:baseRun.leaseEpoch,events:[{id:'update-event'}]});
+  await settle();await s.host.stop();assert.equal(s.host.active,null);assert.equal(s.host.idleForUpdate,false);
+  response.resolve({});await settle();assert.equal(s.host.idleForUpdate,true);
+});
 
 for(const outcome of ['expired','success'] as const) test(`正式 Host：旧心跳 ${outcome} 不停止或缩短新运行租约`,async t=>{
   const s=fixture(t),old=deferred<any>();

@@ -11,6 +11,7 @@ for (const name of [
   "navigator",
   "HTMLElement",
   "HTMLInputElement",
+  "HTMLFormElement",
   "NodeFilter",
   "Element",
   "Node",

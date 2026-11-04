@@ -7,6 +7,7 @@ import { Card,CardHeader,CardTitle,CardDescription,CardContent,CardFooter } from
 import { Field,FieldLabel,FieldDescription,FieldGroup,FieldContent } from './components/ui/field';
 import { ErrorText } from './feedback';
 import { BrandMark } from './brand-mark';
+import { ExecutorUpdate } from './executor-update';
 export function ExecutorApp({executor}:{executor:NonNullable<Transport['desktop']>}) {
  const [status,setStatus]=useState<DesktopStatus|null>(null),[url,setUrl]=useState(''),[pair,setPair]=useState<{code:string}|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[note,setNote]=useState('');
  const refresh=useCallback(async()=>{const value=await executor.status();setStatus(value);setUrl(v=>v||value.cloudUrl);},[executor]);
@@ -14,7 +15,9 @@ export function ExecutorApp({executor}:{executor:NonNullable<Transport['desktop'
  useEffect(()=>{if(!pair)return;let live=true;const timer=setInterval(()=>{void executor.pairPoll().then(done=>{if(live&&done){setPair(null);void refresh();}}).catch(e=>{if(live){setError(e.message);setPair(null);}});},3000);return()=>{live=false;clearInterval(timer);};},[pair,executor,refresh]);
  useEffect(()=>{const mq=window.matchMedia('(prefers-color-scheme: dark)');const apply=()=>document.documentElement.classList.toggle('dark',mq.matches);apply();mq.addEventListener('change',apply);return()=>mq.removeEventListener('change',apply);},[]);
  async function act(fn:()=>Promise<unknown>){setBusy(true);setError('');try{await fn();await refresh();}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
+ const showUpdateFirst=!!status&&['available','downloading','waiting','installing','error'].includes(status.update.phase);
  return <main className="flex h-dvh flex-col gap-3 overflow-y-auto p-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+  {status&&showUpdateFirst&&<ExecutorUpdate version={status.version} update={status.update} executor={executor}/>}
   <Card className="shrink-0 gap-4 py-5"><CardHeader><CardTitle className="flex items-center gap-3"><BrandMark />TaskRelay 执行器</CardTitle><CardDescription>接收云端任务，执行并回传结果。</CardDescription></CardHeader>
    <CardContent className="flex flex-col gap-4">
     <p role="status">{!status?'正在读取状态…':!status.paired?'尚未连接':status.activeRunId?'正在执行':!status.online?'连接中或离线':status.paused?'已暂停领取':'在线，等待任务'}</p>
@@ -30,6 +33,6 @@ export function ExecutorApp({executor}:{executor:NonNullable<Transport['desktop'
   </Card>
   {error&&<ErrorText error={error}/>}{note&&<p role="status" className="break-all text-sm">{note}</p>}
   <p className="text-sm text-muted-foreground">任务配置和人工协助请在网站完成。关闭窗口后继续在托盘运行；通过托盘菜单退出。</p>
-  {status&&<p className="text-xs text-muted-foreground">版本 {status.version}</p>}
+  {status&&!showUpdateFirst&&<ExecutorUpdate version={status.version} update={status.update} executor={executor}/>}
  </main>;
 }
