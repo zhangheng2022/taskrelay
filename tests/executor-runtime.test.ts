@@ -5,7 +5,7 @@ import { hash } from '../packages/contracts/src/security';
 import { run as baseRun } from './ui-fixtures';
 import type { BrowserAction } from '../packages/contracts/src/index';
 
-async function scenario(options: {action?:Partial<BrowserAction>;fault?:string;reconcile?:boolean;cancelAt?:string;human?:boolean}={}) {
+async function scenario(options: {action?:Partial<BrowserAction>;fault?:string;reconcile?:boolean;cancelAt?:string;human?:boolean;continueAfterHuman?:boolean}={}) {
   const calls:{path:string;body:any}[]=[],checkpoints:{state:string;payload:any}[]=[],timeline:string[]=[];
   let text='待处理',value='',clicks=0,fills=0,cancelled=false,closed=false,proxyClosed=false;
   const target={tag:'BUTTON',type:'submit',text:'提交',href:null,form:[]};
@@ -14,7 +14,7 @@ async function scenario(options: {action?:Partial<BrowserAction>;fault?:string;r
     evaluate:async(_fn:unknown,arg?:unknown)=>arg ? target : [],
     locator:(_selector:string)=>({count:async()=>options.fault==='missing-target'?0:1,innerText:async()=>{if(options.fault==='observe'&&clicks)throw Error('PAGE_OBSERVATION_FAILED');return text;},
       click:async()=>{timeline.push('click');clicks++;text='成功';if(options.fault==='click')throw Error('CONNECTION_LOST');},
-      fill:async(v:string)=>{fills++;value=v;text='成功';},inputValue:async()=>value}),
+      fill:async(v:string)=>{fills++;value=v;if(!options.continueAfterHuman)text='成功';},inputValue:async()=>value}),
   };
   const sdk={localBrowser:{connect:async()=>({context:{setDomainPolicy:async()=>{},pages:async()=>[page]}})},
     Stagehand:{create:async()=>({close:async()=>{closed=true;}})}};
@@ -27,7 +27,7 @@ async function scenario(options: {action?:Partial<BrowserAction>;fault?:string;r
     timeline.push(`rpc:${p.split('/').at(-1)}`);calls.push({path:p,body:b});
     if(options.cancelAt===p.split('/').at(-1))cancelled=true;
     if(p==='local:browser')return {cdpUrl:'fixture'} as T;
-    if(p.endsWith('/plan'))return action as T;
+    if(p.endsWith('/plan'))return (options.continueAfterHuman&&fills?{...action,kind:'finish'}:action) as T;
     if(p.endsWith('/intent'))return {status:'intended',digest:await hash(JSON.stringify({action:b.action,url:b.url,facts:b.facts}))} as T;
     if(p.endsWith('/challenges'))return {id:'challenge',kind:action.challengeKind??'information',stepId:'step',version:1,target:'#code'} as T;
     if(p.endsWith('/consume'))return {ready:true,value:'0012Ab',confirmed:true} as T;
@@ -67,6 +67,15 @@ test('正式 execute：消费后停止或凭据请求晚到均禁止继续填写
   assert.equal(s.calls.some(c=>c.path.endsWith('/ack')),false);
   const c=await scenario({action:{kind:'credential',target:'#password',value:'password',effect:'read'},cancelAt:'credentials'});
   assert.equal(c.fills,0);assert.equal(c.finishes[0].status,'unknown');
+});
+test('正式 execute：协助后规划包含已填写目标，不含回复原文',async()=>{
+  const s=await scenario({human:true,continueAfterHuman:true,action:{challengeKind:'information'}});
+  const plans=s.calls.filter(c=>c.path.endsWith('/plan'));
+  assert.equal(plans.length,2);assert.equal(s.fills,1);
+  const history=plans[1].body.history.join('\n');
+  assert.match(history,/#submit/);assert.match(history,/读回一致/);
+  assert.doesNotMatch(history,/0012Ab/);
+  assert.equal(s.finishes.at(-1).status,'unknown'); // Filled is not business success.
 });
 test('正式 execute：缺少目标或目标不存在时，不创建协助、不消费回复、不标记写入',async()=>{
   for(const options of [{human:true,action:{target:null}},{human:true,fault:'missing-target'}]){

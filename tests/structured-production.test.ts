@@ -30,6 +30,28 @@ test('生产规划：人工信息缺少目标触发一次结构化修复，不�
   const result=await s.request(`/api/runner/runs/${s.run.id}/plan`,body('plan',s.run.leaseEpoch));
   assert.equal(result.status,200,JSON.stringify(result.data));assert.deepEqual(result.data,valid);assert.equal(s.jobs(),2);
 });
+for (const protocol of ['chat','responses'] as const) test(`生产规划/${protocol}：已消费协助按运行和租约隔离，隐藏回复与指令`, async t => {
+  const s=await productionModelFixture(t,protocol);
+  const insert=s.sql.prepare("INSERT INTO challenges(id,run_id,lease_epoch,version,step_id,kind,instruction,target,status,secret,delivery_id,expires_at) VALUES(?,?,?,?,?,'information',?,?,?,?,?,?)");
+  for (const [id,runId,epoch,status,delivery] of [
+    ['delivered',s.run.id,s.run.leaseEpoch,'consumed','delivery'],
+    ['pending',s.run.id,s.run.leaseEpoch,'pending',null],
+    ['answered',s.run.id,s.run.leaseEpoch,'answered',null],
+    ['consuming',s.run.id,s.run.leaseEpoch,'consuming','delivery'],
+    ['expired',s.run.id,s.run.leaseEpoch,'expired',null],
+    ['old_epoch',s.run.id,s.run.leaseEpoch-1,'consumed','delivery'],
+    ['other_run','other_run',s.run.leaseEpoch,'consumed','delivery'],
+  ] as const) insert.run(id,runId,epoch,1,id,'private-instruction-0012aB',`#${id}`,status,'private-reply-0012aB',delivery,new Date(Date.now()+60000).toISOString());
+  s.replies(JSON.stringify({...action,kind:'click',target:'button[type="submit"]',effect:'high_impact'}));
+  const result=await s.request(`/api/runner/runs/${s.run.id}/plan`,body('plan',s.run.leaseEpoch));
+  assert.equal(result.status,200,JSON.stringify(result.data));
+  const messages=protocol==='chat'?s.requests[0].body.messages:s.requests[0].body.input;
+  const content=messages.map((m:any)=>typeof m.content==='string'?m.content:m.content.map((p:any)=>p.text??'').join('')).join('\n');
+  assert.match(content,/completedInputAssistance/);
+  assert.match(content,/#delivered/);
+  assert.doesNotMatch(content,/#pending|#answered|#consuming|#expired|#old_epoch|#other_run|private-instruction|private-reply|0012aB/);
+  assert.equal(result.data.effect,'high_impact');
+});
 const schema = {
   type: "object",
   properties: { code: { type: "string", pattern: "^0012aB$" } },

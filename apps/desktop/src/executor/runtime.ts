@@ -115,6 +115,9 @@ export async function execute(run: TaskRun, port: RuntimePort, adapters = {
             id: e.id,
             name: e.getAttribute("name"),
             type: e.getAttribute("type"),
+            // Report presence only: never expose credentials, OTPs, or their length.
+            filled: e instanceof HTMLInputElement || e instanceof HTMLTextAreaElement || e instanceof HTMLSelectElement
+              ? e.value.length > 0 : undefined,
             label:
               e.getAttribute("aria-label") ??
               (e instanceof HTMLInputElement
@@ -344,7 +347,13 @@ export async function execute(run: TaskRun, port: RuntimePort, adapters = {
         throw new Error("SUCCESS_CRITERION_NOT_MET");
       if (action.kind === "human") {
         await human(action, `step_${index}`);
-        history.push("已处理验证回复，需检查是否通过");
+        history.push(JSON.stringify({
+          kind: "human_completed", challengeKind: action.challengeKind,
+          target: action.target?.slice(0, 250),
+          result: ["code", "information"].includes(action.challengeKind ?? "information")
+            ? "回复已填入目标且读回一致；值不在观察中公开。继续后续操作，仍须核验网站结果。"
+            : "用户已回复，仍须核验网站结果。",
+        }));
         continue;
       }
       if (action.kind === "wait") {

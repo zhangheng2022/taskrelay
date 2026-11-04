@@ -1,5 +1,27 @@
 # TaskRelay 验收记录
 
+## 2026-11-04 第一批业务闭环验收（已完成：本机与虚构站范围）
+
+- 结论：修复后人工信息与批准、拒绝取消、提交后进程中断与只读核查、一次性与周期真实调度均通过。旧 unknown 的失败核查和修复前失败如实保留，不能把本轮完成扩展为全量预览版发布验收。
+- 本轮范围：人工信息与批准/拒绝、提交后中断与只读核查、真实定时触发。用户明确允许直接修复发现的问题；日启动额度经本轮确认从 5 临时调至 12，结束已恢复 5。模型/平台预算、Free 套餐、注册开关不变。
+- 开始时为干净提交 `3781eda`，系统快捷方式启动实际 `AppData/Local/TaskRelay/app-0.4.6/TaskRelay.exe`。当日启动已用 2；无排队/执行中运行，旧 `run_ae0010ad117d4c9dbe329c526e41331f` 保持 unknown。虚构站 form=1、assist=0、approval=0、cancel=0。
+- 旧 unknown 的只读核查 `run_af579c3f80064ba3bee8fd2b45740a6f` 返回 `SUCCESS_CRITERION_NOT_MET`；没有写操作，原 unknown 与锁正确保留。此结果不能记为原任务成功，也不能删除锁。该核查在新 assist 写入之前完成，后续共用计数器的变化不能倒推旧运行成功。
+- 人工协助复验 `run_ba279ea560fa4822b0f14fd7c0a7a461` 发现重复索取相同目标信息：已消费记录 target 正确、secret 清理，但下一次规划仍请求同一输入框。首次云端修复向规划传递当前运行/租约已消费的目标摘要，Worker `db25458a-a55b-4d6f-bdd2-6d145e82a4bf`；现场仍重复，因此不能宣称该提示修改已解决问题。随后取消，因已填写保守进入 unknown，assist 计数仍为 0，保留锁与失败证据。
+- 继续修复执行器：观察只报告输入框 filled 布尔值，不包含值或长度；协助完成历史记录具体目标与读回一致的事实，不把填写成功当作业务成功。桌面提升 0.4.8 并同步锁文件，安装后成功复验见下文。
+- 批准拒绝 `run_6dd600ea656a47e1a81d864803515998`：真实网页展示绑定 `/approval` 和 `button[type="submit"]` 的批准卡，点击拒绝后终态 cancelled；write_pending=0、may_have_written=0，站点 approval 计数仍为 0。截图 `.cache/qa1104/approval-rejected.png`。
+- 源码检查：typecheck、161 项完整测试（含 UI）、Web build、check:repo 通过；新增覆盖生产规划两协议的协助状态隔离/脱敏，以及实际 execute 的后续规划历史。Hono CLI 对命名导出的 app 返回 INVALID_APP，未将该 CLI 记为通过；生产入口由项目回归测试直接调用。构建仍有既有大 chunk/混合导入提示。`graphify update .` 成功，4285 节点/6755 边/374 社区；SQL parser 缺失、两个 TSX 部分提取警告保留。
+- 0.4.8 make、packaged/installed smoke 均通过，安装报告 executablePath 指向系统 app-0.4.8。系统物理路径（UNC 读取）与构建 ASAR SHA-256 均为 `6657b0d0189c1ea1f255feb653e835435df1bb156705154c2775c5539b500df3`；原设备授权保留，窗口显示 0.4.8 在线。直接从 UNC 执行 smoke 未产生报告，随后系统本地路径的全新报告通过，未复用旧报告。安装器经原生系统应用启动入口运行，旧 Explorer 窗口无法激活；尚未补本次快捷方式重开证明，不记为第二批完整更新交付。
+- 提交后中断：`run_04b42bb0285b418ba8c9ef85668ae611` 在虚构站 `/cancel` 计数提交为 1 后、15 秒响应窗口内，于 `2026-11-04T03:11:04.670Z` 终止其唯一独立 utilityProcess（PID 30252，Main PID 20476）。正式 Host 回传 `unknown/EXECUTOR_EXITED`；填写 action 已 observed，提交 action 保持 intended，账号锁保留，journal/outbox 已清理。仅终止该测试进程，没有操作其他应用或全局网络。证据 `.cache/qa1104/fault-injection.json`、`submit-unknown.png`；后续只读核查运行 `run_42de0d0da6f74062b9afb2b47749b42c`。
+- 上述只读核查成功，证据时间 `2026-11-04T03:12:55.672Z`；核查运行与原运行均为 succeeded，原结果 already_done、write_pending=0，对应账号锁释放。站点 cancel 计数始终为 1，没有重复提交。截图 `.cache/qa1104/reconciled.png`。
+- 修复后协助与批准：任务 `task_e6fa2caf0a7cd204ae14f10ccf73851d160c80a2`，运行 `run_7421e4afd5f94cd69c92e03f6a42c8e6`，由系统 0.4.8 与当前 Responses 模型实际执行。仅产生 1 次 information 和 1 次 approval，均 consumed、secret 已清理；虚构回复的前导零/大小写经站点精确比较通过，普通对话页面不含回复原文。批准后 assist 计数从 0 到 1，终态 succeeded/completed_now，证据时间 `2026-11-04T03:16:02.703Z`。截图 `.cache/qa1104/assist-approval.png`、`assist-success.png`。
+- 一次性调度：任务 `task_def3ae54402e15e81b5b328d8f54b4cb7746c3be`，上海时间 11:19（`2026-11-04T03:19:00Z`）。试运行 `run_425877974f774954bfb3e3942ab7c9c4` 成功后启用；云端于 03:19:07.956Z 创建定时运行 `run_39f875b1245c4cad8edc829f6ee21c97`，03:19:23.067Z succeeded，next_run_at 已清空。未用手动“运行一次”代替定时触发。
+- 周期调度：任务 `task_13a4b60365f18103a627ed6b1f8d78153c9dcb3d`，`*/5 * * * * / Asia/Shanghai`；试运行 `run_e92e349f5b364ff1bc5b5ad86fe62ae3` 成功后，云端于 03:25:07.791Z 为 11:25 时隙创建 `run_0084bb389e5b4d38b419e8bcbe03161d`，03:25:22.708Z succeeded，下一时隙正确推进至 11:30。随后从网站暂停调度，确认 status=paused、next_run_at=null，菜单显示“启用调度”。截图 `.cache/qa1104/cron-success-paused.png`；仅验证一个真实周期，不冒充跨日或多次漏跑验证。
+- 收尾：每日上限恢复 5，当日已用 12 不重置（本轮新增 10，含失败/核查/试运行），网页显示 12/5，上海时间次日 00:00 重置。没有 queued/running/waiting_human/verifying，系统实际 SQLite 的 outbox 与未完成 journal 均为空。只保留上述两条 unknown 的原账号锁；没有手工解锁或覆写终态。虚构站最终 form=1、assist=1、approval=0、cancel=1。
+- 本轮已部署上述云端修复并安装 0.4.8；Setup SHA-256 为 `1d1b89ec4640604e266caa095527291cf74be1821e36905c28f3376ec45f655a`（363062784 字节）。`out/release-manifest.json` 已生成，sourceDirty=true；源码尚未提交，不能称为干净 tag 构建或公开发布。
+- 模型与环境：本机 Windows x64，原设备授权；`gpt-6-luna / Responses`，模型配置 `model_92a4d269cf454a34b579a089aabe7ab6` v2，生产模型仍经过既有美国 ModelEgress。真实模型参与创建和协助/动作规划；只读任务一旦页面满足判据，程序直接核验成功，不强行额外调用模型。全部写入仅限虚构站。
+- 边界：本轮不包含真实账号登录/扫码/CAPTCHA、非 GPT 或真实 Chat Completions 服务、断网/断电/休眠/锁屏、多设备竞争、跨日/超一小时迟到及连续七天；自动升级通道、快捷方式重开和干净 Windows 属于后续交付验收。源码测试和开发机 smoke 不能替代这些项目。
+- 文档维护：README、CHANGELOG、ARCHITECTURE、UI-REVIEW 同步当前版本/修复/证据范围；相对文件链接与 `git diff --check` 通过。日志与截图仅在忽略目录保存，没有提交密钥、Profile、SQLite 或构建产物。
+
 ## 2026-11-04 冗余与过时内容清理（本地源码）
 
 - 通过 graphify 查询、全仓引用搜索和 TypeScript 诊断核对删除依据。移除无调用的 terminalStatuses/isTerminal/assertTransition、devicesTable、闲置导入和 generate 的未使用 graphId 参数；实际状态事务、账号锁和数据库迁移保持不变。
@@ -257,16 +279,19 @@
 
 ## 现场验证表
 
+当前第一批结果见本文顶部 2026-11-04 记录；更早的部署/安装汇总表保留原批次范围。
+
 记录时补充日期、版本/安装包 SHA-256、设备环境、模型提供方与协议、任务/运行 ID、预期、实际和证据路径；不得记录 API Key、密码或验证码。
 
 | 场景                                    | 状态                                | 实际结果/证据                |
 | --------------------------------------- | ----------------------------------- | ---------------------------- |
-| GPT 查询提取（Responses）               | 待执行                              |                              |
+| GPT 查询提取（Responses）               | 虚构站闭环通过；外部业务站待验收 | 2026-11-04，0.4.8，见顶部一次性/周期任务 |
 | 非 GPT 普通表单（Chat Completions）     | 待执行                              |                              |
 | 授权真实网站登录签到/监测               | 待执行                              |                              |
-| 错误/过期/前导零/重复回复/多轮验证码    | 自建站和 API 部分通过；真实站待执行 |                              |
+| 错误/过期/前导零/重复回复/多轮验证码    | 虚构信息回复前导零/大小写及单次消费通过；其余真实站待执行 | 0.4.8 协助＋批准；不是 CAPTCHA 现场验收 |
 | 扫码完成后实际状态复核                  | 待执行                              |                              |
-| 提交前/提交后崩溃与断网回传             | 单元语义通过；整机故障注入待执行    |                              |
+| 提交前/提交后崩溃与断网回传             | 提交后独立进程强杀与只读恢复通过；提交前/整机断网待执行 | 0.4.8，cancel 计数保持 1，见顶部运行编号 |
+| 批准/拒绝与一次性/周期调度             | 第一批现场结果见顶部记录 | 真实生产网站与安装执行器，虚构站数据 |
 | Renderer 重载不重启任务、旧进程消息隔离 | 代码守卫已实现；整机验证待执行      |                              |
 | 干净 Windows 安装/升级/卸载             | 待执行                              |                              |
 | 中文/空格安装路径                       | 待执行                              | 数据路径测试不能替代安装路径 |
