@@ -124,7 +124,10 @@ export const challengeInputSchema = z
     target: z.string().max(2000).optional(),
     actionDigest: z.string().max(100).optional(),
   })
-  .strict();
+  .strict()
+  .refine((v) => !["code", "information", "scan"].includes(v.kind) || !!v.target?.trim(), {
+    message: "CHALLENGE_TARGET_REQUIRED", path: ["target"],
+  });
 export interface HumanChallenge extends z.infer<typeof challengeInputSchema> {
   id: string;
   runId: string;
@@ -180,6 +183,7 @@ export interface Device {
   protocolVersion: number;
 }
 export interface Snapshot {
+  platformBudget?: {resetAt:string;limits:{model:number;turn:number;evidence:number};used:{model:number;turn:number;evidence:number}};
   me?: { id:string;email:string;role:"admin"|"user" };
   quota?: {resetAt:string;limits:{runs:number;scheduled:number;queued:number;chat:number;models:number};used:{runs:number;chat:number;models:number}};
   tasks: TaskDefinition[];
@@ -211,7 +215,10 @@ export const browserActionSchema = z
       .enum(["code", "scan", "approval", "information", "unsupported"])
       .nullable(),
   })
-  .strict();
+  .strict()
+  .refine((v) => v.kind !== "human" || !["code", "information", "scan"].includes(v.challengeKind ?? "information") || !!v.target?.trim(), {
+    message: "CHALLENGE_TARGET_REQUIRED: human code/information/scan needs an exact target selector", path: ["target"],
+  });
 export type BrowserAction = z.infer<typeof browserActionSchema>;
 export interface DesktopStatus {
   paired: boolean;

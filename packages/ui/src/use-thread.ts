@@ -33,6 +33,7 @@ export function useThread(
       requestId: string;
       expectedVersion: number;
       mode: "chat" | "report";
+      runId?: string;
     } | null>(null);
   const revision = useRef(0),
     reading = useRef(0),
@@ -120,18 +121,19 @@ export function useThread(
     );
     return () => {clearInterval(timer);unsubscribe?.();};
   }, [page?.activeTurn, refresh,transport]);
-  async function send(content: string, mode: "chat" | "report" = "chat") {
+  async function send(content: string, mode: "chat" | "report" = "chat", runId?: string) {
     const p = current.current;
     if (!p) throw new Error("会话尚未加载");
     if (writing.current) throw new Error("消息正在发送");
     if (
       attempt.current &&
-      (attempt.current.content !== content || attempt.current.mode !== mode)
+      (attempt.current.content !== content || attempt.current.mode !== mode || attempt.current.runId !== runId)
     )
       throw new Error("请先重试上一条消息以确认结果");
     attempt.current ??= {
       content,
       mode,
+      ...(runId ? {runId} : {}),
       requestId: crypto.randomUUID(),
       expectedVersion: p.version,
     };

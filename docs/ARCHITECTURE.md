@@ -1,6 +1,21 @@
 # TaskRelay 架构现状与改进候选
 
+## 2026-11-04 可靠性修复：当前基线
+
+当前产品为多用户网站与管理员设备池，网站使用应用会话鉴权，Windows Renderer 仅运行 ExecutorApp。协议和 SQLite schema 仍为 3；D1 新增兼容迁移 `0008_report_run.sql`。下方明确标注的旧版本分析只保留决策依据，不作为当前入口、拓扑或部署状态说明。
+
+- ExecutorHost 的每个异步心跳返回后重验 child、generation 和停止状态。停止期间拒绝新 RPC；浏览器清理失败保留占用，阻止新执行并允许再次清理。Main 显式提供 Electron fork adapter，测试直接调用同一 Host implementation。
+- OwnedBrowser 对整个启动过程持有代次与 pending promise；close 先使启动失效，再等待并清理。读取资源期间停止不再产生迟到浏览器。execute 在迟到凭据、人工消费检查点之后再次检查取消；未知消费保留不确定性。
+- 重启恢复识别 finishing 中的 unknown；恢复与正常终结复用 `finish_<runId>` outbox 键，已排队终态不能被另一条恢复事实覆盖。恢复不重放浏览器写入。
+- 报告请求必须包含 runId，并在接收时校验用户与任务归属，持久化到 ai_turns。alarm 从回合读取绑定，事实只读取该运行、该次任务快照与步骤；没有绑定的旧待执行报告明确失败，不默认为最新运行。
+- 成功判据仍是单个字面条件。创建提示要求多条件先澄清；程序拦截未经原文引用或手动草稿确认的分号、换行、连接词拼接，返回澄清而不生成任务卡。该检查是有限的歧义保护，不是通用自然语言逻辑解析；实际成功仍由 verifyPage 核验。
+- 快照显示个人额度与平台共享预算及各自重置点。队列原因只解释当前已知阻塞条件，不能替代原子领取；本地暂停和实时网络仍可能影响可领取性。调度跳过超过迟到窗口的时隙，不生成过期排队记录。
+
+验证与尚未完成的现场范围统一见 ACCEPTANCE 的 2026-11-04 批次。没有引入新的模型直连、调度器或通用主机工具。
+
 ## 2026-11-03 Cloudflare Free 运行架构
+
+2026-11-04 协助补充：0.4.3 对 code/information/scan 强制非空目标，生产规划允许一次结构化修复；云端拒绝无目标挑战，执行器在请求协助前检查目标存在，避免消费回复后才发现缺少填写位置。批准点击由具体 high_impact 动作生成绑定摘要的批准请求。验证及用户暂停位置见 ACCEPTANCE 最新节。
 
 本节优先于下方历史版本。继续使用 LangChain/LangGraph、D1 和原模型 API，不启用 Workers Paid、Queues、Workflows、Vectorize 或 LangSmith。协议与本地 schema 保持 3，D1 新增 `0007_free_runtime.sql`。
 
@@ -53,6 +68,8 @@
 分析日期：2026-11-03（Asia/Shanghai）。源码基线：`923143af8276a36a7d59a11a7d1916d591d860f1`，版本 0.1.0。本文结合 `improve-codebase-architecture`、`codebase-design` 和独立源码走读。2026-11-03 后续实施已统一结构化输出；其余候选仍未实施。
 
 初始分析时仓库只有一个提交，不能据此推断热点。后续已分阶段提交文档、结构化输出，并实现共享默认主题和聊天式任务创建。未发现 `GLOSSARY.md` 或 `docs/adr/`，领域名称沿用共享协议。本轮验证范围见第 7 节及验收记录，历史模型和安装证据不自动代表本次复验。
+
+## 历史 0.1.0 分析（以下第 1–9 节不代表当前拓扑）
 
 ## 1. 运行拓扑与职责
 
@@ -277,7 +294,9 @@ smoke 走 `executor/entry.ts` 中独立手写流程，没有调用 `RuntimePort`
 - **现有 seam / adapter**：D1 与 SQLite stand-in 已支持替换依赖；不新增只有一个实现的通用存储 module。
 - **收益与验证**：状态规则提升 locality，各路由获得 leverage；保留行为测试，补终结/超时/取消交错和核查锁转移。先澄清实际状态语义，不能直接接入现有 `assertTransition`。
 
-### C. 执行器恢复 module — Worth exploring
+### C. 执行器恢复 module — 局部可靠性修复与测试已落地，整体收敛仍为候选
+
+2026-11-04 更新：下列原分析中的 recover unknown 差异已修复，终结与恢复统一使用 finish outbox 键；正式 ExecutorHost/execute 已引入并使用进程/SDK/网络故障 adapter，相关测试见本文件顶部与验收台账。没有新建通用 Journal 转发层，也没有把完整恢复语义集中为新 module。
 
 - **事实**：runtime 产生检查点，`ExecutorHost.recover` 和 `retire` 分别解释，Journal 接收通用载荷。`retire` 识别 `payload.status === "unknown"`，`recover` 未做同一判断；云端写入事实通常再次保守纠正，不能据此直接断言已误放锁。
 - **深化方向**：集中检查点语义、终结事实保留、恢复判断和 outbox 规则；保留 Main/utilityProcess seam、generation/lease 守卫和先停止本机进程的顺序。
@@ -293,7 +312,7 @@ smoke 走 `executor/entry.ts` 中独立手写流程，没有调用 `RuntimePort`
 - **现有 seam / adapter**：复用 D1/SQLite 与模型出站 adapter；网页回复者与设备消费者是不同参与者，不是同一 interface 的两个 adapter。
 - **收益与验证**：协助约束获得 locality，新验证类型获得 leverage；保留已有绑定/消费行为测试，补解析期间过期/取消、交付后崩溃、确认目标变化与扫码实际复核。
 
-A 已按用户选择完成；B/C/D 涉及可靠性与责任归属，仍需选定范围后进一步设计。
+A 已完成；C 的具体缺陷与故障测试已实施。B/C/D 的整体 module 收敛仍为设计候选，不能将本轮修复描述为三个架构重构全部完成。
 
 后续真实联调补充：`packages/model/src/schema.ts` 只转换发送给兼容服务的严格输出 Schema：oneOf 转 anyOf、const 转 enum、去除未支持的 URI format 和字符串长度限制等；原始 Zod/Ajv 约束仍在 `generateStructured` 校验，校验失败最多修复一次。JSON 模式首个请求明确包含 JSON 指令及完整原始 Schema。不能把投影后的宽松约束当作任务授权校验。
 

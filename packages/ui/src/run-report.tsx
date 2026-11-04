@@ -96,7 +96,7 @@ export function RunReport({
         )}
       </div>
       <p className="whitespace-pre-wrap text-sm leading-7">
-        {run.result?.summary ?? summaries[run.status]}
+        {run.result?.summary ?? (run.status === 'queued' && run.queueReason ? run.queueReason : summaries[run.status])}
       </p>
       <Trace aria-label="执行过程">
         {events.map((event) => {

@@ -6,9 +6,13 @@ import { FuseV1Options, FuseVersion } from "@electron/fuses";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { createRequire } from "node:module";
 const root = path.resolve(import.meta.dirname, "../..");
+const require = createRequire(import.meta.url);
 const config: ForgeConfig = {
   packagerConfig: {
+    // Keep checksum validation, using the manifest shipped with this installed Electron version.
+    download: { checksums: require("electron/checksums.json") },
     name: "TaskRelay",
     executableName: "TaskRelay",
     icon: path.join(root, "resources/icon.ico"),

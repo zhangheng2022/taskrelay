@@ -1,8 +1,8 @@
-import { utilityProcess, type UtilityProcess } from "electron";
+import type { utilityProcess, UtilityProcess } from "electron";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { limits, type TaskRun } from "../../../../packages/contracts/src/index";
-import { Cloud } from "./cloud";
+import type { Cloud } from "./cloud";
 import { Journal } from "./journal";
 import { OwnedBrowser } from "./browser";
 export class ExecutorHost {
@@ -16,12 +16,13 @@ export class ExecutorHost {
   private stopPromise: Promise<void> | null = null;
   private exited = new WeakSet<UtilityProcess>();
   constructor(
-    private cloud: Cloud,
+    private cloud: Pick<Cloud, "request">,
     private journal: Journal,
-    private browser: OwnedBrowser,
+    private browser: Pick<OwnedBrowser, "launch" | "close" | "recover">,
     private executorPath: string,
     private extensionPath: string,
     private notify: () => void,
+    private fork: typeof utilityProcess.fork,
   ) {}
   get active() {
     return this.current?.id ?? null;
@@ -34,9 +35,10 @@ export class ExecutorHost {
         !!payload.writePending ||
         !!payload.mayHaveWritten ||
         row.state === "intent" ||
-        row.state === "human-delivery";
+        row.state === "human-delivery" ||
+        payload.status === "unknown";
       this.journal.queue(
-        `recovery_${row.run_id}`,
+        `finish_${row.run_id}`,
         `/api/runner/runs/${row.run_id}/finish`,
         {
           epoch: row.epoch,
@@ -83,7 +85,7 @@ export class ExecutorHost {
     this.alive = Date.now();
     this.lastLease = new Date(run.leaseExpiresAt!).getTime();
     this.journal.checkpoint(run.id, gen, run.leaseEpoch, "claimed", { run });
-    const child = utilityProcess.fork(this.executorPath, [], {
+    const child = this.fork(this.executorPath, [], {
       serviceName: "TaskRelay Executor",
       stdio: "ignore",
     });
@@ -95,7 +97,7 @@ export class ExecutorHost {
       }),
     );
     child.on("message", (message) => {
-      if (message?.generation !== gen || this.child !== child) return;
+      if (message?.generation !== gen || this.child !== child || this.stopping) return;
       if (message.type === "alive") {
         this.alive = Date.now();
         return;
@@ -107,7 +109,7 @@ export class ExecutorHost {
       if (message.type !== "rpc") return;
       this.rpcChain = this.rpcChain
         .then(async () => {
-          if (this.child !== child || this.generation !== gen) return;
+          if (this.child !== child || this.generation !== gen || this.stopping) return;
           try {
             const data = await this.handle(
               run,
@@ -116,7 +118,7 @@ export class ExecutorHost {
               message.body,
               message.binary,
             );
-            if (this.child === child && this.generation === gen)
+            if (this.child === child && this.generation === gen && !this.stopping)
               child.postMessage({
                 generation: gen,
                 type: "reply",
@@ -124,7 +126,7 @@ export class ExecutorHost {
                 data,
               });
           } catch (e) {
-            if (this.child === child)
+            if (this.child === child && this.generation === gen && !this.stopping)
               child.postMessage({
                 generation: gen,
                 type: "reply",
@@ -143,7 +145,7 @@ export class ExecutorHost {
     });
     const heartbeat = setInterval(() => {
       void (async () => {
-        if (this.child !== child) return;
+        if (this.child !== child || this.generation !== gen || this.stopping) return;
         if (
           Date.now() - this.alive > 25000 ||
           Date.now() > this.lastLease - 5000
@@ -158,10 +160,12 @@ export class ExecutorHost {
           }>("POST", `/api/runner/runs/${run.id}/heartbeat`, {
             epoch: run.leaseEpoch,
           });
+          if (this.child !== child || this.generation !== gen || this.stopping) return;
           this.lastLease = new Date(r.leaseExpiresAt).getTime();
           if (r.cancelRequested)
             child.postMessage({ type: "cancel", generation: gen });
         } catch (e) {
+          if (this.child !== child || this.generation !== gen || this.stopping) return;
           if (
             ["LEASE_EXPIRED", "DEVICE_UNAUTHORIZED"].includes(
               (e as Error).message,
@@ -179,10 +183,12 @@ export class ExecutorHost {
           try {
             await this.browser.close();
             this.retire(run, gen, false);
-          } finally {
             this.child = null;
             this.current = null;
             this.stopping = false;
+            this.notify();
+          } catch {
+            // Keep ownership and block new work until cleanup can be retried.
             this.notify();
           }
         }

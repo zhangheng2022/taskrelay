@@ -187,7 +187,7 @@ export function Conversation({
         );
         setSubmitted(binding);
       } else {
-        await thread.send(content,mode);
+        await thread.send(content,mode,mode === 'report' ? run?.id : undefined);
       }
       setInput({ scope, text: "" });
       const [chat] = await Promise.all([

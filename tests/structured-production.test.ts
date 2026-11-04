@@ -22,6 +22,14 @@ const action = {
   effect: "read",
   challengeKind: null,
 };
+test('生产规划：人工信息缺少目标触发一次结构化修复，不向执行器返回无目标协助',async t=>{
+  const s=await productionModelFixture(t,'responses');
+  const invalid={...action,kind:'human',challengeKind:'information',instruction:'请提供虚构信息'};
+  const valid={...invalid,target:'input[name="code"]'};
+  s.replies(JSON.stringify(invalid),JSON.stringify(valid));
+  const result=await s.request(`/api/runner/runs/${s.run.id}/plan`,body('plan',s.run.leaseEpoch));
+  assert.equal(result.status,200,JSON.stringify(result.data));assert.deepEqual(result.data,valid);assert.equal(s.jobs(),2);
+});
 const schema = {
   type: "object",
   properties: { code: { type: "string", pattern: "^0012aB$" } },

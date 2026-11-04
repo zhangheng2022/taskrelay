@@ -167,7 +167,7 @@ conversations.get("/threads/:id", async (c) =>
   ),
 );
 
-async function facts(env: AppEnv, t: Row) {
+async function facts(env: AppEnv, t: Row, runId?: string) {
   assertPrivateAI();
   const readFacts = tool(
     async () => {
@@ -178,10 +178,11 @@ async function facts(env: AppEnv, t: Row) {
         .bind(t.task_id, t.user_id)
         .first<Row>();
       const runs = await env.DB.prepare(
-        "SELECT id,status,result,updated_at FROM runs WHERE task_id=? AND user_id=? ORDER BY created_at DESC LIMIT 3",
+        "SELECT id,status,result,updated_at,task_snapshot FROM runs WHERE task_id=? AND user_id=?" + (runId ? " AND id=?" : "") + " ORDER BY created_at DESC LIMIT 3",
       )
-        .bind(t.task_id, t.user_id)
+        .bind(t.task_id, t.user_id, ...(runId ? [runId] : []))
         .all<Row>();
+      if (runId && !runs.results.length) throw new Error("RUN_NOT_FOUND");
       const steps = runs.results[0]
         ? await env.DB.prepare(
             "SELECT sequence,kind,message FROM run_events WHERE run_id=? ORDER BY sequence DESC LIMIT 12",
@@ -190,8 +191,9 @@ async function facts(env: AppEnv, t: Row) {
             .all()
         : { results: [] };
       return {
-        task: task ? taskFrom(task) : null,
-        runs: runs.results,
+        task: runId ? JSON.parse(runs.results[0].task_snapshot) : task ? taskFrom(task) : null,
+        selectedRunId: runId ?? null,
+        runs: runs.results.map(({task_snapshot,...run})=>run),
         steps: steps.results,
       };
     },
@@ -208,6 +210,7 @@ async function context(
   t: Row,
   turnId: string,
   guard: () => Promise<void>,
+  runId?: string,
 ): Promise<Message[]> {
   const { profile } = await getModelProfile(env, t.model_id, t.model_version);
   const budget = profile.contextTokens ?? 16000,
@@ -286,7 +289,7 @@ async function context(
         partial: JSON.parse(t.partial),
         summary,
         preferences: memory.map((m) => ({ id: m.key, ...m.value })),
-        facts: await facts(env, t),
+        facts: await facts(env, t, runId),
       }),
   };
   const messages: Message[] = [
@@ -308,6 +311,7 @@ conversations.post("/threads/:id/messages", async (c) => {
       expectedVersion: z.number().int().nonnegative(),
       content: textInput,
       mode: z.enum(["chat", "report"]).default("chat"),
+      runId: idSchema.optional(),
     })
     .strict()
     .parse(await c.req.json());
@@ -330,6 +334,11 @@ conversations.post("/threads/:id/messages", async (c) => {
       ...(await threadPage(c.env, t.id)),
     });
   }
+  if (b.mode === "report") {
+    if (!b.runId) throw new Error("REPORT_RUN_REQUIRED");
+    if (t.kind !== "chat" || !await c.env.DB.prepare("SELECT id FROM runs WHERE id=? AND task_id=? AND user_id=?").bind(b.runId,t.task_id,t.user_id).first())
+      throw new Error("RUN_NOT_FOUND");
+  } else if (b.runId) throw new Error("INVALID_INPUT");
   if (
     t.task_id &&
     (await c.env.DB.prepare(
@@ -346,8 +355,8 @@ conversations.post("/threads/:id/messages", async (c) => {
       "UPDATE ai_threads SET active_turn=?,version=version+1,updated_at=? WHERE id=? AND version=? AND active_turn IS NULL AND closed=0",
     ).bind(turnId, at, t.id, b.expectedVersion),
     c.env.DB.prepare(
-      "INSERT OR IGNORE INTO ai_turns(id,thread_id,request_id,digest,version,status,created_at,updated_at) SELECT ?,id,?,?,version,'running',?,? FROM ai_threads WHERE id=? AND active_turn=?",
-    ).bind(turnId, b.requestId, digest, at, at, t.id, turnId),
+      "INSERT OR IGNORE INTO ai_turns(id,thread_id,request_id,digest,version,status,created_at,updated_at,run_id) SELECT ?,id,?,?,version,'running',?,?,? FROM ai_threads WHERE id=? AND active_turn=?",
+    ).bind(turnId, b.requestId, digest, at, at, b.runId ?? null, t.id, turnId),
     c.env.DB.prepare(
       "INSERT OR IGNORE INTO ai_messages(id,thread_id,seq,role,content,turn_id,at) SELECT ?,id,version*2-1,'user',?,?,? FROM ai_threads WHERE id=? AND active_turn=?",
     ).bind(turnId + "_user", b.content, turnId, at, t.id, turnId),
@@ -491,7 +500,7 @@ conversations.delete("/threads/:id", async (c) => {
 });
 
 export async function executeTurn(env:AppEnv,threadId:string,turnId:string,mode:'chat'|'report') {
-  const turn=await env.DB.prepare("SELECT created_at,status FROM ai_turns WHERE id=? AND thread_id=?").bind(turnId,threadId).first<{created_at:string;status:string}>();
+  const turn=await env.DB.prepare("SELECT created_at,status,run_id FROM ai_turns WHERE id=? AND thread_id=?").bind(turnId,threadId).first<{created_at:string;status:string;run_id:string|null}>();
   if(!turn||turn.status!=='running')throw new Error('TURN_STALE');
   const at=turn.created_at;
   const t = await ownedThread(env, threadId);
@@ -504,7 +513,8 @@ export async function executeTurn(env:AppEnv,threadId:string,turnId:string,mode:
   };
   try {
     await reserve(env, t.user_id, "chat", turnId);
-    const messages = await context(env, t, turnId, guard);
+    if (mode === 'report' && !turn.run_id) throw new Error('REPORT_RUN_REQUIRED');
+    const messages = await context(env, t, turnId, guard, mode === 'report' ? turn.run_id! : undefined);
     let draft: TaskInput | null = null,
       partial: unknown = {},
       reply: string;
@@ -523,10 +533,11 @@ export async function executeTurn(env:AppEnv,threadId:string,turnId:string,mode:
           "请提供要操作的网站地址，例如 www.baidu.com 或 https://www.baidu.com/。";
       else {
         messages[0].content +=
-          "。只生成待确认草稿，缺少网站、具体目标、可观察成功判据时追问缺失项，不重复追问已提供信息。时间未指定为manual；不猜测执行时间。默认read,navigate，用户明确要求才增加fill/submit/publish。网站未写协议已补全HTTPS，不追问协议。partial只总结已提供的非敏感信息，missing列出缺项。用户明确提供地址：" +
+          "。只生成待确认草稿，缺少网站、具体目标、可观察成功判据时追问缺失项，不重复追问已提供信息。时间未指定为manual；不猜测执行时间。默认read,navigate，用户明确要求才增加fill/submit/publish。生成填写/提交草稿不等于执行或修改已生效授权。可以在目标中安排执行时通过专用人工协助通道索取信息或确认操作，但本创建对话不得索取或包含密码、验证码的实际值；不要因任务需要后续协助就拒绝生成草稿。网站未写协议已补全HTTPS，不追问协议。partial只总结已提供的非敏感信息，missing列出缺项。用户明确提供地址：" +
           JSON.stringify(urls) +
           "。允许的草稿站点：" +
           JSON.stringify([...origins]);
+        messages[0].content += "。成功判据只支持一个字面条件，不支持多条件组合。text_present/text_absent/extraction 的 value 必须是一段连续的页面原文，不能用分号、连接词拼接不同段落。用户要求多个条件时返回 task=null，追问选定一个可核验条件，不擅自省略条件。";
         const result = await structuredGraph({
           env: env,
           owner: t.user_id,
@@ -554,6 +565,16 @@ export async function executeTurn(env:AppEnv,threadId:string,turnId:string,mode:
             modelId: t.model_id,
             accountId: t.draft ? JSON.parse(t.draft).accountId : null,
           };
+          const value = draft.verification.value;
+          // Keep literal punctuation possible only when explicitly quoted or manually confirmed.
+          const composite = /[;；\r\n]|并且|同时|且|\bAND\b/i.test(value);
+          const quoted = all.results.some(m => m.content.includes(`“${value}”`) || m.content.includes(`"${value}"`));
+          const edited = t.draft && JSON.parse(t.draft).verification?.value === value;
+          if (draft.verification.kind !== 'url' && composite && !quoted && !edited) {
+            draft = null;
+            reply = "目前成功判据只支持一个字面条件。请提供一段连续的页面原文作为完成标准；多个独立条件不能拼接。若标点本身属于页面原文，请用引号完整标明。";
+            partial = {facts: result.partial, missing: ['单段字面成功判据']};
+          }
         }
       }
     } else {
@@ -561,7 +582,7 @@ export async function executeTurn(env:AppEnv,threadId:string,turnId:string,mode:
         "。回答当前任务的问题，涉及修改请提示用户调整任务卡。执行结论严格以运行事实为准，不编造证据。";
       if (mode === "report")
         messages[0].content +=
-          "。生成运行报告：分别描述实际结果、证据、未验证部分；unknown不能表述为成功。";
+          "。生成运行报告：只解释 selectedRunId 指定运行，明确写出运行编号；分别描述实际结果、证据、未验证部分；unknown不能表述为成功。其他历史消息不能替代该运行事实。";
       reply = (
         await structuredGraph({
           env: env,

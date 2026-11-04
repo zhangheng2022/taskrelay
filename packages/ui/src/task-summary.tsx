@@ -44,10 +44,10 @@ export function TaskSummary({
       <dd className="break-words">
         {
           {
-            text_present: "页面出现",
-            text_absent: "页面不再出现",
+            text_present: "页面包含以下连续原文",
+            text_absent: "页面不再包含以下连续原文",
             url: "到达地址",
-            extraction: "提取内容包含",
+            extraction: "页面包含以下连续原文后提取",
           }[task.verification.kind]
         }
         ：{task.verification.value}

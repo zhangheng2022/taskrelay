@@ -18,6 +18,9 @@ export default {
    if(form.get('value')!=='QA1103'||(key==='assist'&&form.get('code')!=='0012aB'))return page('<p>测试值错误；未提交。</p>',400);
    const result=await env.DB.prepare('UPDATE cases SET submissions=submissions+1 WHERE id=? AND submissions<10').bind(key).run();
    if(!result.meta.changes)return page('<p>本用例提交额度已用完</p>',429);
+   // Synthetic fault window: the counter is committed before the response.
+   // Stop only the test executor during this wait to verify unknown + read-only recovery.
+   if(key==='cancel')await new Promise(resolve=>setTimeout(resolve,15000));
    return Response.redirect(url.origin+'/'+key,303);
   }
   if(request.method!=='GET')return page('<p>方法不支持</p>',405);

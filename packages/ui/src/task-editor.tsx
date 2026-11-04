@@ -277,7 +277,7 @@ export function TaskEditor({
                 <option value="extraction">提取内容包含指定文字</option>
               </NativeSelect>
             </Field>
-            <Field label="核验内容">
+            <Field label="核验内容" hint="只填写一段连续的页面原文，按字面匹配；不支持把多个条件拼接。地址判据须填写完整地址。">
               <Input
                 required
                 value={draft.verification.value}

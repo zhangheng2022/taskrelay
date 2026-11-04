@@ -1,5 +1,21 @@
 # 部署与恢复
 
+0.4.5 界面补充：执行器已调整为默认窗口一屏完整展示，经系统 Explorer 安装、实际桌面快捷方式启动和原生截图确认，系统安装 ASAR 与构建哈希一致。类型检查、UI 测试、构建、打包及 packaged smoke 通过；安装 smoke 在工具环境副本中遇到页面读取超时，系统入口复测未产生新报告，尚未通过，不生成 0.4.5 发布清单。现有清单仍为 0.4.4；详细证据及边界见 ACCEPTANCE 最新节。云端和业务验收状态未改变。
+
+0.4.4 构建补充：Forge 的 Electron 下载校验使用已安装 `electron/checksums.json`（与实际打包 Electron 版本同步）。缓存 ZIP 仍做官方 SHA-256 校验，避免每次打包依赖在线获取 SHASUMS256.txt；没有启用 unsafelyDisableChecksums。0.4.4 已完成系统安装、实际快捷方式启动、安装 smoke 与 ASAR 哈希核对；云端版本不变，上一轮暂停的业务验收未恢复。详见 ACCEPTANCE 最新记录。
+
+最新补充：2026-11-04 最终 Worker 为 `dfdaf69c-d9e9-4c58-ad91-0d084bf14167`，客户端源码/安装包为 0.4.3，修复人工协助缺少输入目标。系统安装进程已更新至 0.4.3，但用户按 Esc 停止界面操作，最终快捷方式、安装 smoke 与哈希复验尚待完成；下方 0.4.2 清单不能用于 0.4.3。临时 owner 日启动 8 已恢复 5，保留一个 unknown 等待只读核查。详见验收台账最新节。
+
+## 当前发布基线（2026-11-04，0.4.2）
+
+本节覆盖下方阶段记录中的旧版本号与暂停状态；下方日期明确的记录保留作历史证据。
+
+- Worker `ee191cf7-e7cc-4a3c-a934-a308367ebc06`；D1 已应用 `0008_report_run.sql`，为 AI 回合增加可空 run_id，旧消息与历史数据保留。报告必须绑定用户选中的运行；旧客户端缺少 runId 的报告会明确拒绝，应刷新网页。
+- Windows 0.4.2 已通过系统资源管理器更新，并从桌面快捷方式打开，进程在系统 `AppData/Local/TaskRelay/app-0.4.2`。系统安装 ASAR 与本次构建一致，原配对保留；协议和 SQLite schema 仍为 3。
+- Free 套餐、六类 SQLite DO、美国模型出站、生产无 R2、`REGISTRATION_OPEN=0`、`DEV_MODE=0` 均保留；没有更换 MASTER_KEY、模型密钥、设备令牌或提高额度。发布前没有活动运行/unknown/AI 回合；领取开关保持原开启状态。
+- 发布先执行 additive 迁移，再部署已构建的 Web/Worker，再安装递增版本客户端。执行了匿名及 bearer 权限检查、本次 packaged/installed smoke。完整验收边界见 [ACCEPTANCE](ACCEPTANCE.md)。
+- 回滚应保留新增列和既有密文，不回滚到旧普通 Worker 同步模型链路。若遇执行异常，先暂停领取并保留 unknown 与账号锁；不可重放未知提交。
+
 ## 多人网站部署（2026-11-03，公开注册仍关闭）
 
 本轮认证邮件改用 Brevo。Resend 添加 `mail.zhangheng.eu.org` 时拒绝免费公共域名；用户选择保留现有域名，`huiyunda.pl` 不用于 TaskRelay。

@@ -10,6 +10,7 @@ import {
   net as electronNet,
   powerMonitor,
   dialog,
+  utilityProcess,
 } from "electron";
 import squirrelStartup from "electron-squirrel-startup";
 import path from "node:path";
@@ -316,6 +317,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
         path.join(__dirname, "executor.cjs"),
         path.join(root, "stagehand-extension"),
         notify,
+        utilityProcess.fork,
       );
       await host.recover();
       const rendererRoot = path.resolve(

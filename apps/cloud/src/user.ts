@@ -1,4 +1,5 @@
 import {getEvidence} from './evidence';
+import { platformBudget } from './free-budget';
 import {Buffer} from 'node:buffer';
 import { quotaSummary, reserve } from './tenancy';
 import { Hono } from "hono";
@@ -23,6 +24,7 @@ import {
   getRun,
   enqueue,
   tick,
+  queueReasons,
   type Row,
 } from "./store";
 import {
@@ -81,9 +83,11 @@ user.get("/snapshot", async (c) => {
       .bind(c.get("userId"),now()),
   ]);
   const r = results.map((x) => x.results as Row[]);
+  const [reasons,budget]=await Promise.all([queueReasons(db,c.get('userId')),platformBudget(c.env)]);
   return c.json({
     tasks: r[0].map(taskFrom),
-    runs: r[1].map(runFrom),
+    runs: r[1].map(row=>runFrom({...row,queue_reason:reasons.get(row.id)})),
+    platformBudget: budget,
     models: r[2].map(modelFrom).map(m=>c.get("actor")==="owner"?m:{...m,baseUrl:"",hasKey:false}),
     me: {id:c.get("userId"),role:c.get("member").role,email:c.get("member").email},
     quota: await quotaSummary(db,c.get("userId"),c.get("member")),
@@ -349,6 +353,7 @@ user.post("/tasks/:id/run", async (c) => {
 });
 user.get("/runs/:id", async (c) => {
   const run = await getRun(c.env.DB, c.req.param("id"));
+  if (run.status === 'queued') run.queueReason = (await queueReasons(c.env.DB,c.get('userId'))).get(run.id);
   const [events, usage] = await c.env.DB.batch([
     c.env.DB.prepare(
       "SELECT id,run_id AS runId,sequence,kind,message,at FROM run_events WHERE run_id=? ORDER BY sequence LIMIT 500",

@@ -1,5 +1,69 @@
 # TaskRelay 验收记录
 
+## 2026-11-04 0.4.5 执行器一屏展示
+
+- 用户补充要求完整内容一屏展示。ExecutorApp 收紧 Card、FieldGroup 和页面间距，暂停说明放入对应 FieldContent，保留字号、控件和异常内容的滚动兜底。
+- typecheck、25 项 UI 测试、Web build、check:repo、make、本次 packaged smoke 通过。源码图更新为 4190 节点/6520 边/374 社区，既有 SQL 解析器缺失及两个 TSX 部分抽取警告保留。
+- 已通过系统 Explorer 更新，并从实际桌面快捷方式打开。原生工具确认进程路径为 `C:/Users/96227/AppData/Local/TaskRelay/app-0.4.5/TaskRelay.exe`，无 LocalCache；界面显示在线等待、版本 0.4.5。默认窗口中从标题到页尾说明、版本号全部可见，右侧无滚动条。截图 `.cache/acceptance-042/single-screen-installed.png`；未验证最小窗口及其他缩放比例。
+- Codex 内启动安装程序曾写入 MSIX LocalCache 副本，不能当作系统更新证据。随后从系统 Explorer 安装成功；通过本机 `\\localhost\C$` 路径读取物理系统安装 ASAR，和构建 ASAR 的 SHA-256 均为 `8846e0fbce5af1013e3401b92dc0093d065d452152efee64bceda4d98b2e518a`。
+- **安装 smoke 尚未通过**：直接执行 UNC 路径未产生新报告；工具环境的安装副本两次在 query/inner_text 等待 20 秒超时，第二次使用独立测试目录仍失败。尝试从系统 Explorer 启动检查后未观测到新报告，不能记为系统安装 smoke 通过。`out/installed-smoke.json` 保留失败结果，未生成新的发布清单；既有 `out/release-manifest.json` 仍属于 0.4.4，不是 0.4.5 验收证据。实际窗口布局检查与上述自动化检查分开记录。
+- 本轮没有恢复业务任务验收、调用真实模型或部署云端，原 unknown、默认额度和待验收项目不变。干净 Windows、真实网站闭环与连续观察不在本次 UI 验证范围。
+
+## 2026-11-04 0.4.4 隐藏执行器滚动条
+
+- 用户要求去掉截图中的右侧滚动条。ExecutorApp 改为视口高度的内部滚动容器，隐藏滚动条但保留滚动能力；未改变任务执行、授权或云端版本。
+- typecheck、25 项 UI 测试、Web build、check:repo、make、本次 packaged/installed smoke 通过。源码图更新为 4188 节点/6516 边；仍有 SQL 解析依赖缺失及两个既有 TSX 部分抽取警告。
+- 打包曾因 GitHub 校验文件 TLS 下载失败阻塞，Forge 改用同版本官方 electron 包附带 checksums.json，缓存 ZIP 仍通过 SHA-256 校验，没有禁用完整性检查。
+- 已通过系统 Explorer 安装 0.4.4，并从桌面 TaskRelay.lnk 打开；进程在系统 app-0.4.4 目录，窗口显示 0.4.4、在线等待。原生窗口目视确认右侧滚动条消失，滚轮仍可到达底部版本信息。仅关闭本次新开的安装 Explorer 窗口，用户原目录保留。
+- 安装/构建 ASAR 均为 `51b7d4fe0703e3183137759a4bd09ae560aab51f8231a40625249a182f47f83b`；安装包 SHA-256 为 `006c3a0bee5da9215ed8098365c89ecfacc9e4b89a2edbb0f90de6a229c70132`。新 `out/release-manifest.json` 指向系统目录，无 LocalCache；未提交工作区的 sourceCommit 仅是基线。
+- 本轮未恢复上一节暂停的任务验收，未新增运行、模型调用或修改启动额度。日志为 `.cache/acceptance-042/scrollbar-*.log`，不据此声称 unknown 核查、人工协助闭环、干净 Windows 或长期观察已完成。
+
+## 2026-11-04 0.4.3 修复完成，现场验收由用户暂停
+
+此节覆盖下方 0.4.2 的最终版本与验证数量。用户在系统快捷方式复验时按 Esc 停止 Computer Use，已停止界面操作，待执行项目不记为通过。
+
+- 现场 `run_ae0010ad117d4c9dbe329c526e41331f` 的 information challenge 缺少 target，消费后报 CHALLENGE_TARGET_REQUIRED，进入 unknown。challenge 已 expired、secret 已清理；未重放或解锁，原运行与账号锁保留供只读核查。
+- 已修复：共享协议要求 code/information/scan 目标；生产规划无目标输出触发一次结构化修复；后端拒绝无目标挑战；执行器在创建协助前检查页面目标。需要批准的点击由具体 high_impact 动作产生绑定批准卡。
+- 最终 typecheck、**141 项完整测试**、check:repo、Web build、0.4.3 make、0.4.3 packaged smoke 通过。新增三项回归分别命中生产规划、后端创建、实际 execute。源码图已更新至 4185 节点/6513 边；8 个 SQL 缺少 tree_sitter_sql，两个既有 TSX 仅部分抽取。
+- 最终 Worker **`dfdaf69c-d9e9-4c58-ad91-0d084bf14167`**。0.4.3 安装包已由系统 Explorer 执行，系统进程已观测为 `AppData/Local/TaskRelay/app-0.4.3/TaskRelay.exe`；随后快捷方式、安装 ASAR 对照及安装 smoke 尚未完成。`out/release-manifest.json` 仍是此前 0.4.2 记录，不能作为 0.4.3 清单。
+- 用户允许临时将 owner 日启动从 5 调至 8，尚未新增启动就停止界面操作；已恢复为 **5**。模型/对话额度未变，没有新增周期任务、付费服务或注册权限。0.4.3 协助复验仅生成待确认草稿，未确认、未执行。
+- 待继续：安装目录 smoke/哈希/快捷方式；0.4.3 人工信息和批准闭环；上述 unknown 的只读核查；提交后中断及只读恢复；定时执行。用户确认暂无非 GPT 配置和第二台 Windows，此两项与七天观察仍为外部环境/时间缺口。
+- 虚构验收站仅 `/cancel` 增加计数已写入后延迟 15 秒响应的故障窗口，Worker `024e038b-35c6-46f8-ad56-822ef94f0c3c`；尚未触发该窗口。每用例最多 10 次、2026-11-05 00:00 UTC 后拒绝写入的边界不变。
+
+## 2026-11-04 完整性修复与 0.4.2 验收
+
+本节是最新基线；下方有日期的暂停、版本、额度及“未修复”记录是当时事实，不代表当前状态。用户已授权按完整性分析执行，认证敏感步骤仍沿用此前暂缓范围；不提高额度、不开放注册。
+
+### 已完成的修复
+
+- Host 心跳返回后的代次校验、停止期间 RPC 阻断；浏览器启动和关闭互斥，关闭能取消尚未 spawn 的启动；退出清理失败继续阻止新任务。
+- 恢复识别持久化 unknown，复用原 finish outbox 键保留已排队终态；execute 在敏感消费/凭据异步返回后再次检查停止，保留写入不确定性。
+- 历史报告从 UI 到 ai_turns、alarm、运行快照与步骤均绑定所选 runId；跨用户/任务及缺少绑定明确拒绝。
+- 成功判据明确为单段字面原文，对常见多段拼接返回澄清；这是有限歧义保护，不是完整多条件协议。
+- 网页显示个人和 UTC 平台预算、重置时间；排队原因来自当前已知阻塞条件；超过一小时的调度时隙直接跳过。
+- 现场发现创建助手混淆“规划协助”和“在创建对话索取敏感值”，已补充边界提示。普通聊天不得收集密码/验证码；执行时仍走专用协助通道。
+
+### 源码、构建与安装证据
+
+- typecheck、完整 **138 项测试**（含实际共享组件 **25 项**）、check:repo、Web build 通过。新增 12 项直接调用正式 ExecutorHost/execute 的故障用例；SDK、进程、网络以隔离 adapter 替代，因此不冒充整机故障测试。补充提交前 checkpoint/云端 intent 与实际 click 的顺序断言通过。
+- `scripts/test-free-runtime.mjs` 通过真实本地 workerd 的网关、alarm/outbox、重复请求、1.1 MB 加密证据及通知撤销检查；不是线上模型证明。构建仍提示既有 500 kB chunk 和静态/动态重复导入。
+- Windows **0.4.2** 已 `npm run make`，本次 `out/packaged-smoke.json` 与 `out/installed-smoke.json` 均通过；仅证明独立 Stagehand 4.3.0/原生加载/自建站操作，不等于 execute 故障流程。
+- 系统 Explorer 运行本次安装包，桌面 `TaskRelay.lnk` 打开系统 `C:/Users/96227/AppData/Local/TaskRelay/app-0.4.2/TaskRelay.exe`，窗口显示 0.4.2、在线等待，原设备授权保留。安装 ASAR 的 realpath 无 LocalCache，SHA-256 与构建均为 `e6d1d15db54d5f5021cbd20798f80d22d07c196f9812ec904fbd1a47c3fcf5a6`；安装包 SHA-256 为 `5b0a6159494688a3507e50028b9caa330bf547c1bea96c951ab6be630569b27b`。
+- 清单为 `out/release-manifest.json`；当前改动未提交，清单 sourceCommit 是 Git 基线，不代表全部源码。测试/构建日志与网页证据在忽略目录 `.cache/acceptance-042/`。
+- 生产已应用 additive `0008_report_run.sql`。初版 Worker `793ab477-b835-4eea-9650-4b423a251765`；人工协助提示修正版 **`ee191cf7-e7cc-4a3c-a934-a308367ebc06`**。MASTER_KEY 和既有密文不变，Free、六类 SQLite DO、无生产 R2、注册关闭保留。匿名/bearer 越权检查通过。
+
+### 本轮真实链路
+
+1. **表单仅提交一次**：`run_a2532d7fafa345adab9ecd6d60c93442`，系统安装 0.4.2、生产云端、真实 Responses/gpt-6-luna 与独立虚构站共同参与。填写 QA1103 后提交，程序核验“已提交次数：1”，状态 succeeded；独立 D1 `/form` 计数从 0 到 1，其余用例当时仍 0。不是 smoke，未访问业务账号。截图 `form-success.png`。
+2. **历史报告**：同一任务已出现上述成功运行后，在“运行记录”选择前一天已取消的 `run_8f2b3f8e214d4699a1bddf080e0867df`，真实模型报告明确引用该运行编号、已取消且无步骤证据，没有套用新运行的成功结果。截图 `historical-report.png`。
+3. **预算与手机布局**：真实生产页显示两套额度及 00:00/08:00 重置点；390×844 下预算正常换行、底部输入区可见，scrollWidth=390；820×700 下 scrollWidth=820。未替代实体手机、输入法及超长历史验证。截图 `mobile-budgets.png`。
+
+### 仍需外部环境或时间的门槛
+
+- 当前仅有 Responses 的 GPT 配置，没有可用非 GPT 服务；没有第二台干净 Windows 或真实第二用户/设备。本轮不声明这些验收通过。
+- 七天观察不能由一次会话替代；2026-11-04 为首日现场样本，后续需逐日记录成功/失败/unknown、设备心跳、outbox 与免费额度。没有创建自动执行或扩大授权的后台任务。
+- 真实邮件/密码/人机验证等用户此前指定暂缓的认证步骤、签名安装、独立 Windows 卸载/升级、真实断电/睡眠与跨日长时间运行仍需单独验收。
+
 ## 2026-11-03 用户视角扩展验收（23:08 批次）
 
 **结论：本轮已完成下面标明的真实操作与修复复测，不能宣称全流程全部通过。** 用户明确将邮件、登录、验证码、设置密码等认证敏感步骤列为待验收；执行额度已使用 7/5，另有用户的百度任务排队。临时提高额度会启动该任务，尚未获得本轮询问的答复，所以没有调整额度或消耗额外启动次数。

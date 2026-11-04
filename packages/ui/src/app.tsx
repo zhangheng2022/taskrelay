@@ -414,6 +414,7 @@ function Workspace({ transport }: { transport: Transport }) {
           )}
         </header>
         {data.quota && <div className="border-b px-4 py-2 text-xs text-muted-foreground" role="status">今日启动 {data.quota.used.runs}/{data.quota.limits.runs} · 模型请求 {data.quota.used.models}/{data.quota.limits.models} · 对话 {data.quota.used.chat}/{data.quota.limits.chat} · {formatDate(data.quota.resetAt)} 重置</div>}
+        {data.platformBudget && <div className="border-b px-4 py-2 text-xs text-muted-foreground" role="status">平台共享预算：模型 {data.platformBudget.used.model}/{data.platformBudget.limits.model} · AI 回合 {data.platformBudget.used.turn}/{data.platformBudget.limits.turn} · 短期证据 {data.platformBudget.used.evidence}/{data.platformBudget.limits.evidence} · {formatDate(data.platformBudget.resetAt)} 重置。个人额度与平台预算均有剩余时才能接收对应工作。</div>}
         {error && (
           <div className="flex shrink-0 items-center gap-2 px-4 py-2">
             <div className="min-w-0 flex-1">

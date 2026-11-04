@@ -89,6 +89,14 @@ test("生产环境缺少 Access JWT 时关闭访问", async () => {
   );
   assert.equal(r.status, 401);
 });
+test("人工协助缺少输入或二维码目标时后端拒绝，不保存无目标挑战", async () => {
+  const s=await setup();
+  for(const kind of ['code','information','scan']) {
+    const r=await s.request(`/api/runner/runs/${s.run.id}/challenges`,{epoch:s.run.leaseEpoch,challenge:{kind,instruction:'虚构验收',stepId:`missing_${kind}`,version:1}});
+    assert.equal(r.status,400);
+  }
+  assert.equal((await s.db.prepare('SELECT COUNT(*) n FROM challenges').first<{n:number}>())!.n,0);
+});
 test("验证码绑定运行/步骤/版本/租约，重复回复和重复消费不会再次授权", async () => {
   const s = await setup(),
     root = `/api/runner/runs/${s.run.id}`,
@@ -248,7 +256,7 @@ test("过期验证码不能提交；新一轮验证取代上一轮", async () =>
   assert.equal(r.status, 409);
   const b = await s.request(root + "/challenges", {
     epoch,
-    challenge: { kind: "scan", instruction: "scan", stepId: "two", version: 2 },
+    challenge: { kind: "scan", instruction: "scan", stepId: "two", version: 2, target: "#qr" },
   });
   assert.equal(b.status, 200);
   assert.equal(

@@ -22,9 +22,14 @@ export interface RuntimePort {
   cancelled(): boolean;
 }
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-export async function execute(run: TaskRun, port: RuntimePort) {
-  const sdk = await import("@browserbasehq/stagehand"); // ESM-only: keep native import() in packaged CJS.
-  const proxy = await startProxy();
+export async function execute(run: TaskRun, port: RuntimePort, adapters = {
+  loadSdk: () => import("@browserbasehq/stagehand"), // Keep native import() in packaged CJS.
+  startProxy,
+  delay,
+}) {
+  const sdk = await adapters.loadSdk();
+  const proxy = await adapters.startProxy();
+  const delay = adapters.delay;
   let stagehand: Awaited<ReturnType<typeof sdk.Stagehand.create>> | undefined;
   let sequence = 0,
     writePending = false,
@@ -66,11 +71,13 @@ export async function execute(run: TaskRun, port: RuntimePort) {
       throw new Error("EXECUTION_TIMEOUT");
   };
   try {
+    guard();
     await port.checkpoint("starting", { run });
     const launch = await port.rpc<{ cdpUrl: string }>("local:browser", {
       proxyPort: proxy.port,
       accountId: run.profileId,
     });
+    guard();
     const browser = await sdk.localBrowser.connect({ cdpUrl: launch.cdpUrl });
     const model: ClientLLM = {
       generate: async (request) => api("stagehand", { request,requestId:crypto.randomUUID() }),
@@ -160,6 +167,12 @@ export async function execute(run: TaskRun, port: RuntimePort) {
         !run.task.allowedActions.includes("fill")
       )
         throw new Error("FILL_NOT_AUTHORIZED");
+      if (["code", "information", "scan"].includes(action.challengeKind ?? "information")) {
+        if (!action.target?.trim()) throw new Error("CHALLENGE_TARGET_REQUIRED");
+        // Inspect before requesting/consuming a reply, not after a user has disclosed it.
+        await facts(action.target);
+        guard();
+      }
       const begin = Date.now();
       humanStarted = begin;
       const challenge = await api<HumanChallenge>("challenges", {
@@ -216,17 +229,20 @@ export async function execute(run: TaskRun, port: RuntimePort) {
             stepId: challenge.stepId,
           });
           if (reply.ready) {
+            writePending = true;
             // Persist consumption BEFORE filling. After a crash, never re-fill this response.
             await port.checkpoint("human-delivery", {
               challengeId: challenge.id,
               deliveryId,
               writePending: true,
             });
+            guard();
             if (["code", "information"].includes(challenge.kind)) {
               if (!challenge.target || typeof reply.value !== "string")
                 throw new Error("CHALLENGE_TARGET_REQUIRED");
               allowedNavigation(await page.url(), run.task.allowedOrigins);
               await facts(challenge.target);
+              guard();
               writePending = true;
               writeOccurred = true;
               await page.locator(challenge.target).fill(reply.value);
@@ -410,6 +426,7 @@ export async function execute(run: TaskRun, port: RuntimePort) {
             "credentials",
             { url: await page.url() },
           );
+          guard();
           await page.locator(action.target!).fill(credentials[action.value]);
           if (
             (await page.locator(action.target!).inputValue()) !==
@@ -494,7 +511,7 @@ export async function execute(run: TaskRun, port: RuntimePort) {
       evidence: [],
       errorCode: code,
     };
-    await port.checkpoint("finishing", { run, status, result });
+    await port.checkpoint("finishing", { run, status, result, writePending, mayHaveWritten: writeOccurred });
     try {
       await api("finish", { status, result });
       await port.checkpoint("finished", { status });

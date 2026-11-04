@@ -67,7 +67,7 @@ test("无写意图的租约过期安全失败并释放账号", async () => {
   await enqueue(db, t, "two");
   assert.ok(await claim(db, "device_b", "req_b"));
 });
-test("调度只补最近一次，旧于一小时不执行", async () => {
+test("调度只补最近一次，重复 tick 不重复排队", async () => {
   const { db } = testDb();
   const t = await insertTask(
     db,
@@ -88,6 +88,15 @@ test("调度只补最近一次，旧于一小时不执行", async () => {
     Date.now() - new Date((rows.results[0] as any).scheduled_for).getTime() <
       61000,
   );
+});
+test('实际 tick 不补跑一小时前的一次性任务',async()=>{
+  const {db,sql}=testDb();
+  try{
+    const at=new Date(Date.now()-7200000).toISOString();
+    await insertTask(db,task({schedule:{kind:'once',at},nextRunAt:at}));
+    await tick(db);
+    assert.equal(sql.prepare('SELECT COUNT(*) n FROM runs').get()!.n,0);
+  }finally{sql.close();}
 });
 test("手动运行允许暂停任务，不能据此自动启用", async () => {
   const { db } = testDb();

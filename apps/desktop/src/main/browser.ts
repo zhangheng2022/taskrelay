@@ -8,6 +8,9 @@ import { Journal } from "./journal";
 const exec = promisify(execFile);
 export class OwnedBrowser {
   private child: ChildProcess | null = null;
+  private generation = 0;
+  private launching: Promise<{ cdpUrl: string }> | null = null;
+  private closing: Promise<void> | null = null;
   constructor(
     private directory: string,
     private profiles: string,
@@ -35,8 +38,21 @@ export class OwnedBrowser {
     );
     this.journal.set("ownedBrowser", null);
   }
-  async launch(accountId: string, proxyPort: number) {
-    if (this.child) throw new Error("BROWSER_ALREADY_RUNNING");
+  launch(accountId: string, proxyPort: number): Promise<{ cdpUrl: string }> {
+    if (this.child || this.launching || this.closing)
+      return Promise.reject(new Error("BROWSER_ALREADY_RUNNING"));
+    const generation = ++this.generation;
+    const guard = () => {
+      if (generation !== this.generation) throw new Error("BROWSER_START_CANCELLED");
+    };
+    const pending = this.launchOwned(accountId, proxyPort, guard);
+    this.launching = pending;
+    void pending.finally(() => {
+      if (this.launching === pending) this.launching = null;
+    }).catch(() => {});
+    return pending;
+  }
+  private async launchOwned(accountId: string, proxyPort: number, guard: () => void) {
     if (
       !/^[a-zA-Z0-9_-]{1,110}$/.test(accountId) ||
       !Number.isInteger(proxyPort) ||
@@ -47,20 +63,24 @@ export class OwnedBrowser {
     const manifest = JSON.parse(
       await readFile(path.join(this.directory, "manifest.json"), "utf8"),
     );
+    guard();
     const executable = path.join(this.directory, manifest.executable);
     const actual = createHash("sha256")
       .update(await readFile(executable))
       .digest("hex");
+    guard();
     if (actual !== manifest.executableSha256)
       throw new Error("BROWSER_INTEGRITY_FAILED");
     const profile = path.join(this.profiles, accountId);
     await mkdir(profile, { recursive: true });
+    guard();
     const extensionManifest = JSON.parse(
       await readFile(
         path.join(this.directory, "../stagehand-extension/manifest.json"),
         "utf8",
       ),
     );
+    guard();
     if (!extensionManifest.key) throw new Error("EXTENSION_IDENTITY_REQUIRED");
     const extensionId = createHash("sha256")
       .update(Buffer.from(extensionManifest.key, "base64"))
@@ -75,6 +95,7 @@ export class OwnedBrowser {
         s.close(() => resolve(p));
       });
     });
+    guard();
     const args = [
       `--user-data-dir=${profile}`,
       `--remote-debugging-port=${port}`,
@@ -110,8 +131,10 @@ export class OwnedBrowser {
       child.once("error", reject);
     });
     this.journal.set("ownedBrowser", { pid: child.pid, profile, executable });
+    guard();
     const until = Date.now() + 20000;
     while (Date.now() < until) {
+      guard();
       if (child.exitCode !== null) throw new Error("BROWSER_START_FAILED");
       try {
         const r = await fetch(`http://127.0.0.1:${port}/json/version`, {
@@ -120,6 +143,7 @@ export class OwnedBrowser {
         if (r.ok) {
           const info = (await r.json()) as { webSocketDebuggerUrl: string };
           await this.denyDownloads(info.webSocketDebuggerUrl);
+          guard();
           return { cdpUrl: `http://127.0.0.1:${port}` };
         }
       } catch {
@@ -127,7 +151,7 @@ export class OwnedBrowser {
       }
       await new Promise((r) => setTimeout(r, 150));
     }
-    await this.close();
+    await this.closeChild();
     throw new Error("BROWSER_START_TIMEOUT");
   }
   private async denyDownloads(url: string) {
@@ -168,7 +192,18 @@ export class OwnedBrowser {
       };
     });
   }
-  async close() {
+  close(): Promise<void> {
+    if (this.closing) return this.closing;
+    ++this.generation;
+    const pending = this.launching;
+    this.closing = (async () => {
+      // Invalidate before waiting: an in-flight launch can no longer spawn or succeed.
+      await pending?.catch(() => {});
+      await this.closeChild();
+    })().finally(() => { this.closing = null; });
+    return this.closing;
+  }
+  private async closeChild() {
     const child = this.child;
     if (!child) return;
     if (child.exitCode === null && child.pid) {

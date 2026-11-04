@@ -14,6 +14,28 @@ import { task, run, challenge, transportWith, threadPage } from "./ui-fixtures";
 import type { HumanChallenge } from "../packages/contracts/src/index";
 
 afterEach(cleanup);
+test('历史报告 Transport 请求携带当前所选运行，切换运行后更新绑定',async()=>{
+  const writes:any[]=[];
+  const transport=transportWith(async(method,path,body)=>{
+    if(path==='/api/user/threads')return [{id:threadPage.id,kind:'chat',model_id:task.modelId,task_id:task.id}];
+    if(path.endsWith('/messages')){writes.push(body);return {...threadPage,status:'done'};}
+    if(path.includes('/threads/'))return threadPage;
+    return {events:[],usage:[]};
+  });
+  const props={transport,task,run:{...run,status:'failed' as const,id:'old-run'},challenges:[],refresh:async()=>{},onEdit:()=>{},offline:false};
+  const view=render(<Conversation {...props}/>);
+  await waitFor(()=>assert.equal(view.getByRole('button',{name:'生成报告'}).hasAttribute('disabled'),false));
+  fireEvent.click(view.getByRole('button',{name:'生成报告'}));
+  await waitFor(()=>assert.equal(writes.length,1));assert.equal(writes[0].runId,'old-run');
+  await waitFor(()=>assert.equal(view.getByRole('button',{name:'生成报告'}).hasAttribute('disabled'),false));
+  view.rerender(<Conversation {...props} run={{...props.run,id:'another-run'}}/>);
+  fireEvent.click(view.getByRole('button',{name:'生成报告'}));
+  await waitFor(()=>assert.equal(writes.length,2));assert.equal(writes[1].runId,'another-run');
+});
+test('运行报告显示后端提供的具体排队原因',()=>{
+  const view=render(<RunReport run={{...run,status:'queued',queueReason:'今日启动额度已用完，上海时间零点重置'}} events={[]} usage={[]} disabled={false} onCancel={()=>{}} onReconcile={()=>{}}/>);
+  assert.ok(view.getByText(/今日启动额度已用完/));
+});
 test("cancelled queued run never claims it is still waiting for cancellation", () => {
   const view=render(<RunReport run={{...run,status:'cancelled',cancelRequested:true}} events={[]} usage={[]} disabled={false} onCancel={()=>{}} onReconcile={()=>{}}/>);
   assert.ok(view.getByText('本次运行已取消。'));

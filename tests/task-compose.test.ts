@@ -218,7 +218,7 @@ test('报告读取 unknown 事实；等待协助时普通消息不能绕过敏�
  s.sql.prepare("UPDATE runs SET status='unknown' WHERE id=?").run(s.run.id);
  const th=(await s.request('/api/user/threads',{kind:'chat',modelId:'model_test',taskId:s.run.taskId})).data;
  s.replies('{"reply":"结果待核查，不应重复提交"}');
- const report=await s.request(`/api/user/threads/${th.id}/messages`,{requestId:'report',expectedVersion:0,mode:'report',content:'生成报告'});
+ const report=await s.request(`/api/user/threads/${th.id}/messages`,{requestId:'report',expectedVersion:0,mode:'report',runId:s.run.id,content:'生成报告'});
  assert.equal(report.data.status,'done');assert.match(JSON.stringify(s.requests[0].body),/unknown不能表述为成功/);
  assert.equal(s.sql.prepare('SELECT status FROM runs WHERE id=?').get(s.run.id)!.status,'unknown');
  s.sql.prepare("INSERT INTO challenges(id,run_id,lease_epoch,version,step_id,kind,instruction,status,expires_at) VALUES('sensitive',?,1,1,'step','code','输入验证码','pending','2099-01-01')").run(s.run.id);

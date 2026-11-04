@@ -11,6 +11,7 @@ export function testDb() {
     "0005_multiuser.sql",
     "0006_ai.sql",
     "0007_free_runtime.sql",
+    "0008_report_run.sql",
   ])
     sql.exec(
       readFileSync(
