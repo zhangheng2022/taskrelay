@@ -1,13 +1,19 @@
 # TaskRelay 验收记录
 
-## 2026-11-04 第二批 Windows 更新交付验收（进行中）
+## 2026-11-04 第二批 Windows 更新交付验收（本机安装通过，线上自动更新待验收）
 
 - 首批修复及记录已提交 `08eb9b8`；0.4.9 候选 `4d06c40` 从干净源码构建，已推送 master。make、packaged smoke、类型检查、11 项更新相关测试、仓库检查通过；候选不能直接视为自动更新通过。
 - 0.4.8 原生窗口关闭后主进程仍存活，MainWindowHandle=0；通过系统 Explorer 执行实际桌面 `TaskRelay.lnk` 后唤回同一系统进程。最初自动化截图错误，显式 Raise 恢复后才取证，未把错误截图记为通过。
-- 安装前从物理系统 Roaming 保存 SQLite 一致备份、Local State 和 profiles 到忽略目录 `.cache/acceptance-049/private-backup/`；不输出或上传敏感内容。schema=3、historyEpoch=3、outbox/unfinished=0。暂时开启暂停领取和登录启动，供升级保留验证，验收后须恢复原偏好。
+- 安装前从物理系统 Roaming 保存 SQLite 一致备份、Local State 和 profiles 到忽略目录 `.cache/acceptance-049/private-backup/`；不输出或上传敏感内容。schema=3、historyEpoch=3、outbox/unfinished=0。暂停领取已确认开启；最初登录启动点击后的状态未获得可靠确认，不能作为跨版本保留的前置证据，后续在 0.4.10 单独复验。
 - 系统 Explorer 运行本次 Setup，0.4.8 → 0.4.9 跨版本安装完成，Main PID 从 20476 变为 30764，进程路径为系统 `AppData/Local/TaskRelay/app-0.4.9/TaskRelay.exe`；构建/系统 ASAR 均为 `62c70c9afe16a94426bc577f6ddd72ecf9cec7e2cf6ead734a8a6a66613d0ae9`。暂停领取保留。
-- 现场发现登录启动显示错误：注册表中本应用条目仍为稳定 `TaskRelay/TaskRelay.exe`，系统批准未禁用，但 0.4.9 窗口显示关闭。Electron 45.2.1 隔离原生探针证实同一路径仅大小写不同即可使 openAtLogin=false，而 launchItems 与 executableWillLaunchAtLogin 仍正确为开启；不能只凭 openAtLogin 作系统启动状态。原生源码依据：[Electron Windows 登录项实现](https://github.com/electron/electron/blob/v45.2.1/shell/browser/browser_win.cc)。
-- 修复接入 Main 的正式 `loginSettings`，按本用户、本应用、无额外参数的 launchItems.enabled 读状态，保护系统禁用偏好与已有稳定入口。新增 4 项生产模块回归；版本提升 0.4.10，不用同版本包替换已安装 0.4.9。最终安装、原生复验和发布候选证据待补充。
+- 启动状态核对：工具环境读取到稳定启动项，但系统窗口显示关闭；Codex 宿主探针与系统 UI 上下文不同，且初次开关操作未可靠确认，**不据此认定升级丢失了已开启的启动项**。独立 Electron 45.2.1 探针仍确定复现代码缺陷：同一路径仅大小写不同即可使 openAtLogin=false，而 launchItems 正确匹配；旧 openAtLogin 也不反映系统禁用。原生源码依据：[Electron Windows 登录项实现](https://github.com/electron/electron/blob/v45.2.1/shell/browser/browser_win.cc)。通过 Explorer 启动额外只读探针没有产生报告，未计为通过。
+- 修复接入 Main 的正式 `loginSettings`，按本用户、本应用、无额外参数的 launchItems.enabled 读状态，保护系统禁用偏好与已有稳定入口。新增 4 项生产模块回归；版本提升 0.4.10，不用同版本包替换已安装 0.4.9。宿主原生探针确认系统禁用/启用分别读为 false/true，并恢复探针开始时设置；此证据与系统安装 UI 分开记录。
+- 最终 0.4.10 从干净提交 `7489ec151848b0e56037c8c3b3ae67b450a1a191` 构建；165 项完整测试、typecheck、check:repo、make、packaged/installed smoke 通过。GitHub [Windows/Ubuntu CI](https://github.com/zhangheng2022/taskrelay/actions/runs/41772407499) 全部成功（包括 Web build）；源码图更新为 4297 节点/6776 边/370 社区，既有 SQL/TSX 提取限制保留。
+- 系统 Explorer 完成 0.4.9 → 0.4.10 安装。暂停领取、全部 config 字节、Local State 保留，schema=3，outbox/unfinished=0；比较只输出布尔结果，不输出令牌或密文。随后从实际桌面 `TaskRelay.lnk` 冷启动，系统进程 PID 16084、路径 `AppData/Local/TaskRelay/app-0.4.10/TaskRelay.exe`，原配对有效。
+- 0.4.10 原生 UI 明确开启登录启动后，停止空闲进程并从桌面快捷方式冷启动，开关仍为开启；证据 `.cache/acceptance-0410/startup-preserved.png`。为诊断执行的两次进程终止均在暂停领取、本地无 outbox/unfinished 时进行，不冒充托盘正常退出或 Windows 注销登录。结束通过 UI 将登录启动恢复关闭、暂停领取恢复关闭，窗口在线等待；截图 `final-installed.png`。跨 Windows 登录和跨版本保留“已开启”状态仍待独立验证。
+- 构建与物理系统安装 ASAR SHA-256 都为 `0491f73ab5c7565754ba708fa4285ab68f43b1d5ac5b56beb1a45702581252ec`；Setup 为 `87b5623bde9f5fac23dbece4a120df32c64d8125013644b8c6e5f981e9368a6d`，nupkg 为 `6a4c2d3835e447ebf249f05cbfd86dd20a916503a473bf1a1561c714da6448d9`。新清单 sourceDirty=false，installedAsarPath 为系统目录，无 LocalCache；源码图/日志/数据库备份/原始清单均未上传。
+- 已生成 `out/desktop-release.json`，[GitHub v0.4.10 预览草稿](https://github.com/zhangheng2022/taskrelay/releases/tag/untagged-eaee2f87bb28c08ec9d5) 已上传（isDraft=true、isPrerelease=true，未发布），目标源码为 `7489ec1`；仅有 Setup（GitHub 规范化名称为 `TaskRelay.Setup.exe`，363068416 字节）、完整 nupkg（362501140 字节）、SHA256SUMS。GitHub 两个包的 digest 与上述本地 SHA-256 一致，校验文件使用实际附件名称。包内文件名检查未发现 .env、.dev.vars、taskrelay.sqlite、Local State 或 profiles。生产更新目录仍为空，未启用通道、未新增模型调用或任务、未调整额度。
+- 未完成：公开包经 Cloudflare 真实下载、确认/拒绝更新、活动任务/人工等待/回传未完成时的真实安装阻断、自动安装重启；干净 Windows、真正的 Windows 登录、卸载和连续观察。本轮手动跨版本安装与隔离 updater 测试不替代这些验收。
 
 ## 2026-11-04 第一批业务闭环验收（已完成：本机与虚构站范围）
 
