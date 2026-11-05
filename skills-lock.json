@@ -37,6 +37,12 @@
       "skillPath": "skills/migrate-radix-to-base/SKILL.md",
       "computedHash": "4fdc31bf287f674ba6bf91a648120f7b34cd7ef370f998f2cc116fed067789c5"
     },
+    "open-code-review-delegate": {
+      "source": "alibaba/open-code-review",
+      "sourceType": "github",
+      "skillPath": "skills/open-code-review-delegate/SKILL.md",
+      "computedHash": "59d49c90884061691d5f1255cfa1781d9e155a74596a6b38c8f3c403e66ae49d"
+    },
     "shadcn": {
       "source": "shadcn/ui",
       "sourceType": "github",
