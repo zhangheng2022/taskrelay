@@ -11,6 +11,20 @@ async function setup(t:TestContext,protocol:'chat'|'responses'='chat'){
   return {...s,thread,path:`/api/runner/runs/${s.run.id}/help`,help:{epoch:s.run.leaseEpoch,id:'help_context',origin:'https://example.com',message:'如何继续登录？'}};
 }
 const reply=(message:string,askUser=false)=>JSON.stringify({message,askUser,accountId:null});
+for(const invalidation of ['cancel','expired','closed'] as const){
+ test(`登录协助回复已送达后 ${invalidation}：拒绝继续处理旧运行`,async t=>{
+  const s=await setup(t);s.replies(reply('请在本聊天回复登录信息。',true));
+  assert.equal((await s.request(s.path,s.help)).data.ready,false);
+  await s.request(`/api/user/threads/${s.thread.id}/messages`,{requestId:'late_login',content:'账号 qa@example.com，密码 00private!'});
+  const jobs=s.jobs();
+  if(invalidation==='cancel')s.sql.prepare('UPDATE runs SET cancel_requested=1 WHERE id=?').run(s.run.id);
+  if(invalidation==='expired')s.sql.prepare("UPDATE runs SET lease_expires_at='2000-01-01T00:00:00Z' WHERE id=?").run(s.run.id);
+  if(invalidation==='closed')s.sql.prepare('UPDATE ai_threads SET closed=1 WHERE id=?').run(s.thread.id);
+  const result=await s.request(s.path,s.help);
+  assert.notEqual(result.status,200);assert.equal(s.jobs(),jobs);
+  assert.equal(s.sql.prepare('SELECT response FROM execution_help WHERE id=?').get(s.help.id)!.response,null);
+ });
+}
 for(const protocol of ['chat','responses'] as const){
   test(`协助意图/${protocol}：完整回复进入任务上下文，不拆分密码与新要求`,async t=>{
     const s=await setup(t,protocol);
