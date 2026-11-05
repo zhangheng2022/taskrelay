@@ -229,3 +229,8 @@ Windows 0.12.0 make、包内 smoke、实际系统目录安装 smoke、release-ma
 - `npm test` 287/287、`npm run test:ui` 45/45、类型检查、仓库检查和 Web 构建通过；构建仍有既有大 chunk 提示。测试使用生产 Hono 路由和 SQLite D1 adapter；Hono CLI 因默认导出为 Worker 对象返回 INVALID_APP，未把失败算作 CLI 通过。
 - Edge 本机隔离页面通过桌面清空与 390×844 窄屏全部清理，确认框默认取消、任务暂停、返回新任务和可输入均已观察；无生产聊天删除、实际 iPhone Safari、独立 Windows 安装或真实模型业务复验。本次不改桌面执行协议或安装包。
 - OCR 委托仅执行确定性 preview/rule，由宿主审查完整差异，补审默认排除的测试与文档，并核对 SQL；审查中发现并修复旧草稿回填竞争。本次 27 个变更文件全部已审，reviewed_files=27、skipped_files=0、coverage_rate=100%；无未解决审查发现。隔离本地 D1 的 0001–0023 迁移全部通过。源码图更新为 4475 节点/7347 边；24 个 SQL 文件缺 tree_sitter_sql，另有 2 个测试文件未提取符号，不能算图覆盖。
+
+- 生产源码 `f96ca08` 已推送；0023 迁移通过，Worker 版本 `dedc1df5-7075-4974-a86a-a096b023e04c` 已 100% 生效。主域健康、匿名/设备令牌权限边界、新清理接口匿名 401 通过；线上 `/assets/index-CnQih4ue.js` 与本地构建 SHA-256 相同：`c647996a0a17417125bfc1d8ebc3f12345fdddaa80637fa1a0cb970f25e6b75f`。
+- 发布前活动运行/推理为 0；发布后任务 3、聊天 4、模型配置 2、设备 1、账号 0，未创建生产清理作业、未删除真实聊天。`maintenance=0`、`claimsEnabled=1` 已恢复，Cron 保持每分钟。生产后台删除闭环未用真实数据执行，仍以生产入口隔离回归和本地 D1 迁移证据为界。
+
+- 源码提交的 [GitHub Actions CI](https://github.com/zhangheng2022/taskrelay/actions/runs/42057489609) 已完成，Ubuntu/Windows Node 24 的类型检查、完整测试、Web 构建、仓库及差异检查均成功。

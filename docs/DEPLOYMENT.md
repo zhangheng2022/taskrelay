@@ -135,3 +135,5 @@ README 负责使用入口与状态，CHANGELOG 记录客户端版本的变更，
 `0023_history_cleanup.sql` 新增任务删除/运行历史清理标记、持久清理作业与目标、旧请求迟到写入触发器和模型调用运行索引；不改 MASTER_KEY、账号、模型配置或设备。旧无归属模型响应缓存只保留防重摘要，已知执行调用回填 run_id，聊天消息和图片不由迁移删除。
 
 发布前保存 maintenance/claimsEnabled 原值，开启维护并暂停领取，确认运行、聊天推理及模型调用均无活动项，再执行 `npx wrangler d1 migrations apply taskrelay --remote`。SQL 自带活动窗口校验，失败应排查并恢复开关，不绕过校验。随后部署新的 Web/Worker，检查服务、认证边界、schema 和资源文件，再恢复原开关。桌面协议 15、安装版本 0.12.5 保持兼容，本功能无需重装桌面。
+
+2026-11-05 已按上述顺序完成生产迁移与部署：源码 `f96ca08`，Worker `dedc1df5-7075-4974-a86a-a096b023e04c`，Wrangler 上传与 triggers 均成功。主域资源哈希、健康与认证检查通过，原开关已恢复；生产未执行聊天清理。具体测试数量和边界见 [ACCEPTANCE](ACCEPTANCE.md#2026-11-05-聊天清理交付)。
