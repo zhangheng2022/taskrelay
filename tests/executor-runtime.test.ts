@@ -7,15 +7,15 @@ import type {ClientLLM} from '@browserbasehq/stagehand';
 import sharp from 'sharp';
 const answer=(text:string):ModelResponse=>({text,calls:[],usage:{input:null,output:null}});
 const tool=(name:string,args:Record<string,unknown>={}):ModelResponse=>({...answer(''),calls:[{id:crypto.randomUUID(),name,arguments:JSON.stringify(args)}]});
-async function scenario(turns:ModelResponse[],options:{actionError?:boolean;actionRejected?:boolean;emptyObserve?:boolean;navigationError?:boolean;cancelConnect?:boolean;createError?:boolean;closeError?:boolean;original?:string;origin?:string;fill?:string;method?:string;helpMessage?:string;cancel?:boolean;cancelStagehand?:boolean;newInstruction?:boolean;compact?:boolean;navigationObservationFailure?:boolean;unknownActionResult?:boolean;helpWaits?:number;cancelHelp?:boolean;executionOutline?:string[];finalShotInstruction?:boolean;finalMessageInstruction?:boolean;finalRpcInstruction?:boolean}={}){
+async function scenario(turns:ModelResponse[],options:{actionError?:boolean;actionRejected?:boolean;emptyObserve?:boolean;navigationError?:boolean;cancelConnect?:boolean;createError?:boolean;closeError?:boolean;original?:string;origin?:string;fill?:string;fills?:string[];account?:{account:Record<string,string>;origin:string};method?:string;helpMessage?:string;cancel?:boolean;cancelStagehand?:boolean;newInstruction?:boolean;compact?:boolean;navigationObservationFailure?:boolean;unknownActionResult?:boolean;helpWaits?:number;cancelHelp?:boolean;executionOutline?:string[];finalShotInstruction?:boolean;finalMessageInstruction?:boolean;finalRpcInstruction?:boolean}={}){
  let attached=false,clicks=0,cancelled=false,closed=false,sessionCloses=0,navigations=0,snapshotFailures=0,planned=0,changed=false,helpRequests=0,finalReply=false;
  const metadata={actionId:'sdk_action_test',cache:{status:'DISABLED'},usage:{inputTokens:1,outputTokens:1}};
- let llm:ClientLLM;const calls:Array<{path:string;body:any}>=[],checkpoints:any[]=[];
+ let llm:ClientLLM,currentUrl='https://example.com/',stagehandCalls=0;const calls:Array<{path:string;body:any}>=[],checkpoints:any[]=[];
  const original=options.original??'请处理当前页面';
  const chat:any[]=[{seq:1,role:'user',source:'user',content:original,private:!!options.original,origin:options.origin??'https://example.com'}];
  const changeInstructions=()=>{if(!changed){changed=true;chat.push({seq:2,role:'user',source:'user',content:'请先核对新补充要求，再结束。'});}};
  const screenshot=await sharp({create:{width:1,height:1,channels:4,background:'#fff'}}).png().toBuffer();
- const page={url:async()=> 'https://example.com/',goto:async()=>{navigations++;if(options.navigationError)throw Error('NAVIGATION_FAILED');},screenshot:async()=>{if(options.finalShotInstruction&&finalReply)changeInstructions();return screenshot;},
+ const page={url:async()=>currentUrl,goto:async(url:string)=>{navigations++;if(options.navigationError)throw Error('NAVIGATION_FAILED');currentUrl=url;},screenshot:async()=>{if(options.finalShotInstruction&&finalReply)changeInstructions();return screenshot;},
   snapshot:async()=>{if(snapshotFailures>0){snapshotFailures--;throw Error('Execution context destroyed during navigation');}return {formattedTree:'[1] button 继续登录\n[2] textbox 密码',xpathMap:{},urlMap:{}};},
   evaluate:async()=>({readyState:'complete',width:1,height:1,text:[]}),locator:()=>{throw Error('RAW_SELECTOR_PATH_MUST_NOT_BE_USED');},
  };
@@ -28,12 +28,14 @@ async function scenario(turns:ModelResponse[],options:{actionError?:boolean;acti
   if(path.endsWith('/stagehand')){
    if(options.cancelStagehand)cancelled=true;
    if(options.newInstruction&&!changed){changed=true;chat.push({seq:2,role:'user',source:'user',content:'先不要提交，改为只读查看'});}
-   const value={action:{method:options.method??(options.fill?'fill':'click'),arguments:options.fill?[options.fill]:[]}};
+   const fill=options.fills?.[stagehandCalls++]??options.fill;
+   const value={action:{method:options.method??(fill?'fill':'click'),arguments:fill?[fill]:[]}};
    return {text:JSON.stringify(value),structured:value} as T;
   }
   if(path.endsWith('/tool'))return {execute:true} as T;
   if(path.endsWith('/snapshots'))return {id:'snapshot_test'} as T;
-  if(path.endsWith('/help')){helpRequests++;if(options.cancelHelp)cancelled=true;return {ready:helpRequests>(options.helpWaits??0),message:options.helpMessage??'请结合用户原文继续'} as T;}
+  if(path.endsWith('/help')){helpRequests++;if(options.cancelHelp)cancelled=true;return {ready:helpRequests>(options.helpWaits??0),message:options.helpMessage??'请结合用户原文继续',accountId:options.account?'account_test':undefined} as T;}
+  if(path.endsWith('/credentials'))return options.account as T;
   return {} as T;
  }};
  const infer=async(instruction:string)=>llm.generate({messages:[{role:'user',content:{type:'text',text:instruction}}],systemPrompt:'Stagehand actual callback',responseFormat:{type:'json_schema',name:'action',schema:{type:'object',properties:{action:{type:'object'}}}}});
@@ -108,6 +110,30 @@ test('模型在完整上下文中生成的实际填写值仍校验所属站点',
  const s=await scenario([tool('act',{instruction:'根据原文填写'})],{original:'密码是 0012Ab!',origin:'https://login.example.com',fill:'0012Ab!'});
  assert.equal(s.clicks,0);assert.equal(s.calls.some(c=>c.path.endsWith('/tool')&&c.body.phase==='start'),false);
  assert.match(JSON.stringify(s.calls.filter(c=>c.path.endsWith('/model'))),/CREDENTIAL_ORIGIN_MISMATCH/);
+});
+
+for(const fill of ['prefix:0012Ab!','0012Ab!:suffix','prefix:0012Ab!:suffix'])test('完整已知凭据加前后缀仍拒绝跨站填写：'+fill,async()=>{
+ const s=await scenario([tool('act',{instruction:'根据原文填写'})],{original:'0012Ab!',origin:'https://login.example.com',fill});
+ assert.equal(s.clicks,0);assert.equal(s.calls.some(c=>c.path.endsWith('/tool')&&c.body.phase==='start'),false);
+ assert.match(JSON.stringify(s.calls.filter(c=>c.path.endsWith('/model'))),/CREDENTIAL_ORIGIN_MISMATCH/);
+});
+
+test('同站拼接凭据可使用且脱敏，从完整原文填写过的值保留站点来源',async()=>{
+ const same=await scenario([tool('act',{instruction:'按原文填写'})],{original:'0012Ab!',fill:'prefix:0012Ab!:suffix'});
+ assert.equal(same.clicks,1);
+ assert.doesNotMatch(JSON.stringify(same.calls.filter(c=>c.path.endsWith('/messages'))),/0012Ab!/);
+ const s=await scenario([tool('act',{instruction:'填写用户密码'}),tool('navigate',{url:'https://other.example.com'}),tool('act',{instruction:'按页面格式填写'})],{
+  original:'密码是 0012Ab!，请先确认页面。',fills:['0012Ab!','prefix:0012Ab!:suffix'],
+ });
+ assert.equal(s.clicks,1);assert.match(JSON.stringify(s.calls.filter(c=>c.path.endsWith('/model'))),/CREDENTIAL_ORIGIN_MISMATCH/);
+ assert.equal(s.calls.filter(c=>c.path.endsWith('/tool')&&c.body.phase==='start').length,2);
+});
+
+test('拼接多个站点凭据时本网站来源不能为其他站点凭据放行',async()=>{
+ const s=await scenario([tool('navigate',{url:'https://other.example.com'}),tool('ask',{message:'读取此站点账号'}),tool('navigate',{url:'https://example.com'}),tool('act',{instruction:'填写拼接内容'})],{
+  original:'current-site-secret',fill:'current-site-secret:other-site-secret',account:{origin:'https://other.example.com',account:{password:'other-site-secret'}},
+ });
+ assert.equal(s.clicks,0);assert.match(JSON.stringify(s.calls.filter(c=>c.path.endsWith('/model'))),/CREDENTIAL_ORIGIN_MISMATCH/);
 });
 test('原生下拉选项不因数字与其他站点密码重合而被当成凭据填写',async()=>{
  const s=await scenario([tool('act',{instruction:'将数量选择为 1'})],{original:'登录密码 001234',origin:'https://login.example.com',fill:'1',method:'selectOptionFromDropdown'});

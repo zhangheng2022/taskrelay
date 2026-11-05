@@ -78,6 +78,7 @@ export async function enqueue(
   task: TaskDefinition,
   key: string,
   scheduled = now(),
+  command?: { id: string; threadId: string },
 ) {
   const owner=await db.prepare('SELECT user_id FROM tasks WHERE id=?').bind(task.id).first<{user_id:string}>();
   if(!owner) throw new Error('TASK_NOT_FOUND');
@@ -94,7 +95,11 @@ export async function enqueue(
     ).toISOString();
   await db
     .prepare(
-      `INSERT OR IGNORE INTO runs(id,task_id,task_snapshot,status,scheduled_for,deadline,account_key,idempotency_key,created_at,updated_at,user_id,profile_id,execution_protocol,thread_id) VALUES(?,?,?,'queued',?,?,?,?,?,?,?,?,${PROTOCOL_VERSION},(SELECT id FROM ai_threads WHERE task_id=? AND closed=0 LIMIT 1))`,
+      `INSERT OR IGNORE INTO runs(id,task_id,task_snapshot,status,scheduled_for,deadline,account_key,idempotency_key,created_at,updated_at,user_id,profile_id,execution_protocol,thread_id)
+      SELECT ?,?,?,'queued',?,?,?,?,?,?,?,?,${PROTOCOL_VERSION},${command ? '?' : '(SELECT id FROM ai_threads WHERE task_id=? AND closed=0 LIMIT 1)'}
+      WHERE EXISTS(SELECT 1 FROM tasks WHERE id=? AND version=? AND context_withdrawn=0)
+      ${command ? `AND EXISTS(SELECT 1 FROM conversation_commands c JOIN ai_threads t ON t.id=c.thread_id
+        WHERE c.id=? AND c.thread_id=? AND c.task_id=? AND c.state='committed' AND c.run_task IS NOT NULL AND t.closed=0 AND t.user_id=?)` : ''}`,
     )
     .bind(
       id,
@@ -105,15 +110,17 @@ export async function enqueue(
       task.accountId ?? `task:${task.id}`,
       key,
       at,
-      at,owner.user_id,profileId,task.id,
+      at,owner.user_id,profileId,command?.threadId ?? task.id,
+      task.id, task.version,
+      ...(command ? [command.id, command.threadId, task.id, owner.user_id] : []),
     )
     .run();
-  return runFrom(
-    (await db
+  const saved = await db
       .prepare("SELECT * FROM runs WHERE idempotency_key=?")
       .bind(key)
-      .first<Row>())!,
-  );
+      .first<Row>();
+  if (!saved) throw new Error(command ? 'COMMAND_RETIRED' : 'TASK_CONTEXT_OR_VERSION_CHANGED');
+  return runFrom(saved);
 }
 export async function claim(
   db: D1Database,
@@ -264,7 +271,7 @@ export async function tick(db: D1Database) {
         task,
         `schedule:${task.id}:${task.version}:${slot}`,
         slot,
-      ); } catch(e) { if(!/QUEUE_LIMIT|USER_DISABLED/.test((e as Error).message)) throw e; } }
+      ); } catch(e) { if(!/QUEUE_LIMIT|USER_DISABLED|TASK_CONTEXT_OR_VERSION_CHANGED/.test((e as Error).message)) throw e; } }
     await db
       .prepare(
         "UPDATE tasks SET next_run_at=? WHERE id=? AND version=? AND next_run_at=?",

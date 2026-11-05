@@ -24,6 +24,8 @@ export function testDb() {
     "0018_action_ledger.sql",
     "0019_chat_execution.sql",
     "0020_graph_orchestration.sql",
+    "0021_context_withdrawal.sql",
+    "0022_checkpoint_chunks.sql",
   ])
     sql.exec(
       readFileSync(

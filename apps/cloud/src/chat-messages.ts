@@ -18,6 +18,7 @@ interface ContextRow {
   reply_to: string | null;
   run_id: string | null;
   private_content: string | null;
+  context_withdrawn: number;
   origin: string | null;
 }
 
@@ -57,8 +58,10 @@ export async function messageStatement(
       )
     : null;
   return env.DB.prepare(
-    `INSERT OR IGNORE INTO ai_messages(id,thread_id,seq,role,content,turn_id,at,source,parts,run_id,reply_to,private_content)
-    SELECT ?,id,(SELECT COALESCE(MAX(seq),0)+1 FROM ai_messages WHERE thread_id=?),?,?,?,?,?,?,?,?,? FROM ai_threads WHERE id=? AND closed=0 ${fence ? `AND (${fence.sql})` : ""}`,
+    `INSERT OR IGNORE INTO ai_messages(id,thread_id,seq,role,content,turn_id,at,source,parts,run_id,reply_to,private_content,context_withdrawn)
+    SELECT ?,id,(SELECT COALESCE(MAX(seq),0)+1 FROM ai_messages WHERE thread_id=?),?,?,?,?,?,?,?,?,?,
+      CASE WHEN EXISTS(SELECT 1 FROM runs WHERE id=? AND context_withdrawn=1) THEN 1 ELSE 0 END
+      FROM ai_threads WHERE id=? AND closed=0 ${fence ? `AND (${fence.sql})` : ""}`,
   ).bind(
     message.id,
     threadId,
@@ -71,6 +74,7 @@ export async function messageStatement(
     message.runId ?? null,
     message.replyTo ?? null,
     secret,
+    message.role === 'user' ? null : message.runId ?? null,
     threadId,
     ...(fence?.values ?? []),
   );
@@ -114,17 +118,20 @@ export async function conversationContext(
   )
     throw Error("THREAD_NOT_FOUND");
   const rows = await env.DB.prepare(
-    `SELECT m.id,m.seq,m.role,m.content,m.source,m.parts,m.reply_to,m.run_id,m.private_content,
+    `SELECT m.id,m.seq,m.role,m.content,m.source,m.parts,m.reply_to,m.run_id,m.private_content,m.context_withdrawn,
     (SELECT json_extract(h.request,'$.origin') FROM execution_help h WHERE h.thread_id=m.thread_id AND (h.id=m.reply_to OR h.id||'_request'=m.reply_to) LIMIT 1) AS origin
     FROM ai_messages m WHERE m.thread_id=? AND m.seq>? ORDER BY m.seq`,
   )
     .bind(threadId, after)
     .all<ContextRow>();
   return Promise.all(
-    rows.results.map(async ({ private_content, ...r }) => ({
+    rows.results.map(async ({ private_content, context_withdrawn, ...r }) => ({
       ...r,
       private: !!private_content,
-      content: private_content
+      // 撤回与加密不是同一状态；本人历史可解密，任何后续任务上下文只保留占位。
+      content: context_withdrawn
+        ? "[用户已将这条内容设为仅本人可见]"
+        : private_content
         ? options
           ? await unseal<string>(
               private_content,
@@ -133,7 +140,7 @@ export async function conversationContext(
             )
           : "[私密回复已提供，请通过协助通道使用]"
         : r.content,
-      parts: JSON.parse(r.parts),
+      parts: context_withdrawn ? [] : JSON.parse(r.parts),
     })),
   );
 }

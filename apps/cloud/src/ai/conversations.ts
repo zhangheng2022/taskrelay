@@ -22,6 +22,7 @@ import type { Message } from "../../../../packages/model/src/index";
 import { planConversation } from "./planning-graph";
 import { D1MemoryStore } from "./memory";
 import { seal, unseal } from "../crypto";
+import { notifyDevices } from "../notifications";
 
 export const conversations = new Hono<{
   Bindings: AppEnv;
@@ -238,22 +239,39 @@ conversations.post("/threads/:id/messages/:messageId/private", async (c) => {
     .bind(c.req.param("messageId"), t.id)
     .first<Row>();
   if (!message) throw new Error("MESSAGE_NOT_FOUND");
-  if (message.private_content) return c.json({ ok: true });
+  if (message.context_withdrawn) return c.json({ ok: true });
   if (t.active_turn) throw new Error("THREAD_VERSION_CONFLICT");
   const fence =
     "EXISTS(SELECT 1 FROM ai_threads WHERE id=? AND version=? AND active_turn IS NULL AND closed=0)";
-  const encrypted = await seal(
+  const encrypted = message.private_content ?? await seal(
     message.content,
     c.env.MASTER_KEY,
     `message:${t.id}:${message.id}`,
   );
   const results = await c.env.DB.batch([
     c.env.DB.prepare(
-      `UPDATE ai_messages SET content='[用户已将这条内容设为仅本人可见]',private_content=? WHERE id=? AND ${fence}`,
+      `UPDATE ai_messages SET content='[用户已将这条内容设为仅本人可见]',private_content=?,context_withdrawn=1 WHERE id=? AND ${fence}`,
     ).bind(encrypted, message.id, t.id, t.version),
+    c.env.DB.prepare(
+      `UPDATE ai_messages SET context_withdrawn=1 WHERE thread_id=? AND role='assistant' AND seq>=? AND ${fence}`,
+    ).bind(t.id, message.seq, t.id, t.version),
     c.env.DB.prepare(
       `UPDATE conversation_inbox SET content='[用户已将这条内容设为仅本人可见]' WHERE id=? AND ${fence}`,
     ).bind(message.turn_id, t.id, t.version),
+    // 执行器可能已缓存旧正文，不能只过滤下次增量读取。取消旧运行后，模型、
+    // 凭据与工具入口的租约检查均拒绝继续；已经发出的远端调用无法追回。
+    c.env.DB.prepare(
+      `UPDATE runs SET context_withdrawn=1,cancel_requested=CASE WHEN status IN ('queued','running','waiting_user','verifying') THEN 1 ELSE cancel_requested END,status=CASE WHEN status='queued' THEN 'cancelled' ELSE status END,updated_at=? WHERE thread_id=? AND ${fence}`,
+    ).bind(now(), t.id, t.id, t.version),
+    c.env.DB.prepare(
+      `UPDATE tasks SET context_withdrawn=1,status='paused',next_run_at=NULL WHERE id=? AND ${fence}`,
+    ).bind(t.task_id ?? null, t.id, t.version),
+    c.env.DB.prepare(
+      `UPDATE conversation_commands SET run_task=NULL,state='done' WHERE thread_id=? AND state IN ('pending','committed') AND ${fence}`,
+    ).bind(t.id, t.id, t.version),
+    c.env.DB.prepare(
+      `UPDATE execution_help SET response=NULL,awaiting_user=0,reply_message_id=NULL WHERE thread_id=? AND ${fence}`,
+    ).bind(t.id, t.id, t.version),
     c.env.DB.prepare(
       `UPDATE ai_graph_inputs SET active=0,generation=generation+1,status='cancelled' WHERE owner=? AND parent_thread=? AND ${fence}`,
     ).bind(t.user_id, t.id, t.id, t.version),
@@ -272,11 +290,12 @@ conversations.post("/threads/:id/messages/:messageId/private", async (c) => {
       ).bind(t.user_id, t.user_id, t.id, t.id, t.version),
     ),
     c.env.DB.prepare(
-      "UPDATE ai_threads SET summary='',summary_seq=0,partial='{}',version=version+1 WHERE id=? AND version=? AND active_turn IS NULL AND closed=0",
+      "UPDATE ai_threads SET summary='',summary_seq=0,partial='{}',draft=NULL,version=version+1 WHERE id=? AND version=? AND active_turn IS NULL AND closed=0",
     ).bind(t.id, t.version),
   ]);
   if (results.at(-1)!.meta.changes !== 1)
     throw new Error("THREAD_VERSION_CONFLICT");
+  await notifyDevices(c.env);
   return c.json({ ok: true });
 });
 

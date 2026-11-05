@@ -28,9 +28,20 @@ export async function maskedScreenshot(page:Page,secrets:string[]){
       });
       const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT),nodes:Node[]=[];
       for(let n=walker.nextNode();n;n=walker.nextNode())nodes.push(n);
-      const text = nodes.map(n=>{
+      const blocks=new Map<Element,number>();
+      const text = nodes.flatMap(n=>{
         const range=document.createRange();range.selectNodeContents(n);
-        return {value:n.textContent??'',rects:Array.from(range.getClientRects(),r=>({left:r.left,top:r.top,width:r.width,height:r.height}))};
+        const rects=Array.from(range.getClientRects(),r=>({left:r.left,top:r.top,width:r.width,height:r.height})).filter(r=>r.width>0&&r.height>0);
+        if(!rects.length)return [];
+        // 块间保留分隔；同一块内的相邻 span 属于连续可见文本。
+        let block=n.parentElement!;
+        while(block.parentElement){
+          const display=getComputedStyle(block).display;
+          if(display&&display!=='contents'&&!display.startsWith('inline'))break;
+          block=block.parentElement;
+        }
+        if(!blocks.has(block))blocks.set(block,blocks.size);
+        return [{value:n.textContent??'',rects,block:blocks.get(block)!}];
       });
       return {width:innerWidth,height:innerHeight,text};
     },marker);
@@ -40,8 +51,24 @@ export async function maskedScreenshot(page:Page,secrets:string[]){
     const capture=await page.screenshot({type:'png',fullPage:false,scale:'css'});
     const {data,info}=await sharp(Buffer.from(capture),{limitInputPixels:16_000_000}).toColourspace('srgb').ensureAlpha().raw().toBuffer({resolveWithObject:true});
     const sx=info.width/layout.width,sy=info.height/layout.height;
-    for(const text of layout.text){
-      if(!secrets.some(s=>s&&text.value.includes(s))&&!/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(text.value))continue;
+    // 在执行进程拼接文本并映射命中区间，避免秘密被 span 拆开后漏遮蔽。
+    // 区间和命中节点只用于本地像素处理，不能回传网页。
+    let joined='';
+    const spans=layout.text.map((text,index)=>{
+      if(index&&layout.text[index-1].block!==text.block)joined+='\n';
+      const start=joined.length;joined+=text.value;
+      return {text,start,end:joined.length};
+    });
+    const matches:Array<{start:number;end:number}>=[];
+    for(const secret of new Set(secrets))if(secret){
+      for(let start=joined.indexOf(secret);start!==-1;start=joined.indexOf(secret,start+1))matches.push({start,end:start+secret.length});
+    }
+    for(const match of joined.matchAll(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi))matches.push({start:match.index,end:match.index+match[0].length});
+    matches.sort((a,b)=>a.start-b.start);
+    let matchIndex=0;
+    for(const {text,start,end} of spans){
+      while(matchIndex<matches.length&&matches[matchIndex].end<=start)matchIndex++;
+      if(!matches[matchIndex]||matches[matchIndex].start>=end)continue;
       for(const rect of text.rects){
         if(![rect.left,rect.top,rect.width,rect.height].every(Number.isFinite)||rect.width<=0||rect.height<=0)continue;
         const left=Math.max(0,Math.floor(rect.left*sx)-1),top=Math.max(0,Math.floor(rect.top*sy)-1);

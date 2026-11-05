@@ -179,6 +179,7 @@ user.post('/tasks/:id/conditions',async c=>{
   if(prior){if(prior.digest!==digest)throw Error('IDEMPOTENCY_CONFLICT');return c.json({id});}
   const row=await c.env.DB.prepare('SELECT * FROM tasks WHERE id=? AND user_id=?').bind(id,c.get('userId')).first<Row>();
   if(!row||row.version!==b.expectedVersion)throw Error('TASK_VERSION_CONFLICT');
+  if(row.context_withdrawn)throw Error('TASK_CONTEXT_WITHDRAWN');
   const card=await c.env.DB.prepare("SELECT c.* FROM run_conditions c JOIN runs r ON r.id=c.run_id WHERE c.run_id=? AND c.task_id=? AND r.status='succeeded'").bind(b.runId,id).first<Row>();
   if(!card)throw Error('CONDITIONS_NOT_READY');
   // An older successful card must never authorize a new, unverified task revision.
@@ -191,8 +192,8 @@ user.post('/tasks/:id/conditions',async c=>{
   const task:TaskDefinition={...base,goal:b.conditions.goal,verification:base.verification.kind==='batch'?{...base.verification,value:b.conditions.completion,scope:b.conditions.scope}:{kind:'goal',value:b.conditions.completion},
     schedule:b.schedule,modelId:b.modelId,modelVersion:model.profile.version,accountId:b.accountId,version:base.version+1,status:'active',nextRunAt:nextOccurrence(b.schedule),confirmedCondition:b.runId};
   const writes=await c.env.DB.batch([
-    c.env.DB.prepare('INSERT OR IGNORE INTO idempotency(key,digest,resource_id) SELECT ?,?,id FROM tasks WHERE id=? AND version=? AND NOT EXISTS(SELECT 1 FROM ai_threads WHERE task_id=tasks.id AND active_turn IS NOT NULL AND closed=0)').bind(key,digest,id,b.expectedVersion),
-    c.env.DB.prepare('UPDATE tasks SET version=?,definition=?,status=?,next_run_at=?,confirmed_condition=?,updated_at=? WHERE id=? AND version=? AND EXISTS(SELECT 1 FROM idempotency WHERE key=? AND digest=?)')
+    c.env.DB.prepare('INSERT OR IGNORE INTO idempotency(key,digest,resource_id) SELECT ?,?,id FROM tasks WHERE id=? AND version=? AND context_withdrawn=0 AND NOT EXISTS(SELECT 1 FROM ai_threads WHERE task_id=tasks.id AND active_turn IS NOT NULL AND closed=0)').bind(key,digest,id,b.expectedVersion),
+    c.env.DB.prepare('UPDATE tasks SET version=?,definition=?,status=?,next_run_at=?,confirmed_condition=?,updated_at=? WHERE id=? AND version=? AND context_withdrawn=0 AND EXISTS(SELECT 1 FROM idempotency WHERE key=? AND digest=?)')
       .bind(task.version,JSON.stringify(task),task.status,task.nextRunAt,b.runId,now(),id,b.expectedVersion,key,digest),
     c.env.DB.prepare('INSERT OR IGNORE INTO task_versions(task_id,version,definition) SELECT id,version,definition FROM tasks WHERE id=? AND version=?').bind(id,task.version),
     c.env.DB.prepare('UPDATE run_conditions SET confirmed_at=?,approved_version=?,confirmed_content=? WHERE run_id=? AND EXISTS(SELECT 1 FROM tasks WHERE id=? AND version=? AND confirmed_condition=?)')
@@ -214,18 +215,21 @@ user.post("/tasks/:id/state", async (c) => {
   if (!row) throw new Error("TASK_NOT_FOUND");
   const task = taskFrom(row);
   if (enabled) {
+    if(row.context_withdrawn)throw Error('TASK_CONTEXT_WITHDRAWN');
     if(!row.confirmed_condition)throw Error("CONDITIONS_CONFIRMATION_REQUIRED");
   }
-  await c.env.DB.prepare(
-    "UPDATE tasks SET status=?,next_run_at=?,updated_at=? WHERE id=?",
+  const saved = await c.env.DB.prepare(
+    "UPDATE tasks SET status=?,next_run_at=?,updated_at=? WHERE id=? AND (?=0 OR context_withdrawn=0)",
   )
     .bind(
       enabled ? "active" : "paused",
       enabled ? nextOccurrence(task.schedule) : null,
       now(),
       id,
+      Number(enabled),
     )
     .run();
+  if(!saved.meta.changes)throw Error('TASK_CONTEXT_WITHDRAWN');
   return c.json({ ok: true });
 });
 user.post("/tasks/:id/run", async (c) => {
@@ -236,6 +240,7 @@ user.post("/tasks/:id/run", async (c) => {
     .bind(c.req.param("id"))
     .first<Row>();
   if (!row) throw new Error("TASK_NOT_FOUND");
+  if(row.context_withdrawn)throw Error('TASK_CONTEXT_WITHDRAWN');
   const task = taskFrom(row);
   const model = await getModel(c.env, task.modelId, task.modelVersion);
   if (

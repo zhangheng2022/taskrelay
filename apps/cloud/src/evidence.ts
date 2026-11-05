@@ -1,8 +1,8 @@
 import type { AppEnv } from './env';
 
-export async function putEvidence(env:AppEnv,key:string,bytes:ArrayBuffer,expires:string|null){
+export async function putEvidence(env:AppEnv,key:string,bytes:ArrayBuffer,expires:string|null,pendingPersistent=false){
   if(!env.EVIDENCE_STORE)throw new Error('EVIDENCE_NOT_CONFIGURED');
-  await env.EVIDENCE_STORE.getByName(key).put(key,bytes,expires===null?null:Date.parse(expires));
+  await env.EVIDENCE_STORE.getByName(key).put(key,bytes,expires===null?null:Date.parse(expires),pendingPersistent);
 }
 export async function getEvidence(env:AppEnv,key:string){
   if(env.EVIDENCE_STORE)return env.EVIDENCE_STORE.getByName(key).get(key);

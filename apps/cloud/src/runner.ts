@@ -42,7 +42,9 @@ runner.post('/runs/:id/heartbeat',async c=>{
 runner.post('/runs/:id/context',async c=>{
   const b=lease.extend({after:z.number().int().nonnegative().default(0)}).parse(await c.req.json());
   const run=await requireLease(c.env.DB,c.req.param('id'),c.get('deviceId'),b.epoch),thread=await runThread(c.env,run.id);
-  return c.json({messages:await conversationContext(c.env,thread.id,b.after,{runId:run.id})});
+  const messages=await conversationContext(c.env,thread.id,b.after,{runId:run.id});
+  await requireLease(c.env.DB,run.id,c.get('deviceId'),b.epoch);
+  return c.json({messages});
 });
 runner.post('/runs/:id/messages',async c=>{
   const b=lease.extend({id:idSchema,content:z.string(),parts:parts.default([]),replyTo:idSchema.optional()}).parse(await c.req.json());
@@ -129,14 +131,26 @@ runner.post('/runs/:id/snapshots',async c=>{
   const run=await requireLease(c.env.DB,c.req.param('id'),c.get('deviceId'),b.epoch,true),thread=await runThread(c.env,run.id);
   const bytes=Buffer.from(b.image,'base64');
   if(bytes.length>1_500_000||!bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])))throw Error('PNG_REQUIRED');
-  const id=`snapshot_${b.captureId}`,key=`chat/${thread.id}/${id}`;
-  const prior=await c.env.DB.prepare('SELECT id,run_id,object_key FROM artifacts WHERE id=?').bind(id).first<Row>();
-  if(prior){if(prior.run_id!==run.id||prior.object_key!==key)throw Error('ARTIFACT_CONFLICT');return c.json({id});}
-  await putEvidence(c.env,key,new Uint8Array(bytes).buffer,null);
-  try{
-    const saved=await c.env.DB.prepare("INSERT OR IGNORE INTO artifacts(id,run_id,object_key,content_type,expires_at,thread_id,persistent) SELECT ?,?,?,'image/png','9999-12-31T23:59:59.999Z',?,1 WHERE EXISTS(SELECT 1 FROM ai_threads WHERE id=? AND closed=0)").bind(id,run.id,key,thread.id,thread.id).run();
-    if(!saved.meta.changes)throw Error('THREAD_NOT_FOUND');
-  }catch(error){await deleteEvidence(c.env,key);throw error;}return c.json({id});
+  const id=`snapshot_${b.captureId}`;
+  const prior=await c.env.DB.prepare('SELECT id,run_id,thread_id FROM artifacts WHERE id=?').bind(id).first<Row>();
+  if(prior){if(prior.run_id!==run.id||prior.thread_id!==thread.id)throw Error('ARTIFACT_CONFLICT');return c.json({id});}
+  // 每次上传独占对象，只有赢得索引插入的对象对外发布。进程中断或D1
+  // 写入结果未知时不贸然删除；Evidence alarm 根据持久索引保留或回收。
+  const key=`chat/${thread.id}/${id}/${crypto.randomUUID()}`;
+  await putEvidence(c.env,key,new Uint8Array(bytes).buffer,null,true);
+  const saved=await c.env.DB.prepare(`INSERT OR IGNORE INTO artifacts(id,run_id,object_key,content_type,expires_at,thread_id,persistent)
+    SELECT ?,?,?,'image/png','9999-12-31T23:59:59.999Z',?,1 WHERE EXISTS(SELECT 1 FROM ai_threads WHERE id=? AND closed=0)
+    AND NOT EXISTS(SELECT 1 FROM evidence_retirements WHERE object_key=?)
+    AND EXISTS(SELECT 1 FROM runs WHERE id=? AND device_id=? AND lease_epoch=? AND lease_expires_at>? AND status IN ('running','waiting_user','verifying'))`)
+    .bind(id,run.id,key,thread.id,thread.id,key,run.id,c.get('deviceId'),b.epoch,now()).run();
+  if(!saved.meta.changes){
+    const winner=await c.env.DB.prepare('SELECT id,run_id,thread_id,object_key FROM artifacts WHERE id=?').bind(id).first<Row>();
+    if(winner?.object_key!==key)await deleteEvidence(c.env,key);
+    if(winner?.run_id===run.id&&winner.thread_id===thread.id)return c.json({id});
+    if(winner)throw Error('ARTIFACT_CONFLICT');
+    throw Error('THREAD_NOT_FOUND');
+  }
+  return c.json({id});
 });
 runner.post('/runs/:id/finish',async c=>{
   const b=lease.extend({status:z.enum(['succeeded','failed','unknown','cancelled']),result:runResultSchema,expectedUserSeq:z.number().int().nonnegative().optional()}).parse(await c.req.json());

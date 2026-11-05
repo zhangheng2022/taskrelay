@@ -92,9 +92,16 @@ export async function execute(run:TaskRun,port:RuntimePort,adapters={loadSdk:()=
     const currentOrigin=new URL(await page!.url()).origin;
     for(const value of action?.arguments??[]){
       if(typeof value!=='string'||!value)continue;
-      const sources=privateSources.filter(source=>source.content.includes(value));
+      // 完整原文仍直接交给模型；这里只追踪实际使用值的来源。前后缀不能
+      // 消除已有凭据的站点约束，已从原文使用过的值也须保留其来源。
+      const sources=privateSources.filter(source=>source.content&&(source.content.includes(value)||value.includes(source.content)));
+      // 多个值拼在一起时，当前站点的一份凭据不能替另一站点的凭据放行。
+      for(const source of sources)if(value.includes(source.content)&&!sources.some(known=>known.content===source.content&&known.origin===currentOrigin))throw Error('CREDENTIAL_ORIGIN_MISMATCH');
       if(sources.length&&!sources.some(source=>source.origin===currentOrigin))throw Error('CREDENTIAL_ORIGIN_MISMATCH');
-      if(sources.length)secrets.add(value);
+      if(sources.length){
+        secrets.add(value);
+        if(!privateSources.some(known=>known.content===value&&known.origin===currentOrigin))privateSources.push({content:value,origin:currentOrigin});
+      }
     }
   };
   try{

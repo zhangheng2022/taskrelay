@@ -99,7 +99,7 @@ export async function commitDecision(
     ),
     env.DB.prepare(
       `INSERT INTO tasks(id,version,definition,status,next_run_at,created_at,updated_at,user_id)
-      SELECT ?,?,?,?,NULL,?,?,? WHERE ${fence} ON CONFLICT(id) DO UPDATE SET version=excluded.version,definition=excluded.definition,status=excluded.status,next_run_at=NULL,confirmed_condition=NULL,updated_at=excluded.updated_at`,
+      SELECT ?,?,?,?,NULL,?,?,? WHERE ${fence} ON CONFLICT(id) DO UPDATE SET version=excluded.version,definition=excluded.definition,status=excluded.status,next_run_at=NULL,confirmed_condition=NULL,context_withdrawn=0,updated_at=excluded.updated_at`,
     ).bind(
       definition.id,
       definition.version,
@@ -143,12 +143,21 @@ export async function drainCommands(env: AppEnv, id?: string) {
     .bind(...(id ? [id] : []))
     .all<Row>();
   for (const row of rows.results) {
-    if (row.run_task)
-      await enqueue(
-        env.DB,
-        JSON.parse(row.run_task),
-        `manual:conversation:${row.id}`,
-      );
+    if (row.run_task) {
+      try {
+        // 读取后聊天仍可能被删除或撤回；把原命令及原聊天的有效性放到
+        // INSERT 内原子检查，不能让旧命令重新挂到同任务的新聊天。
+        await enqueue(
+          env.DB,
+          JSON.parse(row.run_task),
+          `manual:conversation:${row.id}`,
+          undefined,
+          { id: row.id, threadId: row.thread_id },
+        );
+      } catch (error) {
+        if ((error as Error).message !== 'COMMAND_RETIRED') throw error;
+      }
+    }
     await env.DB.prepare(
       "UPDATE conversation_commands SET state='done' WHERE id=? AND state='committed'",
     )

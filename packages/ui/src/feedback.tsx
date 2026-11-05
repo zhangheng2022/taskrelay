@@ -61,6 +61,8 @@ export function ErrorText({ error }: { error: string }) {
     ENTRY_ORIGIN_NOT_ALLOWED:"网站不在允许访问的站点中，请核对地址和授权范围。",
     THREAD_VERSION_CONFLICT:"会话已在另一处更新，请刷新后重新发送。", DRAFT_VERSION_CONFLICT:"草稿已变更，请重新核对确认卡。",
     THREAD_NOT_FOUND:"会话已删除或过期，请重新打开。", TURN_STALE:"这轮回复已失效，请查看最新会话。",
+    TASK_CONTEXT_WITHDRAWN:"这项任务引用的消息已撤回，请在聊天中重新交办。",
+    TASK_CONTEXT_OR_VERSION_CHANGED:"任务内容已变更，请刷新后重新交办。",
     TURN_OUTCOME_UNKNOWN:"本轮结果无法确认，系统不会自动重复请求。", MEMORY_CHANGED:"记忆已更新，请重新发送本轮问题。",
     CONTEXT_BUDGET_EXCEEDED:"这轮内容超过模型上下文预算，请缩短输入或调整模型预算。", MEMORY_LIMIT:"记忆已达100条，请先删除不再需要的内容。",
     MAINTENANCE:"服务维护中，请稍后再试。", CLIENT_UPGRADE_REQUIRED:"请安装最新客户端。", DEVICE_UPGRADE_REQUIRED:"设备需要完成协议升级。",

@@ -34,6 +34,8 @@ try{
  assert.equal(delivery.ready,true);assert.match(delivery.message,/完整回复/);
  assert.equal((await request('/_help-diagnostics')).graph.status,'done');
  assert.deepEqual(await request('/_evidence'),{size:1100000,first:51,other:null,removed:null});
+ assert.deepEqual(await request('/_checkpoint'),{intact:true,remaining:0});
+ assert.deepEqual(await request('/_evidence-publication',{threadId:thread.id,runId:run.id}),{retained:1100000,duplicateSafe:true,orphan:null,deleted:null,retired:2});
  const ws=new WebSocket(origin.replace('http:','ws:')+'/api/device/events',{headers:{Authorization:'Bearer '+'d'.repeat(64),'x-taskrelay-protocol':'15'}});
  await new Promise((resolve,reject)=>{ws.once('open',resolve);ws.once('error',reject);});
  const event=new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('Notification timeout')),5000);ws.once('message',m=>{clearTimeout(timer);resolve(m.toString());});});
@@ -41,5 +43,5 @@ try{
  await db.prepare("UPDATE devices SET revoked=1 WHERE id='fixture'").run();
  const closed=new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('Revocation timeout')),40000);ws.once('close',code=>{clearTimeout(timer);resolve(code);});});
  await request('/_publish');assert.equal(await closed,1008);
- console.log('PASS: real workerd gateway, asynchronous alarm, durable help interrupt/resume, duplicate request, encrypted multi-chunk evidence, WebSocket forwarding and revocation');
+ console.log('PASS: real workerd gateway, asynchronous alarm, durable help interrupt/resume, duplicate request, encrypted multi-chunk evidence and large checkpoints, staged evidence publication/orphan cleanup/duplicate alarm, cascading cleanup, WebSocket forwarding and revocation');
 }finally{await mf.dispose();}

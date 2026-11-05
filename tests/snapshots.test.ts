@@ -71,3 +71,24 @@ test('不可信页面无法通过截图读取其他站点秘密；敏感文字�
   assert.equal(dom.window.document.querySelectorAll('[data-taskrelay-mask]').length,0);
  }finally{dom.window.close();}
 });
+
+test('相邻 span 分割秘密和邮箱仍遮蔽全部片段，跨块普通文本保持可见',async()=>{
+ const dom=new JSDOM('<body><p><span>visible-</span><span>secret</span></p><p><span>fixture</span><span>@example</span><span>.com</span></p><p>ordinary text</p><p>visible-secret</p></body>',{runScripts:'outside-only'});
+ try{
+  (dom.window as any).__name=(f:unknown)=>f;
+  const positions=new Map([['visible-',{left:10,top:10,width:50,height:20}],['secret',{left:60,top:10,width:50,height:20}],
+   ['fixture',{left:10,top:40,width:40,height:20}],['@example',{left:50,top:40,width:40,height:20}],['.com',{left:90,top:40,width:30,height:20}],
+   ['ordinary text',{left:10,top:70,width:100,height:20}],['visible-secret',{left:10,top:100,width:100,height:20}]]);
+  dom.window.Range.prototype.getClientRects=function(this:Range){return [positions.get(this.startContainer.textContent!)!];} as any;
+  const inputs:string[]=[];
+  const page={evaluate:async(fn:Function,arg:unknown)=>{inputs.push(fn.toString()+JSON.stringify(arg));return dom.window.eval(`(${fn.toString()})(${JSON.stringify(arg)})`);},
+   screenshot:async()=>sharp({create:{width:1024,height:768,channels:4,background:'#fff'}}).png().toBuffer()};
+  const image=await maskedScreenshot(page as any,['visible-secret','invisible-other-site-secret']);
+  const {data,info}=await sharp(Buffer.from(image,'base64')).ensureAlpha().raw().toBuffer({resolveWithObject:true});
+  const pixel=(x:number,y:number)=>Array.from(data.subarray((y*info.width+x)*4,(y*info.width+x)*4+4));
+  for(const [x,y] of [[20,20],[70,20],[20,50],[60,50],[100,50],[20,110]])assert.deepEqual(pixel(x,y),[119,119,119,255]);
+  assert.deepEqual(pixel(20,80),[255,255,255,255]);
+  assert.doesNotMatch(inputs.join('\n'),/visible-secret|invisible-other-site-secret|fixture@example\.com/);
+  assert.equal(dom.window.document.querySelectorAll('[data-taskrelay-mask]').length,0);
+ }finally{dom.window.close();}
+});

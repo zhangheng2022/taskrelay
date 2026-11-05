@@ -92,10 +92,18 @@ export class ExecutorHost {
     this.alive = Date.now();
     this.lastLease = new Date(run.leaseExpiresAt!).getTime();
     this.journal.checkpoint(run.id, gen, run.leaseEpoch, "claimed", { run });
-    const child = this.fork(this.executorPath, [], {
-      serviceName: "TaskRelay Executor",
-      stdio: "ignore",
-    });
+    let child: UtilityProcess;
+    try {
+      child = this.fork(this.executorPath, [], {
+        serviceName: "TaskRelay Executor",
+        stdio: "ignore",
+      });
+    } catch (error) {
+      // fork 尚未返回也已持有云端租约；沿同一收尾路径保存失败事实，
+      // 清理或持久化失败时保留 current，允许 stop 再次完成收尾。
+      await this.stop(false);
+      throw error;
+    }
     this.child = child;
     const exit = new Promise<void>((resolve) =>
       child.once("exit", () => {
@@ -262,6 +270,8 @@ export class ExecutorHost {
         row.state === "intent" ||
         row.state === "human-delivery" ||
         payload.status === "unknown";
+    const stoppedSummary = this.child ? "执行进程已停止。" : "执行进程未能启动。";
+    const stoppedCode = this.child ? "EXECUTOR_EXITED" : "EXECUTOR_START_FAILED";
     // Preserve a previously queued terminal fact. Never replace it with a fabricated success.
     this.journal.queue(
       `finish_${run.id}`,
@@ -272,10 +282,10 @@ export class ExecutorHost {
         result: {
           summary: uncertain
             ? "本机已停止，操作结果需要只读核查。"
-            : "执行进程已停止。",
+            : stoppedSummary,
           outcome: uncertain ? "unconfirmed" : cancelled ? "stopped" : "error",
           evidence: [],
-          errorCode: cancelled ? "CANCEL_REQUESTED" : "EXECUTOR_EXITED",
+          errorCode: cancelled ? "CANCEL_REQUESTED" : stoppedCode,
         },
       },
     );
@@ -285,16 +295,16 @@ export class ExecutorHost {
   }
   stop(requestCancel = true): Promise<void> {
     if (this.stopPromise) return this.stopPromise;
-    if (!this.child) return Promise.resolve();
+    if (!this.current) return Promise.resolve();
     this.stopping = true;
     const child = this.child,
       run = this.current!,
       gen = this.generation;
     this.stopPromise = (async () => {
-      child.postMessage({ type: "cancel", generation: gen });
+      child?.postMessage({ type: "cancel", generation: gen });
       // Offline stopping must not wait for a network request. Stop effects before reporting.
       await this.browser.close();
-      if (!this.exited.has(child)) {
+      if (child && !this.exited.has(child)) {
         let timer: ReturnType<typeof setTimeout> | undefined;
         const exited = new Promise<void>((resolve, reject) => {
           child.once("exit", () => {
@@ -313,7 +323,7 @@ export class ExecutorHost {
         if (this.exited.has(child)) clearTimeout(timer);
         else await exited;
       }
-      this.retire(run, gen, requestCancel);
+      this.retire(run, gen, child ? requestCancel : false);
       this.child = null;
       this.current = null;
       this.stopping = false;

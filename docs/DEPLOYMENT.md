@@ -2,9 +2,9 @@
 
 ## 最近已记录部署
 
-2026-11-05，云端/Web 最近已记录版本为 `ca0a873e-f57a-42aa-a77b-0112a53ef1e3`，协议 14。系统安装基线 0.11.0，实际路径 `C:/Users/96227/AppData/Local/TaskRelay/app-0.11.0/TaskRelay.exe`；安装与构建 ASAR SHA-256 均为 `7446d6b307eee1c70459a7665e8b62d8149913ea46305cec9115716b375aa928`。安装包 SHA-256 为 `b32314a4b2bf09be336e1d7fc33d638e1a50530fcdf92a20053063c979bca57f`，当时的包内/安装 smoke 和 release-manifest 已通过。
+依据 [验收记录](ACCEPTANCE.md)，2026-11-05 最近已记录的云端/Web 部署版本为 `e15c198a-968f-430a-a368-c4ee994923e3`，协议 15，生产 D1 迁移至 `0020_graph_orchestration.sql`。最近已记录的系统安装为 0.12.0，实际路径 `C:/Users/96227/AppData/Local/TaskRelay/app-0.12.0/TaskRelay.exe`；安装与构建 ASAR SHA-256 均为 `d09ce5aadff134d73f1bb8a2b77a5a01cb29f15118864318fa346d4b9b7dc1f8`。这是历史验收事实，本轮未查询线上或系统安装的当前状态。
 
-本轮冗余与流程清理尚未部署或重新安装。上述安装为历史验证基线：用户随后要求卸载，本机卸载登记已移除，但有程序与数据目录残留，详见验收记录。用户另行授权的线上及本地历史清理已经执行，数据结果和剩余项见 [ACCEPTANCE](ACCEPTANCE.md)。历史发布过程可从 Git 查询，不按旧版本步骤重复操作。
+0.12.2 为本轮本地修复版本，尚未部署或替换系统安装。新增 `0021_context_withdrawal.sql` 与 `0022_checkpoint_chunks.sql` 只在隔离测试库验证；上线须先应用迁移，再部署匹配代码。0021 会停止含历史已撤回消息的旧运行，以阻止继续使用已缓存内容；0022 增加检查点密文分块表，保留旧格式读取。不要直接用旧服务代码读取新分块格式。此前卸载、重新安装及历史清理的顺序与剩余项以 [ACCEPTANCE](ACCEPTANCE.md) 为准。
 
 ## 资源配置与已记录部署
 

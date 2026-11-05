@@ -9,6 +9,7 @@ import { attachTestEgress } from '../../tests/egress-helpers';
 import { hashPassword } from 'better-auth/crypto';
 import { z } from 'zod';
 import type { AppEnv } from '../../apps/cloud/src/env';
+import { AiTurn as ProductionAiTurn } from '../../apps/cloud/src/ai/turn';
 
 const reply={reply:'请描述任务目标',start:false,title:null,goal:null,entryUrl:null,accountId:null,executionOutline:[]};
 // No network is allowed, including accidental requests to a real provider.
@@ -20,10 +21,18 @@ globalThis.fetch=async(input)=>{
 };
 const schema=z.object({reply:z.string()});
 const value={text:'中文 checkpoint '.repeat(700)};
-export default {async fetch(request:Request,bindings:AppEnv){
- if(!['127.0.0.1','localhost'].includes(new URL(request.url).hostname))return new Response('LOCAL_ONLY',{status:403});
+function profileEnv(bindings:AppEnv){
  const env={...bindings,DEV_MODE:'0',AUTH_SECRET:'isolated-profiling-secret-at-least-32-characters',AUTH_BASE_URL:'http://localhost',OWNER_EMAIL:'profile@example.com',MASTER_KEY:btoa(String.fromCharCode(...new Uint8Array(32).fill(9))),requestUserId:'legacy_owner'} as AppEnv;
  attachTestEgress(env);
+ return env;
+}
+// 使用真实异步 alarm，仅出站适配器提供合成模型回答。
+export class AiTurn extends ProductionAiTurn {
+ constructor(ctx:DurableObjectState,env:AppEnv){super(ctx,profileEnv(env));}
+}
+export default {async fetch(request:Request,bindings:AppEnv){
+ if(!['127.0.0.1','localhost'].includes(new URL(request.url).hostname))return new Response('LOCAL_ONLY',{status:403});
+ const env=profileEnv(bindings);
  const path=new URL(request.url).pathname;
  if(path==='/init'){
   const at=Date.now(),password='isolated-profiling-password';

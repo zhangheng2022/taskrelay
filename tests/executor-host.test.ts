@@ -29,18 +29,68 @@ class Child extends EventEmitter {
     this.emit('message',{generation:this.messages[0].generation,type:'rpc',id:crypto.randomUUID(),path:p,body});
   }
 }
-function fixture(t: TestContext) {
+function fixture(t: TestContext, beforeFork?:()=>void) {
   const dir=mkdtempSync(path.join(tmpdir(),'relay-host-'));
   const journal=new Journal(dir);
   const children: Child[]=[];
   const browser={launch:async()=>({cdpUrl:'fixture'}),close:async()=>{},recover:async()=>{}};
   const cloud={request:async <T>(_method:string,_path:string,_body?:unknown):Promise<T> => ({leaseExpiresAt:new Date(Date.now()+90000).toISOString(),cancelRequested:false}) as T};
   const host=new ExecutorHost(cloud,journal,browser,'fixture','extension',()=>{},
-    (()=>{const c=new Child();children.push(c);return c as unknown as UtilityProcess;}) as typeof utilityProcess.fork);
+    (()=>{beforeFork?.();const c=new Child();children.push(c);return c as unknown as UtilityProcess;}) as typeof utilityProcess.fork);
   const run=(id:string)=>({...baseRun,id,status:'running' as const,leaseExpiresAt:new Date(Date.now()+90000).toISOString()});
   t.after(async()=>{await host.stop();journal.close();rmSync(dir,{recursive:true,force:true});});
   return {dir,journal,children,browser,cloud,host,run};
 }
+
+test('fork 同步失败保存终态并释放占用，离线回传可重试且不重启失败任务',async t=>{
+ let fail=true;
+ const s=fixture(t,()=>{if(fail)throw Error('SPAWN_FAILED');});
+ await assert.rejects(s.host.start(s.run('spawn-failed')),/SPAWN_FAILED/);
+ assert.equal(s.host.active,null);assert.equal(s.host.idleForUpdate,true);assert.equal(s.children.length,0);
+ assert.equal(s.journal.incomplete().length,0);
+ const pending=s.journal.pending();assert.equal(pending.length,1);
+ assert.equal(JSON.parse(pending[0].body).status,'failed');assert.equal(JSON.parse(pending[0].body).result.errorCode,'EXECUTOR_START_FAILED');
+ await s.host.stop();assert.deepEqual(s.journal.pending(),pending);
+ s.cloud.request=async()=>{throw Error('OFFLINE');};
+ await assert.rejects(s.host.flush(),/OFFLINE/);assert.deepEqual(s.journal.pending(),pending);
+ s.cloud.request=async<T>()=>({}) as T;await s.host.flush();assert.equal(s.journal.pending().length,0);
+ fail=false;await s.host.start(s.run('next'));assert.equal(s.host.active,'next');assert.equal(s.children.length,1);
+});
+
+test('fork 失败后的收尾失败保留占用，stop 重试保留原失败事实',async t=>{
+ let fail=true;
+ const s=fixture(t,()=>{if(fail)throw Error('SPAWN_FAILED');});
+ const checkpoint=s.journal.checkpoint.bind(s.journal);let blocked=true;
+ t.mock.method(s.journal,'checkpoint',(...args:Parameters<Journal['checkpoint']>)=>{
+  if(args[3]==='abandoned'&&blocked)throw Error('JOURNAL_WRITE_FAILED');
+  return checkpoint(...args);
+ });
+ await assert.rejects(s.host.start(s.run('spawn-failed')),/JOURNAL_WRITE_FAILED/);
+ assert.equal(s.host.active,'spawn-failed');assert.equal(s.host.idleForUpdate,false);
+ assert.equal(s.journal.incomplete().length,1);assert.equal(s.journal.pending().length,1);
+ await assert.rejects(s.host.start(s.run('blocked')),/EXECUTOR_BUSY/);
+ blocked=false;await s.host.stop();
+ assert.equal(s.host.active,null);assert.equal(s.host.idleForUpdate,true);assert.equal(s.journal.incomplete().length,0);
+ const pending=s.journal.pending();assert.equal(pending.length,1);
+ assert.equal(JSON.parse(pending[0].body).status,'failed');assert.equal(JSON.parse(pending[0].body).result.errorCode,'EXECUTOR_START_FAILED');
+ fail=false;await s.host.start(s.run('next'));assert.equal(s.children.length,1);
+});
+
+test('Poller 在 fork 失败后先回传失败再解决原领取请求，不重新启动同一运行',async t=>{
+ let forks=0;
+ const s=fixture(t,()=>{forks++;throw Error('SPAWN_FAILED');});
+ const claim=s.run('spawn-failed');let finished=false;
+ const ids:string[]=[];
+ s.cloud.request=async<T>(_method:string,p:string)=>{assert.ok(p.endsWith('/finish'));finished=true;return {} as T;};
+ const cloud={paired:true,connect:async()=>({maintenance:false,historyEpoch:4}),request:async<T>(_method:string,_path:string,body?:unknown)=>{
+  ids.push((body as {requestId:string}).requestId);
+  return {run:{...claim,status:finished?'failed':'running'}} as T;
+ }};
+ const poller=new RunnerPoller(cloud,s.host,s.journal,{quitting:()=>false,blocksClaims:()=>false,installing:()=>false,result:()=>{},settled:()=>{}});
+ await poller.poll();assert.equal(poller.unsettled,true);assert.equal(s.host.active,null);assert.equal(s.journal.pending().length,1);
+ await poller.poll();assert.equal(finished,true);assert.deepEqual(ids,[ids[0],ids[0]]);
+ assert.equal(forks,1);assert.equal(poller.unsettled,false);assert.equal(s.journal.pending().length,0);
+});
 
 test('云端控制通知立即检查停止，不等待下一次十五秒心跳或模型响应',async t=>{
   const s=fixture(t);let closed=0;

@@ -31,6 +31,25 @@ export type ThreadPage = {
 function mergeReplies(a:ThreadPage['replies'],b:ThreadPage['replies']){
   return [...(a??[]).filter(m=>!b?.some(n=>n.id===m.id)),...(b??[])].sort((a,b)=>a.cursor-b.cursor);
 }
+function mergeLatest(previous: ThreadPage, next: ThreadPage): ThreadPage {
+  // 最新页只更新尾部内容；历史游标属于已加载的历史范围，null 也表示已读到底。
+  // 若两次读取之间新增超过一页，仍从新窗口回补缺口；旧协助 cursor 非连续编号，
+  // 没有重叠时保守回补，避免把此前的 null 当作新消息也已全部加载。
+  const messageGap = next.nextCursor !== null &&
+    (next.messages[0]?.seq ?? 0) > (previous.messages.at(-1)?.seq ?? 0) + 1;
+  const replyGap = next.nextReplyCursor !== undefined && next.nextReplyCursor !== null &&
+    (next.replies?.[0]?.cursor ?? 0) > (previous.replies?.at(-1)?.cursor ?? 0);
+  return {
+    ...next,
+    nextCursor: previous.messages.length && !messageGap ? previous.nextCursor : next.nextCursor,
+    nextReplyCursor: previous.replies?.length && !replyGap ? previous.nextReplyCursor : next.nextReplyCursor,
+    replies: mergeReplies(previous.replies, next.replies),
+    messages: [
+      ...previous.messages.filter((m) => !next.messages.some((n) => n.id === m.id)),
+      ...next.messages,
+    ].sort((a, b) => a.seq - b.seq),
+  };
+}
 export function useThread(
   transport: Transport,
   kind: "compose" | "chat",
@@ -51,6 +70,7 @@ export function useThread(
   const revision = useRef(0),
     reading = useRef(0),
     refreshing = useRef(false),
+    loadingOlder = useRef<symbol | null>(null),
     writing = useRef(false);
   const accept = useCallback((p: ThreadPage) => {
     current.current = p;
@@ -60,6 +80,7 @@ export function useThread(
     const g = ++generation.current;
     revision.current++;
     writing.current = false;
+    loadingOlder.current = null;
     current.current = null;
     setPage(null);
     attempt.current = null;
@@ -120,16 +141,7 @@ export function useThread(
       setError("");
       // An idle turn does not acknowledge a particular POST. Keep its requestId
       // across refreshes until an explicit retry receives the write response.
-      accept({
-        ...next,
-        replies:mergeReplies(current.current?.replies,next.replies),
-        messages: [
-          ...(current.current?.messages ?? []).filter(
-            (m) => !next.messages.some((n) => n.id === m.id),
-          ),
-          ...next.messages,
-        ].sort((a, b) => a.seq - b.seq),
-      });
+      accept(mergeLatest(current.current!, next));
     }
     } finally {refreshing.current=false;}
   }, [transport, accept]);
@@ -163,16 +175,7 @@ export function useThread(
         ThreadPage & { status: string; error?: string }
       >("POST", `/api/user/threads/${p.id}/messages`, attempt.current);
       if (g !== generation.current) return result;
-      accept({
-        ...result,
-        replies:mergeReplies(current.current?.replies,result.replies),
-        messages: [
-          ...(current.current?.messages ?? []).filter(
-            (m) => !result.messages.some((n) => n.id === m.id),
-          ),
-          ...result.messages,
-        ],
-      });
+      accept(mergeLatest(current.current!, result));
       attempt.current = null;
       if (
         result.status === "failed" ||
@@ -190,8 +193,10 @@ export function useThread(
   }
   async function older() {
     const p = current.current;
-    if (!p || (!p.nextCursor&&!p.nextReplyCursor)) return;
+    if (!p || loadingOlder.current || (!p.nextCursor&&!p.nextReplyCursor)) return;
     const g = generation.current;
+    const ticket = Symbol();
+    loadingOlder.current = ticket;
     try {
     const old = await transport.request<ThreadPage>(
       "GET",
@@ -200,14 +205,16 @@ export function useThread(
     if (g === generation.current && current.current)
       accept({
         ...current.current,
-        nextCursor: old.nextCursor,
-        nextReplyCursor:old.nextReplyCursor,
+        // 新快照可能在请求途中发现更近的缺口；旧分页只推进自己请求的边界。
+        nextCursor: current.current.nextCursor === p.nextCursor ? old.nextCursor : current.current.nextCursor,
+        nextReplyCursor: current.current.nextReplyCursor === p.nextReplyCursor ? old.nextReplyCursor : current.current.nextReplyCursor,
         replies:mergeReplies(old.replies,current.current.replies),
-        messages: [...old.messages, ...current.current.messages].filter(
+        messages: [...current.current.messages, ...old.messages].filter(
           (m, i, a) => a.findIndex((n) => n.id === m.id) === i,
-        ),
+        ).sort((a, b) => a.seq - b.seq),
       });
     } catch(e){if(g===generation.current)setError((e as Error).message);}
+    finally {if(loadingOlder.current===ticket)loadingOlder.current=null;}
   }
   async function clear() {
     const p = current.current;
@@ -217,6 +224,7 @@ export function useThread(
     if(g!==generation.current)return;
     const nextGeneration=++generation.current;
     writing.current=false;
+    loadingOlder.current=null;
     current.current=null;setPage(null);
     revision.current++;
     attempt.current = null;
