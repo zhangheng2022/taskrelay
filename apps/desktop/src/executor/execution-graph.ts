@@ -15,12 +15,12 @@ export interface ExecutionGraphPort {
   decide(messages:Message[]):Promise<{response:ModelResponse;compacted:boolean}>;
   changed(userSeq:number):Promise<boolean>;
   perform(call:ExecutorCall,args:Record<string,unknown>,userSeq:number):Promise<unknown>;
-  registerHelp(args:Record<string,unknown>):Promise<{request:ExecutionHelp;answer:HelpResponse}>;
+  registerHelp(args:Record<string,unknown>,call:ExecutorCall):Promise<{request:ExecutionHelp;answer:HelpResponse}>;
   pollHelp(request:ExecutionHelp):Promise<HelpResponse>;
   consumeHelp(request:ExecutionHelp,answer:HelpResponse):Promise<unknown>;
   record(call:ExecutorCall,result:unknown):void;
   error(call:ExecutorCall,error:Error):Promise<void>;
-  say(text:string):Promise<unknown>;
+  say(text:string,eventId:string):Promise<unknown>;
   finish(text:string,userSeq:number):Promise<boolean>;
 }
 const State=Annotation.Root({
@@ -67,7 +67,8 @@ export async function runExecutionGraph(port:ExecutionGraphPort){
         if(!response.text.trim()){port.record({id:'empty',name:'model',arguments:'{}'},{error:'MODEL_EMPTY_REPLY'});return {route:'observe' as const};}
         return {text:response.text,route:'finish' as const};
       }
-      if(response.text.trim())await port.say(response.text);
+      // ask 的问题只由云端协助图发布，模型随工具附带的提问不再先行回显。
+      if(response.text.trim()&&!response.calls.some(call=>call.name==='ask'))await port.say(response.text,response.calls[0].id);
       const message:AIMessage=modelResponseToAIMessage(response);
       return {transcript:[...(reply.compacted?[]:state.transcript),message],calls:response.calls,index:0,help:null,route:'dispatch' as const};
     })
@@ -83,7 +84,7 @@ export async function runExecutionGraph(port:ExecutionGraphPort){
     })
     .addNode('registerHelp',async state=>{
       const call=state.calls[state.index];
-      try{const registered=await invokeTool(call,args=>port.registerHelp(args)) as {request:ExecutionHelp;answer:HelpResponse};return {help:registered.request,answer:registered.answer,route:registered.answer.ready?'consumeHelp' as const:'awaitHelp' as const};}
+      try{const registered=await invokeTool(call,args=>port.registerHelp(args,call)) as {request:ExecutionHelp;answer:HelpResponse};return {help:registered.request,answer:registered.answer,route:registered.answer.ready?'consumeHelp' as const:'awaitHelp' as const};}
       catch(error){port.guard();await port.error(call,error as Error);return {result:{error:(error as Error).message},route:'feedback' as const};}
     })
     // No network, browser, messages, IDs or credentials before interrupt: this

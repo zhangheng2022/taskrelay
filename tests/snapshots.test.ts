@@ -3,7 +3,16 @@ import assert from 'node:assert/strict';
 import {JSDOM} from 'jsdom';
 import {productionModelFixture} from './production-model-fixture';
 import {app} from '../apps/cloud/src/index';
-import {maskedScreenshot,redactSnapshot} from '../apps/desktop/src/executor/snapshots';
+import {maskedScreenshot,redactSnapshot,loadingFacts} from '../apps/desktop/src/executor/snapshots';
+
+test('业务进度条不表示页面加载，显式 aria-busy 作为独立现场事实',async()=>{
+ const dom=new JSDOM('<body><div role="progressbar" aria-valuenow="5931" aria-valuemax="10000"></div></body>',{runScripts:'outside-only'});
+ try{
+  const page={evaluate:async(fn:Function)=>dom.window.eval(`(${fn.toString()})()`)};
+  const first=await loadingFacts(page as any);assert.equal(first.busy,false);assert.equal(first.progressBars,1);
+  dom.window.document.body.setAttribute('aria-busy','true');assert.equal((await loadingFacts(page as any)).busy,true);
+ }finally{dom.window.close();}
+});
 import sharp from 'sharp';
 
 test('私有快照：生产上传校验租约、文件类型、归属及过期，重试不重复存储',async t=>{

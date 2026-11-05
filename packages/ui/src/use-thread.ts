@@ -22,6 +22,7 @@ export type ThreadPage = {
     at: string;
     private?:boolean;
     source?:string;
+    run_id?:string|null;
     parts?:import("../../contracts/src/execution").ChatPart[];
   }[];
   nextCursor: number | null;

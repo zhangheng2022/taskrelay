@@ -7,6 +7,23 @@ import {task,run,transportWith,threadPage} from './ui-fixtures';
 import type {ThreadPage} from '../packages/ui/src/use-thread';
 afterEach(cleanup);
 
+test('执行过程稳定合并八次读取，刷新不重复，展开保留全部记录和独立问题及结果',async()=>{
+ let notify=()=>{};
+ const events=Array.from({length:8},(_,i)=>({id:`progress_${i}`,seq:i+1,role:'assistant',source:'executor',run_id:run.id,content:'已读取当前页面信息。',at:`2026-11-05T12:30:0${i}.000Z`,parts:[{type:'tool' as const,name:'extract',result:`第 ${i+1} 次的真实反馈`}]}));
+ const page={...threadPage,messages:[...events,{id:'question',seq:9,role:'assistant',source:'cloud',run_id:run.id,content:'请补充验证码',at:'2026-11-05T12:31:00.000Z'},{id:`final_${run.id}`,seq:10,role:'assistant',source:'executor',run_id:run.id,content:'本次结果已核对',at:'2026-11-05T12:32:00.000Z'}]};
+ const transport=transportWith(async(_method,path)=>path==='/api/user/threads'?[{id:page.id,model_id:task.modelId,task_id:task.id}]:page);
+ transport.subscribe=fn=>{notify=fn;return()=>{};};
+ const v=render(<Conversation transport={transport} task={task} run={run} offline={false} refresh={async()=>{}}/>);
+ await waitFor(()=>assert.ok(v.getByText('读取页面 8 次',{exact:false})));
+ assert.equal(v.getAllByText('执行过程').length,1);assert.equal(v.queryAllByText('已读取当前页面信息。').length,0);
+ assert.ok(v.getByText('请补充验证码'));assert.ok(v.getByText('本次结果已核对'));
+ fireEvent.click(v.getByRole('button',{name:/执行过程\s*8 次调用/}));
+ assert.equal(v.getAllByText('已读取当前页面信息。').length,8);
+ fireEvent.click(v.getAllByRole('button',{name:'已读取当前页面信息。'})[7]);assert.ok(v.getByText('第 8 次的真实反馈'));
+ await act(async()=>notify());await waitFor(()=>assert.equal(v.getAllByText('已读取当前页面信息。').length,8));
+ assert.equal(v.getAllByText('执行过程').length,1);
+});
+
 test('响应丢失后收到空闲会话通知，重试仍使用原 requestId',async()=>{
  const ids:string[]=[];let notify=()=>{};
  let page:ThreadPage={...threadPage,taskId:task.id,activeTurn:null};

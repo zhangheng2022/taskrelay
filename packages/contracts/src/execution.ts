@@ -5,7 +5,8 @@ const instruction={type:'object',properties:{instruction:{type:'string'}},requir
 export const executorTools=[
   {name:'act',description:'让 Stagehand 根据当前页面执行一个自然语言操作。它会收到同一任务的原始用户消息。',parameters:instruction},
   {name:'observe',description:'让 Stagehand 查找当前页面可操作的控件。',parameters:instruction},
-  {name:'extract',description:'让 Stagehand 读取当前页面信息。截图会自动进入聊天，不需要用此工具拍照。',parameters:instruction},
+  {name:'extract',description:'让 Stagehand 读取当前页面信息，不拍摄聊天截图。',parameters:instruction},
+  {name:'screenshot',description:'用户明确需要查看当前页面时，保存一张脱敏截图到聊天。常规读取和操作无需调用。',parameters:{type:'object',properties:{},required:[],additionalProperties:false}},
   {name:'navigate',description:'打开任务相关的公开 HTTPS 页面。',parameters:{type:'object',properties:{url:{type:'string'}},required:['url'],additionalProperties:false}},
   {name:'switchPage',description:'切换到当前页面列表中的标签。',parameters:{type:'object',properties:{index:{type:'integer'}},required:['index'],additionalProperties:false}},
   {name:'wait',description:'等待页面变化后重新观察。',parameters:{type:'object',properties:{},required:[],additionalProperties:false}},
@@ -13,8 +14,8 @@ export const executorTools=[
 ];
 export const executorArguments={
   act:z.object({instruction:z.string().min(1)}),observe:z.object({instruction:z.string()}),extract:z.object({instruction:z.string()}),
-  navigate:z.object({url:z.url()}),switchPage:z.object({index:z.number().int().nonnegative()}),wait:z.object({}),ask:z.object({message:z.string().min(1)}),
+  navigate:z.object({url:z.url()}),switchPage:z.object({index:z.number().int().nonnegative()}),wait:z.object({}),screenshot:z.object({}),ask:z.object({message:z.string().min(1)}),
 };
 export type ChatPart={type:'image';artifactId:string;alt:string}|{type:'tool';name:string;result:string};
 export interface ExecutionHelp {id:string;message:string;origin:string;}
-export interface HelpResponse {ready:boolean;message?:string;accountId?:string;}
+export interface HelpResponse {ready:boolean;message?:string;accountId?:string;questionRound?:number;}

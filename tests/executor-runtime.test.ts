@@ -7,15 +7,43 @@ import type {ClientLLM} from '@browserbasehq/stagehand';
 import sharp from 'sharp';
 const answer=(text:string):ModelResponse=>({text,calls:[],usage:{input:null,output:null}});
 const tool=(name:string,args:Record<string,unknown>={}):ModelResponse=>({...answer(''),calls:[{id:crypto.randomUUID(),name,arguments:JSON.stringify(args)}]});
+
+test('八次读取保留八份反馈但只在首尾拍照，相同图片复用；相同提供方调用标识不吞真实调用',async()=>{
+ const repeated=tool('extract',{instruction:'读取当前结果'});
+ const s=await scenario(Array.from({length:8},()=>structuredClone(repeated)));
+ assert.equal(s.captures,2);assert.equal(s.calls.filter(c=>c.path.endsWith('/snapshots')).length,1);
+ const messages=s.calls.filter(c=>c.path.endsWith('/messages')&&c.body.parts.some((p:any)=>p.type==='tool'));
+ assert.equal(messages.length,8);assert.equal(new Set(messages.map(c=>c.body.id)).size,8);
+ const history=s.calls.filter(c=>c.path.endsWith('/model')).at(-1)!.body.messages.filter((m:any)=>m.role==='tool');
+ assert.deepEqual(JSON.parse(history.at(-1).content).readFeedback,{unchangedFromPreviousRead:true,consecutiveSameRead:8});
+});
+
+test('普通点击和填写不截图，明确请求截图仍可用',async()=>{
+ const s=await scenario([tool('act',{instruction:'填写账号'}),tool('act',{instruction:'点击下一步'}),tool('screenshot')]);
+ assert.equal(s.captures,3);assert.equal(s.clicks,2);
+ assert.equal(s.calls.filter(c=>c.path.endsWith('/snapshots')).length,1);
+ assert.equal(s.calls.some(c=>c.path.endsWith('/messages')&&c.body.content.includes('沿用此前截图')),true);
+});
+
+test('相同页面重复报错只拍一次，新页面报错再拍，不阻止模型重新操作',async()=>{
+ const s=await scenario([tool('act',{instruction:'尝试按钮'}),tool('act',{instruction:'换个按钮'}),tool('navigate',{url:'https://example.com/other'}),tool('act',{instruction:'新页面按钮'})],{actionRejected:true});
+ assert.equal(s.clicks,3);assert.equal(s.captures,4);
+});
+
+test('模型附带的求助文字不提前回显，内部协助立即解决不拍照',async()=>{
+ const request=tool('ask',{message:'请提供账号'});request.text='请提供账号';
+ const s=await scenario([request]);assert.equal(s.captures,2);
+ assert.equal(s.calls.some(c=>c.path.endsWith('/messages')&&c.body.content==='请提供账号'),false);
+});
 async function scenario(turns:ModelResponse[],options:{actionError?:boolean;actionRejected?:boolean;emptyObserve?:boolean;navigationError?:boolean;cancelConnect?:boolean;createError?:boolean;closeError?:boolean;original?:string;origin?:string;fill?:string;fills?:string[];account?:{account:Record<string,string>;origin:string};method?:string;helpMessage?:string;cancel?:boolean;cancelStagehand?:boolean;newInstruction?:boolean;compact?:boolean;navigationObservationFailure?:boolean;unknownActionResult?:boolean;helpWaits?:number;cancelHelp?:boolean;executionOutline?:string[];finalShotInstruction?:boolean;finalMessageInstruction?:boolean;finalRpcInstruction?:boolean}={}){
- let attached=false,clicks=0,cancelled=false,closed=false,sessionCloses=0,navigations=0,snapshotFailures=0,planned=0,changed=false,helpRequests=0,finalReply=false;
+ let attached=false,clicks=0,cancelled=false,closed=false,sessionCloses=0,navigations=0,snapshotFailures=0,planned=0,changed=false,helpRequests=0,finalReply=false,captures=0;
  const metadata={actionId:'sdk_action_test',cache:{status:'DISABLED'},usage:{inputTokens:1,outputTokens:1}};
  let llm:ClientLLM,currentUrl='https://example.com/',stagehandCalls=0;const calls:Array<{path:string;body:any}>=[],checkpoints:any[]=[];
  const original=options.original??'请处理当前页面';
  const chat:any[]=[{seq:1,role:'user',source:'user',content:original,private:!!options.original,origin:options.origin??'https://example.com'}];
  const changeInstructions=()=>{if(!changed){changed=true;chat.push({seq:2,role:'user',source:'user',content:'请先核对新补充要求，再结束。'});}};
  const screenshot=await sharp({create:{width:1,height:1,channels:4,background:'#fff'}}).png().toBuffer();
- const page={url:async()=>currentUrl,goto:async(url:string)=>{navigations++;if(options.navigationError)throw Error('NAVIGATION_FAILED');currentUrl=url;},screenshot:async()=>{if(options.finalShotInstruction&&finalReply)changeInstructions();return screenshot;},
+ const page={url:async()=>currentUrl,goto:async(url:string)=>{navigations++;if(options.navigationError)throw Error('NAVIGATION_FAILED');currentUrl=url;},screenshot:async()=>{captures++;if(options.finalShotInstruction&&finalReply)changeInstructions();return screenshot;},
   snapshot:async()=>{if(snapshotFailures>0){snapshotFailures--;throw Error('Execution context destroyed during navigation');}return {formattedTree:'[1] button 继续登录\n[2] textbox 密码',xpathMap:{},urlMap:{}};},
   evaluate:async()=>({readyState:'complete',width:1,height:1,text:[]}),locator:()=>{throw Error('RAW_SELECTOR_PATH_MUST_NOT_BE_USED');},
  };
@@ -23,7 +51,7 @@ async function scenario(turns:ModelResponse[],options:{actionError?:boolean;acti
   calls.push({path,body});if(path==='local:browser')return {cdpUrl:'test'} as T;
   if(path.endsWith('/context'))return {messages:chat.filter(m=>m.seq>body.after)} as T;
   if(path.endsWith('/model')){if(options.cancel)cancelled=true;planned++;const response=turns.shift()??answer('已处理当前页面，结果如上。');finalReply=!response.calls.length;return {response,memory:options.compact&&planned===1?{summaries:['旧操作历史摘要']}:null} as T;}
-  if(path.endsWith('/messages')&&body.content==='当前页面。'&&options.finalMessageInstruction)changeInstructions();
+  if(path.endsWith('/messages')&&['当前页面。','当前页面未变化，沿用此前截图。'].includes(body.content)&&options.finalMessageInstruction)changeInstructions();
   if(path.endsWith('/finish')&&options.finalRpcInstruction&&!changed){changeInstructions();throw Error('INSTRUCTIONS_CHANGED');}
   if(path.endsWith('/stagehand')){
    if(options.cancelStagehand)cancelled=true;
@@ -34,7 +62,7 @@ async function scenario(turns:ModelResponse[],options:{actionError?:boolean;acti
   }
   if(path.endsWith('/tool'))return {execute:true} as T;
   if(path.endsWith('/snapshots'))return {id:'snapshot_test'} as T;
-  if(path.endsWith('/help')){helpRequests++;if(options.cancelHelp)cancelled=true;return {ready:helpRequests>(options.helpWaits??0),message:options.helpMessage??'请结合用户原文继续',accountId:options.account?'account_test':undefined} as T;}
+  if(path.endsWith('/help')){helpRequests++;if(options.cancelHelp)cancelled=true;return {ready:helpRequests>(options.helpWaits??0),questionRound:0,message:options.helpMessage??'请结合用户原文继续',accountId:options.account?'account_test':undefined} as T;}
   if(path.endsWith('/credentials'))return options.account as T;
   return {} as T;
  }};
@@ -44,7 +72,7 @@ async function scenario(turns:ModelResponse[],options:{actionError?:boolean;acti
   return {data:{success:!options.actionRejected,message:options.actionRejected?'TARGET_NOT_FOUND':'已执行',actions:[]},metadata};
  },observe:async(instruction:string)=>{await infer(instruction);return {data:options.emptyObserve?[]:[{description:'继续登录'}],metadata};},extract:async(instruction:string)=>{await infer(instruction);return {data:{text:'实际页面信息'},metadata};}};
  await execute({...run,task:{...run.task,entryUrl:'https://example.com/',executionOutline:options.executionOutline}},port,{loadSdk:async()=>({Stagehand:{create:async(opts:any)=>{if(options.createError)throw Error('CREATE_FAILED');attached=true;llm=opts.model;if(options.cancelConnect)cancelled=true;return session;}},localBrowser:{connect:async()=>({get context(){if(!attached)throw Error('Browser context is unavailable');return {setDomainPolicy:async()=>{},pages:async()=>[page]};}})}} as any),startProxy:async()=>({port:1,close:async()=>{closed=true;}}),delay:async()=>{}});
- return {calls,checkpoints,clicks,closed,sessionCloses,navigations,finish:calls.filter(c=>c.path.endsWith('/finish')).at(-1)?.body};
+ return {calls,checkpoints,clicks,closed,sessionCloses,navigations,captures,finish:calls.filter(c=>c.path.endsWith('/finish')).at(-1)?.body};
 }
 
 test('初始化期间停止不再导航，关闭 Stagehand 失败仍释放代理',async()=>{
@@ -167,8 +195,8 @@ test('真实 execute 协助中断以相同请求恢复，不重复登记或重�
  const requests=s.calls.filter(c=>c.path.endsWith('/help'));
  assert.equal(requests.length,3);assert.equal(new Set(requests.map(c=>c.body.id)).size,1);assert.equal(s.clicks,2);
  assert.equal(s.calls.filter(c=>c.path.endsWith('/messages')&&c.body.content==='请提供验证码').length,0);
- const shown=s.calls.findIndex(c=>c.path.endsWith('/messages')&&c.body.content==='等待协助，当前页面。');
- assert.ok(shown>s.calls.findIndex(c=>c.path.endsWith('/help')));
+ assert.equal(s.captures,3); // 首次、同一协助轮次一次、最终；轮询不重复拍。
+ assert.equal(s.calls.filter(c=>c.path.endsWith('/snapshots')).length,1); // 相同脱敏图片仅上传一次。
  assert.equal(s.calls.filter(c=>c.path.includes('/help/')&&c.path.endsWith('/ack')).length,1);
  assert.equal(s.finish.status,'succeeded');
 });

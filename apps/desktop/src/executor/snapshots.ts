@@ -91,7 +91,9 @@ export async function maskedScreenshot(page:Page,secrets:string[]){
 export async function loadingFacts(page:Page){
   return page.evaluate(()=>({
     readyState:document.readyState,
-    busy:!!document.querySelector('[aria-busy="true"],[role="progressbar"]'),
+    // 业务进度（积分、等级等）不是加载信号；aria-busy 也只是局部声明，不证明全页不可用。
+    busy:!!document.querySelector('[aria-busy="true"]'),
+    progressBars:document.querySelectorAll('[role="progressbar"]').length,
     disabledControls:document.querySelectorAll('button:disabled,input:disabled').length,
     resourceErrors:(typeof performance.getEntriesByType==='function'?performance.getEntriesByType('resource'):[]).filter(e=>(e as PerformanceResourceTiming).responseStatus>=400).slice(-4).map(e=>({host:new URL(e.name).hostname.slice(0,100),status:(e as PerformanceResourceTiming).responseStatus})),
     // Resource timing does not expose every failed/cross-origin request.

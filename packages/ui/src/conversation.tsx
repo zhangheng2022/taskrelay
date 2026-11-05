@@ -6,6 +6,7 @@ import {MessageScrollerItem} from './components/ui/message-scroller';
 import {Button} from './components/ui/button';
 import {ErrorText,LoadFeedback} from './feedback';
 import {ChatAttachments} from './chat-attachments';
+import {conversationRows,ExecutionProgress} from './execution-progress';
 
 // 将用户消息、云端协助和执行器反馈合并到同一聊天；停止直接调用运行控制接口。
 // run 由工作空间选择当前活动运行，历史记录入口不会把停止按钮绑定到旧运行。
@@ -18,7 +19,7 @@ export function Conversation({transport,task,run,offline,refresh}: {
   const [confirmClear,setConfirmClear]=useState(false),[stopping,setStopping]=useState(false);
   const sending=useRef(false);
   const active=run&&['queued','running','waiting_user','verifying'].includes(run.status);
-  const messages=[...(thread.page?.messages??[]),...(thread.page?.replies??[])].sort((a,b)=>(a.at??'').localeCompare(b.at??'')||a.id.localeCompare(b.id));
+  const messages=[...(thread.page?.messages??[]),...(thread.page?.replies??[]).map(m=>({...m,seq:m.cursor}))].sort((a,b)=>(a.at??'').localeCompare(b.at??'')||a.seq-b.seq);
   async function send(){
     if(sending.current||!text.trim()||offline)return;
     sending.current=true;setBusy(true);setError('');const value=text;setText('');
@@ -32,12 +33,13 @@ export function Conversation({transport,task,run,offline,refresh}: {
     <Thread>
       {(thread.loading||thread.error)&&<MessageScrollerItem messageId="loading"><LoadFeedback loading={thread.loading} error={thread.error} label="正在加载聊天…" onRetry={thread.retry}/></MessageScrollerItem>}
       {(thread.page?.nextCursor||thread.page?.nextReplyCursor)&&<MessageScrollerItem messageId="older"><Button variant="ghost" onClick={()=>void thread.older()}>加载更早消息</Button></MessageScrollerItem>}
-      {messages.map(m=><MessageScrollerItem key={m.id} messageId={m.id} scrollAnchor={m.role==='user'}>
+      {conversationRows(messages).map(({id,message:m,events})=><MessageScrollerItem key={id} messageId={id} scrollAnchor={m.role==='user'}>
+        {events?<ExecutionProgress events={events} transport={transport}/>:
         <ChatMessage role={m.role}>
           {'source' in m&&m.role!=='user'&&<div className="text-xs text-muted-foreground">{m.source==='executor'?'执行器':'云端助手'}</div>}
           {m.content}
           {'parts' in m&&<ChatAttachments transport={transport} parts={m.parts??[]}/>}
-        </ChatMessage>
+        </ChatMessage>}
       </MessageScrollerItem>)}
       {thread.page?.queued?.map(m=><MessageScrollerItem key={m.id} messageId={m.id}><ChatMessage role="user">{m.content}</ChatMessage></MessageScrollerItem>)}
       {thread.page?.activeTurn&&<MessageScrollerItem messageId="thinking"><PendingMessage>云端助手正在处理…</PendingMessage></MessageScrollerItem>}

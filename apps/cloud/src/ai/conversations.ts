@@ -421,13 +421,6 @@ conversations.post("/threads/:id/messages", async (c) => {
       )
         .bind(id, help.id)
         .run();
-      await appendMessage(c.env, t.id, {
-        id: id + "_relay",
-        source: "cloud",
-        content: "已收到回复，正在结合当前任务理解你的要求。",
-        runId: active.id,
-        replyTo: id,
-      });
       await queueHelpReply(c.env, help.id, id);
     }
     return c.json(await threadPage(c.env, t.id), 202);

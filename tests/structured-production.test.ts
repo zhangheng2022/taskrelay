@@ -9,9 +9,16 @@ for(const protocol of ['chat','responses'] as const)test(`执行器原生工具�
  assert.equal(r.status,200,JSON.stringify(r.data));assert.deepEqual(r.data.response.calls,[call]);assert.equal(s.jobs(),1);
  const body=s.requests[0].body;assert.equal(body.model,'vendor/non-gpt');assert.equal(body.tool_choice,'auto');assert.equal(body.response_format,undefined);assert.equal(body.text,undefined);
  assert.ok(body.tools.some((t:any)=>(t.function?.name??t.name)==='act'));
+ assert.equal(body.tools.some((t:any)=>(t.function?.name??t.name)==='screenshot'),false);
  s.replies('当前已完成第一项；其余项目因网站维护暂不可用。');
  const final=await s.request(`/api/runner/runs/${s.run.id}/model`,{epoch:s.run.leaseEpoch,requestId:'model_final',messages:[{role:'user',content:'操作反馈'}]});
  assert.equal(final.status,200);assert.match(final.data.response.text,/暂不可用/);assert.deepEqual(final.data.response.calls,[]);
+});
+
+test('只有声明支持截图工具的执行器收到截图能力，旧安装版本保持兼容',async t=>{
+ const s=await productionModelFixture(t);s.replies('已读取。');
+ const r=await s.request(`/api/runner/runs/${s.run.id}/model`,{epoch:s.run.leaseEpoch,requestId:'screenshot_capability',supportsScreenshot:true,messages:[{role:'user',content:'截图给我看'}]});
+ assert.equal(r.status,200);assert.ok(s.requests[0].body.tools.some((t:any)=>(t.function?.name??t.name)==='screenshot'));
 });
 
 test('旧云端规划、进度与报告入口不再接手新版执行',async t=>{

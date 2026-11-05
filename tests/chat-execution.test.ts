@@ -36,6 +36,10 @@ test('完整生产链：执行器模型转发、多项目操作、云端求助�
  const port:RuntimePort={cancelled:()=>false,checkpoint:async()=>{},rpc:async<T>(path:string,body:any)=>{
   if(path==='local:browser')return {cdpUrl:'fixture'} as T;
   const response=await s.request(path,body);if(response.status!==200)throw Error(response.data.error??'REQUEST_FAILED');
+  // 模拟成功响应丢失后的同次 RPC 重传，不能增加图片、过程或最终结果。
+  if(['/messages','/snapshots','/finish'].some(suffix=>path.endsWith(suffix))){
+   const retry=await s.request(path,body);assert.equal(retry.status,200);assert.deepEqual(retry.data,response.data);
+  }
   if(path.endsWith('/help')&&!response.data.ready&&!replied){
    replied=true;await s.request(`/api/user/threads/${thread.id}/messages`,{requestId:'verify',content:original});
   }
@@ -54,6 +58,10 @@ test('完整生产链：执行器模型转发、多项目操作、云端求助�
  assert.ok(chat.messages.some((m:any)=>m.source==='cloud'&&/确认码/.test(m.content)));
  assert.ok(chat.messages.some((m:any)=>m.parts.some((p:any)=>p.type==='image')));
  assert.match(chat.messages.at(-1).content,/两项/);assert.ok(s.jobs()>=8);
+ assert.equal(chat.messages.filter((m:any)=>m.source==='cloud').length,1);
+ assert.equal(chat.messages.filter((m:any)=>m.id===`final_${s.run.id}`).length,1);
+ assert.equal(chat.messages.filter((m:any)=>m.parts.some((p:any)=>p.type==='tool')).length,3);
+ assert.equal(s.sql.prepare('SELECT COUNT(*) n FROM artifacts').get()!.n,1);
  assert.match(JSON.stringify(s.requests),/0012Ab/);
  assert.equal(s.sql.prepare('SELECT COUNT(*) n FROM batch_progress').get()!.n,0);
 });

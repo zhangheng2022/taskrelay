@@ -54,7 +54,7 @@ runner.post('/runs/:id/messages',async c=>{
 });
 // The executor owns the prompt and tool loop; this endpoint only relays inference.
 runner.post('/runs/:id/model',async c=>{
-  const b=lease.extend({requestId:idSchema,messages:z.array(modelMessage)}).parse(await c.req.json());
+  const b=lease.extend({requestId:idSchema,messages:z.array(modelMessage),supportsScreenshot:z.boolean().optional()}).parse(await c.req.json());
   const run=await requireLease(c.env.DB,c.req.param('id'),c.get('deviceId'),b.epoch);
   const {profile}=await getModelProfile(c.env,run.task.modelId,run.task.modelVersion);
   const images=await c.env.DB.prepare(`SELECT COUNT(*) AS count FROM ai_messages m,json_each(m.parts) p
@@ -64,7 +64,7 @@ runner.post('/runs/:id/model',async c=>{
   const input=[{role:'system' as const,content:`运行能力与聊天附件反馈：本次运行已关联到聊天的截图数量=${images?.count??0}。执行器会自动在最终答复前附上当前页面截图；保存与展示截图不需要视觉模型。只报告实际结果，不把工具一次失败等同于整个任务失败。`},...b.messages];
   const messages=await compactMessages(c.env,run.task.modelId,run.task.modelVersion,input,run.id,b.requestId,()=>requireLease(c.env.DB,run.id,c.get('deviceId'),b.epoch));
   const model=new RelayChatModel(c.env,run.task.modelId,run.task.modelVersion,`execute_${run.id}_${b.requestId}`,run.id);
-  const response=aiMessageToModelResponse(await model.bindTools(executorTools.map(tool=>({type:'function',function:tool})),{tool_choice:'auto',maxTokens:profile.outputTokens??4096}).invoke(toLangChainMessages(messages)));
+  const response=aiMessageToModelResponse(await model.bindTools(executorTools.filter(tool=>tool.name!=='screenshot'||b.supportsScreenshot).map(tool=>({type:'function',function:tool})),{tool_choice:'auto',maxTokens:profile.outputTokens??4096}).invoke(toLangChainMessages(messages)));
   let memory:Record<string,unknown>|null=null;
   if(messages!==input){
     const summary=messages.find(message=>message.role==='user'&&message.content.includes('"summaries"'));

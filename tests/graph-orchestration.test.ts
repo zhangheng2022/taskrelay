@@ -212,15 +212,16 @@ test("取消发生在checkpoint前置检查与写入之间时，D1原子fence拒
   );
 });
 
-test("协助聊天写入失败时同事务回滚ready响应，设备不会收到缺失聊天的答案", async (t) => {
+test("协助问题写入失败时同事务回滚等待状态，不出现看不到问题的等待", async (t) => {
   const s = await setup(t);
   s.sql.exec(`CREATE TRIGGER fail_help_publication BEFORE INSERT ON ai_messages
     WHEN NEW.source='cloud' AND NEW.private_content IS NOT NULL
     BEGIN SELECT RAISE(ABORT,'publication fixture failure'); END`);
-  s.replies(answer("可以继续处理。"));
+  s.replies(answer("请提供验证码。",true));
   const response = await s.request(s.path, s.help);
   assert.equal(response.data.error, "AI_GRAPH_FAILED");
   assert.equal(s.sql.prepare("SELECT response FROM execution_help").get()!.response, null);
+  assert.equal(s.sql.prepare("SELECT awaiting_user FROM execution_help").get()!.awaiting_user, 0);
   assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM ai_messages WHERE source='cloud'").get()!.n, 0);
 });
 

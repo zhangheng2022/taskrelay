@@ -235,11 +235,11 @@ export async function executeHelpGraph(env: AppEnv, event: GraphEvent) {
         sql: `${graphFence.sql} AND (SELECT COALESCE(MAX(seq),0) FROM ai_messages WHERE thread_id=? AND role='user')=?`,
         values: [...graphFence.values, stored.thread_id, state.latestUserSeq],
       };
-      const publication = await messageStatement(
+      const publication = result.askUser ? await messageStatement(
         env,
         stored.thread_id,
         {
-          id: `${event.graph_id}:${state.round}:${state.latestUserSeq}:cloud`,
+          id: `${event.graph_id}:${state.round}:question`,
           source: "cloud",
           content: result.message,
           private: true,
@@ -247,7 +247,7 @@ export async function executeHelpGraph(env: AppEnv, event: GraphEvent) {
           replyTo: help.id + "_request",
         },
         publicationFence,
-      );
+      ) : null;
       const [saved] = await env.DB.batch([
         env.DB.prepare(
           `UPDATE execution_help SET response=?,awaiting_user=?,reply_message_id=NULL,question_round=?,interrupt_id=NULL
@@ -261,7 +261,7 @@ export async function executeHelpGraph(env: AppEnv, event: GraphEvent) {
           run.leaseEpoch,
           ...publicationFence.values,
         ),
-        publication,
+        ...(publication ? [publication] : []),
       ]);
       if (!saved.meta.changes) {
         await runtime.guard();

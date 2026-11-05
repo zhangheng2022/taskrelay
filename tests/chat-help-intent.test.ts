@@ -11,6 +11,21 @@ async function setup(t:TestContext,protocol:'chat'|'responses'='chat'){
   return {...s,thread,path:`/api/runner/runs/${s.run.id}/help`,help:{epoch:s.run.leaseEpoch,id:'help_context',origin:'https://example.com',message:'如何继续登录？'}};
 }
 const reply=(message:string,askUser=false)=>JSON.stringify({message,askUser,accountId:null});
+
+test('协助轮询只发布一次问题，回复后内部答案不回显，新一轮更正允许同文问题',async t=>{
+ const s=await setup(t);s.replies(reply('请提供有效密码。',true));
+ const first=await s.request(s.path,s.help);assert.equal(first.data.questionRound,0);
+ await s.request(s.path,s.help);await s.request(s.path,s.help);
+ const questions=()=>s.sql.prepare("SELECT id,content,private_content FROM ai_messages WHERE source='cloud'").all();
+ assert.equal(questions().length,1);assert.ok(questions()[0].private_content);
+ await s.request(`/api/user/threads/${s.thread.id}/messages`,{requestId:'password_one',content:'first-password'});
+ assert.equal(questions().length,1); // 没有额外“已收到”气泡。
+ s.replies(reply('请提供有效密码。',true));await s.request(s.path,s.help);
+ assert.equal(questions().length,2);assert.notEqual(questions()[0].id,questions()[1].id);
+ await s.request(`/api/user/threads/${s.thread.id}/messages`,{requestId:'password_two',content:'corrected-password'});
+ s.replies(reply('现在可继续。'));assert.equal((await s.request(s.path,s.help)).data.ready,true);
+ assert.equal(questions().length,2);
+});
 test('协助模型尚未发布等待状态时，提前回复也加密并绑定当前来源',async t=>{
  const s=await setup(t),original='00early-password!';
  const providerFetch=globalThis.fetch;let inject=true;
@@ -97,7 +112,7 @@ for(const protocol of ['chat','responses'] as const){
     s.replies(reply('请提供新账号本次有效的验证码。',true));assert.equal((await s.request(s.path,s.help)).data.ready,false);
     const body=s.requests.at(-1)!.body,payload=JSON.parse((protocol==='chat'?body.messages:body.input).at(-1).content);
     for(const content of originals)assert.ok(payload.userMessages.some((m:any)=>m.content===content));
-    const calls=s.jobs();assert.deepEqual((await s.request(s.path,s.help)).data,{ready:false});assert.equal(s.jobs(),calls);
+    const calls=s.jobs();assert.deepEqual((await s.request(s.path,s.help)).data,{ready:false,questionRound:0});assert.equal(s.jobs(),calls);
   });
 }
 
@@ -121,7 +136,7 @@ test('模型判断期间的新补充不会被旧答案覆盖，原回复重试�
     if(inject&&String(input).startsWith('https://provider.example/')){inject=false;await s.request(`/api/user/threads/${s.thread.id}/messages`,{requestId:'inflight_change',content:'改用验证码，不要使用刚才的密码'});}
     return response;
   });
-  s.replies(reply('已有登录信息。'));assert.deepEqual((await s.request(s.path,s.help)).data,{ready:false});
+  s.replies(reply('已有登录信息。'));assert.equal((await s.request(s.path,s.help)).data.ready,false);
   assert.equal(s.sql.prepare('SELECT response FROM execution_help WHERE id=?').get(s.help.id)!.response,null);
   s.replies(reply('请确认验证码发送到哪个账号？',true));assert.equal((await s.request(s.path,s.help)).data.ready,false);
   assert.equal(s.sql.prepare('SELECT reply_message_id FROM execution_help WHERE id=?').get(s.help.id)!.reply_message_id,null);
@@ -149,7 +164,7 @@ test('用户原文超出已配置上下文时明确报错，不静默截断',asy
   const page=(await s.request(`/api/user/threads/${s.thread.id}`,undefined,'GET')).data;assert.ok(page.messages.some((m:any)=>m.content===original));
 });
 
-test('求助问题若含敏感原文，请求存储与聊天回显均加密且本人上下文可读',async t=>{
+test('内部求助原文加密保留，不复制到用户聊天',async t=>{
   const s=await setup(t),message='刚才输入 00private! 后页面报错，应如何继续？';
   s.replies(reply('请检查页面错误提示。'));
   assert.equal((await s.request(s.path,{...s.help,message})).data.ready,true);
@@ -157,7 +172,6 @@ test('求助问题若含敏感原文，请求存储与聊天回显均加密且�
   assert.ok(!String(row.request).includes('00private!'));
   const stored=JSON.parse(String(row.request));assert.equal(stored.origin,s.help.origin);assert.equal(stored.message,undefined);
   assert.equal(await unseal<string>(stored.encryptedMessage,s.env.MASTER_KEY,`help-request:${s.run.id}:${s.help.id}`),message);
-  const echo=s.sql.prepare('SELECT content,private_content FROM ai_messages WHERE id=?').get(s.help.id+'_request')!;
-  assert.ok(echo.private_content);assert.ok(!JSON.stringify(echo).includes('00private!'));
-  assert.ok((await conversationContext(s.env,s.thread.id,0,{runId:s.run.id})).some(m=>m.content===message&&m.private));
+  assert.equal(s.sql.prepare('SELECT id FROM ai_messages WHERE id=?').get(s.help.id+'_request'),undefined);
+  assert.equal((await conversationContext(s.env,s.thread.id,0,{runId:s.run.id})).some(m=>m.content===message),false);
 });

@@ -5,7 +5,7 @@ import type {
 } from "../../../packages/contracts/src/execution";
 import type { TaskRun } from "../../../packages/contracts/src/index";
 import { hash } from "../../../packages/contracts/src/security";
-import { appendMessage, runThread } from "./chat-messages";
+import { runThread } from "./chat-messages";
 import { now, requireLease, type Row } from "./store";
 import { seal, unseal } from "./crypto";
 import { dispatchGraphEvent, wakeGraph } from "./ai/dispatch";
@@ -120,23 +120,17 @@ export async function resolveHelp(
     )) !== help.message
   )
     throw Error("HELP_INPUT_CONFLICT");
-  await appendMessage(env, thread.id, {
-    id: help.id + "_request",
-    source: "executor",
-    content: help.message,
-    private: true,
-    runId: run.id,
-  });
+  // 执行器求助保留在加密 request 中；只有协助图确认缺少信息才发布用户问题。
   if (prior.awaiting_user && prior.reply_message_id)
     await queueHelpReply(env, help.id, prior.reply_message_id);
   await wakeGraph(env, graphId);
   if (!env.AI_TURNS && env.DEV_MODE === "1")
     await dispatchGraphEvent({ ...env, requestUserId: run.userId }, graphId);
   const saved = await env.DB.prepare(
-    "SELECT response FROM execution_help WHERE id=? AND run_id=? AND epoch=?",
+    "SELECT response,awaiting_user,question_round FROM execution_help WHERE id=? AND run_id=? AND epoch=?",
   )
     .bind(help.id, run.id, run.leaseEpoch)
-    .first<{ response: string | null }>();
+    .first<{ response: string | null; awaiting_user:number; question_round:number }>();
   if (saved?.response) {
     const { encrypted, ...references } = JSON.parse(
       saved.response,
@@ -158,5 +152,5 @@ export async function resolveHelp(
     .bind(graphId)
     .first<{ error: string }>();
   if (failed) throw Error(failed.error);
-  return { ready: false };
+  return { ready: false, ...(saved?.awaiting_user ? {questionRound:saved.question_round} : {}) };
 }

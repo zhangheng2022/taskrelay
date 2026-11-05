@@ -7,6 +7,7 @@ import {maskedScreenshot,redactSnapshot,loadingFacts} from './snapshots';
 import {startProxy} from './proxy';
 import {stagehandModel} from './stagehand-model';
 import {runExecutionGraph} from './execution-graph';
+import {chatSnapshots} from './chat-snapshots';
 export interface RuntimePort {
   rpc<T>(path:string,body?:unknown,binary?:Uint8Array):Promise<T>;
   checkpoint(state:string,payload:unknown):Promise<void>;
@@ -19,6 +20,7 @@ export const executionPrompt=`你是用户的浏览器执行助手。用户原�
 遇到缺少信息或有疑问，使用 ask 向云端求助，云端先查已有上下文，无法解决再在原聊天询问。普通回复、密码和改变登录方式等都由你结合完整原文理解，不需要输入用途分类。
 当前任务浏览器没有供用户操作的可见窗口，也不共享用户日常浏览器的登录状态。登录需要账号、密码、短信或邮件验证码时，说明当前登录站点和实际缺少的信息，通过 ask 请用户在原聊天输入框回复；允许明文交互、一次或分次提供，不要求固定格式或另开登录表单。收到原文后按当前页面逐步填写、提交并观察结果；密码错误后请求更正，验证码失效后请求新的验证码。不要要求用户到任务浏览器自行登录、点击或输入，也不要假装已打开人工接管窗口。扫码或无法通过文字回复完成的验证若无可用入口，如实说明受阻，不能仅让用户回复“已完成”就视为登录成功。
 工具错误直接作为下一步上下文。根据实际页面重新定位或调整操作，不反复发送同一无效操作。可能已提交但观察暂不可用时，先只读查明结果，不重放提交。
+普通进度条可能表示积分或业务进度，不等于页面正在加载；aria-busy 也可能只是局部状态。重复读取没有带来新事实时，结合已知结果决定下一步或如实结束，不因为进度条一直存在反复读取。同一问题等待云端协助，不重复向用户发问；用户更正或缺少新的信息时可以再次求助。聊天截图按首次打开、用户协助、新错误现场与最终结果保存；用户明确要看截图时用 screenshot，常规操作与读取无需拍照。
 已有足够结果时直接用普通文字回复用户，说明实际完成、部分完成或受阻的情况；不调用独立报告或成功审核。执行器会在最终回复前自动附上当前页面截图，不必调用视觉模型拍照。需要继续操作时调用工具，不要仅承诺稍后执行。
 不提供脚本、Shell 或主机文件工具。新的高影响操作通过 ask 在原聊天询问。`;
 
@@ -42,14 +44,26 @@ export async function execute(run:TaskRun,port:RuntimePort,adapters={loadSdk:()=
   const secrets=new Set<string>(),privateSources:Array<{content:string;origin:string}>=[],accounts:Array<{account:Record<string,string>;origin:string}>=[];
   // Never replace original messages with a summary. Only operation history is compacted.
   const conversation:ChatContext[]=[],history:Array<{tool:unknown;result:unknown}>=[];
+  const reads=new Map<string,{data:string;count:number}>();
   let cursor=0,userSeq=0,summarizedThroughSeq=0,memory:Record<string,unknown>|null=null,writePending=false;
   let pending:{id:string;digest:string}|undefined,beforeAction:((result:unknown)=>Promise<void>)|undefined;
   const guard=()=>{if(port.cancelled())throw Error('CANCEL_REQUESTED');};
   const api=<T>(suffix:string,body:Record<string,unknown>={})=>port.rpc<T>(`/api/runner/runs/${run.id}/${suffix}`,{epoch:run.leaseEpoch,...body});
-  const say=(content:string,parts:ChatPart[]=[])=>api('messages',{id:crypto.randomUUID(),content:redactSnapshot(content,secrets),parts});
-  const shot=async():Promise<ChatPart[]>=>{
-    if(!page)return [];
-    try{const saved=await api<{id:string}>('snapshots',{captureId:crypto.randomUUID(),image:await maskedScreenshot(page,[...secrets])});return [{type:'image',artifactId:saved.id,alt:'当前页面'}];}catch{return [];}
+  // 事件身份贯穿 Main 重试与云端唯一键。不同推理的同名调用不会被误合并。
+  const say=async(event:string,content:string,parts:ChatPart[]=[],progress=true)=>{
+    await api('messages',{id:`${progress?'progress':'image'}_${await hash(`${run.id}:${run.leaseEpoch}:${event}`)}`,content:redactSnapshot(content,secrets),parts});
+    screenshots.published(parts);
+  };
+  const screenshots=chatSnapshots(`${run.id}:${run.leaseEpoch}`,()=>maskedScreenshot(page!,[...secrets]),(captureId,image)=>api('snapshots',{captureId,image}));
+  const shot=screenshots.take;
+  const errorShot=async(error:string)=>{
+    let scene:unknown;try{scene={url:await page!.url(),tree:(await page!.snapshot({includeIframes:true})).formattedTree};}catch{scene={url:await page?.url()};}
+    return (await shot(`error:${await hash(JSON.stringify({error,scene}))}`)).parts;
+  };
+  const helpShot=async(request:{id:string},answer:HelpResponse)=>{
+    if(answer.ready||answer.questionRound===undefined)return;
+    const event=`help:${request.id}:${answer.questionRound}`,image=await shot(event);
+    if(image.parts.length)await say(event,'协助所需的当前页面。',image.parts,false);
   };
   const context=async()=>{
     const result=await api<{messages:ChatContext[]}>('context',{after:cursor});
@@ -116,7 +130,7 @@ export async function execute(run:TaskRun,port:RuntimePort,adapters={loadSdk:()=
     page=(await browserContext.pages())[0]??await browserContext.newPage();publicUrl(run.task.entryUrl);
     let entryError:string|undefined;
     guard();try{await page.goto(run.task.entryUrl);}catch(e){entryError=(e as Error).message;history.push({tool:'navigate',result:{error:entryError}});}
-    guard();await say(entryError?'打开任务页面时遇到问题，继续查看实际页面。':'已打开任务页面，开始查看。',await shot());
+    guard();await context();await say('opened',entryError?'打开任务页面时遇到问题，继续查看实际页面。':'已打开任务页面，开始查看。',(await shot('opened')).parts,false);
     await runExecutionGraph({
       guard,
       observe:async()=>{
@@ -127,18 +141,26 @@ export async function execute(run:TaskRun,port:RuntimePort,adapters={loadSdk:()=
         return {messages,userSeq};
       },
       decide:async messages=>{
-        const reply=await api<{response:ModelResponse;memory:Record<string,unknown>|null}>('model',{requestId:crypto.randomUUID(),messages});
+        const requestId=crypto.randomUUID();
+        const reply=await api<{response:ModelResponse;memory:Record<string,unknown>|null}>('model',{requestId,messages,supportsScreenshot:true});
+        // 提供方可能在不同回合重复 call id；给本次推理的每个调用加命名空间。
+        reply.response.calls=await Promise.all(reply.response.calls.map(async(call,index)=>({...call,id:await hash(`${requestId}:${index}:${call.id}`)})));
         if(reply.memory){memory=reply.memory;history.length=0;summarizedThroughSeq=cursor;}
         return {response:reply.response,compacted:!!reply.memory};
       },
       changed:async plannedUserSeq=>{guard();await context();return userSeq!==plannedUserSeq;},
-      say,
+      say:(text,event)=>say(`thought:${event}`,text),
       record:(call,result)=>{history.push({tool:call,result});},
-      error:async(call,error)=>{await say('这一步没有完成，继续根据实际反馈处理。',[{type:'tool',name:call.name,result:redactSnapshot(error.message,secrets)}]);},
+      error:async(call,error)=>{await say(`tool:${call.id}`,'这一步没有完成，继续根据实际反馈处理。',[{type:'tool',name:call.name,result:redactSnapshot(error.message,secrets)},...await errorShot(error.message)]);},
       perform:async(call,args,plannedUserSeq)=>{
         const fresh=async()=>{guard();await context();if(userSeq!==plannedUserSeq)throw Error('INSTRUCTIONS_CHANGED');};
         await fresh();
-        if(writePending&&!['observe','extract','wait'].includes(call.name))throw Error('ACTION_RESULT_PENDING');
+        if(writePending&&!['observe','extract','wait','screenshot'].includes(call.name))throw Error('ACTION_RESULT_PENDING');
+        if(call.name==='screenshot'){
+          const image=await shot(`requested:${call.id}`);
+          const feedback=image.reused?'当前页面未变化，沿用此前截图。':image.available?'已保存当前页面截图。':'当前页面截图未能保存。';
+          await say(`screenshot:${call.id}`,feedback,image.parts,false);return feedback;
+        }
         if(call.name==='wait'){await pause(1500);return '已等待，重新读取实际页面';}
         if(call.name==='switchPage'){
           const pages=await browserContext!.pages(),index=args.index as number;if(!pages[index])throw Error('PAGE_NOT_FOUND');page=pages[index];return settle();
@@ -147,8 +169,10 @@ export async function execute(run:TaskRun,port:RuntimePort,adapters={loadSdk:()=
           const instruction=args.instruction as string;
           const result=call.name==='observe'?await session!.observe(instruction,{page:page!,cache:false}):await session!.extract(instruction,{page:page!,cache:false});
           const empty=call.name==='observe'&&Array.isArray(result.data)&&result.data.length===0;
-          await say(call.name==='observe'?(empty?'未找到符合指令的可操作内容，继续根据实际页面判断。':'已找到候选操作，尚未执行。'):'已读取当前页面信息。',[{type:'tool',name:call.name,result:redactSnapshot(JSON.stringify(result.data),secrets)},...await shot()]);
-          return {data:result.data,metadata:result.metadata};
+          await say(`tool:${call.id}`,call.name==='observe'?(empty?'未找到符合指令的可操作内容，继续根据实际页面判断。':'已找到候选操作，尚未执行。'):'已读取当前页面信息。',[{type:'tool',name:call.name,result:redactSnapshot(JSON.stringify(result.data),secrets)}]);
+          const serialized=JSON.stringify(result.data),prior=reads.get(call.name);
+          const count=prior?.data===serialized?prior.count+1:1;reads.set(call.name,{data:serialized,count});
+          return {data:result.data,metadata:result.metadata,readFeedback:{unchangedFromPreviousRead:count>1,consecutiveSameRead:count}};
         }
         const pagesBefore=await browserContext!.pages();let result:unknown,metadata:unknown,error:string|null=null;
         if(call.name==='navigate'){
@@ -159,18 +183,18 @@ export async function execute(run:TaskRun,port:RuntimePort,adapters={loadSdk:()=
         }
         guard();const pagesAfter=await browserContext!.pages();if(pagesAfter.length>pagesBefore.length)page=pagesAfter.at(-1)!;
         let observed:unknown;try{observed=await settle();}catch(e){observed={error:(e as Error).message,actionResultPending:writePending};}
-        await say(error?'这一步返回错误，继续根据实际页面判断。':(args.instruction as string|undefined)??'页面导航已返回，继续查看实际页面。',[{type:'tool',name:call.name,result:redactSnapshot(error??JSON.stringify(result),secrets)},...await shot()]);
+        await say(`tool:${call.id}`,error?'这一步返回错误，继续根据实际页面判断。':(args.instruction as string|undefined)??'页面导航已返回，继续查看实际页面。',[{type:'tool',name:call.name,result:redactSnapshot(error??JSON.stringify(result),secrets)},...(error?await errorShot(error):[])]);
         return {feedback:result,metadata,error,observation:observed};
       },
-      registerHelp:async args=>{
-        const request={id:crypto.randomUUID(),message:args.message as string,origin:new URL(await page!.url()).origin};
+      registerHelp:async(args,call)=>{
+        const request={id:await hash(`${run.id}:${run.leaseEpoch}:help:${call.id}`),message:args.message as string,origin:new URL(await page!.url()).origin};
         // 先登记来源和协助，再展示现场；云端会发布问题，避免提前回显造成回复绑定窗口及重复提问。
         const answer=await api<HelpResponse>('help',request);
-        if(!answer.ready)await say('等待协助，当前页面。',await shot());
+        await helpShot(request,answer);
         return {request,answer};
       },
       pollHelp:async request=>{
-        for(;;){guard();await context();await pause(1500);const answer=await api<HelpResponse>('help',{...request});if(answer.ready)return answer;}
+        for(;;){guard();await context();await pause(1500);const answer=await api<HelpResponse>('help',{...request});await helpShot(request,answer);if(answer.ready)return answer;}
       },
       consumeHelp:async(request,answer)=>{
         try{
@@ -183,7 +207,8 @@ export async function execute(run:TaskRun,port:RuntimePort,adapters={loadSdk:()=
         }finally{await api(`help/${request.id}/ack`).catch(()=>{});}
       },
       finish:async(text,plannedUserSeq)=>{
-        const images=await shot();if(images.length)await say('当前页面。',images);
+        const image=await shot(`final:${plannedUserSeq}`);
+        if(image.available)await say(`final-shot:${plannedUserSeq}`,image.reused?'当前页面未变化，沿用此前截图。':'当前页面。',image.parts,false);
         guard();await context();if(userSeq!==plannedUserSeq)return false;
         try{
           await complete(writePending?'unknown':'succeeded',text,writePending?'unconfirmed':'reported',plannedUserSeq);
