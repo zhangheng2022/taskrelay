@@ -9,7 +9,7 @@ pairing.post("/start", async (c) => {
   const { name } = z
     .object({
       name: z.string().trim().min(1).max(100),
-      protocolVersion: z.literal(3),
+      protocolVersion: z.literal(14),
     })
     .strict()
     .parse(await c.req.json());

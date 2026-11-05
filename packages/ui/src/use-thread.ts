@@ -4,19 +4,31 @@ export type ThreadPage = {
   id: string;
   version: number;
   modelId: string;
+  taskId?:string|null;
+  queued?:{id:string;content:string;at:string}[];
+  conditions?:{run_id:string;task_version:number;instruction_version:number;content:string;confirmed_content:string|null;confirmed_at:string|null;approved_version:number|null;current_version:number}|null;
   draft: TaskInput | null;
   partial: { facts?: string; missing?: string[] };
   activeTurn: string | null;
   latestTurn?: { status: string; error?: string };
+  waiting?:{id:string;request:string}|null;
   messages: {
     id: string;
     seq: number;
     role: string;
     content: string;
     at: string;
+    private?:boolean;
+    source?:string;
+    parts?:import("../../contracts/src/execution").ChatPart[];
   }[];
   nextCursor: number | null;
+  replies?:{id:string;cursor:number;role:string;content:string;at:string;status:string}[];
+  nextReplyCursor?:number|null;
 };
+function mergeReplies(a:ThreadPage['replies'],b:ThreadPage['replies']){
+  return [...(a??[]).filter(m=>!b?.some(n=>n.id===m.id)),...(b??[])].sort((a,b)=>a.cursor-b.cursor);
+}
 export function useThread(
   transport: Transport,
   kind: "compose" | "chat",
@@ -33,12 +45,10 @@ export function useThread(
     attempt = useRef<{
       content: string;
       requestId: string;
-      expectedVersion: number;
-      mode: "chat" | "report";
-      runId?: string;
     } | null>(null);
   const revision = useRef(0),
     reading = useRef(0),
+    refreshing = useRef(false),
     writing = useRef(false);
   const accept = useCallback((p: ThreadPage) => {
     current.current = p;
@@ -61,7 +71,6 @@ export function useThread(
       if(generation.current!==g)return;
       const found = list.find(
         (t) =>
-          t.kind === kind &&
           t.model_id === modelId &&
           (t.task_id ?? undefined) === taskId,
       );
@@ -71,7 +80,6 @@ export function useThread(
             `/api/user/threads/${found.id}`,
           )
         : await transport.request<ThreadPage>("POST", "/api/user/threads", {
-            kind,
             modelId,
             ...(taskId ? { taskId } : {}),
           });
@@ -90,7 +98,9 @@ export function useThread(
   }, [transport, scope, accept, retryIndex]);
   const refresh = useCallback(async () => {
     const p = current.current;
-    if (!p) return;
+    if (!p || refreshing.current) return;
+    refreshing.current=true;
+    try {
     const g = generation.current,
       r = revision.current,
       ticket = ++reading.current;
@@ -109,6 +119,7 @@ export function useThread(
       if (!next.activeTurn) attempt.current = null;
       accept({
         ...next,
+        replies:mergeReplies(current.current?.replies,next.replies),
         messages: [
           ...(current.current?.messages ?? []).filter(
             (m) => !next.messages.some((n) => n.id === m.id),
@@ -117,31 +128,29 @@ export function useThread(
         ].sort((a, b) => a.seq - b.seq),
       });
     }
+    } finally {refreshing.current=false;}
   }, [transport, accept]);
   useEffect(() => {
-    if (!page?.activeTurn) return;
+    if (!page?.id) return;
     const unsubscribe=transport.subscribe?.(()=>void refresh().catch((e)=>setError(e.message)));
     const timer = setInterval(
       () => void refresh().catch((e) => setError(e.message)),
       transport.subscribe ? 15000 : 3000,
     );
     return () => {clearInterval(timer);unsubscribe?.();};
-  }, [page?.activeTurn, refresh,transport]);
-  async function send(content: string, mode: "chat" | "report" = "chat", runId?: string) {
+  }, [page?.id, refresh,transport]);
+  async function send(content: string) {
     const p = current.current;
     if (!p) throw new Error("会话尚未加载");
     if (writing.current) throw new Error("消息正在发送");
     if (
       attempt.current &&
-      (attempt.current.content !== content || attempt.current.mode !== mode || attempt.current.runId !== runId)
+      (attempt.current.content !== content)
     )
       throw new Error("请先重试上一条消息以确认结果");
     attempt.current ??= {
       content,
-      mode,
-      ...(runId ? {runId} : {}),
       requestId: crypto.randomUUID(),
-      expectedVersion: p.version,
     };
     const g = generation.current;
     revision.current++;
@@ -153,6 +162,7 @@ export function useThread(
       if (g !== generation.current) return result;
       accept({
         ...result,
+        replies:mergeReplies(current.current?.replies,result.replies),
         messages: [
           ...(current.current?.messages ?? []).filter(
             (m) => !result.messages.some((n) => n.id === m.id),
@@ -160,7 +170,7 @@ export function useThread(
           ...result.messages,
         ],
       });
-      if (result.status !== "running") attempt.current = null;
+      attempt.current = null;
       if (
         result.status === "failed" ||
         result.status === "unknown" ||
@@ -175,41 +185,21 @@ export function useThread(
       }
     }
   }
-  async function saveDraft(draft: TaskInput) {
-    const p = current.current;
-    if (!p) throw new Error("会话尚未加载");
-    const g = generation.current;
-    revision.current++;
-    writing.current = true;
-    try {
-      const result = await transport.request<ThreadPage>(
-        "PUT",
-        `/api/user/threads/${p.id}/draft`,
-        { expectedVersion: p.version, draft },
-      );
-      if (g === generation.current) accept(result);
-      else throw new Error("会话已切换");
-      return result;
-    } finally {
-      if (g === generation.current) {
-        writing.current = false;
-        revision.current++;
-      }
-    }
-  }
   async function older() {
     const p = current.current;
-    if (!p?.nextCursor) return;
+    if (!p || (!p.nextCursor&&!p.nextReplyCursor)) return;
     const g = generation.current;
     try {
     const old = await transport.request<ThreadPage>(
       "GET",
-      `/api/user/threads/${p.id}?before=${p.nextCursor}`,
+      `/api/user/threads/${p.id}?before=${p.nextCursor??1}&beforeReply=${p.nextReplyCursor??1}`,
     );
     if (g === generation.current && current.current)
       accept({
         ...current.current,
         nextCursor: old.nextCursor,
+        nextReplyCursor:old.nextReplyCursor,
+        replies:mergeReplies(old.replies,current.current.replies),
         messages: [...old.messages, ...current.current.messages].filter(
           (m, i, a) => a.findIndex((n) => n.id === m.id) === i,
         ),
@@ -229,7 +219,7 @@ export function useThread(
     const next = await transport.request<ThreadPage>(
       "POST",
       "/api/user/threads",
-      { kind, modelId, ...(taskId ? { taskId } : {}) },
+      { modelId, ...(taskId ? { taskId } : {}) },
     );
     if(nextGeneration===generation.current)accept(next);
   }
@@ -241,5 +231,5 @@ export function useThread(
     void refresh().catch(e=>{if(g===generation.current)setError(e.message);})
       .finally(()=>{if(g===generation.current)setLoading(false);});
   }
-  return { page, error, loading, retry, send, saveDraft, refresh, older, clear };
+  return { page, error, loading, retry, send, refresh, older, clear };
 }

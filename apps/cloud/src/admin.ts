@@ -10,7 +10,7 @@ admin.get('/operations',async c=>{
   c.env.DB.prepare('SELECT id,name,last_seen,revoked,protocol_version FROM devices ORDER BY name'),
   c.env.DB.prepare("SELECT id,user_id,device_id,status,created_at,updated_at,json_extract(result,'$.errorCode') error_code FROM runs ORDER BY created_at DESC LIMIT 200"),
   c.env.DB.prepare('SELECT id,user_id,assigned_device_id,login_reset FROM accounts'),
-  c.env.DB.prepare("SELECT key,value FROM settings WHERE key IN ('globalDailyModels','claimsEnabled')"),
+  c.env.DB.prepare("SELECT key,value FROM settings WHERE key='claimsEnabled'"),
  ]);
  return c.json({users:members.results,devices:devices.results,runs:runs.results,accounts:accounts.results,settings:Object.fromEntries(settings.results.map(x=>[x.key,x.value]))});
 });
@@ -30,17 +30,16 @@ admin.put('/users/:id',async c=>{
  return c.json({ok:true});
 });
 admin.put('/pool',async c=>{
- const b=z.object({claimsEnabled:z.boolean(),globalDailyModels:quota}).strict().parse(await c.req.json());
+ const b=z.object({claimsEnabled:z.boolean()}).strict().parse(await c.req.json());
  await c.env.DB.batch<Row>([
  c.env.DB.prepare("UPDATE settings SET value=? WHERE key='claimsEnabled'").bind(b.claimsEnabled?'1':'0'),
- c.env.DB.prepare("UPDATE settings SET value=? WHERE key='globalDailyModels'").bind(String(b.globalDailyModels)),
  ]);return c.json({ok:true});
 });
 admin.post('/accounts/:id/migrate',async c=>{
  const b=z.object({deviceId:z.string().min(1).max(100),oldExecutionStopped:z.literal(true)}).strict().parse(await c.req.json());
  const id=c.req.param('id');
  const results=await c.env.DB.batch([c.env.DB.prepare(`UPDATE accounts SET assigned_device_id=?,profile_id=?,login_reset=1 WHERE id=?
- AND EXISTS(SELECT 1 FROM devices WHERE id=? AND revoked=0 AND protocol_version=3)
+ AND EXISTS(SELECT 1 FROM devices WHERE id=? AND revoked=0 AND protocol_version=14)
  AND NOT EXISTS(SELECT 1 FROM account_locks WHERE account_key=accounts.id)
  AND NOT EXISTS(SELECT 1 FROM runs WHERE account_key=accounts.id AND status IN ('running','waiting_user','verifying','unknown'))`)
  .bind(b.deviceId,uid('profile'),id,b.deviceId),

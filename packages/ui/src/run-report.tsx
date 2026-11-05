@@ -42,6 +42,10 @@ const eventNames: Record<string, string> = {
   challenge: "等待协助",
   error: "执行错误",
   failed: "执行失败",
+  page_wait: "等待页面变化",
+  action_blocked: "调整执行计划",
+  snapshot: "页面快照",
+  snapshot_unavailable: "快照未保存",
 };
 const summaries: Record<TaskRun["status"], string> = {
   queued: "等待可用的执行设备和执行额度。已暂停的设备不会领取任务。",
@@ -99,6 +103,19 @@ export function RunReport({
         {run.result?.summary ?? (run.status === 'queued' && run.queueReason ? run.queueReason : summaries[run.status])}
       </p>
       <Trace aria-label="执行过程">
+        {run.result?.batch&&<>
+          <TraceLine><TraceTitle>页面证据与 AI 核验</TraceTitle><TraceDescription>{run.result.batch.coverage==='complete'?'范围已核对完整':'范围尚未核对完整'} · 已发现 {run.result.batch.items.length} / {run.result.batch.expected??'未知'} 项</TraceDescription></TraceLine>
+          <p className="text-sm text-muted-foreground">{run.result.batch.reason}</p>
+          {run.result.batch.items.map(item=><TraceCollapsible key={item.id}>
+            <TraceCollapsibleTrigger><TraceLine><TraceTitle>{item.label}</TraceTitle><TraceDescription>{{pending:'待处理',completed:'本次完成',already_done:'原已完成',excluded:'不在处理范围',unknown:'待核查'}[item.status]}</TraceDescription></TraceLine></TraceCollapsibleTrigger>
+            <TraceCollapsibleContent>
+              <p className="whitespace-pre-wrap break-words text-sm">{item.label}</p>
+              {item.reason&&<p className="text-sm">{item.reason}</p>}
+              <p className="whitespace-pre-wrap break-words text-sm">{item.evidence.quote||'尚无明确完成状态'}</p>
+              <p className="text-xs text-muted-foreground">采集于 {formatDate(item.evidence.capturedAt)}</p>
+            </TraceCollapsibleContent>
+          </TraceCollapsible>)}
+        </>}
         {events.map((event) => {
           const failed = ["error", "failed"].includes(event.kind);
           return (
@@ -125,9 +142,10 @@ export function RunReport({
                     </CodeBlockTitle>
                   </CodeBlockHeader>
                   <CodeBlockContent wrap className="max-h-60">
-                    {event.message}
+                    {event.kind==='snapshot'?'已保存当前页面快照，可在下方核对。':event.message}
                   </CodeBlockContent>
                 </CodeBlock>
+                {event.kind==='snapshot' && <SnapshotEvidence message={event.message} />}
               </TraceCollapsibleContent>
             </TraceCollapsible>
           );
@@ -244,4 +262,13 @@ export function RunReport({
       </div>
     </div>
   );
+}
+
+function SnapshotEvidence({message}:{message:string}){
+  let snapshot:{artifactId?:string;phase?:string;expiresAt?:string};
+  try{snapshot=JSON.parse(message);}catch{return null;}
+  if(!/^snapshot_[a-f0-9]{32}$/.test(snapshot.artifactId??''))return null;
+  if(!snapshot.expiresAt||Date.parse(snapshot.expiresAt)<=Date.now())return <p className="text-sm text-muted-foreground">快照已到期清理；步骤摘要仍保留。</p>;
+  const src='/api/user/artifacts/'+snapshot.artifactId;
+  return <div className="flex flex-col gap-2"><p className="text-xs text-muted-foreground">敏感内容已遮蔽，快照最多保留 10 分钟。</p><img src={src} alt="执行页面快照（敏感内容已遮蔽）" loading="lazy" className="max-h-96 max-w-full object-contain" /><Button asChild variant="outline" size="sm"><a href={src} target="_blank" rel="noreferrer">打开快照</a></Button></div>;
 }

@@ -1,72 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { productionModelFixture } from './production-model-fixture';
-import { executeTurn } from '../apps/cloud/src/ai/conversations';
-import { enqueue } from '../apps/cloud/src/store';
-
-test('历史报告绑定所选运行和当时任务快照；异步期间新运行不能替换事实',async t=>{
-  const s=await productionModelFixture(t);
-  const old=s.run.id;
-  s.sql.prepare("UPDATE runs SET status='failed',result=?,created_at='2020-01-01' WHERE id=?").run(JSON.stringify({summary:'OLD_RESULT_ONLY'}),old);
-  s.sql.prepare("INSERT INTO run_events(id,run_id,sequence,kind,message,at) VALUES('old_event',?,1,'failed','OLD_STEP_ONLY','2020-01-01')").run(old);
-  s.env.AI_TURNS={getByName:()=>({enqueue:async()=>{}})} as any;
-  const th=(await s.request('/api/user/threads',{kind:'chat',taskId:s.run.taskId,modelId:'model_test'})).data;
-  const body={requestId:'old-report',expectedVersion:0,mode:'report',runId:old,content:'生成所选运行报告'};
-  const sent=await s.request(`/api/user/threads/${th.id}/messages`,body);
-  assert.equal(sent.status,202);
-  const newer=await enqueue(s.db,{...s.run.task,title:'NEW_TASK_ONLY'},'newer-report');
-  s.sql.prepare("UPDATE runs SET status='succeeded',result=? WHERE id=?").run(JSON.stringify({summary:'NEW_RESULT_ONLY'}),newer.id);
-  s.replies('{"reply":"旧运行未完成，有失败步骤"}');
-  await executeTurn({...s.env,requestUserId:'legacy_owner'},th.id,sent.data.turnId,'report');
-  const prompt=JSON.stringify(s.requests[0].body);
-  assert.match(prompt,/OLD_RESULT_ONLY/);assert.match(prompt,/OLD_STEP_ONLY/);
-  assert.doesNotMatch(prompt,/NEW_RESULT_ONLY|NEW_TASK_ONLY/);
-  assert.equal(s.sql.prepare('SELECT run_id FROM ai_turns WHERE id=?').get(sent.data.turnId)!.run_id,old);
-  assert.equal((await s.request(`/api/user/threads/${th.id}/messages`,body)).data.status,'done');
-  assert.equal((await s.request(`/api/user/threads/${th.id}/messages`,{...body,runId:newer.id})).data.error,'MESSAGE_CONFLICT');
-  assert.equal(s.jobs(),1);
+import {productionModelFixture} from './production-model-fixture';
+test('聊天图片长期保存，清空聊天同时删除图片，旧运行不会迁入新聊天',async t=>{
+ const s=await productionModelFixture(t),images=new Map<string,ArrayBuffer>();
+ s.env.EVIDENCE_STORE={getByName:(key:string)=>({put:async(_key:string,bytes:ArrayBuffer,expires:number|null)=>{assert.equal(expires,null);images.set(key,bytes);},get:async()=>images.get(key)??null,remove:async()=>{images.delete(key);}})} as any;
+ const th=(await s.request('/api/user/threads',{modelId:'model_test',taskId:s.run.taskId})).data;s.sql.prepare('UPDATE runs SET thread_id=? WHERE id=?').run(th.id,s.run.id);
+ const r=await s.request(`/api/runner/runs/${s.run.id}/snapshots`,{epoch:s.run.leaseEpoch,captureId:'shot_one',image:Buffer.from([137,80,78,71,13,10,26,10]).toString('base64')});assert.equal(r.status,200,JSON.stringify(r.data));
+ assert.ok(Date.parse(String(s.sql.prepare('SELECT expires_at FROM artifacts').get()!.expires_at))>Date.now()+86400000);assert.equal(images.size,1);
+ const deleted=await s.request(`/api/user/threads/${th.id}`,{},'DELETE');assert.equal(deleted.status,200);assert.equal(images.size,0);assert.equal(s.sql.prepare('SELECT COUNT(*) n FROM artifacts').get()!.n,0);
+ await s.request('/api/user/threads',{modelId:'model_test',taskId:s.run.taskId});
+ const message=await s.request(`/api/runner/runs/${s.run.id}/messages`,{epoch:s.run.leaseEpoch,id:'late_message',content:'不应回填'});assert.notEqual(message.status,200);
 });
-
-test('报告缺少运行、跨用户或跨任务运行均在创建回合和调用模型前拒绝',async t=>{
-  const s=await productionModelFixture(t);
-  const th=(await s.request('/api/user/threads',{kind:'chat',taskId:s.run.taskId,modelId:'model_test'})).data;
-  const body={requestId:'rejected',expectedVersion:0,mode:'report',content:'生成报告'};
-  assert.equal((await s.request(`/api/user/threads/${th.id}/messages`,body)).data.error,'REPORT_RUN_REQUIRED');
-  assert.equal((await s.request(`/api/user/threads/${th.id}/messages`,{...body,runId:'other_run'})).data.error,'RUN_NOT_FOUND');
-  s.sql.prepare("INSERT INTO members(id,role,email) VALUES('other','user','other@example.com')").run();
-  s.sql.prepare("UPDATE runs SET user_id='other' WHERE id=?").run(s.run.id);
-  assert.equal((await s.request(`/api/user/threads/${th.id}/messages`,{...body,runId:s.run.id})).data.error,'RUN_NOT_FOUND');
-  assert.equal(s.sql.prepare('SELECT COUNT(*) n FROM ai_turns').get()!.n,0);assert.equal(s.jobs(),0);
-});
-
-test('创建不接受模型拼接的多段判据，明确引用的连续原文仍可生成草稿',async t=>{
-  const s=await productionModelFixture(t);
-  const th=(await s.request('/api/user/threads',{kind:'compose',modelId:'model_test'})).data;
-  const task={title:'提交',goal:'虚构验收',entryUrl:'https://example.com/',allowedOrigins:['https://example.com'],allowedActions:['read'],verification:{kind:'text_present',value:'QA-SUBMITTED；已提交次数：1'},schedule:{kind:'manual'}};
-  const reply=JSON.stringify({reply:'请确认',task,partial:'虚构验收',missing:[]});
-  s.replies(reply);
-  const first=await s.request(`/api/user/threads/${th.id}/messages`,{requestId:'multi',expectedVersion:0,content:'查看 https://example.com/，出现 QA-SUBMITTED，并且已提交次数：1'});
-  assert.equal(first.data.status,'done');assert.equal(first.data.draft,null);assert.match(first.data.messages.at(-1).content,/连续的页面原文/);
-  assert.equal(s.sql.prepare('SELECT COUNT(*) n FROM tasks').get()!.n,1);
-  s.replies(reply);
-  const second=await s.request(`/api/user/threads/${th.id}/messages`,{requestId:'literal',expectedVersion:1,content:'页面连续原文为“QA-SUBMITTED；已提交次数：1”'});
-  assert.equal(second.data.draft.verification.value,task.verification.value);
-});
-
-test('快照和运行详情解释排队阻塞，并分别返回平台与个人预算',async t=>{
-  const s=await productionModelFixture(t);
-  s.sql.prepare("UPDATE runs SET status='queued',device_id=NULL,started_day=NULL WHERE id=?").run(s.run.id);
-  s.sql.prepare('DELETE FROM account_locks').run();
-  s.sql.prepare("INSERT INTO platform_budget VALUES(?,'model',99)").run(new Date().toISOString().slice(0,10));
-  const get=()=>s.request('/api/user/snapshot',undefined,'GET');
-  let snap=(await get()).data;
-  assert.equal(snap.platformBudget.used.model,99);assert.equal(snap.platformBudget.limits.model,100);
-  assert.notEqual(snap.quota.resetAt,snap.platformBudget.resetAt);
-  assert.match(snap.runs[0].queueReason,/最近在线/);
-  s.sql.prepare("UPDATE devices SET last_seen=?").run(new Date().toISOString());
-  assert.match((await get()).data.runs[0].queueReason,/等待设备领取/);
-  s.sql.prepare("UPDATE members SET daily_runs=0 WHERE id='legacy_owner'").run();
-  assert.match((await s.request(`/api/user/runs/${s.run.id}`,undefined,'GET')).data.run.queueReason,/启动额度/);
-  s.sql.prepare("UPDATE settings SET value='0' WHERE key='claimsEnabled'").run();
-  assert.match((await get()).data.runs[0].queueReason,/管理员已暂停/);
+test('图片删除暂时失败后本人可以重试，删除标记阻止新写入',async t=>{
+ const s=await productionModelFixture(t),th=(await s.request('/api/user/threads',{modelId:'model_test',taskId:s.run.taskId})).data;
+ s.sql.prepare("INSERT INTO artifacts(id,run_id,object_key,content_type,expires_at,thread_id,persistent) VALUES('delete_retry',?,'image','image/png','9999-01-01',?,1)").run(s.run.id,th.id);
+ let fails=true;s.env.EVIDENCE_STORE={getByName:()=>({remove:async()=>{if(fails)throw Error('STORAGE_OFFLINE');}})} as any;
+ assert.notEqual((await s.request(`/api/user/threads/${th.id}`,{},'DELETE')).status,200);
+ assert.equal(s.sql.prepare('SELECT deleted FROM ai_threads WHERE id=?').get(th.id)!.deleted,1);
+ fails=false;assert.equal((await s.request(`/api/user/threads/${th.id}`,{},'DELETE')).status,200);
+ assert.equal(s.sql.prepare('SELECT COUNT(*) n FROM artifacts WHERE thread_id=?').get(th.id)!.n,0);
 });

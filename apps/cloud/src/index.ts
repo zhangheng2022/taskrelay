@@ -42,10 +42,10 @@ app.use('/api/*',async(c,next)=>{
  await next();
  if(c.req.method==='GET'||c.res.status>=400)return;
  if(c.get('userId'))await notifyUser(c.env,c.get('userId'));
- if(c.req.path.startsWith('/api/user/tasks')||c.req.path.startsWith('/api/admin/'))await notifyDevices(c.env);
+ if(c.req.path.startsWith('/api/user/tasks')||c.req.path.startsWith('/api/admin/')||/^\/api\/user\/(runs\/[^/]+\/cancel|threads\/[^/]+\/messages)$/.test(c.req.path))await notifyDevices(c.env);
  if(c.get('deviceId')&&c.env.NOTIFICATIONS){
    const run=/^\/api\/runner\/runs\/([^/]+)/.exec(c.req.path);
-   if(run&&!c.req.path.endsWith('/heartbeat')){
+   if(run&&c.req.path.endsWith('/finish')){
      const owner=await c.env.DB.prepare('SELECT user_id FROM runs WHERE id=?').bind(run[1]).first<{user_id:string}>();
      if(owner)await notifyUser(c.env,owner.user_id);
    }
@@ -75,11 +75,11 @@ app.route("/api/admin", admin);
 app.get('/api/auth/config',c=>c.json({registrationOpen:c.env.REGISTRATION_OPEN==='1',siteKey:c.env.TURNSTILE_SITE_KEY||''}));
 app.all('/api/auth/*',c=>authHandler(c.req.raw,c.env));
 app.post('/api/device/upgrade',async c=>{
- z.object({protocolVersion:z.literal(3),localReady:z.literal(true)}).strict().parse(await c.req.json());
- const result=await c.env.DB.prepare("UPDATE devices SET protocol_version=3,cutover_ready_at=? WHERE id=? AND revoked=0 AND (EXISTS(SELECT 1 FROM settings WHERE key='historyEpoch' AND value='3') OR (EXISTS(SELECT 1 FROM settings WHERE key='maintenance' AND value='1') AND EXISTS(SELECT 1 FROM settings WHERE key='claimsEnabled' AND value='0'))) AND NOT EXISTS(SELECT 1 FROM runs WHERE device_id=? AND status IN ('running','waiting_user','verifying','unknown'))").bind(now(),c.get('deviceId'),c.get('deviceId')).run();
+ z.object({protocolVersion:z.literal(14),localReady:z.literal(true)}).strict().parse(await c.req.json());
+ const result=await c.env.DB.prepare("UPDATE devices SET protocol_version=14,cutover_ready_at=? WHERE id=? AND revoked=0 AND (EXISTS(SELECT 1 FROM settings WHERE key='historyEpoch' AND value='3') OR (EXISTS(SELECT 1 FROM settings WHERE key='maintenance' AND value='1') AND EXISTS(SELECT 1 FROM settings WHERE key='claimsEnabled' AND value='0'))) AND NOT EXISTS(SELECT 1 FROM runs WHERE device_id=? AND status IN ('running','waiting_user','verifying'))").bind(now(),c.get('deviceId'),c.get('deviceId')).run();
  if(!result.meta.changes)throw new Error('CUTOVER_NOT_READY');
  const epoch=await c.env.DB.prepare("SELECT value FROM settings WHERE key='historyEpoch'").first<{value:string}>();
- return c.json({protocolVersion:3,historyEpoch:Number(epoch?.value??0)});
+ return c.json({protocolVersion:14,historyEpoch:Number(epoch?.value??0)});
 });
 app.get('/api/device/status',async c=>{
  const rows=await c.env.DB.prepare("SELECT key,value FROM settings WHERE key IN ('maintenance','historyEpoch')").all<{key:string;value:string}>();
@@ -96,8 +96,8 @@ app.onError((error, c) => {
         ? error.message
         : /(?:MEMORY_LIMIT|QUEUE_LIMIT|CLAIM_BUSY|RUN_QUOTA_EXCEEDED|SCHEDULE_QUOTA_EXCEEDED|USER_DISABLED|ACCOUNT_DEVICE_MISMATCH)/.exec(error.message)?.[0] ?? "INTERNAL_ERROR";
   return c.json(
-    { error: code, ...(code==='PLATFORM_DAILY_LIMIT'?{resetAt:new Date(new Date().setUTCHours(24,0,0,0)).toISOString()}:code.includes("QUOTA")||code==="QUEUE_LIMIT"?{resetAt:quotaReset()}: {}) },
-    code==='PLATFORM_DAILY_LIMIT'||code.includes("QUOTA")||code==="QUEUE_LIMIT"||code==="RATE_LIMITED" ? 429 : code==="USER_DISABLED" ? 403 : code === "INTERNAL_ERROR"
+    { error: code, ...(code.includes("QUOTA")||code==="QUEUE_LIMIT"?{resetAt:quotaReset()}: {}) },
+    code.includes("QUOTA")||code==="QUEUE_LIMIT"||code==="RATE_LIMITED" ? 429 : code==="USER_DISABLED" ? 403 : code === "INTERNAL_ERROR"
       ? 500
       : code.includes("NOT_FOUND")
         ? 404
@@ -147,6 +147,7 @@ export async function maintenance(env: AppEnv) {
         const cutoff = new Date(Date.now() - days * 86400000).toISOString();
         await retainHistory(env,cutoff);
         await env.DB.batch([
+          env.DB.prepare("DELETE FROM batch_progress WHERE updated_at<? AND run_id IN (SELECT id FROM runs WHERE status IN ('succeeded','failed','cancelled','expired'))").bind(cutoff),
           env.DB.prepare(
             "DELETE FROM run_events WHERE at<? AND run_id IN (SELECT id FROM runs WHERE status IN ('succeeded','failed','cancelled','expired'))",
           ).bind(cutoff),

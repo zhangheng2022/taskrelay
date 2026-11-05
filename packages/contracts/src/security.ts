@@ -39,11 +39,6 @@ export async function publicEndpoint(
     throw new Error("PRIVATE_ADDRESS_BLOCKED");
   return url;
 }
-export function allowedNavigation(value: string, origins: string[]) {
-  const url = publicUrl(value);
-  if (!origins.includes(url.origin)) throw new Error("ORIGIN_NOT_AUTHORIZED");
-  return url;
-}
 export function redact(value: string) {
   return value
     .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")

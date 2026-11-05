@@ -4,23 +4,14 @@ import type { AppEnv } from "./env";
 import { wakeTurns } from './ai/turn';
 import {notifyDevices} from './notifications';
 
-/** Bounded session shards coordinate admission. A routing hash is NEVER identity;
+/** Bounded session shards route application work. A routing hash is NEVER identity;
  * the application authenticates the original request on every invocation. */
 export class RequestCoordinator extends DurableObject<AppEnv> {
   constructor(ctx: DurableObjectState, env: AppEnv) {
     super(ctx, env);
-    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS admission(day TEXT PRIMARY KEY,n INTEGER NOT NULL)");
+    ctx.storage.sql.exec('DROP TABLE IF EXISTS admission');
   }
   async fetch(request: Request) {
-    const day = new Date().toISOString().slice(0, 10);
-    const sql = this.ctx.storage.sql;
-    sql.exec("DELETE FROM admission WHERE day<>?", day);
-    // Eight shards leave a single always-on executor enough room for its 60s fallback.
-    // This is application admission, not a replacement for Cloudflare account quotas.
-    const n = sql.exec<{n:number}>("SELECT n FROM admission WHERE day=?",day).toArray()[0]?.n ?? 0;
-    const recovery = /^\/api\/runner\/runs\/[^/]+\/(heartbeat|finish|events|actions|stop)/.test(new URL(request.url).pathname);
-    if(n >= (recovery ? 9600 : 8000))return Response.json({error:"PLATFORM_DAILY_LIMIT",resetAt:new Date(Date.parse(day)+86400000).toISOString()},{status:429});
-    sql.exec("INSERT INTO admission(day,n) VALUES(?,1) ON CONFLICT(day) DO UPDATE SET n=n+1",day);
     return app.fetch(request, this.env);
   }
 }

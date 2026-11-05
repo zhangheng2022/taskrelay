@@ -1,4 +1,4 @@
-import { execute } from "./runtime";
+import { execute,connectExecutionBrowser } from "./runtime";
 import type { TaskRun } from "../../../../packages/contracts/src/index";
 const parent = process.parentPort;
 if (!parent) throw new Error("UTILITY_PROCESS_REQUIRED");
@@ -31,13 +31,8 @@ parent.on("message", async ({ data }) => {
     let phase = "connect";
     try {
       const sdk = await import("@browserbasehq/stagehand");
-      const browser = await sdk.localBrowser.connect({ cdpUrl: data.cdpUrl });
       let callbacks = 0;
-      const stagehand = await sdk.Stagehand.create({
-        browser,
-        cache: false,
-        logging: { level: "off" },
-        model: {
+      const {browser,session:stagehand} = await connectExecutionBrowser(sdk,data.cdpUrl,{
           generate: async (request) => {
             callbacks++;
             if (request.responseFormat?.type !== "json_schema")
@@ -45,18 +40,24 @@ parent.on("message", async ({ data }) => {
             const schema = request.responseFormat.schema as {
               properties?: Record<string, unknown>;
             };
-            const content: Record<string, string | boolean> =
-              schema.properties && "progress" in schema.properties
+            const text=request.messages.flatMap(m=>(Array.isArray(m.content)?m.content:[m.content]).filter(p=>p.type==='text').map(p=>p.type==='text'?p.text:'')).join('\n');
+            const password=phase==='stagehand-password';
+            const elementId=password?text.match(/\[([\d]+-[\d]+)\][^\n]*textbox[^\n]*密码/)?.[1]:text.match(/\[([\d]+-[\d]+)\][^\n]*继续登录/)?.[1];
+            const target={elementId,description:password?'密码':'继续登录',method:password?'fill':'click',arguments:password?['synthetic-smoke-secret']:[]};
+            const content: Record<string, unknown> = schema.properties&&'elements' in schema.properties
+              ? {elements:[target]}
+              : schema.properties&&'action' in schema.properties
+              ? {action:target,twoStep:false}
+              : schema.properties && "progress" in schema.properties
                 ? { progress: "Read fixture value", completed: true }
                 : { value: "42" };
             return {
               role: "assistant",
               content: [{ type: "text", text: JSON.stringify(content) }],
               outputFormat: "json_schema",
-              structuredContent: content,
+              structuredContent: content as any,
             };
           },
-        },
       });
       const page = (await browser.context.pages())[0];
       const clickAndVerify = async (target: string, selector: string) => {
@@ -113,6 +114,25 @@ parent.on("message", async ({ data }) => {
       await clickAndVerify("#submit", "#result");
       if (!(await page.locator("body").innerText()).includes("提交成功"))
         throw new Error("SUBMIT_FAILED");
+      phase='multi-step-login';
+      await page.goto(data.url+'/multi-login');
+      await page.locator('#email').fill('fixture@example.com');
+      await clickAndVerify('#next','#password');
+      phase='stagehand-password';
+      const filled=await stagehand.act('将 synthetic-smoke-secret 填入密码输入框',{page});
+      if(!filled.data.success||await page.locator('#password').inputValue()!=='synthetic-smoke-secret')throw Error('STAGEHAND_PASSWORD_FAILED');
+      phase='masked-snapshot';
+      const {maskedScreenshot,loadingFacts}=await import('./snapshots');
+      await page.locator('#password').fill('synthetic-smoke-secret');
+      const masked=await maskedScreenshot(page,['synthetic-smoke-secret']);
+      if(!masked.startsWith('iVBORw0KGgo')||await page.locator('[data-taskrelay-mask]').count()!==0||await page.locator('#password').inputValue()!=='synthetic-smoke-secret')throw Error('SNAPSHOT_MASK_FAILED');
+      if((await loadingFacts(page)).readyState!=='complete')throw Error('SNAPSHOT_LOADING_FAILED');
+      phase='stagehand-ai-actions';
+      await page.goto(data.url+'/selectors');
+      const discovered=await stagehand.observe('找到“继续登录”按钮',{page});
+      if(!discovered.data.length)throw Error('STAGEHAND_OBSERVE_FAILED');
+      const acted=await stagehand.act('点击“继续登录”按钮',{page});
+      if(!acted.data.success||await page.evaluate(()=>document.body.dataset.clicked)!=='yes')throw Error('STAGEHAND_AI_ACT_FAILED');
       phase = "close";
       await stagehand.close();
       parent.postMessage({
@@ -126,6 +146,11 @@ parent.on("message", async ({ data }) => {
           wrongCodeRejected: true,
           formSubmit: true,
           leadingZero: true,
+          multiStepLogin:true,
+          maskedSnapshot:true,
+          stagehandAiObserve:true,
+          stagehandAiAct:true,
+          stagehandAiPassword:true,
           modelCallback: callbacks > 0,
           extracted,
         },

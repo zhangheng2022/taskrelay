@@ -1,7 +1,11 @@
 
 if(import.meta.env.DEV){
   const state=new URLSearchParams(location.search).get('state')??'network';
-  const entries=state==='loading'
+  const entries=state==='batch'
+    ?[['手机 · 批量核验报告',390,760,'?batch&state=failed&history#demo_task'],['窄桌面 · 批量核验报告',768,760,'?batch&state=failed&history#demo_task']]
+    :state==='batch-compose'
+    ?[['手机 · 批量创建',390,760,'?batch&state=new'],['窄桌面 · 批量创建',768,760,'?batch&state=new']]
+    :state==='loading'
     ?[['手机 · 慢速首次加载',390,760,'?state=new&network=slow'],['窄桌面 · 慢速首次加载',768,760,'?state=new&network=slow']]
     :state==='auth'
     ?[['手机 · 登录主题',390,760,'?auth'],['窄桌面 · 登录主题',768,760,'?auth']]

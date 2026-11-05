@@ -14,7 +14,7 @@ afterEach(() => {
   cleanup();
   localStorage.clear();
 });
-test("task editor rejects private addresses and does not silently expand allowed sites", async () => {
+test("task editor accepts public website changes without an allowlist and rejects private addresses", async () => {
   const applied: unknown[]=[];
   const view=render(<TaskEditor initial={taskInputSchema.strip().parse(task)} snapshot={snapshot} onClose={()=>{}} onApply={v=>applied.push(v)}/>);
   fireEvent.change(view.getByRole('textbox',{name:'网站地址'}),{target:{value:'http://127.0.0.1'}});
@@ -23,37 +23,30 @@ test("task editor rejects private addresses and does not silently expand allowed
   assert.equal(applied.length,0);
   fireEvent.change(view.getByRole('textbox',{name:'网站地址'}),{target:{value:'https://other.example.com/'}});
   fireEvent.click(view.getByRole('button',{name:'更新确认卡'}));
-  assert.match(view.getByRole('alert').textContent??'',/允许访问/);
-  assert.equal(applied.length,0);
+  assert.equal(applied.length,1);
+  assert.equal(view.queryByLabelText('允许访问的站点'),null);
   fireEvent.change(view.getByRole('textbox',{name:'网站地址'}),{target:{value:task.entryUrl}});
   fireEvent.click(view.getByRole('button',{name:'更新确认卡'}));
-  assert.equal(applied.length,1);
+  assert.equal(applied.length,2);
 });
-test("asynchronous completion with the same version shows the draft and unlocks the next turn", async () => {
-  let page: any = {...threadPage}, listener: (()=>void)|undefined;
-  const sent: any[]=[];
-  const transport={...transportWith(async (method,path,body)=>{
-    if(path==='/api/user/threads')return [{id:threadPage.id,kind:'compose',model_id:'model-ui',task_id:null}];
-    if(method==='GET')return page;
-    assert.ok(path.endsWith('/messages'),'a draft must never create a task implicitly');
-    sent.push(body);
-    page={...page,version:sent.length,activeTurn:'turn-'+sent.length,latestTurn:{status:'running'},status:'running'};
-    return page;
-  }),subscribe(fn:()=>void){listener=fn;return()=>{listener=undefined;};}};
-  const view=render(<TaskCompose transport={transport} snapshot={snapshot} offline={false} onSaved={async()=>{}} onSettings={()=>{}}/>);
-  await waitFor(()=>assert.equal(view.getByRole('button',{name:'监测页面是否发生变化'}).hasAttribute('disabled'),false));
-  fireEvent.click(view.getByRole('button',{name:'监测页面是否发生变化'}));
-  await waitFor(()=>assert.ok(listener));
-  assert.ok(view.getByRole('status').textContent?.includes('正在整理任务'));
-  page={...page,activeTurn:null,latestTurn:{status:'done'},draft:task};
-  await act(async()=>listener!());
-  await view.findByRole('button',{name:'创建并试运行'});
-  assert.equal(view.queryByRole('status'),null);
-  fireEvent.change(view.getByRole('textbox'),{target:{value:'改成每天上午九点'}});
-  fireEvent.click(view.getByRole('button',{name:'发送消息'}));
-  await waitFor(()=>assert.equal(sent.length,2));
-  assert.notEqual(sent[0].requestId,sent[1].requestId);
-  assert.equal(sent[1].expectedVersion,1);
+test("交办通过消息启动，异步完成保留会话并允许继续补充", async () => {
+ let page:any={...threadPage},listener:(()=>void)|undefined;const sent:any[]=[],opened:string[]=[];
+ const transport={...transportWith(async(method,path,body)=>{
+  if(path==='/api/user/threads')return [{id:threadPage.id,model_id:'model-ui',task_id:null}];
+  if(method==='GET')return page;
+  assert.ok(path.endsWith('/messages'));sent.push(body);
+  page={...page,activeTurn:'working',status:'running'};return page;
+ }),subscribe(fn:()=>void){listener=fn;return()=>{listener=undefined;};}};
+ const view=render(<TaskCompose transport={transport} snapshot={snapshot} offline={false} onSaved={async id=>{opened.push(id);}} onSettings={()=>{}}/>);
+ await waitFor(()=>assert.equal(view.getByRole('button',{name:'发送消息'}).hasAttribute('disabled'),true));
+ await waitFor(()=>assert.ok(listener));
+ fireEvent.change(view.getByRole('textbox'),{target:{value:'查看 https://example.com/'}});fireEvent.click(view.getByRole('button',{name:'发送消息'}));
+ await waitFor(()=>assert.equal(sent.length,1));
+ fireEvent.change(view.getByRole('textbox'),{target:{value:'这次只看今天'}});fireEvent.click(view.getByRole('button',{name:'发送消息'}));
+ await waitFor(()=>assert.equal(sent.length,2));assert.notEqual(sent[0].requestId,sent[1].requestId);
+ assert.equal(view.queryByRole('button',{name:'创建并试运行'}),null);
+ page={...page,taskId:'created-task',activeTurn:null,status:'done'};
+ await act(async()=>listener!());await waitFor(()=>assert.deepEqual(opened,['created-task']));
 });
 test("pending input stays focused and read-only, and accepts another message after completion", () => {
   let sends = 0;
@@ -103,74 +96,20 @@ test("composer sends once on Enter; Shift+Enter and IME composition never send",
   assert.equal(sends, 2);
 });
 
-test("suggestion sends a real compose request, shows pending turn, and requires explicit creation", async () => {
-  const calls: { path: string; body: any }[] = [];
-  let resolve!: (value: unknown) => void;
-  const transport = transportWith(async (_method, path, body) => {
-    if(path==='/api/user/threads')return _method==='GET'?[]:threadPage;
-    calls.push({ path, body });
-    return new Promise((r) => {
-      resolve = r;
-    });
-  });
-  const view = render(
-    <TaskCompose
-      transport={transport}
-      snapshot={snapshot}
-      offline={false}
-      onSaved={async () => {}}
-      onSettings={() => {}}
-    />,
-  );
-  await waitFor(()=>assert.equal(view.getByRole("button",{name:"监测页面是否发生变化"}).hasAttribute("disabled"),false));
-  fireEvent.click(view.getByRole("button", { name: "监测页面是否发生变化" }));
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].body.content, "监测页面是否发生变化");
-  assert.ok(view.getByRole("status"));
-  assert.equal(view.queryByText("今天想交给 TaskRelay 什么任务？"), null);
-  resolve({...threadPage,version:1,status:'done',draft:task,messages:[{id:'reply',seq:2,role:'assistant',content:'请确认范围'}]});
-  await view.findByRole("button", { name: "创建并试运行" });
-  assert.equal(calls.length, 1);
+test("消息响应丢失重试保留相同请求，不另建确认请求", async () => {
+ const writes:unknown[]=[];
+ const transport=transportWith(async(method,path,body)=>{
+  if(path==='/api/user/threads')return method==='GET'?[]:threadPage;
+  if(method==='GET')return threadPage;
+  assert.ok(path.endsWith('/messages'));writes.push(structuredClone(body));throw Error('NETWORK_ERROR');
+ });
+ const view=render(<TaskCompose transport={transport} snapshot={snapshot} offline={false} onSaved={async()=>{}} onSettings={()=>{}}/>);
+ await waitFor(()=>assert.equal(view.getByRole('textbox').hasAttribute('disabled'),false));
+ fireEvent.change(view.getByRole('textbox'),{target:{value:'查看 https://example.com/'}});
+ fireEvent.click(view.getByRole('button',{name:'发送消息'}));await waitFor(()=>assert.equal(writes.length,1));
+ await waitFor(()=>assert.equal(view.getByRole('button',{name:'发送消息'}).hasAttribute('disabled'),false));
+ fireEvent.click(view.getByRole('button',{name:'发送消息'}));await waitFor(()=>assert.equal(writes.length,2));assert.deepEqual(writes[0],writes[1]);
 });
-
-test("ambiguous task creation retries exactly the same payload/id and locks editing", async () => {
-  const writes: unknown[] = [];
-  const transport = transportWith(async (_method, path, body) => {
-    if(path==='/api/user/threads')return _method==='GET'?[]:threadPage;
-    if(path.endsWith('/messages'))return {...threadPage,version:1,status:'done',draft:task};
-    if(path.endsWith('/draft'))return {...threadPage,version:2,draft:body.draft};
-    writes.push(structuredClone(body));
-    throw new Error("NETWORK_ERROR");
-  });
-  const view = render(
-    <TaskCompose
-      transport={transport}
-      snapshot={snapshot}
-      offline={false}
-      onSaved={async () => {}}
-      onSettings={() => {}}
-    />,
-  );
-  await waitFor(()=>assert.equal(view.getByRole("button",{name:"监测页面是否发生变化"}).hasAttribute("disabled"),false));
-  fireEvent.change(view.getByRole("textbox"), {
-    target: { value: "检查 https://example.com" },
-  });
-  fireEvent.click(view.getByRole("button", { name: "发送消息" }));
-  fireEvent.click(await view.findByRole("button", { name: "创建并试运行" }));
-  await waitFor(() =>
-    assert.equal(
-      view.getByRole("button", { name: "重试确认" }).hasAttribute("disabled"),
-      false,
-    ),
-  );
-  assert.ok(
-    view.getByRole("button", { name: "编辑配置" }).hasAttribute("disabled"),
-  );
-  fireEvent.click(view.getByRole("button", { name: "重试确认" }));
-  await waitFor(() => assert.equal(writes.length, 2));
-  assert.deepEqual(writes[0], writes[1]);
-});
-
 test("model selector keeps arbitrary names and disables profiles without required capabilities", async () => {
   let selected = "";
   const models = [

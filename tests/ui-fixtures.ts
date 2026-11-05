@@ -16,11 +16,10 @@ export const task: TaskDefinition = {
   title: "检查公告",
   goal: "查询公告",
   entryUrl: "https://example.com/",
-  allowedOrigins: ["https://example.com"],
   accountId: null,
   modelId: "model-ui",
   allowedActions: ["navigate", "read"],
-  verification: { kind: "text_present", value: "公告" },
+  verification: { kind: "goal", value: "公告" },
   schedule: { kind: "manual" },
 };
 export const snapshot: Snapshot = {

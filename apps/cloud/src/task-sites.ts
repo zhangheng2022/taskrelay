@@ -1,7 +1,7 @@
 import { publicUrl } from "../../../packages/contracts/src/security";
 
-// Recognize user-supplied addresses only. This is input convenience, not a
-// replacement for publicUrl, DNS checks, or the task confirmation boundary.
+// Extract address hints from user text. AI may also infer a public entry URL;
+// these hints are not an authorization list. Public URL and DNS checks remain.
 export function suppliedTaskUrls(content: string): string[] {
   const urls = new Set<string>();
   const candidates = /[a-z][a-z0-9+.-]*:\/\/[^\s<>"'`，。；、！？（）)\]}]+|[a-z0-9][a-z0-9.-]*\.[a-z]{2,63}(?::\d+)?(?:[/?#][^\s<>"'`，。；、！？（）)\]}]*)?/gi;
@@ -20,7 +20,7 @@ export function suppliedTaskUrls(content: string): string[] {
         /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(label))) continue;
       urls.add(url.href);
     } catch {
-      // Invalid/private addresses are not evidence of an authorized website.
+      // Invalid/private addresses are not usable navigation hints.
     }
   }
   return [...urls];

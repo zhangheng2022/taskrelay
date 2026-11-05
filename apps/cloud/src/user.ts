@@ -1,5 +1,5 @@
+import { conditionsSchema } from './ai/commands';
 import {getEvidence} from './evidence';
-import { platformBudget } from './free-budget';
 import {Buffer} from 'node:buffer';
 import { quotaSummary } from './tenancy';
 import { Hono } from "hono";
@@ -9,6 +9,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { desc, eq } from "drizzle-orm";
 import {
   taskInputSchema,
+  scheduleSchema,
   idSchema,
   type TaskDefinition,
 } from "../../../packages/contracts/src/index";
@@ -37,7 +38,7 @@ import {
   validateEndpoint,
 } from "./models";
 import { seal, unseal } from "./crypto";
-import { challengeFrom, exactReply } from "./challenges";
+import { challengeFrom } from "./challenges";
 import { ownedThread } from './ai/conversations';
 export const user = new Hono<{ Bindings: AppEnv; Variables: Variables }>();
 export const admin = new Hono<{ Bindings: AppEnv; Variables: Variables }>();
@@ -82,11 +83,10 @@ user.get("/snapshot", async (c) => {
       .bind(c.get("userId"),now()),
   ]);
   const r = results.map((x) => x.results as Row[]);
-  const [reasons,budget]=await Promise.all([queueReasons(db,c.get('userId')),platformBudget(c.env)]);
+  const reasons=await queueReasons(db,c.get('userId'));
   return c.json({
     tasks: r[0].map(taskFrom),
     runs: r[1].map(row=>runFrom({...row,queue_reason:reasons.get(row.id)})),
-    platformBudget: budget,
     models: r[2].map(modelFrom).map(m=>c.get("actor")==="owner"?m:{...m,baseUrl:"",hasKey:false}),
     me: {id:c.get("userId"),role:c.get("member").role,email:c.get("member").email},
     quota: await quotaSummary(db,c.get("userId"),c.get("member")),
@@ -173,132 +173,37 @@ user.post("/accounts", async (c) => {
     .run();
   return c.json({ id }, 201);
 });
-async function validatedTask(env: AppEnv, input: unknown,version?:number) {
-  const data = taskInputSchema.parse(input);
-  const origin = publicUrl(data.entryUrl).origin;
-  data.allowedOrigins = [
-    ...new Set(data.allowedOrigins.map((x) => publicUrl(x).origin)),
-  ];
-  if (!data.allowedOrigins.includes(origin))
-    throw new Error("ENTRY_ORIGIN_NOT_ALLOWED");
-  if (data.schedule.kind !== "manual") nextOccurrence(data.schedule);
-  const { profile } = await getModel(env, data.modelId,version);
-  if (
-    !profile.capabilities.connection ||
-    !profile.capabilities.tools ||
-    profile.capabilities.structured === "none"
-  )
-    throw new Error("MODEL_CAPABILITIES_REQUIRED");
-  if (data.accountId) {
-    const a = await env.DB.prepare("SELECT origin FROM accounts WHERE id=? AND user_id=?")
-      .bind(data.accountId,env.requestUserId)
-      .first<{ origin: string }>();
-    if (!a || !data.allowedOrigins.includes(a.origin))
-      throw new Error("ACCOUNT_ORIGIN_MISMATCH");
-  }
-  return { data, modelVersion: profile.version };
-}
-user.post("/tasks", async (c) => {
-  const body = z
-    .object({ task: taskInputSchema, requestId: idSchema, threadId:idSchema, draftVersion:z.number().int().nonnegative() })
-    .strict()
-    .parse(await c.req.json());
-  const key = `create:${c.get("userId")}:${body.requestId}`,
-    digest = await hash(JSON.stringify(body.task));
-  const existing = await c.env.DB.prepare(
-    "SELECT * FROM idempotency WHERE key=?",
-  )
-    .bind(key)
-    .first<Row>();
-  if (existing) {
-    if (existing.digest !== digest) throw new Error("IDEMPOTENCY_CONFLICT");
-    const stored = await c.env.DB.prepare("SELECT * FROM tasks WHERE id=?")
-      .bind(existing.resource_id)
-      .first<Row>();
-    if (!stored) throw new Error("TASK_NOT_FOUND");
-    if (stored.version === 1)
-      await enqueue(
-        c.env.DB,
-        taskFrom(stored),
-        `trial:${existing.resource_id}:1`,
-      );
-    return c.json({ id: existing.resource_id });
-  }
-  const draftThread=await ownedThread(c.env,body.threadId);
-  if(draftThread.kind!=='compose'||draftThread.task_id||draftThread.version!==body.draftVersion||draftThread.active_turn||!draftThread.draft||JSON.stringify(taskInputSchema.parse(JSON.parse(draftThread.draft)))!==JSON.stringify(body.task))throw new Error('DRAFT_VERSION_CONFLICT');
-  const { data, modelVersion } = await validatedTask(c.env, body.task,draftThread.model_version),
-    id = `task_${(await hash(c.get("userId")+":"+body.requestId)).slice(0,40)}`,
-    at = now();
-  const task: TaskDefinition = {
-    ...data,
-    id,
-    version: 1,
-    modelVersion,
-    status: "pending_validation",
-    createdAt: at,
-    nextRunAt: null,
-  };
-  await c.env.DB.batch([
-    c.env.DB.prepare(
-      "INSERT OR IGNORE INTO idempotency(key,digest,resource_id) SELECT ?,?,? FROM ai_threads WHERE id=? AND version=? AND active_turn IS NULL AND closed=0",
-    ).bind(key, digest, id,body.threadId,body.draftVersion),
-    c.env.DB.prepare(
-      "INSERT OR IGNORE INTO tasks(id,version,definition,status,created_at,updated_at,user_id) SELECT ?,1,?,'pending_validation',?,?,? WHERE EXISTS(SELECT 1 FROM idempotency WHERE key=? AND digest=?)",
-    ).bind(id, JSON.stringify(task), at, at, c.get("userId"), key, digest),
-    c.env.DB.prepare(
-      "INSERT OR IGNORE INTO task_versions(task_id,version,definition) SELECT id,version,definition FROM tasks WHERE id=?",
-    ).bind(id),
-    c.env.DB.prepare('UPDATE ai_threads SET closed=1,version=version+1 WHERE id=? AND EXISTS(SELECT 1 FROM tasks WHERE id=?)').bind(body.threadId,id),
+user.post('/tasks/:id/conditions',async c=>{
+  const b=z.object({requestId:idSchema,runId:idSchema,expectedVersion:z.number().int(),conditions:conditionsSchema,
+    schedule:scheduleSchema,modelId:idSchema,accountId:idSchema.nullable()}).strict().parse(await c.req.json());
+  const id=c.req.param('id'),key='conditions:'+id+':'+b.requestId,digest=await hash(JSON.stringify(b));
+  const prior=await c.env.DB.prepare('SELECT digest FROM idempotency WHERE key=?').bind(key).first<{digest:string}>();
+  if(prior){if(prior.digest!==digest)throw Error('IDEMPOTENCY_CONFLICT');return c.json({id});}
+  const row=await c.env.DB.prepare('SELECT * FROM tasks WHERE id=? AND user_id=?').bind(id,c.get('userId')).first<Row>();
+  if(!row||row.version!==b.expectedVersion)throw Error('TASK_VERSION_CONFLICT');
+  const card=await c.env.DB.prepare("SELECT c.* FROM run_conditions c JOIN runs r ON r.id=c.run_id WHERE c.run_id=? AND c.task_id=? AND r.status='succeeded'").bind(b.runId,id).first<Row>();
+  if(!card)throw Error('CONDITIONS_NOT_READY');
+  // An older successful card must never authorize a new, unverified task revision.
+  if(card.task_version!==row.version&&card.approved_version!==row.version)throw Error('CONDITIONS_STALE');
+  if(await c.env.DB.prepare("SELECT id FROM runs WHERE task_id=? AND status IN ('queued','running','waiting_user','verifying','unknown')").bind(id).first())throw Error('RUN_ALREADY_ACTIVE');
+  if(await c.env.DB.prepare('SELECT id FROM ai_threads WHERE task_id=? AND active_turn IS NOT NULL AND closed=0').bind(id).first())throw Error('CONVERSATION_BUSY');
+  const base=taskFrom(row),model=await getModel(c.env,b.modelId);
+  if(!model.profile.capabilities.connection||!model.profile.capabilities.tools||model.profile.capabilities.structured==='none')throw Error('MODEL_CAPABILITIES_REQUIRED');
+  if(b.accountId){const a=await c.env.DB.prepare('SELECT origin FROM accounts WHERE id=? AND user_id=?').bind(b.accountId,c.get('userId')).first<{origin:string}>();if(!a||a.origin!==new URL(base.entryUrl).origin)throw Error('ACCOUNT_ORIGIN_MISMATCH');}
+  const task:TaskDefinition={...base,goal:b.conditions.goal,verification:base.verification.kind==='batch'?{...base.verification,value:b.conditions.completion,scope:b.conditions.scope}:{kind:'goal',value:b.conditions.completion},
+    schedule:b.schedule,modelId:b.modelId,modelVersion:model.profile.version,accountId:b.accountId,version:base.version+1,status:'active',nextRunAt:nextOccurrence(b.schedule),confirmedCondition:b.runId};
+  const writes=await c.env.DB.batch([
+    c.env.DB.prepare('INSERT OR IGNORE INTO idempotency(key,digest,resource_id) SELECT ?,?,id FROM tasks WHERE id=? AND version=? AND NOT EXISTS(SELECT 1 FROM ai_threads WHERE task_id=tasks.id AND active_turn IS NOT NULL AND closed=0)').bind(key,digest,id,b.expectedVersion),
+    c.env.DB.prepare('UPDATE tasks SET version=?,definition=?,status=?,next_run_at=?,confirmed_condition=?,updated_at=? WHERE id=? AND version=? AND EXISTS(SELECT 1 FROM idempotency WHERE key=? AND digest=?)')
+      .bind(task.version,JSON.stringify(task),task.status,task.nextRunAt,b.runId,now(),id,b.expectedVersion,key,digest),
+    c.env.DB.prepare('INSERT OR IGNORE INTO task_versions(task_id,version,definition) SELECT id,version,definition FROM tasks WHERE id=? AND version=?').bind(id,task.version),
+    c.env.DB.prepare('UPDATE run_conditions SET confirmed_at=?,approved_version=?,confirmed_content=? WHERE run_id=? AND EXISTS(SELECT 1 FROM tasks WHERE id=? AND version=? AND confirmed_condition=?)')
+      .bind(now(),task.version,JSON.stringify(b.conditions),b.runId,id,task.version,b.runId),
+    c.env.DB.prepare('UPDATE ai_threads SET model_id=?,model_version=? WHERE task_id=? AND closed=0 AND EXISTS(SELECT 1 FROM tasks WHERE id=? AND version=? AND confirmed_condition=?)')
+      .bind(task.modelId,task.modelVersion,id,id,task.version,b.runId),
   ]);
-  if(!await c.env.DB.prepare('SELECT id FROM tasks WHERE id=?').bind(id).first())throw new Error('DRAFT_VERSION_CONFLICT');
-  await enqueue(c.env.DB, task, `trial:${id}:1`);
-  return c.json({ id }, 201);
-});
-user.put("/tasks/:id", async (c) => {
-  const { task: input, expectedVersion, threadId, draftVersion,requestId } = z
-    .object({
-      task: taskInputSchema,
-      expectedVersion: z.number().int().positive(),
-      requestId:idSchema,
-      threadId:idSchema,
-      draftVersion:z.number().int().nonnegative(),
-    })
-    .parse(await c.req.json());
-  const key=`update:${c.get('userId')}:${requestId}`,digest=await hash(JSON.stringify({input,expectedVersion,threadId,draftVersion}));
-  const prior=await c.env.DB.prepare('SELECT digest,resource_id FROM idempotency WHERE key=?').bind(key).first<Row>();
-  if(prior) {
-    if(prior.digest!==digest)throw new Error('IDEMPOTENCY_CONFLICT');
-    const saved=await c.env.DB.prepare('SELECT definition FROM task_versions WHERE task_id=? AND version=?').bind(prior.resource_id,expectedVersion+1).first<{definition:string}>();
-    if(!saved)throw new Error('VERSION_CONFLICT');
-    await enqueue(c.env.DB,JSON.parse(saved.definition),`trial:${prior.resource_id}:${expectedVersion+1}`);
-    return c.json({id:prior.resource_id,version:expectedVersion+1});
-  }
-  const draftThread=await ownedThread(c.env,threadId);
-  if(draftThread.kind!=='compose'||draftThread.task_id!==c.req.param('id')||draftThread.version!==draftVersion||draftThread.active_turn||!draftThread.draft||JSON.stringify(taskInputSchema.parse(JSON.parse(draftThread.draft)))!==JSON.stringify(input))throw new Error('DRAFT_VERSION_CONFLICT');
-  const { data, modelVersion } = await validatedTask(c.env, input,draftThread.model_version),
-    id = c.req.param("id");
-  const old = await c.env.DB.prepare("SELECT * FROM tasks WHERE id=?")
-    .bind(id)
-    .first<Row>();
-  if (!old) throw new Error("TASK_NOT_FOUND");
-  const task: TaskDefinition = {
-    ...data,
-    id,
-    version: expectedVersion + 1,
-    modelVersion,
-    status: "pending_validation",
-    createdAt: old.created_at,
-    nextRunAt: null,
-  };
-  const committed=await c.env.DB.batch([
-    c.env.DB.prepare('INSERT OR IGNORE INTO idempotency(key,digest,resource_id) SELECT ?,?,? WHERE EXISTS(SELECT 1 FROM tasks WHERE id=? AND version=?) AND EXISTS(SELECT 1 FROM ai_threads WHERE id=? AND version=? AND active_turn IS NULL AND closed=0)').bind(key,digest,id,id,expectedVersion,threadId,draftVersion),
-    c.env.DB.prepare("UPDATE tasks SET version=?,definition=?,status='pending_validation',next_run_at=NULL,updated_at=? WHERE id=? AND version=? AND EXISTS(SELECT 1 FROM idempotency WHERE key=? AND digest=?)").bind(task.version,JSON.stringify(task),now(),id,expectedVersion,key,digest),
-    c.env.DB.prepare('INSERT OR IGNORE INTO task_versions(task_id,version,definition) SELECT id,version,definition FROM tasks WHERE id=? AND version=? AND EXISTS(SELECT 1 FROM idempotency WHERE key=? AND digest=?)').bind(id,task.version,key,digest),
-    c.env.DB.prepare('UPDATE ai_threads SET closed=1,version=version+1 WHERE id=? AND closed=0 AND EXISTS(SELECT 1 FROM idempotency WHERE key=? AND digest=?)').bind(threadId,key,digest),
-  ]);
-  if(!committed[1].meta.changes)throw new Error('VERSION_CONFLICT');
-  await enqueue(c.env.DB,task,`trial:${id}:${task.version}`);
-  return c.json({ id, version: task.version });
+  if(!writes[1].meta.changes)throw Error('TASK_VERSION_CONFLICT');
+  return c.json({id,version:task.version});
 });
 user.post("/tasks/:id/state", async (c) => {
   const { enabled } = z
@@ -311,12 +216,7 @@ user.post("/tasks/:id/state", async (c) => {
   if (!row) throw new Error("TASK_NOT_FOUND");
   const task = taskFrom(row);
   if (enabled) {
-    const verified = await c.env.DB.prepare(
-      "SELECT id FROM runs WHERE task_id=? AND status='succeeded' AND json_extract(task_snapshot,'$.version')=?",
-    )
-      .bind(id, task.version)
-      .first();
-    if (!verified) throw new Error("TRIAL_REQUIRED");
+    if(!row.confirmed_condition)throw Error("CONDITIONS_CONFIRMATION_REQUIRED");
   }
   await c.env.DB.prepare(
     "UPDATE tasks SET status=?,next_run_at=?,updated_at=? WHERE id=?",
@@ -389,109 +289,6 @@ user.post("/runs/:id/cancel", async (c) => {
   )
     .bind(now(), id)
     .run();
-  return c.json({ ok: true });
-});
-user.post("/runs/:id/reconcile", async (c) => {
-  const { requestId } = z
-    .object({ requestId: idSchema })
-    .parse(await c.req.json());
-  const original = await getRun(c.env.DB, c.req.param("id"));
-  if (original.status !== "unknown")
-    throw new Error("RECONCILIATION_NOT_REQUIRED");
-  const pending = await c.env.DB.prepare(
-    "SELECT * FROM runs WHERE reconciliation_of=? AND status IN ('queued','running','waiting_user','verifying')",
-  )
-    .bind(original.id)
-    .first<Row>();
-  if (pending) return c.json(runFrom(pending));
-  const task: TaskDefinition = {
-    ...original.task,
-    allowedActions: ["read", "navigate"],
-    goal:
-      "只读核查原任务的成功判据，禁止重复提交、填写或确认高影响动作。原目标：" +
-      original.task.goal,
-  };
-  const run = await enqueue(
-    c.env.DB,
-    task,
-    `reconcile:${original.id}:${requestId}`,
-  );
-  await c.env.DB.prepare(
-    "UPDATE runs SET reconciliation_of=? WHERE id=? AND status='queued'",
-  )
-    .bind(original.id, run.id)
-    .run();
-  return c.json({ ...run, reconciliationOf: original.id });
-});
-user.post("/challenges/:id/reply", async (c) => {
-  const body = z
-    .object({
-      runId: idSchema,
-      stepId: idSchema,
-      version: z.number().int(),
-      leaseEpoch: z.number().int(),
-      text: z.string().min(1).max(4000),
-    })
-    .strict()
-    .parse(await c.req.json());
-  const row = await c.env.DB.prepare(
-    "SELECT c.* FROM challenges c JOIN runs r ON r.id=c.run_id WHERE c.id=? AND c.run_id=? AND c.step_id=? AND c.version=? AND c.lease_epoch=? AND c.status='pending' AND c.expires_at>? AND r.status='waiting_user' AND r.lease_epoch=c.lease_epoch AND r.lease_expires_at>? AND r.cancel_requested=0",
-  )
-    .bind(
-      c.req.param("id"),
-      body.runId,
-      body.stepId,
-      body.version,
-      body.leaseEpoch,
-      now(),
-      now(),
-    )
-    .first<Row>();
-  if (!row) throw new Error("CHALLENGE_STALE");
-  if (row.kind === "unsupported") throw new Error("CHALLENGE_UNSUPPORTED");
-  const run = await getRun(c.env.DB, body.runId);
-  const parsed = await generate(
-    c.env,
-    run.task.modelId,
-    run.task.modelVersion,
-    z.object({
-      start: z.number().int().nonnegative(),
-      end: z.number().int().nonnegative(),
-      confirmed: z.boolean(),
-    }),
-    [
-      {
-        role: "system",
-        content:
-          "提取用户回复中要填写的信息。返回原文 UTF-16 字符起止位置（end不含），必须保留前导零、大小写、符号；不能生成新值。scan或approval时仅用户明确表示完成/同意才confirmed=true；否定、歧义一律false。类型：" +
-          row.kind,
-      },
-      { role: "user", content: body.text },
-    ],
-    run.id,
-  );
-  const value = ["code", "information"].includes(row.kind)
-    ? exactReply(body.text, parsed)
-    : "";
-  // Consequential approvals require an explicit literal as well as model interpretation.
-  if (
-    row.kind === "approval" &&
-    (!parsed.confirmed || !["确认执行", "同意执行"].includes(body.text.trim()))
-  )
-    throw new Error("EXPLICIT_APPROVAL_REQUIRED");
-  if (row.kind === "scan" && !parsed.confirmed)
-    throw new Error("CONFIRMATION_REQUIRED");
-  const secret = await seal(
-    { value, confirmed: parsed.confirmed },
-    c.env.MASTER_KEY,
-    `challenge:${row.id}:${row.version}:${row.lease_epoch}`,
-  );
-  const result = await c.env.DB.prepare(
-    "UPDATE challenges SET status='answered',secret=? WHERE id=? AND status='pending' AND expires_at>? AND EXISTS(SELECT 1 FROM runs r WHERE r.id=challenges.run_id AND r.lease_epoch=challenges.lease_epoch AND r.lease_expires_at>? AND r.status='waiting_user' AND r.cancel_requested=0)",
-  )
-    .bind(secret, row.id, now(), now())
-    .run();
-  if (result.meta.changes !== 1) throw new Error("CHALLENGE_STALE");
   return c.json({ ok: true });
 });
 admin.post("/devices/:id/revoke", async (c) => {

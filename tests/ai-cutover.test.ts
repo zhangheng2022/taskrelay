@@ -56,7 +56,7 @@ test("旧设备原 token 升级须维护和本地就绪；旧协议请求继续�
     (await s.request("/api/device/status", undefined, "GET")).data.error,
     "DEVICE_UPGRADE_REQUIRED",
   );
-  const body = { protocolVersion: 3, localReady: true };
+  const body = { protocolVersion: 14, localReady: true };
   assert.equal(
     (await s.request("/api/device/upgrade", body)).data.error,
     "CUTOVER_NOT_READY",
@@ -73,7 +73,7 @@ test("旧设备原 token 升级须维护和本地就绪；旧协议请求继续�
   assert.equal(
     (await s.request("/api/device/status", undefined, "GET")).data
       .protocolVersion,
-    3,
+    14,
   );
   assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM devices").get()!.n, 1);
 });
@@ -138,46 +138,35 @@ test("启用外部 tracing 的环境在 graph 开始前被拒绝，不上传会�
   assert.equal(s.jobs(), 0);
 });
 
-test("长对话压缩历史但原文保持完整；后续上下文包含摘要和当前纠正", async (t) => {
+test("历史保持完整，云端意图检查收到当前纠正", async (t) => {
   const s = await productionModelFixture(t);
   const th = (
     await s.request("/api/user/threads", {
-      kind: "chat",
       modelId: "model_test",
       taskId: s.run.taskId,
     })
   ).data;
   for (let i = 1; i <= 10; i++)
     s.sql
-      .prepare("INSERT INTO ai_messages VALUES(?,?,?,?,?,?,?)")
+      .prepare("INSERT INTO ai_messages(id,thread_id,seq,role,content,turn_id,at) VALUES(?,?,?,?,?,?,?)")
       .run(
         "old" + i,
         th.id,
         i,
         i % 2 ? "user" : "assistant",
-        "旧信息".repeat(100),
+        "旧信息".repeat(400),
         "seed",
         new Date().toISOString(),
       );
   s.sql.prepare("UPDATE ai_threads SET version=5 WHERE id=?").run(th.id);
-  s.replies(
-    '{"summary":"先前的要求已取消，使用用户最新纠正，来源1-7"}',
-    '{"reply":"采用最新要求"}',
-  );
+  s.sql.exec("UPDATE runs SET status='succeeded'");
+  s.respond(body=>JSON.stringify(JSON.stringify(body).includes('"summary"')?{summary:'历史要求摘要，保留当前用户纠正。'}:{reply:'采用最新要求',start:false,title:null,goal:null,entryUrl:null,accountId:null}));
   const result = await s.request(`/api/user/threads/${th.id}/messages`, {
     requestId: "correct",
-    expectedVersion: 5,
     content: "纠正：以后只读，不执行提交",
   });
   assert.equal(result.data.status, "done", JSON.stringify(result.data));
   assert.equal(result.data.messages.length, 12);
-  assert.equal(s.jobs(), 2);
-  assert.match(JSON.stringify(s.requests[1].body), /先前的要求已取消/);
-  assert.match(JSON.stringify(s.requests[1].body), /以后只读/);
-  assert.ok(
-    Number(
-      s.sql.prepare("SELECT summary_seq FROM ai_threads WHERE id=?").get(th.id)!
-        .summary_seq,
-    ) > 0,
-  );
+  assert.ok(s.jobs()>1);
+  assert.match(JSON.stringify(s.requests.at(-1)!.body), /以后只读/);
 });

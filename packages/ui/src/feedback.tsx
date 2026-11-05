@@ -58,7 +58,6 @@ export function ErrorText({ error }: { error: string }) {
   const friendly: Record<string, string> = {
     PUBLIC_HTTPS_REQUIRED:"请填写公网 HTTPS 网站地址，不要包含用户名、密码或非标准端口。",
     PRIVATE_ADDRESS_BLOCKED:"不能访问本机或私有网络地址，请改用公网网站。",
-    ORIGIN_NOT_AUTHORIZED:"网站不在允许访问的站点中，请核对地址和授权范围。",
     ENTRY_ORIGIN_NOT_ALLOWED:"网站不在允许访问的站点中，请核对地址和授权范围。",
     THREAD_VERSION_CONFLICT:"会话已在另一处更新，请刷新后重新发送。", DRAFT_VERSION_CONFLICT:"草稿已变更，请重新核对确认卡。",
     THREAD_NOT_FOUND:"会话已删除或过期，请重新打开。", TURN_STALE:"这轮回复已失效，请查看最新会话。",
@@ -76,7 +75,6 @@ export function ErrorText({ error }: { error: string }) {
     CHAT_QUOTA_EXCEEDED:"今日对话额度已用完，额度将在上海时间零点重置。",
     MODEL_QUOTA_EXCEEDED:"个人或公共模型额度已用完，请查看额度或联系管理员。",
     RUN_QUOTA_EXCEEDED:"今日执行额度已用完，额度将在上海时间零点重置。",
-    PLATFORM_DAILY_LIMIT:"今日平台免费预算已用完，预算在北京时间每日 08:00 重置。",
     PAGE_NETWORK_FAILED:"执行器无法安全连接目标网站，请检查网站及网络后重新发起运行。",
     QUEUE_LIMIT:"排队任务已达上限，请等待已有任务完成或取消排队。",
     SCHEDULE_QUOTA_EXCEEDED:"启用的周期任务已达上限，请先暂停其他周期任务。",
@@ -108,6 +106,7 @@ export function ErrorText({ error }: { error: string }) {
     MODEL_CAPABILITIES_REQUIRED: "模型尚未通过能力测试，请到设置中测试。",
     TRIAL_REQUIRED: "请先完成一次成功的试运行，再启用调度。",
     CHALLENGE_STALE: "这条协助请求已过期或已回复，请刷新当前任务。",
+    CHALLENGE_ALREADY_REPLIED: "此步骤已经收到另一条回复，请等待执行器处理，不会重复提交。",
     EXPLICIT_APPROVAL_REQUIRED: "请核对具体操作，再输入“确认执行”。",
     CHALLENGE_UNSUPPORTED: "此验证无法通过当前对话通道完成。",
     REPLY_SPAN_INVALID:

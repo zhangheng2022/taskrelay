@@ -7,7 +7,6 @@ import type { Inference } from "../../../../packages/model/src/index";
 import { RelayChatModel } from "./model";
 import { D1Checkpointer } from "./checkpointer";
 import { D1MemoryStore } from "./memory";
-import { getModelProfile } from "../models";
 import { hash } from "../../../../packages/contracts/src/security";
 
 export const GRAPH_VERSION = "relay-2";
@@ -33,15 +32,9 @@ export async function structuredGraph<T>(args: {
     args;
   const guard = args.guard ?? (async () => {});
   await guard();
-  const { profile } = await getModelProfile(env, modelId, version);
-  const inputBytes = new TextEncoder().encode(
-    JSON.stringify({ messages, schema: jsonSchema(schema) }),
-  ).length;
-  if (
-    inputBytes + 512 >
-    (profile.contextTokens ?? 16000) - (profile.outputTokens ?? 4096)
-  )
-    throw new Error("CONTEXT_BUDGET_EXCEEDED");
+  // UTF-8 bytes are not model tokens. The caller compacts its context; the
+  // configured provider determines whether the resulting request fits its
+  // tokenizer and actual context window. Do not reject pages by a byte guess.
   const digest = await hash(
     JSON.stringify({
       kind,

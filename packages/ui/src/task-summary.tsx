@@ -44,14 +44,18 @@ export function TaskSummary({
       <dd className="break-words">
         {
           {
-            text_present: "页面包含以下连续原文",
-            text_absent: "页面不再包含以下连续原文",
-            url: "到达地址",
-            extraction: "页面包含以下连续原文后提取",
+            goal: "AI 根据页面证据核验业务目标",
+            batch: "逐项核验全部范围内项目",
           }[task.verification.kind]
         }
         ：{task.verification.value}
       </dd>
+      {task.verification.kind==='batch'&&<>
+        <dt className="text-muted-foreground">批量范围</dt><dd className="break-words">{task.verification.scope}</dd>
+        <dt className="text-muted-foreground">处理资格</dt><dd className="break-words">{task.verification.eligibility}</dd>
+        <dt className="text-muted-foreground">排除范围</dt><dd className="break-words">{task.verification.exclusions.join('；')||'无'}</dd>
+        <dt className="text-muted-foreground">核验方式</dt><dd>AI 根据实际页面规划、逐项采证并判断范围覆盖；总数未知时如实说明。证据不足或达到限额时报告实际进度与未核实部分。</dd>
+      </>}
     </dl>
   );
 }

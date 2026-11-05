@@ -32,11 +32,10 @@ const definition: TaskDefinition = {
   title: "演示 · 每日查询",
   goal: "每天上午九点查询 https://example.com 的信息",
   entryUrl: "https://example.com/",
-  allowedOrigins: ["https://example.com"],
   accountId: null,
   modelId: "fixture_model",
   allowedActions: ["read", "navigate"],
-  verification: { kind: "text_present", value: "操作成功" },
+  verification: { kind: "goal", value: "操作成功" },
   schedule: {
     kind: "cron",
     expression: "0 9 * * *",
@@ -71,6 +70,7 @@ const snapshot: Snapshot = {
     },
   ],
 };
+if(options.has('batch'))definition.verification={kind:'batch',value:'每条普通记录标记为已处理',scope:'当前账号全部记录及其分页',eligibility:'普通记录',exclusions:['已归档记录']};
 if (state !== "new")
   snapshot.runs.push({
     id: "demo_run",userId:"demo",profileId:"profile_demo",
@@ -115,6 +115,17 @@ if (state !== "new")
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   });
+if(options.has('batch')&&snapshot.runs[0]?.result){
+  const result=snapshot.runs[0].result;
+  result.summary='批量任务尚未全部核验：本次完成 1 项，原已完成 1 项，排除 1 项，待核查 1 项。';
+  delete result.data;
+  result.batch={coverage:'incomplete',expected:4,reason:'最后一页仍需复核，未将已发现项目当作全部完成。',items:[
+    {id:'one',label:'记录一：订单资料核对',status:'completed'},
+    {id:'two',label:'记录二：供应商信息更新',status:'already_done'},
+    {id:'three',label:'记录三：已归档的历史项目',status:'excluded'},
+    {id:'four',label:'记录四：需要继续核查的长名称项目，用于检查手机上的换行与完整显示',status:'unknown'},
+  ].map(item=>({...item,status:item.status as 'completed'|'already_done'|'excluded'|'unknown',reason:item.status==='excluded'?'已归档记录':'',evidence:{url:'https://example.com/',quote:item.status==='unknown'?'提交结果尚未确认':'已读取对应项目状态',capturedAt:new Date().toISOString()}}))};
+}
 if (assistance)
   snapshot.challenges.push({
     id: "demo_challenge",

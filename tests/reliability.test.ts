@@ -9,8 +9,6 @@ import {
   tick,
   finish,
 } from "../apps/cloud/src/store";
-import { actionPolicy } from "../packages/contracts/src/policy";
-import { exactReply } from "../apps/cloud/src/challenges";
 import { nextOccurrence, latestDue } from "../packages/contracts/src/schedule";
 import {
   publicUrl,
@@ -113,41 +111,6 @@ test("手动运行允许暂停任务，不能据此自动启用", async () => {
     (await db.prepare("SELECT status FROM tasks").first<{ status: string }>())
       ?.status,
     "paused",
-  );
-});
-test("验证码仅从用户原文截取，保留零、大小写和特殊字符", () => {
-  const raw = "验证码是：00aB-7";
-  assert.equal(exactReply(raw, { start: 5, end: 11 }), "00aB-7");
-  assert.throws(() => exactReply(raw, { start: -1, end: 10 }), /SPAN_INVALID/);
-  assert.throws(() => exactReply(raw, { start: 0, end: 500 }), /SPAN_INVALID/);
-});
-test("模型不能把提交按钮伪装为 read 来扩大授权", () => {
-  const a = {
-    kind: "click" as const,
-    instruction: "click",
-    target: "#submit",
-    value: null,
-    effect: "read" as const,
-    challengeKind: null,
-  };
-  assert.throws(
-    () =>
-      actionPolicy(
-        task({ allowedActions: ["read", "navigate"] }),
-        a,
-        "https://example.com/",
-        { tag: "BUTTON", type: "submit", text: "提交", href: null },
-      ),
-    /NOT_AUTHORIZED/,
-  );
-  assert.equal(
-    actionPolicy(task(), a, "https://example.com/", {
-      tag: "BUTTON",
-      type: "submit",
-      text: "删除订单",
-      href: null,
-    }).approval,
-    true,
   );
 });
 test("HTTPS 地址及 DNS 解析拒绝私网、凭据、非标准端口和混合解析", async () => {

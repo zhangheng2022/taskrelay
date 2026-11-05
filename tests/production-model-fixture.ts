@@ -21,7 +21,7 @@ export async function productionModelFixture(
   await enqueue(db, task, "model_fixture");
   await db
     .prepare(
-      "INSERT INTO devices(id,name,token_hash,protocol_version) VALUES(?,?,?,3)",
+      "INSERT INTO devices(id,name,token_hash,protocol_version) VALUES(?,?,?,14)",
     )
     .bind("device_test", "fixture", await hash(token))
     .run();
@@ -57,6 +57,7 @@ export async function productionModelFixture(
   }
   const env = { DB: db, MASTER_KEY: key, DEV_MODE: "1" } as AppEnv;
   attachTestEgress(env);
+  let responder:((body:any)=>string)|null=null;
   let jobs = 0;
   const jurisdiction = env.MODEL_EGRESS.jurisdiction.bind(env.MODEL_EGRESS);
   t.mock.method(env.MODEL_EGRESS, "jurisdiction", (region: "us") => {
@@ -79,18 +80,32 @@ export async function productionModelFixture(
       assert.ok(url.startsWith("https://provider.example/v1/"));
       assert.equal(init?.redirect, "manual");
       requests.push({ url, body: JSON.parse(String(init?.body)) });
-      const reply = replies.shift();
+      let reply = responder?responder(requests.at(-1)!.body):replies.shift();
+      // This fixture supplies a model answer, including the current conversation decision contract.
+      if(typeof reply==='string')try{
+        const v=JSON.parse(reply);
+        if(v.reply&&!('start' in v)&&JSON.stringify(requests.at(-1)?.body).includes('"start"'))reply=JSON.stringify({reply:v.reply,start:false,title:null,goal:null,entryUrl:null,accountId:null});
+        if(v.reply&&!v.operation&&JSON.stringify(requests.at(-1)?.body).includes('"operation"')){
+          reply=JSON.stringify({reply:v.reply,operation:v.task?'start':'respond',scope:'current',startWhen:'now',task:v.task?{...v.task,accountId:v.task.accountId??null}:null});
+        }
+        if(v.reply&&!('conditions' in v)&&JSON.stringify(requests.at(-1)?.body).includes('"conditions"'))reply=JSON.stringify({...v,conditions:null});
+      }catch{}
       if (reply instanceof Error) throw reply;
       if (reply instanceof Response) return reply;
       assert.equal(typeof reply, "string", "unexpected provider request");
+      let native:{text:string;calls:Array<{id:string;name:string;arguments:string}>}|undefined;
+      try{native=JSON.parse(reply as string).__model;}catch{}
       return Response.json(
         protocol === "chat"
           ? {
-              choices: [{ message: { content: reply } }],
+              choices: [{ message: { content: native?.text??reply,...(native?{tool_calls:native.calls.map(c=>({id:c.id,type:'function',function:{name:c.name,arguments:c.arguments}}))}:{}) } }],
               usage: { prompt_tokens: 11, completion_tokens: 7 },
             }
           : {
-              output: [
+              output: native?[
+                ...(native.text?[{type:'message',content:[{type:'output_text',text:native.text}]}]:[]),
+                ...native.calls.map(c=>({type:'function_call',call_id:c.id,name:c.name,arguments:c.arguments})),
+              ]:[
                 {
                   type: "message",
                   content: [{ type: "output_text", text: reply }],
@@ -108,19 +123,21 @@ export async function productionModelFixture(
     run,
     requests,
     jobs: () => jobs,
+    respond:(handler:(body:any)=>string)=>{responder=handler;},
     replies: (...values: (string | Error | Response)[]) => {
       replies = values;
     },
     async request(path: string, body: unknown, method='POST') {
+      if(path.startsWith('/api/runner/runs/')&&body&&typeof body==='object')body={instructionVersion:0,...body};
       if(path.endsWith('/stagehand')&&body&&typeof body==='object')body={requestId:'sdk_test',...body};
-      if(path.endsWith('/plan') && body && typeof body==='object' && 'observation' in body)body={...body,stepId:'test_step',observationId:await hash(String(body.observation))};
+      if(path.endsWith('/plan') && body && typeof body==='object' && 'observation' in body)body={stepId:'test_step',...body,observationId:await hash(String(body.observation))};
       const response = await app.request(
         "http://127.0.0.1" + path,
         {
           method,
           headers: {
             "content-type": "application/json",
-            ...((path.startsWith("/api/runner/")||path.startsWith("/api/device/"))?{"x-taskrelay-protocol":"3", Authorization: `Bearer ${token}`}:{ }),
+            ...((path.startsWith("/api/runner/")||path.startsWith("/api/device/"))?{"x-taskrelay-protocol":"14", Authorization: `Bearer ${token}`}:{ }),
           },
           body: method==='GET'?undefined:JSON.stringify(body),
         },

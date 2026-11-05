@@ -367,7 +367,7 @@ function Workspace({ transport }: { transport: Transport }) {
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       disabled={offline}
-                      onSelect={() => setEdit(task)}
+                      onSelect={() => { setDetail(false); document.querySelector<HTMLTextAreaElement>('[aria-label="任务对话回复"]')?.focus(); }}
                     >
                       调整任务
                     </DropdownMenuItem>
@@ -397,8 +397,9 @@ function Workspace({ transport }: { transport: Transport }) {
             </>
           )}
         </header>
-        {data.quota && <div className="border-b px-4 py-2 text-xs text-muted-foreground" role="status">今日启动 {data.quota.used.runs}/{data.quota.limits.runs} · 模型请求 {data.quota.used.models}/{data.quota.limits.models} · 对话 {data.quota.used.chat}/{data.quota.limits.chat} · {formatDate(data.quota.resetAt)} 重置</div>}
-        {data.platformBudget && <div className="border-b px-4 py-2 text-xs text-muted-foreground" role="status">平台共享预算：模型 {data.platformBudget.used.model}/{data.platformBudget.limits.model} · AI 回合 {data.platformBudget.used.turn}/{data.platformBudget.limits.turn} · 短期证据 {data.platformBudget.used.evidence}/{data.platformBudget.limits.evidence} · {formatDate(data.platformBudget.resetAt)} 重置。个人额度与平台预算均有剩余时才能接收对应工作。</div>}
+        {data.quota && <div className="border-b px-4 py-2 text-xs text-muted-foreground" role="status">{data.quota.paused
+          ? <>{data.quota.pausedUntil?<>个人次数限制已暂停至 {formatDate(data.quota.pausedUntil)}</>:'个人次数限制已关闭，等待手动恢复'} · 今日启动 {data.quota.used.runs} · 模型请求 {data.quota.used.models} · 对话 {data.quota.used.chat}</>
+          : <>今日启动 {data.quota.used.runs}/{data.quota.limits.runs} · 模型请求 {data.quota.used.models}/{data.quota.limits.models} · 对话 {data.quota.used.chat}/{data.quota.limits.chat} · {formatDate(data.quota.resetAt)} 重置</>}</div>}
         {error && (
           <div className="flex shrink-0 flex-wrap items-center gap-2 px-4 py-2">
             <div className="min-w-0 flex-1">
@@ -486,7 +487,7 @@ function Workspace({ transport }: { transport: Transport }) {
                   <EmptyHeader>
                     <EmptyTitle>还没有运行记录</EmptyTitle>
                     <EmptyDescription>
-                      任务试运行后，结果会出现在这里。
+                      任务执行后，结果会出现在这里。
                     </EmptyDescription>
                   </EmptyHeader>
                 </Empty>
@@ -509,6 +510,7 @@ function Workspace({ transport }: { transport: Transport }) {
           />
         ) : (
           <Conversation
+            snapshot={data}
             key={task.id + ":" + (run?.id ?? "")}
             transport={transport}
             task={task}

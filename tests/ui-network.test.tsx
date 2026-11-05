@@ -44,7 +44,7 @@ test('会话首次加载失败后可恢复；只重读会话，不自动发送�
   await view.findByRole('button',{name:'重新加载'});
   assert.equal(view.queryByRole('status'),null);
   fireEvent.click(view.getByRole('button',{name:'重新加载'}));
-  await waitFor(()=>assert.ok(view.getByRole('status').textContent?.includes('正在加载任务对话')));
+  await waitFor(()=>assert.ok(view.getByRole('status').textContent?.includes('正在加载对话')));
   assert.ok(view.getByRole('button',{name:'发送消息'}).hasAttribute('disabled'));
   await act(async()=>resolveRead(threadPage));
   await waitFor(()=>assert.equal(view.queryByRole('status'),null));

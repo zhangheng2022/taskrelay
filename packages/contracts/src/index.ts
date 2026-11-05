@@ -1,10 +1,8 @@
 import { z } from "zod";
+import { batchVerificationSchema, batchReportSchema } from './batch';
 
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 14;
 export const limits = {
-  durationMs: 300_000,
-  actions: 40,
-  waitMs: 300_000,
   leaseMs: 90_000,
   heartbeatMs: 15_000,
   lateMs: 3_600_000,
@@ -23,16 +21,15 @@ export const scheduleSchema = z.discriminatedUnion("kind", [
     timezone: z.string().default("Asia/Shanghai"),
   }),
 ]);
-export const verificationSchema = z.object({
-  kind: z.enum(["text_present", "text_absent", "url", "extraction"]),
+export const verificationSchema = z.union([z.object({
+  kind: z.literal("goal"),
   value: z.string().min(1).max(2000),
-});
+}), batchVerificationSchema]);
 export const taskInputSchema = z
   .object({
     title: z.string().trim().min(1).max(120),
     goal: z.string().min(1).max(6000),
     entryUrl: z.url().max(2000),
-    allowedOrigins: z.array(z.url()).min(1).max(20),
     accountId: idSchema.nullable().default(null),
     modelId: idSchema,
     allowedActions: z
@@ -44,6 +41,8 @@ export const taskInputSchema = z
   .strict();
 export type TaskInput = z.infer<typeof taskInputSchema>;
 export interface TaskDefinition extends TaskInput {
+  confirmedCondition?: string | null;
+  runConditions?: {goal:string;scope:string;prerequisites:string[];completion:string;assistance:string[]};
   id: string;
   version: number;
   modelVersion: number;
@@ -64,6 +63,7 @@ export const runStatusSchema = z.enum([
 ]);
 export type RunStatus = z.infer<typeof runStatusSchema>;
 export interface TaskRun {
+  instructionVersion?: number;
   userId: string;
   profileId: string;
   queueReason?: string;
@@ -87,6 +87,7 @@ export interface TaskRun {
 export const runResultSchema = z.object({
   summary: z.string().max(8000),
   outcome: z.enum([
+    "reported",
     "completed_now",
     "already_done",
     "read_result",
@@ -95,10 +96,11 @@ export const runResultSchema = z.object({
     "error",
   ]),
   data: z.unknown().optional(),
+  batch: batchReportSchema.optional(),
   evidence: z
     .array(
       z.object({
-        url: z.string().max(2000),
+        url: z.string(),
         quote: z.string().max(4000),
         capturedAt: z.iso.datetime(),
       }),
@@ -183,9 +185,8 @@ export interface Device {
   protocolVersion: number;
 }
 export interface Snapshot {
-  platformBudget?: {resetAt:string;limits:{model:number;turn:number;evidence:number};used:{model:number;turn:number;evidence:number}};
   me?: { id:string;email:string;role:"admin"|"user" };
-  quota?: {resetAt:string;limits:{runs:number;scheduled:number;queued:number;chat:number;models:number};used:{runs:number;chat:number;models:number}};
+  quota?: {resetAt:string;paused?:boolean;pausedUntil?:string|null;limits:{runs:number;scheduled:number;queued:number;chat:number;models:number};used:{runs:number;chat:number;models:number}};
   tasks: TaskDefinition[];
   runs: TaskRun[];
   models: ModelProfile[];
@@ -194,32 +195,6 @@ export interface Snapshot {
   challenges: HumanChallenge[];
   serverTime: string;
 }
-export const browserActionSchema = z
-  .object({
-    kind: z.enum([
-      "navigate",
-      "observe",
-      "click",
-      "fill",
-      "credential",
-      "extract",
-      "wait",
-      "human",
-      "finish",
-    ]),
-    instruction: z.string().max(4000),
-    target: z.string().max(2000).nullable(),
-    value: z.string().max(4000).nullable(),
-    effect: z.enum(["read", "fill", "submit", "publish", "high_impact"]),
-    challengeKind: z
-      .enum(["code", "scan", "approval", "information", "unsupported"])
-      .nullable(),
-  })
-  .strict()
-  .refine((v) => v.kind !== "human" || !["code", "information", "scan"].includes(v.challengeKind ?? "information") || !!v.target?.trim(), {
-    message: "CHALLENGE_TARGET_REQUIRED: human code/information/scan needs an exact target selector", path: ["target"],
-  });
-export type BrowserAction = z.infer<typeof browserActionSchema>;
 export interface DesktopStatus {
   update: import('./updates').DesktopUpdateStatus;
   paired: boolean;

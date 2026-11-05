@@ -16,6 +16,7 @@ export interface Inference {
   messages: Message[];
   image?: string;
   tools?: Tool[];
+  toolChoice?: "auto" | "required";
   schema?: Record<string, unknown>;
   jsonMode?: boolean;
   maxTokens?: number;
@@ -60,7 +61,7 @@ export async function infer(
       ];
     if (tools?.length) {
       body.tools = tools;
-      body.tool_choice = "required";
+      body.tool_choice = request.toolChoice ?? "required";
       body.parallel_tool_calls = false;
     }
     if (request.schema)
@@ -114,7 +115,7 @@ export async function infer(
         ...t,
         strict: true,
       }));
-      body.tool_choice = "required";
+      body.tool_choice = request.toolChoice ?? "required";
       body.parallel_tool_calls = false;
     }
     if (request.schema)

@@ -1,10 +1,8 @@
 import type { AppEnv } from './env';
-import {admit} from './free-budget';
 
-export async function putEvidence(env:AppEnv,key:string,bytes:ArrayBuffer,expires:string){
+export async function putEvidence(env:AppEnv,key:string,bytes:ArrayBuffer,expires:string|null){
   if(!env.EVIDENCE_STORE)throw new Error('EVIDENCE_NOT_CONFIGURED');
-  await admit(env,'evidence');
-  await env.EVIDENCE_STORE.getByName(key).put(key,bytes,Date.parse(expires));
+  await env.EVIDENCE_STORE.getByName(key).put(key,bytes,expires===null?null:Date.parse(expires));
 }
 export async function getEvidence(env:AppEnv,key:string){
   if(env.EVIDENCE_STORE)return env.EVIDENCE_STORE.getByName(key).get(key);

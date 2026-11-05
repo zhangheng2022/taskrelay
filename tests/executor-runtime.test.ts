@@ -1,87 +1,93 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execute, type RuntimePort } from '../apps/desktop/src/executor/runtime';
-import { hash } from '../packages/contracts/src/security';
-import { run as baseRun } from './ui-fixtures';
-import type { BrowserAction } from '../packages/contracts/src/index';
-
-async function scenario(options: {action?:Partial<BrowserAction>;fault?:string;reconcile?:boolean;cancelAt?:string;human?:boolean;continueAfterHuman?:boolean}={}) {
-  const calls:{path:string;body:any}[]=[],checkpoints:{state:string;payload:any}[]=[],timeline:string[]=[];
-  let text='待处理',value='',clicks=0,fills=0,cancelled=false,closed=false,proxyClosed=false;
-  const target={tag:'BUTTON',type:'submit',text:'提交',href:null,form:[]};
-  const page={
-    goto:async()=>{},url:async()=> 'https://example.com/',
-    evaluate:async(_fn:unknown,arg?:unknown)=>arg ? target : [],
-    locator:(_selector:string)=>({count:async()=>options.fault==='missing-target'?0:1,innerText:async()=>{if(options.fault==='observe'&&clicks)throw Error('PAGE_OBSERVATION_FAILED');return text;},
-      click:async()=>{timeline.push('click');clicks++;text='成功';if(options.fault==='click')throw Error('CONNECTION_LOST');},
-      fill:async(v:string)=>{fills++;value=v;if(!options.continueAfterHuman)text='成功';},inputValue:async()=>value}),
-  };
-  const sdk={localBrowser:{connect:async()=>({context:{setDomainPolicy:async()=>{},pages:async()=>[page]}})},
-    Stagehand:{create:async()=>({close:async()=>{closed=true;}})}};
-  const action={kind:options.human?'human':'click',instruction:'提交虚构表单',effect:'submit',target:'#submit',value:null,challengeKind:null,...options.action};
-  const run={...baseRun,status:'running' as const,task:{...baseRun.task,allowedActions:['read','navigate','fill','submit'] as any,verification:{kind:'text_present' as const,value:'成功'}},...(options.reconcile?{reconciliationOf:'old'}:{})};
-  const port:RuntimePort={cancelled:()=>cancelled,checkpoint:async(state,payload)=>{
-    timeline.push(`checkpoint:${state}`);checkpoints.push({state,payload});if(options.cancelAt===state)cancelled=true;
-    if(options.fault===state)throw Error('CHECKPOINT_INTERRUPTED');
-  },rpc:async<T>(p:string,b?:any)=>{
-    timeline.push(`rpc:${p.split('/').at(-1)}`);calls.push({path:p,body:b});
-    if(options.cancelAt===p.split('/').at(-1))cancelled=true;
-    if(p==='local:browser')return {cdpUrl:'fixture'} as T;
-    if(p.endsWith('/plan'))return (options.continueAfterHuman&&fills?{...action,kind:'finish'}:action) as T;
-    if(p.endsWith('/intent'))return {status:'intended',digest:await hash(JSON.stringify({action:b.action,url:b.url,facts:b.facts}))} as T;
-    if(p.endsWith('/challenges'))return {id:'challenge',kind:action.challengeKind??'information',stepId:'step',version:1,target:'#code'} as T;
-    if(p.endsWith('/consume'))return {ready:true,value:'0012Ab',confirmed:true} as T;
-    if(p.endsWith('/credentials'))return {username:'fictional',password:'fixture'} as T;
-    if(p.endsWith('/finish')&&options.fault==='finish')throw Error('OFFLINE');
-    return {} as T;
-  }};
-  await execute(run,port,{loadSdk:async()=>sdk as any,startProxy:async()=>({port:1234,close:async()=>{proxyClosed=true;}}),delay:async()=>{}});
-  return {calls,checkpoints,timeline,clicks,fills,value,closed,proxyClosed,finishes:calls.filter(c=>c.path.endsWith('/finish')).map(c=>c.body)};
-}
-test('正式 execute：检查点和云端意图先于唯一提交，重新观察后程序核验成功',async()=>{
-  const s=await scenario();assert.equal(s.clicks,1);assert.equal(s.finishes[0].status,'succeeded');
-  assert.ok(s.checkpoints.some(x=>x.state==='intent'&&x.payload.writePending));
-  for(const predecessor of ['checkpoint:intent','rpc:intent'])assert.ok(s.timeline.indexOf(predecessor)>=0&&s.timeline.indexOf(predecessor)<s.timeline.indexOf('click'));
-  assert.ok(s.timeline.indexOf('click')<s.timeline.indexOf('rpc:action-complete'));
-  assert.ok(s.calls.findIndex(x=>x.path.endsWith('/intent'))<s.calls.findIndex(x=>x.path.endsWith('/action-complete')));
-  assert.equal(s.closed,true);assert.equal(s.proxyClosed,true);
-});
-for(const fault of ['click','observe','finish'])test(`正式 execute：${fault} 故障不重复提交并保留未知结果`,async()=>{
-  const s=await scenario({fault});assert.equal(s.clicks,1);assert.equal(s.finishes.at(-1).status,'unknown');
-  assert.equal(s.checkpoints.filter(x=>x.state==='intent').length,1);
-  assert.equal(s.closed,true);assert.equal(s.proxyClosed,true);
-});
-test('正式 execute：提交前取消与只读核查均不执行写操作',async()=>{
-  const cancelled=await scenario({cancelAt:'intent'});assert.equal(cancelled.clicks,0);
-  const readOnly=await scenario({reconcile:true});assert.equal(readOnly.clicks,0);assert.equal(readOnly.finishes[0].result.errorCode,'RECONCILIATION_READ_ONLY');
-});
-test('正式 execute：人工回复保持原文，先写消费检查点，确认站点后才 ACK',async()=>{
-  const s=await scenario({human:true,action:{challengeKind:'code'}});
-  assert.equal(s.value,'0012Ab');assert.equal(s.fills,1);assert.equal(s.finishes[0].status,'succeeded');
-  assert.ok(s.checkpoints.some(c=>c.state==='human-delivery'&&c.payload.writePending));
-  assert.ok(s.calls.some(c=>c.path.endsWith('/ack')));
-  assert.doesNotMatch(JSON.stringify(s.calls.filter(c=>c.path.endsWith('/events'))),/0012Ab/);
-});
-test('正式 execute：消费后停止或凭据请求晚到均禁止继续填写',async()=>{
-  const s=await scenario({human:true,cancelAt:'human-delivery'});assert.equal(s.fills,0);assert.equal(s.finishes[0].status,'unknown');
-  assert.equal(s.calls.some(c=>c.path.endsWith('/ack')),false);
-  const c=await scenario({action:{kind:'credential',target:'#password',value:'password',effect:'read'},cancelAt:'credentials'});
-  assert.equal(c.fills,0);assert.equal(c.finishes[0].status,'unknown');
-});
-test('正式 execute：协助后规划包含已填写目标，不含回复原文',async()=>{
-  const s=await scenario({human:true,continueAfterHuman:true,action:{challengeKind:'information'}});
-  const plans=s.calls.filter(c=>c.path.endsWith('/plan'));
-  assert.equal(plans.length,2);assert.equal(s.fills,1);
-  const history=plans[1].body.history.join('\n');
-  assert.match(history,/#submit/);assert.match(history,/读回一致/);
-  assert.doesNotMatch(history,/0012Ab/);
-  assert.equal(s.finishes.at(-1).status,'unknown'); // Filled is not business success.
-});
-test('正式 execute：缺少目标或目标不存在时，不创建协助、不消费回复、不标记写入',async()=>{
-  for(const options of [{human:true,action:{target:null}},{human:true,fault:'missing-target'}]){
-    const s=await scenario(options);
-    assert.equal(s.fills,0);assert.equal(s.finishes[0].status,'failed');
-    assert.equal(s.calls.some(c=>c.path.endsWith('/challenges')||c.path.endsWith('/consume')),false);
-    assert.equal(s.checkpoints.some(c=>c.state==='human-delivery'),false);
+import {execute,type RuntimePort} from '../apps/desktop/src/executor/runtime';
+import {run} from './ui-fixtures';
+import type {ModelResponse} from '../packages/model/src/index';
+import type {ClientLLM} from '@browserbasehq/stagehand';
+const answer=(text:string):ModelResponse=>({text,calls:[],usage:{input:null,output:null}});
+const tool=(name:string,args:Record<string,unknown>={}):ModelResponse=>({...answer(''),calls:[{id:crypto.randomUUID(),name,arguments:JSON.stringify(args)}]});
+async function scenario(turns:ModelResponse[],options:{actionError?:boolean;original?:string;origin?:string;fill?:string;method?:string;helpMessage?:string;cancel?:boolean;cancelStagehand?:boolean;newInstruction?:boolean;compact?:boolean;navigationObservationFailure?:boolean}={}){
+ let attached=false,clicks=0,cancelled=false,closed=false,snapshotFailures=0,planned=0,changed=false;
+ let llm:ClientLLM;const calls:Array<{path:string;body:any}>=[],checkpoints:any[]=[];
+ const original=options.original??'请处理当前页面';
+ const chat:any[]=[{seq:1,role:'user',source:'user',content:original,private:!!options.original,origin:options.origin??'https://example.com'}];
+ const page={url:async()=> 'https://example.com/',goto:async()=>{},screenshot:async()=>Buffer.from('png'),
+  snapshot:async()=>{if(snapshotFailures>0){snapshotFailures--;throw Error('Execution context destroyed during navigation');}return {formattedTree:'[1] button 继续登录\n[2] textbox 密码',xpathMap:{},urlMap:{}};},
+  evaluate:async()=>({readyState:'complete'}),locator:()=>{throw Error('RAW_SELECTOR_PATH_MUST_NOT_BE_USED');},
+ };
+ const port:RuntimePort={cancelled:()=>cancelled,checkpoint:async(state,payload)=>{checkpoints.push({state,payload});},rpc:async<T>(path:string,body?:any)=>{
+  calls.push({path,body});if(path==='local:browser')return {cdpUrl:'test'} as T;
+  if(path.endsWith('/context'))return {messages:chat.filter(m=>m.seq>body.after)} as T;
+  if(path.endsWith('/model')){if(options.cancel)cancelled=true;planned++;return {response:turns.shift()??answer('已处理当前页面，结果如上。'),memory:options.compact&&planned===1?{summaries:['旧操作历史摘要']}:null} as T;}
+  if(path.endsWith('/stagehand')){
+   if(options.cancelStagehand)cancelled=true;
+   if(options.newInstruction&&!changed){changed=true;chat.push({seq:2,role:'user',source:'user',content:'先不要提交，改为只读查看'});}
+   const value={action:{method:options.method??(options.fill?'fill':'click'),arguments:options.fill?[options.fill]:[]}};
+   return {text:JSON.stringify(value),structured:value} as T;
   }
+  if(path.endsWith('/tool'))return {execute:true} as T;
+  if(path.endsWith('/snapshots'))return {id:'snapshot_test'} as T;
+  if(path.endsWith('/help'))return {ready:true,message:options.helpMessage??'请结合用户原文继续'} as T;
+  return {} as T;
+ }};
+ const infer=async(instruction:string)=>llm.generate({messages:[{role:'user',content:{type:'text',text:instruction}}],systemPrompt:'Stagehand actual callback',responseFormat:{type:'json_schema',name:'action',schema:{type:'object',properties:{action:{type:'object'}}}}});
+ const session={close:async()=>{},act:async(instruction:string)=>{
+  await infer(instruction);clicks++;if(options.navigationObservationFailure)snapshotFailures=1;if(options.actionError&&clicks===1)throw Error('TARGET_NOT_FOUND');
+  return {data:{success:true,message:'已执行',actions:[]}};
+ },observe:async(instruction:string)=>{await infer(instruction);return {data:[{description:'继续登录'}]};},extract:async(instruction:string)=>{await infer(instruction);return {data:{text:'实际页面信息'}};}};
+ await execute({...run,task:{...run.task,entryUrl:'https://example.com/'}},port,{loadSdk:async()=>({Stagehand:{create:async(opts:any)=>{attached=true;llm=opts.model;return session;}},localBrowser:{connect:async()=>({get context(){if(!attached)throw Error('Browser context is unavailable');return {setDomainPolicy:async()=>{},pages:async()=>[page]};}})}} as any),startProxy:async()=>({port:1,close:async()=>{closed=true;}}),delay:async()=>{}});
+ return {calls,checkpoints,clicks,closed,finish:calls.find(c=>c.path.endsWith('/finish'))?.body};
+}
+test('真实 execute 使用原生工具调用和普通文字结束，不再解析业务动作计划',async()=>{
+ const s=await scenario([tool('observe',{instruction:'查看登录入口'}),tool('act',{instruction:'点击继续登录'}),tool('extract',{instruction:'读取登录状态'})]);
+ assert.equal(s.clicks,1);assert.equal(s.finish.status,'succeeded');assert.equal(s.finish.result.outcome,'reported');assert.equal(s.closed,true);
+ assert.equal(s.calls.filter(c=>c.path.endsWith('/stagehand')).length,3);
+ const sent=s.calls.findIndex(c=>c.path.endsWith('/stagehand')&&JSON.stringify(c.body).includes('点击继续登录'));
+ const intent=s.calls.findIndex(c=>c.path.endsWith('/tool')&&c.body.phase==='start');assert.ok(intent>sent);
+});
+test('Stagehand 工具错误回到同一执行上下文，不强制结束或偷偷重放',async()=>{
+ const s=await scenario([tool('act',{instruction:'点击登录'}),tool('act',{instruction:'重新观察后点击继续'})],{actionError:true});
+ assert.equal(s.clicks,2);assert.match(JSON.stringify(s.calls.filter(c=>c.path.endsWith('/model'))),/TARGET_NOT_FOUND/);
+});
+test('完整原始回复同时到达执行器模型和 Stagehand，摘要不能丢掉密码与补充要求',async()=>{
+ const original='密码是 0012Ab!，但是请先确认页面，再填写。';
+ const s=await scenario([tool('ask',{message:'请确认登录信息'}),tool('act',{instruction:'根据用户回复填写密码'})],{original,fill:'0012Ab!',compact:true});
+ assert.equal(s.clicks,1);
+ for(const call of s.calls.filter(c=>c.path.endsWith('/model')||c.path.endsWith('/stagehand')))assert.ok(JSON.stringify(call.body).includes(original));
+ assert.doesNotMatch(JSON.stringify(s.checkpoints),/0012Ab!/);
+ assert.doesNotMatch(JSON.stringify(s.calls.filter(c=>c.path.endsWith('/messages'))),/0012Ab!/);
+});
+test('用户改变登录方式的原文交给 Stagehand，无字段提取和强制填写',async()=>{
+ const original='不要填密码了，改用邮箱验证码。';
+ const s=await scenario([tool('act',{instruction:'按用户新要求更换登录方式'})],{original});
+ assert.equal(s.clicks,1);assert.ok(JSON.stringify(s.calls.find(c=>c.path.endsWith('/stagehand'))?.body).includes(original));
+});
+test('模型在完整上下文中生成的实际填写值仍校验所属站点',async()=>{
+ const s=await scenario([tool('act',{instruction:'根据原文填写'})],{original:'密码是 0012Ab!',origin:'https://login.example.com',fill:'0012Ab!'});
+ assert.equal(s.clicks,0);assert.equal(s.calls.some(c=>c.path.endsWith('/tool')&&c.body.phase==='start'),false);
+ assert.match(JSON.stringify(s.calls.filter(c=>c.path.endsWith('/model'))),/CREDENTIAL_ORIGIN_MISMATCH/);
+});
+test('原生下拉选项不因数字与其他站点密码重合而被当成凭据填写',async()=>{
+ const s=await scenario([tool('act',{instruction:'将数量选择为 1'})],{original:'登录密码 001234',origin:'https://login.example.com',fill:'1',method:'selectOptionFromDropdown'});
+ assert.equal(s.clicks,1);assert.equal(s.calls.filter(c=>c.path.endsWith('/tool')&&c.body.phase==='start').length,1);
+});
+test('超过四十步可如实给出受阻答复，不做独立成功审核',async()=>{
+ const s=await scenario([...Array.from({length:41},()=>tool('act',{instruction:'查看下一页'})),answer('已完成部分，其余网站暂不可用。')]);
+ assert.equal(s.clicks,41);assert.equal(s.finish.result.summary,'已完成部分，其余网站暂不可用。');assert.equal(s.finish.result.outcome,'reported');
+ assert.equal(JSON.parse(s.calls.filter(c=>c.path.endsWith('/model')).at(-1)!.body.messages[1].content).history.length,41);
+});
+test('模型等待期间停止，不执行返回的工具调用',async()=>{
+ const s=await scenario([tool('act',{instruction:'点击提交'})],{cancel:true});assert.equal(s.clicks,0);assert.equal(s.finish.status,'cancelled');
+});
+test('Stagehand 定位推理期间停止不把未点击动作标成 unknown',async()=>{
+ const s=await scenario([tool('act',{instruction:'点击提交'})],{cancelStagehand:true});assert.equal(s.clicks,0);assert.equal(s.finish.status,'cancelled');
+ assert.equal(s.calls.some(c=>c.path.endsWith('/tool')&&c.body.phase==='start'),false);
+});
+test('Stagehand 推理期间收到用户新要求，旧动作作废',async()=>{
+ const s=await scenario([tool('act',{instruction:'点击提交'}),answer('已按新要求停止提交。')],{newInstruction:true});
+ assert.equal(s.clicks,0);assert.equal(s.calls.some(c=>c.path.endsWith('/tool')&&c.body.phase==='start'),false);
+});
+test('导航过渡观察失败只重新观察，不重复提交',async()=>{
+ const s=await scenario([tool('act',{instruction:'点击提交'})],{navigationObservationFailure:true});assert.equal(s.clicks,1);
+ assert.equal(s.calls.filter(c=>c.path.endsWith('/tool')&&c.body.phase==='start').length,1);assert.equal(s.calls.filter(c=>c.path.endsWith('/tool')&&c.body.phase==='result').length,1);
 });

@@ -1,4 +1,3 @@
-import {admit} from './free-budget';
 import { reserve } from './tenancy';
 import { z } from "zod";
 import {
@@ -119,7 +118,6 @@ export async function invoke(
     throw new Error(prior.status==='failed' ? prior.error : 'MODEL_CALL_OUTCOME_UNKNOWN');
   }
   try {
-  await admit(env,'model');
   const reservationId=await reserve(env,userId,'model',callId);
   await env.DB.prepare("UPDATE ai_calls SET status='running',updated_at=? WHERE id=?").bind(now(),callId).run();
   return await egress<ModelResponse>(env, {
@@ -134,7 +132,7 @@ export async function invoke(
   });
   } catch(error) {
     const code=/^[A-Z][A-Z0-9_]+$/.test((error as Error).message)?(error as Error).message:'MODEL_CALL_OUTCOME_UNKNOWN';
-    await env.DB.prepare("UPDATE ai_calls SET status=?,error=?,updated_at=? WHERE id=? AND status<>'done'").bind(code.includes('QUOTA')||code==='PLATFORM_DAILY_LIMIT'||code==='MODEL_REGION_REQUIRES_DEPLOYMENT'?'failed':'unknown',code,now(),callId).run();
+    await env.DB.prepare("UPDATE ai_calls SET status=?,error=?,updated_at=? WHERE id=? AND status<>'done'").bind(code.includes('QUOTA')||code==='MODEL_REGION_REQUIRES_DEPLOYMENT'?'failed':'unknown',code,now(),callId).run();
     throw error;
   } finally {
     if(!operationId)await env.DB.prepare('UPDATE ai_calls SET result=NULL WHERE id=?').bind(callId).run();
@@ -170,6 +168,7 @@ export async function generateStructured<T>(
   invalidCode = "MODEL_INVALID_JSON",
   operationId?: string,
   graphId?: string,
+  media?: {image:string},
 ): Promise<{ data: T; response: ModelResponse }> {
   const { profile } = await getModelProfile(env, id, version);
   if (profile.capabilities.structured === "none")
@@ -208,6 +207,7 @@ export async function generateStructured<T>(
             ]
           : instructions,
         ...format,
+        ...media,
         maxTokens: profile.outputTokens ?? 4096,
       },
       runId,

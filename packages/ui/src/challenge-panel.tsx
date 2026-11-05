@@ -97,7 +97,9 @@ export function ChallengePanel({
                 ? "已回复，等待执行器核查网站实际状态。"
                 : challenge.kind === "unsupported"
                   ? "当前通道无法完成此验证，可取消本次运行。"
-                  : "回复只用于当前步骤，不进入聊天记录。"}
+                  : ['code','information'].includes(challenge.kind)
+                    ? "在下方唯一输入框回复当前步骤，每次只填一项。回复加密保存并显示在你的会话中，不交给模型解析。"
+                    : "确认只作用于当前步骤，回复会保存在你的会话中。"}
         </p>
       </ItemFooter>
     </Item>

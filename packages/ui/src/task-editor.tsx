@@ -8,7 +8,7 @@ import {
 } from "react";
 import type { Snapshot, TaskInput } from "../../contracts/src/index";
 import { taskInputSchema } from "../../contracts/src/index";
-import { allowedNavigation, publicUrl } from "../../contracts/src/security";
+import { publicUrl } from "../../contracts/src/security";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Textarea } from "./components/ui/textarea";
@@ -69,9 +69,8 @@ export function TaskEditor({
   onClose: () => void;
   onApply: (task: TaskInput) => void;
 }) {
-  const [draft, setDraft] = useState(initial),
+  const [draft, setDraft] = useState<TaskInput>(()=>taskInputSchema.strip().parse(initial)),
     [error, setError] = useState("");
-  const [origins, setOrigins] = useState(initial.allowedOrigins.join("\n"));
   const change = <K extends keyof TaskInput>(key: K, value: TaskInput[K]) =>
     setDraft((d) => ({ ...d, [key]: value }));
   const schedule = draft.schedule;
@@ -96,20 +95,14 @@ export function TaskEditor({
             try {
               const next = taskInputSchema.parse({
                   ...draft,
-                  allowedOrigins: [
-                    ...new Set([
-                      ...origins
-                        .split("\n")
-                        .map((s) => s.trim())
-                        .filter(Boolean).map((value) => publicUrl(value).origin),
-                    ]),
-                  ],
+                  ...(draft.verification.kind==='batch'?{verification:{...draft.verification,exclusions:draft.verification.exclusions.map(x=>x.trim()).filter(Boolean)}}:{}),
+
                 });
-              allowedNavigation(next.entryUrl, next.allowedOrigins);
+              publicUrl(next.entryUrl);
               onApply(next);
             } catch (e) {
               const code = (e as Error).message;
-              setError(['PUBLIC_HTTPS_REQUIRED','PRIVATE_ADDRESS_BLOCKED','ORIGIN_NOT_AUTHORIZED'].includes(code) ? code : "请检查网站、时间和必填内容。");
+              setError(['PUBLIC_HTTPS_REQUIRED','PRIVATE_ADDRESS_BLOCKED'].includes(code) ? code : "请检查网站、时间和必填内容。");
             }
           }}
         >
@@ -265,19 +258,16 @@ export function TaskEditor({
               <NativeSelect
                 value={draft.verification.kind}
                 onChange={(e) =>
-                  change("verification", {
-                    ...draft.verification,
-                    kind: e.target.value as TaskInput["verification"]["kind"],
-                  })
+                  change("verification", e.target.value==='batch'
+                    ? {kind:'batch',value:draft.goal,scope:'',eligibility:'',exclusions:[]}
+                    : {kind:'goal',value:draft.goal})
                 }
               >
-                <option value="text_present">页面出现指定文字</option>
-                <option value="text_absent">页面不再出现指定文字</option>
-                <option value="url">到达完整地址</option>
-                <option value="extraction">提取内容包含指定文字</option>
+                <option value="goal">AI 核验业务目标</option>
+                <option value="batch">逐项核验批量任务</option>
               </NativeSelect>
             </Field>
-            <Field label="核验内容" hint="只填写一段连续的页面原文，按字面匹配；不支持把多个条件拼接。地址判据须填写完整地址。">
+            <Field label={draft.verification.kind==='batch'?'每项完成目标':'核验内容'} hint="描述业务结果即可，AI 根据实际页面观察判断是否完成。">
               <Input
                 required
                 value={draft.verification.value}
@@ -289,15 +279,12 @@ export function TaskEditor({
                 }
               />
             </Field>
-            <Field
-              label="允许访问的站点"
-              hint="每行一个 HTTPS origin；不会自动扩大授权范围。"
-            >
-              <Textarea
-                value={origins}
-                onChange={(e) => setOrigins(e.target.value)}
-              />
-            </Field>
+            {draft.verification.kind==='batch'&&<>
+              <Field label="批量范围" hint="明确本次处理的列表或业务区域，不包含未来新增项目。"><Textarea required value={draft.verification.scope} onChange={e=>draft.verification.kind==='batch'&&change('verification',{...draft.verification,scope:e.target.value})}/></Field>
+              <Field label="处理资格"><Textarea required value={draft.verification.eligibility} onChange={e=>draft.verification.kind==='batch'&&change('verification',{...draft.verification,eligibility:e.target.value})}/></Field>
+              <Field label="排除范围" hint="每行一项；范围外项目会单独报告，不计入本次完成。"><Textarea value={draft.verification.exclusions.join('\n')} onChange={e=>draft.verification.kind==='batch'&&change('verification',{...draft.verification,exclusions:e.target.value.split('\n')})}/></Field>
+            </>}
+
           </FieldGroup>
           {error && <ErrorText error={error} />}
           <div className="flex justify-end gap-2">

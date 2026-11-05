@@ -28,7 +28,7 @@ export class RunnerPoller {
         this.claimRequest ??= crypto.randomUUID();
         this.journal.set('claimRequest',this.claimRequest);
         const {run}=await this.cloud.request<{run:TaskRun|null}>('POST','/api/runner/claim',{
-          requestId:this.claimRequest,protocolVersion:3,
+          requestId:this.claimRequest,protocolVersion:14,
         });
         if(run && ['running','waiting_user','verifying'].includes(run.status))await this.host.start(run);
         this.claimRequest=null;this.journal.set('claimRequest',null);

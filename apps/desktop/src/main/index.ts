@@ -164,7 +164,7 @@ function registerIpc() {
     }>(
       "POST",
       "/api/pair/start",
-      { name: require("node:os").hostname(), protocolVersion: 3 },
+      { name: require("node:os").hostname(), protocolVersion: 14 },
       true,
     );
     if (new URL(result.url).origin !== url)
@@ -399,7 +399,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
       });
       powerMonitor.on("resume", () => void poll());
       createWindow();
-      cloud.watch(()=>void poll());
+      cloud.watch(()=>{void host.refreshControl().catch(()=>{});void poll();});
       setInterval(() => void poll(), 60000);
       setTimeout(() => void updater.check(),15000);
       setInterval(() => void updater.check(),6*60*60*1000);

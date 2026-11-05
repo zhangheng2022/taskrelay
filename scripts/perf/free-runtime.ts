@@ -1,6 +1,7 @@
+import { AiTurn as ProductionAiTurn } from '../../apps/cloud/src/ai/turn';
 // Isolated workerd fixture. No network provider and no production secrets.
 import worker from '../../apps/cloud/src/worker';
-export {RequestCoordinator,Scheduler,AiTurn,Evidence,NotificationHub,ModelEgress} from '../../apps/cloud/src/worker';
+export {RequestCoordinator,Scheduler,Evidence,NotificationHub,ModelEgress} from '../../apps/cloud/src/worker';
 import {hash} from '../../packages/contracts/src/security';
 import {seal} from '../../apps/cloud/src/crypto';
 import type {AppEnv} from '../../apps/cloud/src/env';
@@ -18,7 +19,7 @@ export default {async fetch(req:Request,env:AppEnv,ctx:ExecutionContext){
    return Response.json({valid,rejected});
  }
  if(path==='/_init'){
-   await env.DB.prepare("INSERT INTO devices(id,name,token_hash,protocol_version) VALUES('fixture','fixture',?,3)").bind(await hash('d'.repeat(64))).run();
+   await env.DB.prepare("INSERT INTO devices(id,name,token_hash,protocol_version) VALUES('fixture','fixture',?,14)").bind(await hash('d'.repeat(64))).run();
    await env.DB.prepare('INSERT INTO model_profiles(id,version,config,secret,capabilities,created_at) VALUES(?,1,?,?,?,?)').bind('fixture',JSON.stringify({name:'fixture',baseUrl:'https://provider.example/v1',model:'fixture',protocol:'chat',inputPrice:null,outputPrice:null}),await seal('fixture-only',env.MASTER_KEY,'model:fixture:1'),JSON.stringify({connection:true,tools:true,structured:'schema',vision:false}),new Date().toISOString()).run();
    return Response.json({ok:true});
  }
@@ -34,3 +35,11 @@ export default {async fetch(req:Request,env:AppEnv,ctx:ExecutionContext){
  if(path==='/_publish'){await env.NOTIFICATIONS.getByName('device:fixture').publish();return Response.json({ok:true});}
  return worker.fetch(req,env,ctx);
 }};
+
+// Test-only synthetic model adapter. The production jurisdiction path is unchanged.
+export class AiTurn extends ProductionAiTurn {
+ constructor(ctx:DurableObjectState,env:AppEnv){
+  const model={jurisdiction:()=>({getByName:()=>({submitAndWait:async(id:string)=>({status:'done',cipher:await seal({text:JSON.stringify({reply:'请提供网站和目标',operation:'respond',scope:'current',startWhen:'now',task:null}),usage:{input:10,output:10},toolCalls:[]},env.MASTER_KEY,`egress:${id}:response`)}),ack:async()=>{}})})};
+  super(ctx,{...env,MODEL_EGRESS:model as unknown as AppEnv['MODEL_EGRESS']});
+ }
+}

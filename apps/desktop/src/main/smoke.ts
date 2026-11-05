@@ -42,6 +42,10 @@ export async function packagedSmoke(
   const server = http.createServer(async (req, res) => {
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     const route = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
+    if(route==='/selectors'){
+      res.end('<!doctype html><meta charset="utf-8"><section><span role="button">其他方式</span></section><section><span>标题</span><span role="button" onclick="document.body.dataset.clicked=\'yes\'">继续登录</span></section>');
+      return;
+    }
     if (route === "/login") {
       let body = "";
       for await (const chunk of req) body += chunk;
@@ -77,6 +81,18 @@ export async function packagedSmoke(
       res.end(
         '<form action="/submitted" method="post"><label>内容<input id="comment" name="comment"></label><button id="submit">提交表单</button></form>',
       );
+      return;
+    }
+    if (route === '/batch') {
+      res.end('<main id="batch"><h1>测试记录</h1><span class="total">共 1 条</span><article data-id="record-a"><span class="label">记录 A</span><span class="status">待处理</span><form><input type="hidden" name="id" value="record-a"><button type="button" class="process" onclick="document.querySelector(\'.status\').textContent=\'已处理\'"><span class="button-label">处理</span></button></form></article></main>');
+      return;
+    }
+    if (route === '/multi-login') {
+      res.end('<form action="/password-step"><input id="email" type="email" autocomplete="username"><button id="next">下一步</button></form>');
+      return;
+    }
+    if (route === '/password-step') {
+      res.end('<form><input id="password" type="password" aria-label="密码" autocomplete="current-password"><button id="login">继续</button></form>');
       return;
     }
     if (route === "/submitted") {

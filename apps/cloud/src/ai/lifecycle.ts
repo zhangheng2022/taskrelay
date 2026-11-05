@@ -14,6 +14,10 @@ const preserved = [
   "quota_reservations",
 ] as const;
 const history = [
+  "assistance_replies",
+  "conversation_inbox",
+  "conversation_commands",
+  "run_conditions",
   "ai_messages",
   "ai_turns",
   "ai_threads",
@@ -27,6 +31,7 @@ const history = [
   "challenges",
   "artifacts",
   "actions",
+  "batch_progress",
   "claims",
   "account_locks",
   "run_events",
@@ -38,7 +43,7 @@ const history = [
 ] as const;
 const blockers = `(SELECT COUNT(*) FROM runs WHERE status IN ('running','waiting_user','verifying','unknown') OR (write_pending=1 AND status<>'succeeded'))
  +(SELECT COUNT(*) FROM account_locks)
- +(SELECT COUNT(*) FROM devices WHERE revoked=0 AND (protocol_version<>3 OR cutover_ready_at IS NULL OR julianday(cutover_ready_at)<julianday('now','-10 minutes')))
+ +(SELECT COUNT(*) FROM devices WHERE revoked=0 AND (protocol_version<>14 OR cutover_ready_at IS NULL OR julianday(cutover_ready_at)<julianday('now','-10 minutes')))
  +(SELECT COUNT(*) FROM ai_calls WHERE status IN ('reserved','running'))
  +(SELECT COUNT(*) FROM ai_turns WHERE status='running')`;
 
@@ -133,6 +138,12 @@ export async function retainHistory(env: AppEnv, cutoff: string) {
     env.DB.prepare(
       "DELETE FROM ai_messages WHERE thread_id IN(SELECT id FROM ai_threads WHERE deleted=1)",
     ),
+    env.DB.prepare('DELETE FROM assistance_replies WHERE created_at<? OR thread_id IN(SELECT id FROM ai_threads WHERE deleted=1)').bind(cutoff),
+    env.DB.prepare("UPDATE conversation_inbox SET content='',status='failed' WHERE thread_id IN(SELECT id FROM ai_threads WHERE deleted=1)"),
+    env.DB.prepare("UPDATE conversation_commands SET run_task=NULL,state='done' WHERE thread_id IN(SELECT id FROM ai_threads WHERE deleted=1)"),
   ]);
+  const images=await env.DB.prepare('SELECT a.id,a.object_key FROM artifacts a JOIN ai_threads t ON t.id=a.thread_id WHERE t.deleted=1').all<{id:string;object_key:string}>();
+  for(const image of images.results){await deleteEvidence(env,image.object_key);await env.DB.prepare('DELETE FROM artifacts WHERE id=?').bind(image.id).run();}
+  await env.DB.prepare('DELETE FROM execution_help WHERE thread_id IN (SELECT id FROM ai_threads WHERE deleted=1)').run();
   // Digest tombstones deliberately remain: expiry must not make a request replayable.
 }

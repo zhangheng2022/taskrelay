@@ -156,16 +156,16 @@ test("真实 graph 从 D1 恢复终态不再调用模型，改变输入拒绝；
 
 test("超过200条历史完整分页；显式记忆变更失效摘要和派生结果，删除会话后不能回填", async (t) => {
   const s = await productionModelFixture(t);
+  s.sql.exec("UPDATE runs SET status='succeeded'");
   const th = (
     await s.request("/api/user/threads", {
-      kind: "chat",
       modelId: "model_test",
       taskId: s.run.taskId,
     })
   ).data;
   for (let i = 1; i <= 205; i++)
     s.sql
-      .prepare("INSERT INTO ai_messages VALUES(?,?,?,?,?,?,?)")
+      .prepare("INSERT INTO ai_messages(id,thread_id,seq,role,content,turn_id,at) VALUES(?,?,?,?,?,?,?)")
       .run(
         "m" + i,
         th.id,
@@ -196,7 +196,6 @@ test("超过200条历史完整分页；显式记忆变更失效摘要和派生�
     (
       await s.request(`/api/user/threads/${th.id}/messages`, {
         requestId: "one",
-        expectedVersion: 0,
         content: "你好",
       })
     ).data.status,
@@ -239,7 +238,6 @@ test("超过200条历史完整分页；显式记忆变更失效摘要和派生�
   assert.notEqual(
     (
       await s.request("/api/user/threads", {
-        kind: "chat",
         modelId: "model_test",
         taskId: s.run.taskId,
       })
@@ -267,15 +265,15 @@ test("超过200条历史完整分页；显式记忆变更失效摘要和派生�
 
 test("并发同一消息只执行一次，另一消息不能抢占 active turn", async (t) => {
   const s = await productionModelFixture(t);
+  s.sql.exec("UPDATE runs SET status='succeeded'");
   const th = (
     await s.request("/api/user/threads", {
-      kind: "chat",
       modelId: "model_test",
       taskId: s.run.taskId,
     })
   ).data;
   s.replies('{"reply":"唯一回复"}');
-  const body = { requestId: "same", expectedVersion: 0, content: "你好" };
+  const body = { requestId: "same", content: "你好" };
   const results = await Promise.all([
     s.request(`/api/user/threads/${th.id}/messages`, body),
     s.request(`/api/user/threads/${th.id}/messages`, body),
@@ -287,7 +285,8 @@ test("并发同一消息只执行一次，另一消息不能抢占 active turn",
   assert.equal(s.jobs(), 1);
   assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM ai_messages").get()!.n, 2);
   assert.ok(results.some((r) => r.data.status === "done"));
-  assert.equal(results[2].data.error, "THREAD_VERSION_CONFLICT");
+  assert.equal(results[2].data.status, "queued");
+  assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM conversation_inbox WHERE status='pending'").get()!.n,1);
 });
 
 test("清理先阻止 unknown 和未就绪设备；保留身份、账号、模型、设备、当天额度，且不自动恢复调度", async (t) => {
@@ -329,13 +328,11 @@ test("保留策略删除正文和派生结果，但保留请求墓碑阻止重�
   const s = await productionModelFixture(t);
   const th = (
     await s.request("/api/user/threads", {
-      kind: "compose",
       modelId: "model_test",
     })
   ).data;
   await s.request(`/api/user/threads/${th.id}/messages`, {
     requestId: "one",
-    expectedVersion: 0,
     content: "你好",
   });
   await retainHistory(s.env, "2099-01-01");

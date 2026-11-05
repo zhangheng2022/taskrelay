@@ -17,16 +17,17 @@ Git 提交信息使用中文：标题和正文均用中文描述改动，代码�
 
 ### 运行与授权
 
-- **云端权威**：任务配置、模型版本、调度、租约及运行状态由云端管理；离线仅查看缓存和停止本机执行，不新增本地调度器。
-- **进程隔离**：Main 管理云端连接、SQLite、令牌和进程；Preload 仅暴露受校验的命名入口；Renderer 不访问文件、明文设备令牌或执行进程；Stagehand 留在独立 `utilityProcess`。
-- **创建与修改**：`/threads`、`/threads/:id/messages` 多轮补全持久化草稿，模型返回草稿不得创建或执行任务。确认卡展示授权范围，用户确认后才调用创建/更新入口或试运行；详细表单只编辑草稿，普通任务对话不直接修改授权或调度。旧 `/tasks/compose` 与 `/tasks/draft` 已移除。
-- **授权范围**：网页和模型内容不能扩大任务卡授权；保留目标事实校验、允许站点限制和公共网络检查，不增加任意 JavaScript、Shell 或主机文件工具。
-- **副作用与未知结果**：本地检查点和云端动作意图先于执行，动作后重新观察；模型宣称成功不能替代程序核验。可能已写入但结果丢失时进入 `unknown`、保持账号锁、先只读核查，不得重复点击、重试提交或重新排队。
-- **租约与代次**：设备上传绑定运行和 `leaseEpoch`；Main 拒绝旧 child/generation 消息，取消、停止、恢复不得让旧进程修改新状态；确认旧进程退出后才能开启新执行。
-- **统一协助**：验证码、扫码、外部确认、高影响操作均通过任务对话，不新增本地浏览器接管入口。回复原文截取须保留前导零和大小写，绑定运行、步骤、版本、租约和消费编号，并经后端校验；填写或收到“已完成”后仍核查站点状态，敏感回复不进入普通消息历史。
-- **默认限额**：全机并发 1、心跳 15 秒、租约 90 秒、自动执行 5 分钟/40 动作、人工等待 5 分钟、迟到窗口 1 小时且只补最近一次。常量在 `packages/contracts/src/index.ts`；领取及 Main/Host 共同守卫并发。
-- **窗口与退出**：关主窗口保留托盘，明确退出时停止领取并关闭自有进程；自启动默认关闭，UI 重载不得重启任务。
-- **状态变更**：以生产状态转移与只读核查行为为准；`unknown` 可经核查完成，不得套用禁止其后续转移的简化状态表。候选及实施状态见架构文档。
+- **聊天主线（0.11.0 / 协议 14）**：用户交办由云端 AI 检查意图；明确直接交接，含糊才询问。执行器拥有观察、规划、操作、纠错和最终总结的完整循环；云端不逐步规划或另起报告。用户消息、云端协助、执行过程、截图和结果进入同一聊天，只有一个输入框。
+- **按需求助**：执行器先向云端 AI 求助，云端查已有上下文和可用账号，无法解决再询问用户。普通补充直接给执行器，待协助的回复绑定当前询问。账号密码与验证码独立加密，本人聊天可查看；按用户强制要求，当前任务 AI 可以读取与使用这些信息，并自行判断回复是输入、新要求还是问题，不设置发送模式或输入框前置门槛。平台模型密钥、设备令牌及其他用户数据不在此授权范围。
+- **AI 判断业务**：不设动作业务分类门槛、批量项目绑定、固定项目身份、成功判据硬匹配、强制核验表及独立报告阶段。普通目标与批量目标使用同一工具循环；AI 根据真实工具反馈结束并如实报告，部分完成或受阻也可以正常结束。取消五分钟、四十动作和人工等待五分钟上限。
+- **保留的基础边界**：账号与设备身份隔离、凭据所属站点与设备校验、公共网络检查、单机并发、租约、停止控制与同一次工具调用的幂等标识保留。网页不能扩大用户授权，不提供任意脚本、Shell 或主机文件工具。不恢复网站授权名单。
+- **原始上下文**：用户原话、补充及协助回复直接给执行器与 Stagehand，不拆账号/密码/验证码字段，不通过 target/value 或原文片段提取来交接。执行器使用原生工具调用，普通文字直接作为最终答复；不输出自定义动作计划或业务完成枚举。
+- **Stagehand AI**：固定 4.3.0，执行使用原生快照及 act/observe/extract，通过 ClientLLM 转发到现有云端模型链路。高层 AI 表达自然语言操作，不生成选择器。页面结构和控件编号不经过聊天摘要；定位错误由 AI 重新观察纠正。SDK 自动重放仍关闭，避免已发送点击被隐藏重试。
+- **未知动作**：只记录动作是否已送出和是否收到后续观察；不按 DOM/URL 指纹拦截不同操作。结果尚未返回时停止不自动重放。已有历史 unknown 及检查点保留，不自动恢复旧任务。
+- **进程隔离**：Main 管理云端连接、SQLite、令牌和子进程；Preload 暴露校验后的命名入口；Renderer 不访问文件、明文设备令牌或执行进程。Stagehand 位于独立 utilityProcess，Main 拒绝旧 generation 消息。
+- **截图与聊天**：脱敏截图作为消息图片长期保存，随聊天删除，不再十分钟失效。清理先关闭聊天和停止新写入，再清图片。执行终态可在聊天删除后独立收尾，不能重新把旧消息挂到新聊天。
+- **调度与条件卡**：云端保持配置与设备分配权威，桌面不增加本地调度器。条件卡由用户确认频率、模型和账号的产品方向保留，但本轮暂不扩展，不成为执行前提。个人次数限制保持关闭。
+- **窗口与退出**：关主窗口保留托盘，明确退出停止领取并关闭自有进程；自启动默认关闭。停止按钮直接控制执行器，不等待模型理解。
 
 ### 模型与出站
 
@@ -39,10 +40,10 @@ Git 提交信息使用中文：标题和正文均用中文描述改动，代码�
 ### 数据与认证
 
 - 网站通过 Better Auth 会话与已验证邮箱校验身份，服务端实施用户归属与管理员角色隔离；Cloudflare Access 仅保留为可选外层限制，不能替代应用鉴权。设备使用可吊销 bearer token，不能访问用户或管理员接口；开发绕过仅限本机 `DEV_MODE=1`，生产关闭，不向公网暴露开发服务器。
-- Main 用系统 `safeStorage` 保存设备令牌；模型密钥、账号凭据、敏感协助回复按上下文加密，普通日志、聊天、诊断包不得包含明文。
+- Main 用系统 `safeStorage` 保存设备令牌；模型密钥、账号凭据、敏感协助回复按上下文加密，普通日志和诊断包不得包含明文；当前任务模型可按上述强制要求读取用户的站点登录信息；用户已授权协助回复在本人聊天界面解密显示，清空聊天与保留期同时清理该密文。
 - **不得重新生成或覆盖现有 `MASTER_KEY`**：D1 和出站作业的密文依赖它；轮换必须有迁移与恢复方案。
 - 短期证据由私有 SQLite Durable Object 分块加密保存，协助完成或过期后清理；生产不绑定 R2，避免超出免费额度后计费。诊断包不得包含 Profile、SQLite 或 API Key。
-- Cloudflare 保持 Free；普通 Worker 仅路由，业务计算进入 DO，长 AI 回合通过持久化 outbox 与 alarm 执行。达到平台预算时拒绝新工作，不自动购买或切换付费服务；具体预算、保留期与验证范围见架构和部署文档。
+- Cloudflare 保持 Free；普通 Worker 仅路由，业务计算进入 DO，长 AI 回合通过持久化 outbox 与 alarm 执行。不设置项目级每日平台预算或全站模型上限，不自动购买或切换付费服务；官方平台限制、保留期与验证范围见架构和部署文档。
 - 数据库变更添加迁移并兼容已安装客户端数据；SQLite 拒绝高于支持版本的 schema，不得覆盖重建。数据库结构以 SQL 迁移为准，`schema.ts` 仅覆盖部分 Drizzle 查询。
 
 ## 任务导航与技能
@@ -51,13 +52,13 @@ Git 提交信息使用中文：标题和正文均用中文描述改动，代码�
 
 | 任务 | 优先阅读 |
 | --- | --- |
-| 创建对话、确认卡、成功判据、授权、时间规则 | `packages/contracts/src/{index,policy,schedule}.ts`；`packages/ui/src/{task-compose,task-editor,task-summary}.tsx`；`apps/cloud/src/user.ts` |
+| 创建对话、确认卡、成功判据、授权、时间规则 | `packages/contracts/src/{index,execution,schedule}.ts`；`packages/ui/src/{task-compose,task-editor,task-summary}.tsx`；`apps/cloud/src/user.ts` |
 | 调度、领取、取消、租约、账号锁、只读核查 | `apps/cloud/src/{store,runner,user}.ts`；`tests/{reliability,api}.test.ts` |
 | 模型配置、能力、协议、地区出站 | `apps/cloud/src/{models,egress,egress-state,model-egress}.ts`；`packages/model/src/index.ts`；`tests/{model,structured-production,egress}.test.ts` |
 | 人工协助与敏感回复 | `apps/cloud/src/{challenges,user,runner}.ts`；`apps/desktop/src/executor/runtime.ts`；`packages/ui/src/conversation.tsx` |
 | 桌面生命周期、恢复、停止、离线 | `apps/desktop/src/main/{index,executor-host,journal,cloud,browser}.ts` |
 | Preload / Renderer 权限 | `apps/desktop/src/preload/index.ts`；`apps/desktop/src/shared/ipc.ts`；`apps/desktop/src/renderer/main.tsx`；Main 的 IPC 注册与参数校验 |
-| 页面动作、站点限制、证据 | `apps/desktop/src/executor/{entry,runtime,proxy}.ts`；`packages/contracts/src/{policy,security}.ts` |
+| 页面动作、站点限制、证据 | `apps/desktop/src/executor/{entry,runtime,proxy}.ts`；`packages/contracts/src/{execution,security}.ts` |
 | 共享 UI | `packages/ui/src/{chat-parts,model-selector,task-compose,conversation,run-report,challenge-panel}.tsx`；宿主 `apps/web/src/main.tsx`、`apps/desktop/src/renderer/main.tsx`；[检查记录](docs/UI-REVIEW.md) |
 | Windows 打包与安装 | `apps/desktop/{forge.config,vite.executor.config}.mts`；`scripts/{stage-runtime,prepare-browser,verify-browser,smoke,release-manifest}.mjs` |
 | Cloudflare 绑定、认证、迁移 | `apps/web/wrangler.jsonc`；`apps/cloud/src/{worker,index,auth,pairing,env}.ts`；`apps/cloud/migrations/` |

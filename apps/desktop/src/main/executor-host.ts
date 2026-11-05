@@ -71,7 +71,7 @@ export class ExecutorHost {
         this.journal.remove(row.id);
       } catch (e) {
         if (
-          ["LEASE_EXPIRED", "CANCEL_REQUESTED", "RUN_NOT_FOUND"].includes(
+          ["LEASE_EXPIRED", "CANCEL_REQUESTED", "RUN_NOT_FOUND", "INSTRUCTIONS_PENDING", "INSTRUCTIONS_CHANGED"].includes(
             (e as Error).message,
           )
         )
@@ -149,38 +149,7 @@ export class ExecutorHost {
       run,
       extensionPath: this.extensionPath,
     });
-    const heartbeat = setInterval(() => {
-      void (async () => {
-        if (this.child !== child || this.generation !== gen || this.stopping) return;
-        if (
-          Date.now() - this.alive > 25000 ||
-          Date.now() > this.lastLease - 5000
-        ) {
-          await this.stop(true);
-          return;
-        }
-        try {
-          const r = await this.cloud.request<{
-            leaseExpiresAt: string;
-            cancelRequested: boolean;
-          }>("POST", `/api/runner/runs/${run.id}/heartbeat`, {
-            epoch: run.leaseEpoch,
-          });
-          if (this.child !== child || this.generation !== gen || this.stopping) return;
-          this.lastLease = new Date(r.leaseExpiresAt).getTime();
-          if (r.cancelRequested)
-            child.postMessage({ type: "cancel", generation: gen });
-        } catch (e) {
-          if (this.child !== child || this.generation !== gen || this.stopping) return;
-          if (
-            ["LEASE_EXPIRED", "DEVICE_UNAUTHORIZED"].includes(
-              (e as Error).message,
-            )
-          )
-            await this.stop(true);
-        }
-      })().catch(() => {});
-    }, limits.heartbeatMs);
+    const heartbeat = setInterval(() => {void this.refreshControl().catch(()=>{});}, limits.heartbeatMs);
     void exit
       .then(async () => {
         clearInterval(heartbeat);
@@ -204,6 +173,20 @@ export class ExecutorHost {
         this.notify();
       });
     this.notify();
+  }
+  async refreshControl() {
+    const child=this.child,run=this.current,gen=this.generation;
+    if(!child||!run||this.stopping)return;
+    if(Date.now()-this.alive>25000||Date.now()>this.lastLease-5000){await this.stop(true);return;}
+    try{
+      const result=await this.cloud.request<{leaseExpiresAt:string;cancelRequested:boolean}>('POST',`/api/runner/runs/${run.id}/heartbeat`,{epoch:run.leaseEpoch});
+      if(this.child!==child||this.generation!==gen||this.stopping)return;
+      this.lastLease=new Date(result.leaseExpiresAt).getTime();
+      if(result.cancelRequested)await this.stop(false);
+    }catch(error){
+      if(this.child!==child||this.generation!==gen||this.stopping)return;
+      if(['LEASE_EXPIRED','DEVICE_UNAUTHORIZED'].includes((error as Error).message))await this.stop(true);
+    }
   }
   private async handle(
     run: TaskRun,
@@ -252,9 +235,15 @@ export class ExecutorHost {
         ? `finish_${run.id}`
         : `events_${body.events?.[0]?.id}`;
       this.journal.queue(key, p, body);
-      const result = await this.cloud.request("POST", p, body);
-      this.journal.remove(key);
-      return result;
+      try {
+        const result = await this.cloud.request("POST", p, body);
+        this.journal.remove(key);
+        return result;
+      } catch (error) {
+        // A definitive control-fence rejection is not an uncertain network result.
+        if (['INSTRUCTIONS_PENDING','INSTRUCTIONS_CHANGED'].includes((error as Error).message)) this.journal.remove(key);
+        throw error;
+      }
     }
     return this.cloud.request("POST", p, body, false, binary);
   }
