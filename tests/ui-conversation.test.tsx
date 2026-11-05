@@ -83,7 +83,7 @@ test('截图直接显示在聊天，不渲染旧运行事件卡；停止不调�
 });
 
 test('连续运行通知合并读取，不饿死聊天刷新',async()=>{
- let notify=()=>{},pending:((value:any)=>void)|undefined,reads=0;
+ let notify:(()=>void)|undefined,pending:((value:any)=>void)|undefined,reads=0;
  const page={...threadPage,taskId:task.id,messages:[]};
  const transport=transportWith(async(_method,path)=>{
   if(path==='/api/user/threads')return [{id:page.id,model_id:task.modelId,task_id:task.id}];
@@ -92,8 +92,9 @@ test('连续运行通知合并读取，不饿死聊天刷新',async()=>{
  });
  transport.subscribe=fn=>{notify=fn;return()=>{};};
  const v=render(<Conversation transport={transport} task={task} run={run} offline={false} refresh={async()=>{}}/>);
- await waitFor(()=>assert.equal(v.getByRole('textbox').hasAttribute('disabled'),false));
- await act(async()=>{notify();notify();notify();});
+ // 输入框启用发生在提交渲染时，通知订阅在后续 effect 中建立；必须等订阅就绪再模拟事件。
+ await waitFor(()=>assert.equal(typeof notify,'function'));
+ await act(async()=>{notify!();notify!();notify!();});
  assert.equal(reads,2);
  await act(async()=>{pending!({...page,messages:[{id:'new',seq:1,role:'assistant',source:'executor',content:'刚刚执行完成',parts:[]}]});});
  await waitFor(()=>assert.ok(v.getByText('刚刚执行完成')));
