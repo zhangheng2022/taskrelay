@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Snapshot, Transport } from '../../contracts/src/index';
 import { useThread } from './use-thread';
 import { canUseModel, ModelSelector } from './model-selector';
-import { Thread, ChatMessage, Composer, PendingMessage } from './chat-parts';
+import { Thread, ChatMessage, Composer, PendingMessage, SendingMessage } from './chat-parts';
 import { MessageScrollerItem } from './components/ui/message-scroller';
 import { Button } from './components/ui/button';
 import { ErrorText, LoadFeedback } from './feedback';
@@ -27,11 +27,12 @@ export function TaskCompose({transport,snapshot,offline,onSaved,onSettings}: {
   return <div className="flex min-h-0 flex-1 flex-col">
     <Thread>
       {(thread.loading||thread.error)&&<MessageScrollerItem messageId="loading"><LoadFeedback loading={thread.loading} error={thread.error} label="正在加载对话…" onRetry={thread.retry}/></MessageScrollerItem>}
-      {!thread.page?.messages.length&&!thread.loading&&<MessageScrollerItem messageId="welcome"><ChatMessage role="assistant">描述目标和网站，我会开始执行。有需要你决定的问题，会在这里继续沟通。</ChatMessage>{!available.length&&<Button onClick={onSettings}>查看模型设置</Button>}</MessageScrollerItem>}
+      {!thread.page?.messages.length&&!thread.loading&&!thread.sending&&<MessageScrollerItem messageId="welcome"><ChatMessage role="assistant">描述目标和网站，我会开始执行。有需要你决定的问题，会在这里继续沟通。</ChatMessage>{!available.length&&<Button onClick={onSettings}>查看模型设置</Button>}</MessageScrollerItem>}
       {thread.page?.nextCursor&&<MessageScrollerItem messageId="older"><Button variant="ghost" onClick={()=>void thread.older()}>加载更早消息</Button></MessageScrollerItem>}
       {thread.page?.messages.map(m=><MessageScrollerItem key={m.id} messageId={m.id} scrollAnchor={m.role==='user'}><ChatMessage role={m.role}>{m.content}</ChatMessage></MessageScrollerItem>)}
       {thread.page?.queued?.map(m=><MessageScrollerItem key={m.id} messageId={m.id}><ChatMessage role="user">{m.content}</ChatMessage></MessageScrollerItem>)}
-      {thread.page?.activeTurn&&<MessageScrollerItem messageId="thinking"><PendingMessage>正在处理交办…</PendingMessage></MessageScrollerItem>}
+      <SendingMessage message={thread.sending}/>
+      {!thread.sending&&thread.page?.activeTurn&&<MessageScrollerItem messageId="thinking"><PendingMessage>正在处理交办…</PendingMessage></MessageScrollerItem>}
       {(error||thread.page?.latestTurn?.error)&&<MessageScrollerItem messageId="error"><ErrorText error={error||thread.page?.latestTurn?.error||''}/></MessageScrollerItem>}
     </Thread>
     <Composer text={text} setText={setText} onSend={()=>void send()} busy={busy} disabled={offline||!thread.page} label="任务需求" placeholder="交代任务，或继续补充要求…">

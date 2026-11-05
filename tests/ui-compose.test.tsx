@@ -7,10 +7,31 @@ import { Composer } from "../packages/ui/src/chat-parts";
 import { TaskCompose } from "../packages/ui/src/task-compose";
 import { ModelSelector } from "../packages/ui/src/model-selector";
 import { snapshot, transportWith, threadPage } from "./ui-fixtures";
+import type {ThreadPage} from '../packages/ui/src/use-thread';
 
 afterEach(() => {
   cleanup();
   localStorage.clear();
+});
+
+test('新交办慢请求立即显示原文和发送状态，失败恢复输入，重试沿用请求且确认后只留一条',async()=>{
+ let resolvePost!:(value:unknown)=>void,rejectPost!:(error:Error)=>void;
+ const ids:string[]=[];let page:ThreadPage={...threadPage};
+ const transport=transportWith(async(method,path,body)=>{
+  if(path==='/api/user/threads')return [{id:page.id,model_id:'model-ui',task_id:null}];
+  if(method==='GET')return page;
+  ids.push(body.requestId);return new Promise((resolve,reject)=>{resolvePost=resolve;rejectPost=reject;});
+ });
+ const v=render(<TaskCompose transport={transport} snapshot={snapshot} offline={false} onSaved={async()=>{}} onSettings={()=>{}}/>);
+ await waitFor(()=>assert.equal(v.getByRole('textbox').hasAttribute('disabled'),false));
+ const content='帮我查看公开网页';
+ fireEvent.change(v.getByRole('textbox'),{target:{value:content}});fireEvent.click(v.getByRole('button',{name:'发送消息'}));
+ assert.ok(v.getByText(content));assert.ok(v.getByText('正在发送…'));assert.equal(ids.length,1);
+ await act(async()=>rejectPost(Error('REQUEST_UNCONFIRMED')));
+ assert.equal(v.queryByText('正在发送…'),null);assert.equal((v.getByRole('textbox') as HTMLTextAreaElement).value,content);
+ fireEvent.click(v.getByRole('button',{name:'发送消息'}));assert.equal(ids.length,2);assert.equal(ids[0],ids[1]);
+ page={...page,activeTurn:'running',messages:[{id:'server-message',seq:1,role:'user',content,at:new Date().toISOString()}]};
+ await act(async()=>resolvePost(page));assert.equal(v.getAllByText(content).length,1);assert.ok(v.getByText('正在处理交办…'));
 });
 test("交办通过消息启动，异步完成保留会话并允许继续补充", async () => {
  let page:any={...threadPage},listener:(()=>void)|undefined;const sent:any[]=[],opened:string[]=[];

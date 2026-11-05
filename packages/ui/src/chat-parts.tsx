@@ -14,6 +14,7 @@ import {
   MessageScrollerViewport,
   MessageScrollerContent,
   MessageScrollerButton,
+  MessageScrollerItem,
 } from "./components/ui/message-scroller";
 import { Marker, MarkerIcon, MarkerContent } from "./components/ui/marker";
 
@@ -65,6 +66,14 @@ export function PendingMessage({ children }: { children: ReactNode }) {
       <MarkerContent>{children}</MarkerContent>
     </Marker>
   );
+}
+// 新交办和既有聊天共用发送回显。确认后由服务端消息替换，失败后原文回到输入框重试。
+export function SendingMessage({message}:{message:{id:string;content:string}|null}){
+  if(!message)return null;
+  return <>
+    <MessageScrollerItem messageId={message.id} scrollAnchor><ChatMessage role="user">{message.content}</ChatMessage></MessageScrollerItem>
+    <MessageScrollerItem messageId={`${message.id}_status`}><PendingMessage>正在发送…</PendingMessage></MessageScrollerItem>
+  </>;
 }
 export function Composer({
   text,

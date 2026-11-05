@@ -7,6 +7,44 @@ import {task,run,transportWith,threadPage} from './ui-fixtures';
 import type {ThreadPage} from '../packages/ui/src/use-thread';
 afterEach(cleanup);
 
+test('发送立即回显及显示发送中，写入期间通知合并并在返回后补读，不等轮询也不重复消息',async()=>{
+ let notify=()=>{},resolvePost!:(value:unknown)=>void,reads=0;
+ const sent='请查询最新结果';
+ const user={id:'accepted',seq:1,role:'user',content:sent,at:new Date().toISOString()};
+ const accepted={...threadPage,messages:[user],activeTurn:'turn',waiting:null};
+ let latest:ThreadPage={...threadPage,waiting:{id:'help',request:'{}'}};
+ const transport=transportWith(async(method,path)=>{
+  if(path==='/api/user/threads')return [{id:latest.id,model_id:task.modelId,task_id:task.id}];
+  if(method==='POST')return new Promise(resolve=>{resolvePost=resolve;});
+  reads++;return latest;
+ });
+ transport.subscribe=fn=>{notify=fn;return()=>{};};
+ const v=render(<Conversation transport={transport} task={task} run={run} offline={false} refresh={async()=>{}}/>);
+ await waitFor(()=>assert.equal(v.getByRole('textbox').hasAttribute('disabled'),false));
+ fireEvent.change(v.getByRole('textbox'),{target:{value:sent}});fireEvent.click(v.getByRole('button',{name:'发送消息'}));
+ assert.equal(v.getAllByText(sent).length,1);assert.ok(v.getByText('正在发送…'));assert.equal(v.queryByText('等待你的回复'),null);
+ await act(async()=>{notify();notify();});assert.equal(reads,1);
+ latest={...accepted,activeTurn:null,messages:[user,{id:'answer',seq:2,role:'assistant',content:'已收到最新结果',at:new Date().toISOString()}]};
+ await act(async()=>resolvePost(accepted));
+ await waitFor(()=>assert.ok(v.getByText('已收到最新结果')));
+ assert.equal(reads,2);assert.equal(v.getAllByText(sent).length,1);assert.equal(v.queryByText('正在发送…'),null);
+});
+
+test('读取期间到达的新通知在读取结束后补读，不能丢失最后一次更新',async()=>{
+ let notify=()=>{},resolveRead!:(value:unknown)=>void,reads=0;
+ const page={...threadPage,messages:[]};
+ const transport=transportWith(async(_method,path)=>{
+  if(path==='/api/user/threads')return [{id:page.id,model_id:task.modelId,task_id:task.id}];
+  reads++;if(reads===2)return new Promise(resolve=>{resolveRead=resolve;});
+  return reads===1?page:{...page,messages:[{id:'new-result',seq:1,role:'assistant',content:'第二次通知的新结果',at:new Date().toISOString()}]};
+ });
+ transport.subscribe=fn=>{notify=fn;return()=>{};};
+ const v=render(<Conversation transport={transport} task={task} run={run} offline={false} refresh={async()=>{}}/>);
+ await waitFor(()=>assert.equal(v.getByRole('textbox').hasAttribute('disabled'),false));
+ await act(async()=>notify());await act(async()=>notify());assert.equal(reads,2);
+ await act(async()=>resolveRead(page));await waitFor(()=>assert.ok(v.getByText('第二次通知的新结果')));assert.equal(reads,3);
+});
+
 test('执行过程稳定合并八次读取，刷新不重复，展开保留全部记录和独立问题及结果',async()=>{
  let notify=()=>{};
  const events=Array.from({length:8},(_,i)=>({id:`progress_${i}`,seq:i+1,role:'assistant',source:'executor',run_id:run.id,content:'已读取当前页面信息。',at:`2026-11-05T12:30:0${i}.000Z`,parts:[{type:'tool' as const,name:'extract',result:`第 ${i+1} 次的真实反馈`}]}));

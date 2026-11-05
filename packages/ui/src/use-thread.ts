@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { TaskInput, Transport } from "../../contracts/src/index";
 // 管理新任务和既有任务共用的聊天生命周期：查找/创建、通知刷新、发送、历史分页与清空。
 // generation 隔离会话切换，revision 隔离读写交错；attempt 保存待确认发送的原文和幂等标识。
+// sending 仅作内存中的即时回显，不冒充服务端记录；被读写占用期间的通知合并后补读。
 export type ThreadPage = {
   id: string;
   version: number;
@@ -58,6 +59,7 @@ export function useThread(
   taskId?: string,
 ) {
   const [page, setPage] = useState<ThreadPage | null>(null),
+    [sending, setSending] = useState<{id:string;content:string}|null>(null),
     [error, setError] = useState(""),
     [loading, setLoading] = useState(!!modelId),
     [retryIndex, setRetryIndex] = useState(0);
@@ -70,7 +72,8 @@ export function useThread(
     } | null>(null);
   const revision = useRef(0),
     reading = useRef(0),
-    refreshing = useRef(false),
+    refreshing = useRef<number|null>(null),
+    refreshQueued = useRef(false),
     loadingOlder = useRef<symbol | null>(null),
     writing = useRef(false);
   const accept = useCallback((p: ThreadPage) => {
@@ -81,6 +84,9 @@ export function useThread(
     const g = ++generation.current;
     revision.current++;
     writing.current = false;
+    refreshing.current = null;
+    refreshQueued.current = false;
+    setSending(null);
     loadingOlder.current = null;
     current.current = null;
     setPage(null);
@@ -120,14 +126,15 @@ export function useThread(
       generation.current++;
     };
   }, [transport, scope, accept, retryIndex]);
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async ():Promise<void> => {
     const p = current.current;
-    if (!p || refreshing.current) return;
-    refreshing.current=true;
-    try {
+    if (!p) return;
+    if (writing.current || refreshing.current !== null) {refreshQueued.current=true;return;}
     const g = generation.current,
       r = revision.current,
       ticket = ++reading.current;
+    refreshing.current=g;refreshQueued.current=false;
+    try {
     const next = await transport.request<ThreadPage>(
       "GET",
       `/api/user/threads/${p.id}`,
@@ -144,7 +151,15 @@ export function useThread(
       // across refreshes until an explicit retry receives the write response.
       accept(mergeLatest(current.current!, next));
     }
-    } finally {refreshing.current=false;}
+    } catch(error) {
+      if(g===generation.current)throw error;
+    } finally {
+      if(refreshing.current===g){
+        refreshing.current=null;
+        if(g===generation.current&&refreshQueued.current&&!writing.current)
+          void refresh().catch(e=>{if(g===generation.current)setError(e.message);});
+      }
+    }
   }, [transport, accept]);
   useEffect(() => {
     if (!page?.id) return;
@@ -171,6 +186,7 @@ export function useThread(
     const g = generation.current;
     revision.current++;
     writing.current = true;
+    setSending({id:`pending_${attempt.current.requestId}`,content});
     try {
       const result = await transport.request<
         ThreadPage & { status: string; error?: string }
@@ -189,6 +205,9 @@ export function useThread(
       if (g === generation.current) {
         writing.current = false;
         revision.current++;
+        setSending(null);
+        // POST 返回的是某一时刻的快照；随后完成的推理或写入通知可能已到达，立即补读。
+        void refresh().catch(e=>{if(g===generation.current)setError(e.message);});
       }
     }
   }
@@ -225,6 +244,7 @@ export function useThread(
     if(g!==generation.current)return;
     const nextGeneration=++generation.current;
     writing.current=false;
+    refreshing.current=null;refreshQueued.current=false;setSending(null);
     loadingOlder.current=null;
     current.current=null;setPage(null);
     revision.current++;
@@ -244,5 +264,5 @@ export function useThread(
     void refresh().catch(e=>{if(g===generation.current)setError(e.message);})
       .finally(()=>{if(g===generation.current)setLoading(false);});
   }
-  return { page, error, loading, retry, send, refresh, older, clear };
+  return { page, error, loading, sending, retry, send, refresh, older, clear };
 }

@@ -1,7 +1,7 @@
 import {useState,useRef} from 'react';
 import type {TaskDefinition,TaskRun,Transport} from '../../contracts/src/index';
 import {useThread} from './use-thread';
-import {Thread,Composer,ChatMessage,PendingMessage} from './chat-parts';
+import {Thread,Composer,ChatMessage,PendingMessage,SendingMessage} from './chat-parts';
 import {MessageScrollerItem} from './components/ui/message-scroller';
 import {Button} from './components/ui/button';
 import {ErrorText,LoadFeedback} from './feedback';
@@ -42,8 +42,9 @@ export function Conversation({transport,task,run,offline,refresh}: {
         </ChatMessage>}
       </MessageScrollerItem>)}
       {thread.page?.queued?.map(m=><MessageScrollerItem key={m.id} messageId={m.id}><ChatMessage role="user">{m.content}</ChatMessage></MessageScrollerItem>)}
-      {thread.page?.activeTurn&&<MessageScrollerItem messageId="thinking"><PendingMessage>云端助手正在处理…</PendingMessage></MessageScrollerItem>}
-      {active&&<MessageScrollerItem messageId="activity"><PendingMessage>{thread.page?.waiting?'等待你的回复':run.status==='queued'?'等待执行设备':run.cancelRequested?'正在停止…':'执行器正在处理…'}</PendingMessage></MessageScrollerItem>}
+      <SendingMessage message={thread.sending}/>
+      {!thread.sending&&thread.page?.activeTurn&&<MessageScrollerItem messageId="thinking"><PendingMessage>云端助手正在处理…</PendingMessage></MessageScrollerItem>}
+      {!thread.sending&&active&&<MessageScrollerItem messageId="activity"><PendingMessage>{thread.page?.waiting?'等待你的回复':run.status==='queued'?'等待执行设备':run.cancelRequested?'正在停止…':'执行器正在处理…'}</PendingMessage></MessageScrollerItem>}
       {(error||thread.page?.latestTurn?.error)&&<MessageScrollerItem messageId="error"><ErrorText error={error||thread.page?.latestTurn?.error||''}/></MessageScrollerItem>}
     </Thread>
     <Composer text={text} setText={setText} onSend={()=>void send()} busy={busy} disabled={offline||!thread.page} label="消息" placeholder={thread.page?.waiting?'在这里回复，执行器会继续…':'发送消息或补充要求…'}>
