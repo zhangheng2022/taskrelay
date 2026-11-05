@@ -58,6 +58,8 @@ flowchart LR
 
 开发机需要 Node.js 24+；最终用户无需 Node.js。
 
+项目级 Codex 配置 [`.codex/config.toml`](.codex/config.toml) 已接入 [Stagehand 官方文档 MCP](https://docs.stagehand.dev/v4/first-steps/ai-rules)，提供文档搜索与读取，无需 API Key。可在项目目录运行 `codex mcp get stagehand-docs` 检查配置；使用时可要求“用 stagehand-docs 查询 act/observe 的用法”。项目须受信任才会加载该配置；文档示例仍须与本项目固定的 Stagehand 4.3.0 核对。
+
 ```powershell
 npm ci
 node scripts/setup-local.mjs

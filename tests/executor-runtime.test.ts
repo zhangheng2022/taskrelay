@@ -6,12 +6,13 @@ import type {ModelResponse} from '../packages/model/src/index';
 import type {ClientLLM} from '@browserbasehq/stagehand';
 const answer=(text:string):ModelResponse=>({text,calls:[],usage:{input:null,output:null}});
 const tool=(name:string,args:Record<string,unknown>={}):ModelResponse=>({...answer(''),calls:[{id:crypto.randomUUID(),name,arguments:JSON.stringify(args)}]});
-async function scenario(turns:ModelResponse[],options:{actionError?:boolean;original?:string;origin?:string;fill?:string;method?:string;helpMessage?:string;cancel?:boolean;cancelStagehand?:boolean;newInstruction?:boolean;compact?:boolean;navigationObservationFailure?:boolean}={}){
- let attached=false,clicks=0,cancelled=false,closed=false,snapshotFailures=0,planned=0,changed=false;
+async function scenario(turns:ModelResponse[],options:{actionError?:boolean;actionRejected?:boolean;emptyObserve?:boolean;navigationError?:boolean;cancelConnect?:boolean;createError?:boolean;closeError?:boolean;original?:string;origin?:string;fill?:string;method?:string;helpMessage?:string;cancel?:boolean;cancelStagehand?:boolean;newInstruction?:boolean;compact?:boolean;navigationObservationFailure?:boolean}={}){
+ let attached=false,clicks=0,cancelled=false,closed=false,sessionCloses=0,navigations=0,snapshotFailures=0,planned=0,changed=false;
+ const metadata={actionId:'sdk_action_test',cache:{status:'DISABLED'},usage:{inputTokens:1,outputTokens:1}};
  let llm:ClientLLM;const calls:Array<{path:string;body:any}>=[],checkpoints:any[]=[];
  const original=options.original??'请处理当前页面';
  const chat:any[]=[{seq:1,role:'user',source:'user',content:original,private:!!options.original,origin:options.origin??'https://example.com'}];
- const page={url:async()=> 'https://example.com/',goto:async()=>{},screenshot:async()=>Buffer.from('png'),
+ const page={url:async()=> 'https://example.com/',goto:async()=>{navigations++;if(options.navigationError)throw Error('NAVIGATION_FAILED');},screenshot:async()=>Buffer.from('png'),
   snapshot:async()=>{if(snapshotFailures>0){snapshotFailures--;throw Error('Execution context destroyed during navigation');}return {formattedTree:'[1] button 继续登录\n[2] textbox 密码',xpathMap:{},urlMap:{}};},
   evaluate:async()=>({readyState:'complete'}),locator:()=>{throw Error('RAW_SELECTOR_PATH_MUST_NOT_BE_USED');},
  };
@@ -31,13 +32,49 @@ async function scenario(turns:ModelResponse[],options:{actionError?:boolean;orig
   return {} as T;
  }};
  const infer=async(instruction:string)=>llm.generate({messages:[{role:'user',content:{type:'text',text:instruction}}],systemPrompt:'Stagehand actual callback',responseFormat:{type:'json_schema',name:'action',schema:{type:'object',properties:{action:{type:'object'}}}}});
- const session={close:async()=>{},act:async(instruction:string)=>{
+ const session={close:async()=>{sessionCloses++;if(options.closeError)throw Error('CLOSE_FAILED');},act:async(instruction:string)=>{
   await infer(instruction);clicks++;if(options.navigationObservationFailure)snapshotFailures=1;if(options.actionError&&clicks===1)throw Error('TARGET_NOT_FOUND');
-  return {data:{success:true,message:'已执行',actions:[]}};
- },observe:async(instruction:string)=>{await infer(instruction);return {data:[{description:'继续登录'}]};},extract:async(instruction:string)=>{await infer(instruction);return {data:{text:'实际页面信息'}};}};
- await execute({...run,task:{...run.task,entryUrl:'https://example.com/'}},port,{loadSdk:async()=>({Stagehand:{create:async(opts:any)=>{attached=true;llm=opts.model;return session;}},localBrowser:{connect:async()=>({get context(){if(!attached)throw Error('Browser context is unavailable');return {setDomainPolicy:async()=>{},pages:async()=>[page]};}})}} as any),startProxy:async()=>({port:1,close:async()=>{closed=true;}}),delay:async()=>{}});
- return {calls,checkpoints,clicks,closed,finish:calls.find(c=>c.path.endsWith('/finish'))?.body};
+  return {data:{success:!options.actionRejected,message:options.actionRejected?'TARGET_NOT_FOUND':'已执行',actions:[]},metadata};
+ },observe:async(instruction:string)=>{await infer(instruction);return {data:options.emptyObserve?[]:[{description:'继续登录'}],metadata};},extract:async(instruction:string)=>{await infer(instruction);return {data:{text:'实际页面信息'},metadata};}};
+ await execute({...run,task:{...run.task,entryUrl:'https://example.com/'}},port,{loadSdk:async()=>({Stagehand:{create:async(opts:any)=>{if(options.createError)throw Error('CREATE_FAILED');attached=true;llm=opts.model;if(options.cancelConnect)cancelled=true;return session;}},localBrowser:{connect:async()=>({get context(){if(!attached)throw Error('Browser context is unavailable');return {setDomainPolicy:async()=>{},pages:async()=>[page]};}})}} as any),startProxy:async()=>({port:1,close:async()=>{closed=true;}}),delay:async()=>{}});
+ return {calls,checkpoints,clicks,closed,sessionCloses,navigations,finish:calls.find(c=>c.path.endsWith('/finish'))?.body};
 }
+
+test('初始化期间停止不再导航，关闭 Stagehand 失败仍释放代理',async()=>{
+ const s=await scenario([],{cancelConnect:true,closeError:true});
+ assert.equal(s.navigations,0);assert.equal(s.finish.status,'cancelled');assert.equal(s.sessionCloses,1);assert.equal(s.closed,true);
+});
+
+test('Stagehand 初始化失败保留失败事实并释放代理，由 Host 收回浏览器',async()=>{
+ const s=await scenario([],{createError:true});
+ assert.equal(s.navigations,0);assert.equal(s.finish.status,'failed');assert.match(s.finish.result.summary,/CREATE_FAILED/);
+ assert.equal(s.sessionCloses,0);assert.equal(s.closed,true);
+});
+
+test('空观察候选如实反馈并保留 Stagehand 元数据，不登记动作',async()=>{
+ const s=await scenario([tool('observe',{instruction:'查看登录入口'}),tool('extract',{instruction:'读取状态'})],{emptyObserve:true});
+ const messages=s.calls.filter(c=>c.path.endsWith('/messages'));
+ assert.ok(messages.some(c=>c.body.content.includes('未找到符合指令的可操作内容')));
+ assert.equal(s.clicks,0);assert.equal(s.calls.some(c=>c.path.endsWith('/tool')),false);
+ const history=JSON.parse(s.calls.filter(c=>c.path.endsWith('/model')).at(-1)!.body.messages[1].content).history;
+ assert.deepEqual(history[0].result.data,[]);
+ for(const item of history)assert.equal(item.result.metadata.actionId,'sdk_action_test');
+});
+
+test('导航异常不展示已打开，错误交回模型继续处理',async()=>{
+ const s=await scenario([tool('navigate',{url:'https://example.com/next'})],{navigationError:true});
+ const messages=s.calls.filter(c=>c.path.endsWith('/messages'));
+ assert.equal(messages.some(c=>/已打开/.test(c.body.content)),false);
+ assert.match(JSON.stringify(s.calls.filter(c=>c.path.endsWith('/model'))),/NAVIGATION_FAILED/);
+});
+
+test('act 返回失败而未抛异常时保留错误和元数据，不自动重放',async()=>{
+ const s=await scenario([tool('act',{instruction:'点击登录'})],{actionRejected:true});
+ const history=JSON.parse(s.calls.filter(c=>c.path.endsWith('/model')).at(-1)!.body.messages[1].content).history;
+ assert.equal(s.clicks,1);assert.equal(history[0].result.error,'TARGET_NOT_FOUND');
+ assert.equal(history[0].result.metadata.actionId,'sdk_action_test');
+ assert.equal(s.sessionCloses,1);
+});
 test('真实 execute 使用原生工具调用和普通文字结束，不再解析业务动作计划',async()=>{
  const s=await scenario([tool('observe',{instruction:'查看登录入口'}),tool('act',{instruction:'点击继续登录'}),tool('extract',{instruction:'读取登录状态'})]);
  assert.equal(s.clicks,1);assert.equal(s.finish.status,'succeeded');assert.equal(s.finish.result.outcome,'reported');assert.equal(s.closed,true);

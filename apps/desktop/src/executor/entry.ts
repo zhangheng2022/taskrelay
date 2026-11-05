@@ -59,7 +59,9 @@ parent.on("message", async ({ data }) => {
             };
           },
       });
+      const smokeResult = await (async () => { try {
       const page = (await browser.context.pages())[0];
+      if (!page) throw new Error("SMOKE_PAGE_NOT_FOUND");
       const clickAndVerify = async (target: string, selector: string) => {
         try {
           await page.locator(target).click();
@@ -87,11 +89,13 @@ parent.on("message", async ({ data }) => {
         throw new Error("QUERY_FAILED");
       phase = "extract";
       const { z } = await import("zod");
+      const ValueSchema = z.object({ value: z.string() });
       const extracted = await stagehand.extract(
         "Read the value",
-        z.object({ value: z.string() }),
+        ValueSchema,
         { page },
       );
+      if (extracted.data.value !== "42") throw new Error("STAGEHAND_EXTRACT_FAILED");
       phase = "monitor";
       await page.locator("#monitor").click();
       if (!(await page.locator("#query").innerText()).includes("43"))
@@ -134,10 +138,7 @@ parent.on("message", async ({ data }) => {
       const acted=await stagehand.act('点击“继续登录”按钮',{page});
       if(!acted.data.success||await page.evaluate(()=>document.body.dataset.clicked)!=='yes')throw Error('STAGEHAND_AI_ACT_FAILED');
       phase = "close";
-      await stagehand.close();
-      parent.postMessage({
-        type: "smoke-result",
-        result: {
+      return {
           stagehand: "4.3.0",
           nativeEsmImport: true,
           query: true,
@@ -153,8 +154,11 @@ parent.on("message", async ({ data }) => {
           stagehandAiPassword:true,
           modelCallback: callbacks > 0,
           extracted,
-        },
-      });
+      };
+      } finally {
+        await stagehand.close();
+      } })();
+      parent.postMessage({ type: "smoke-result", result: smokeResult });
     } catch (e) {
       parent.postMessage({
         type: "smoke-result",

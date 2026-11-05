@@ -74,6 +74,21 @@ Git 提交信息使用中文：标题和正文均用中文描述改动，代码�
 | Workers、D1、R2、DO、部署 | 会话中对应的 Cloudflare、workers-best-practices、durable-objects、wrangler 技能；从当前技能目录获取路径，不硬编码其他机器的插件版本 |
 | 动画、UI 原语迁移 | 实际涉及时才用 vercel-react-view-transitions / migrate-radix-to-base，不作为架构分析的默认动作 |
 
+## Stagehand 开发规则
+
+依据 [官方 AI rules 的 TypeScript 模板](https://docs.stagehand.dev/v4/first-steps/ai-rules)维护；适用于 Stagehand 初始化、浏览器工具、模型适配与相关测试。以下为本项目适配，官方示例不覆盖本文已确认的运行、授权和出站约束。
+
+1. **先查文档再实现**：涉及 Stagehand 时，主动使用项目配置的 `stagehand-docs` MCP。先用 `search_stagehand` 查相关 v4 API，再用 `query_docs_filesystem_stagehand` 读取搜索返回的文档路径；不猜路径。MCP 不可用时说明原因，读取对应官方网页继续。查询只包含技术问题，不发送用户聊天、凭据或私有运行数据。配置见 [`.codex/config.toml`](.codex/config.toml)。
+2. **按安装版本核对**：固定 `@browserbasehq/stagehand` 4.3.0；最新 v4 文档与本地签名不一致时，以该版本的 `dist/index.d.mts` 和实现核实，不能为套用示例自行升级或用 `any` 掩盖差异。官方文档和 SDK 类型仅用于定位，实际行为仍须通过生产入口验证。
+3. **使用 v4 生命周期**：先取得 browser，再 `await Stagehand.create({ browser, model, ... })`；不使用旧版 `new Stagehand()` / `init()`，不添加 `agent()` 调用。生产沿用 `runtime.ts` 的 `localBrowser.connect({ cdpUrl })` 连接 Main 管理的 Chromium，Stagehand 保持在 utilityProcess，并保留原生动态导入。资源在异常、停止及正常结束时均清理；先关闭 Stagehand，浏览器进程仍由 Main/Host 按所有权关闭。
+4. **工具与页面明确绑定**：`act / observe / extract` 调用 Stagehand 实例，页面来自 `browser.context`，多页操作显式传 `{ page }`。`act` 指令应描述清晰、具体的一步操作，由 Stagehand 定位；不让高层 AI 编造 CSS/XPath，也不把整个业务流程塞进一次 `act`。`observe` 返回候选操作，不证明已经执行或业务完成。
+5. **正确消费返回值**：读取 `{ data, metadata }`，检查 `act` 的 `data.success` 和错误反馈；处理空的 observe 候选，不直接假设 `data[0]` 存在。已知结构的提取使用贴近调用位置的 Zod Schema 和 `z.infer`，URL 字段按语义校验。官方模板称 extract 必须带 Schema，但本项目 4.3.0 同时支持 `extract(instruction, options)` 与带 Schema 重载；保持通用执行器现有无 Schema 路径，不凭模板改写它。
+6. **保留项目模型适配**：复用 `stagehand-model.ts` 的 `ClientLLM` 与云端 `/stagehand` 链路。官方直传提供方 API Key、Browserbase 托管浏览器或自动选模型的示例不适用于本项目生产入口；不引入模型直连、额外密钥或自动换模型。
+7. **观察和缓存遵守现有防重语义**：官方 observe-then-act 与缓存示例是可选模式，不自动替换当前自然语言工具循环。保留 `cache:false`、`selfHeal:false`；不能复用旧页面候选绕过动作登记、停止、租约和凭据检查，不能借缓存重放已经发送而结果未知的操作。定位失败交回 AI 重新观察，后续页面观察与业务成功判断分开。
+8. **敏感上下文按既有授权处理**：保持 `logging: { level: "off" }` 和现有截图/日志脱敏。官方 `variables` 示例用于避免把秘密交给模型，本项目已明确授权当前任务 AI 理解站点账号、密码和验证码，因此不据此拆字段、替换用户原文或恢复输入模式门槛；平台密钥与设备令牌仍不得进入模型上下文。
+
+源码入口：`apps/desktop/src/executor/{runtime,stagehand-model}.ts`、`apps/cloud/src/runner.ts`。改动验证沿用下方表格，优先覆盖 `tests/{stagehand-relay,executor-runtime,chat-execution,structured-production}.test.ts`；涉及资源生命周期、原生依赖或打包时追加对应 Host 与打包 smoke，不把独立 smoke 写成完整任务闭环通过。
+
 ## UI 专项要求
 
 网站与 Windows Renderer 的 AI 交互统一遵循 [shadcn/ui AI Elements](https://ui.shadcn.com/docs/ai-elements)；“Codex 式”仅指侧栏、会话主区和底部输入区布局，组件及交互以对应 pattern 为准。设置、导航使用常规 shadcn/ui。

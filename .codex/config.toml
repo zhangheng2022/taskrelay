@@ -1,0 +1,4 @@
+# Stagehand 官方文档，仅用于开发时搜索和读取文档。
+[mcp_servers.stagehand-docs]
+url = "https://docs.stagehand.dev/mcp"
+enabled_tools = ["search_stagehand", "query_docs_filesystem_stagehand"]
