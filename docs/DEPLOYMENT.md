@@ -2,7 +2,9 @@
 
 ## 最近已记录部署
 
-2026-11-05 最新部署为消息防重与按需截图修复：源码 `9ba3d511e6819ead7839c00fac073cc5b472f513`，Worker 版本 `f6f7a752-5348-4899-b1c8-57508a94c080`，Windows 实际安装版本 **0.12.5**。两域名健康及权限自检、Windows / Ubuntu CI、包内与实际安装 smoke 均通过；本轮无 SQL 结构迁移，沿用协议 15 和迁移 0022。系统快捷方式启动、配置保留与 ASAR 哈希证据见 [ACCEPTANCE](ACCEPTANCE.md)。未发布 GitHub Release 或切换自动更新目录。
+2026-11-05 网站发送即时反馈已从源码 `3fa4d7161ac9df3b1322fd747ccb093a7bb29c66` 部署，Worker 版本 `198a7751-901d-4ef6-a17e-357f1a5e65c6`。两个域名健康与权限自检通过，主域引用新资源 `index-BGoiEkHm.js`。发布前活动运行 0，本轮无数据库结构或桌面执行器改动，Windows 实际安装仍为 0.12.5。
+
+此前消息防重与按需截图修复：源码 `9ba3d511e6819ead7839c00fac073cc5b472f513`，Worker 版本 `f6f7a752-5348-4899-b1c8-57508a94c080`，Windows 实际安装版本 **0.12.5**。两域名健康及权限自检、Windows / Ubuntu CI、包内与实际安装 smoke 均通过；该轮无 SQL 结构迁移，沿用协议 15 和迁移 0022。系统快捷方式启动、配置保留与 ASAR 哈希证据见 [ACCEPTANCE](ACCEPTANCE.md)。未发布 GitHub Release 或切换自动更新目录。
 
 以下为 0.12.2 的迁移部署基线：
 
