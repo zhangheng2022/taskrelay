@@ -2,6 +2,8 @@
 
 ## 最近已记录部署
 
+2026-11-05 聊天滚动与 iPhone Loading 兼容修复已从 `1777a1daca056d55a68f61733157c1141e9d81f2` 上线，活动 Worker 版本 `24ce3fa3-484b-4eb3-a06a-cf8312860257`（Cloudflare API 确认 100%）。主域健康、权限、JS/CSS 构建哈希及跨平台 CI 通过。CLI 上传成功后 Cron 核对遇网络错误；API 确认原定时配置正常，无需重复迁移或重建。备用 workers.dev 复检因本机网络连接重置未完成。桌面仍为 0.12.5；iPhone 真机验收未完成，详见 [ACCEPTANCE](ACCEPTANCE.md)。
+
 2026-11-05 网站发送即时反馈已从源码 `3fa4d7161ac9df3b1322fd747ccb093a7bb29c66` 部署，Worker 版本 `198a7751-901d-4ef6-a17e-357f1a5e65c6`。两个域名健康与权限自检通过，主域引用新资源 `index-BGoiEkHm.js`。发布前活动运行 0，本轮无数据库结构或桌面执行器改动，Windows 实际安装仍为 0.12.5。
 
 此前消息防重与按需截图修复：源码 `9ba3d511e6819ead7839c00fac073cc5b472f513`，Worker 版本 `f6f7a752-5348-4899-b1c8-57508a94c080`，Windows 实际安装版本 **0.12.5**。两域名健康及权限自检、Windows / Ubuntu CI、包内与实际安装 smoke 均通过；该轮无 SQL 结构迁移，沿用协议 15 和迁移 0022。系统快捷方式启动、配置保留与 ASAR 哈希证据见 [ACCEPTANCE](ACCEPTANCE.md)。未发布 GitHub Release 或切换自动更新目录。
