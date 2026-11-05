@@ -2,9 +2,11 @@
 
 ## 最近已记录部署
 
-依据 [验收记录](ACCEPTANCE.md)，2026-11-05 最近已记录的云端/Web 部署版本为 `e15c198a-968f-430a-a368-c4ee994923e3`，协议 15，生产 D1 迁移至 `0020_graph_orchestration.sql`。最近已记录的系统安装为 0.12.0，实际路径 `C:/Users/96227/AppData/Local/TaskRelay/app-0.12.0/TaskRelay.exe`；安装与构建 ASAR SHA-256 均为 `d09ce5aadff134d73f1bb8a2b77a5a01cb29f15118864318fa346d4b9b7dc1f8`。这是历史验收事实，本轮未查询线上或系统安装的当前状态。
+2026-11-05 从干净源码提交 `05789de81dc377510536249a45abac4705f24254` 部署云端/Web，版本为 `ad3876af-4ada-4a2c-891f-f08eb55d5232`，协议 15，生产 D1 已迁移至 `0022_checkpoint_chunks.sql`。两个生产域名的健康、权限拒绝与静态资源哈希检查通过；领取恢复为 1、维护恢复为 0，设备心跳正常。该源码的 Ubuntu / Windows、Node 24 [远程 CI](https://github.com/zhangheng2022/taskrelay/actions/runs/42019037637) 均通过。
 
-0.12.2 为本轮本地修复版本，尚未部署或替换系统安装。新增 `0021_context_withdrawal.sql` 与 `0022_checkpoint_chunks.sql` 只在隔离测试库验证；上线须先应用迁移，再部署匹配代码。0021 会停止含历史已撤回消息的旧运行，以阻止继续使用已缓存内容；0022 增加检查点密文分块表，保留旧格式读取。不要直接用旧服务代码读取新分块格式。此前卸载、重新安装及历史清理的顺序与剩余项以 [ACCEPTANCE](ACCEPTANCE.md) 为准。
+同一提交已生成并实际安装 Windows **0.12.2**。从桌面快捷方式启动的进程位于系统 `C:/Users/96227/AppData/Local/TaskRelay/app-0.12.2/TaskRelay.exe`，安装与构建 ASAR SHA-256 均为 `29b98cfb520fba6877c0c532700e1303b7c46015d283b309d8d2b1d6e29d9b17`；包内 smoke、实际安装 smoke 与 release-manifest 均通过。本地配置及 23 个 Profile 目录保留，没有清空历史或更改 MASTER_KEY；未发布 GitHub Release 或切换自动更新目录。证据与未验证范围见 [ACCEPTANCE](ACCEPTANCE.md)。
+
+本次先暂停领取并确认无活动运行，保存 D1 Time Travel bookmark，再应用 `0021_context_withdrawal.sql`、`0022_checkpoint_chunks.sql` 并部署匹配代码。0021 会停止含历史已撤回消息的旧运行，以阻止继续使用已缓存内容；本次生产库没有此类旧记录。0022 增加检查点密文分块表，保留旧格式读取。不要直接用旧服务代码读取新分块格式；回退须评估新格式数据，不能只切换 Worker 版本。此次为常规升级，未重做此前的历史重置。
 
 ## 资源配置与已记录部署
 

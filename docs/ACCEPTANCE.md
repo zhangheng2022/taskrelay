@@ -1,5 +1,25 @@
 # TaskRelay 验收记录
 
+## 2026-11-05 生产迁移、云端部署与 Windows 安装（0.12.2 / 协议 15）
+
+已按本次授权推送 `master` 至 `05789de81dc377510536249a45abac4705f24254`，从该干净提交重新构建。本提交 [远程 CI](https://github.com/zhangheng2022/taskrelay/actions/runs/42019037637) 的 Ubuntu / Windows、Node 24 均通过，含完整 256 项测试、类型检查、Web 构建、仓库及差异检查。下方两节“尚未部署/安装”描述的是先前源码修复阶段，本节记录后续交付。
+
+生产维护前确认没有排队/执行/等待中的运行或待处理交办，记录 D1 Time Travel bookmark；临时关闭领取并开启维护。北京时间 **19:28:08** 应用 `0021_context_withdrawal.sql` 与 `0022_checkpoint_chunks.sql`，新增分块表、证据退休表及索引已核对，外键检查无异常。本次生产库没有历史已撤回消息，原有两条终态运行保留；没有清空任务历史、轮换 MASTER_KEY 或更改注册设置。
+
+云端/Web 于北京时间 **19:28:40** 部署版本 `ad3876af-4ada-4a2c-891f-f08eb55d5232`，接收 100% 流量。主域名 `https://tr.zhangheng.eu.org` 与原 workers.dev 域名均通过健康、协议 15、匿名拒绝、设备/管理权限边界自检。线上 JS/CSS 与本次构建逐字节哈希一致；仍有已记录的主 JS 大分块提示。美国 ModelEgress alarm、现有六个 SQLite DO 与无 R2 配置保留。
+
+`npm run make` 与本次包内 smoke 通过，生成 `apps/desktop/out/make/squirrel.windows/x64/TaskRelay Setup.exe`，安装器 SHA-256 为 `2367e6ee3c91fdb4010acb6160ee8ea98e204e83aa4b3ed862b22c1a23b6da02`。首先识别到 Codex MSIX 安装重定向，随后通过系统文件资源管理器执行同一安装包。关闭空闲的重定向副本后，从实际桌面 `TaskRelay.lnk` 启动；快捷方式目标为系统安装根目录 `TaskRelay.exe`，实际进程为 `C:/Users/96227/AppData/Local/TaskRelay/app-0.12.2/TaskRelay.exe`，界面显示 **0.12.2**。
+
+安装前备份系统 userData 中的 SQLite 和 Local State。升级后配置哈希、Local State 哈希、23 个 Profile 目录列表均一致；SQLite quick_check 为 ok，未完成 journal 和 outbox 均为 0。该检查证明目录和配置保留，未重新逐站验证登录。自启动与暂停领取偏好没有调整。
+
+直接从 Codex 以 UNC 路径启动安装 smoke 时发生 Electron GPU 子进程启动错误，未生成新报告；未将该尝试计为通过。随后从系统 Explorer 启动同一安装程序的 smoke 入口，使用独立 userData，生成北京时间 **19:39:39** 的新报告并通过。覆盖 Stagehand 4.3.0 原生导入、sharp 脱敏、自建站操作、LangChain 工具消息及 LangGraph interrupt/resume。
+
+`out/packaged-smoke.json`、`out/installed-smoke.json` 与 `out/release-manifest.json` 均为本次新报告。构建、真实系统安装及两份 smoke 的 ASAR SHA-256 一致：`29b98cfb520fba6877c0c532700e1303b7c46015d283b309d8d2b1d6e29d9b17`。清单检查仅通过仓库忽略目录中的读取适配器，将已知安装路径映射到系统物理 UNC 路径，避免 Codex 再次读取 LocalCache；未修改 smoke 报告或清单校验逻辑。`sourceDirty=false`，`installedAsarMatches=true`，`installedAsarPath` 明确为系统 `app-0.12.2/resources/app.asar` 的 UNC 路径。
+
+安装验证后恢复 `claimsEnabled=1`、`maintenance=0`，保留 `historyEpoch=4`，协议 15 的已授权设备持续心跳。实际系统窗口复核显示“在线，等待任务”，维护提示消失，版本为 0.12.2。部署日志、迁移恢复点、本地备份及安装入口证据仅保存在忽略目录，未提交或公开。没有发布 GitHub Release，也没有切换自动更新目录。
+
+本次没有执行真实模型/业务网站完整任务、干净 Windows 安装、锁屏/休眠/断网或连续观察。独立 smoke 不调用生产 `runtime.execute()` / `ExecutorHost`，不能替代完整调度、租约和真实业务闭环；源码生产入口回归与远程 CI 也不等于这些现场验证。
+
 ## 2026-11-05 架构审查确认问题修复（0.12.2 源码 / 协议 15）
 
 先以 `9cbdd0f` 提交本地已有的 51 个文件改动，再修复本次审查确认的九项生产缺陷和两项验证工具问题。保留现有云端规划、桌面执行和美国模型出站架构，没有推送或部署。
