@@ -32,8 +32,3 @@ export async function conversationContext(env:AppEnv,threadId:string,after=0,opt
     FROM ai_messages m WHERE m.thread_id=? AND m.seq>? ORDER BY m.seq`).bind(threadId,after).all<ContextRow>();
   return Promise.all(rows.results.map(async ({private_content,...r})=>({...r,private:!!private_content,content:private_content?(options?await unseal<string>(private_content,env.MASTER_KEY,`message:${threadId}:${r.id}`):'[私密回复已提供，请通过协助通道使用]'):r.content,parts:JSON.parse(r.parts)})));
 }
-export async function privateReply(env:AppEnv,threadId:string,id:string){
-  const m=await env.DB.prepare('SELECT private_content FROM ai_messages WHERE id=? AND thread_id=?').bind(id,threadId).first<{private_content:string}>();
-  if(!m?.private_content)throw Error('REPLY_NOT_FOUND');
-  return unseal<string>(m.private_content,env.MASTER_KEY,`message:${threadId}:${id}`);
-}

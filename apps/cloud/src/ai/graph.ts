@@ -18,7 +18,7 @@ export async function structuredGraph<T>(args: {
   env: AppEnv;
   owner: string;
   id: string;
-  kind: "compose" | "chat" | "plan" | "report" | "summary";
+  kind: "chat";
   modelId: string;
   version: number;
   schema: z.ZodType<T>;

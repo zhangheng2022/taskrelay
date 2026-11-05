@@ -71,7 +71,7 @@ export function Memories({ transport }: { transport: Transport }) {
         <CardHeader>
           <CardTitle>我的记忆</CardTitle>
           <CardDescription>
-            只保存你明确确认的偏好，例如报告语言和格式。请勿填写密码、验证码或账号凭据。任务授权仍以确认卡为准。
+            这里保留你保存的偏好，目前尚未用于任务执行。请直接在任务聊天中说明本次要求；此处不要填写密码或验证码。
           </CardDescription>
         </CardHeader>
         <CardContent>

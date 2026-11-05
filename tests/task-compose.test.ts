@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {productionModelFixture} from './production-model-fixture';
-import {appendMessage,runThread} from '../apps/cloud/src/chat-messages';
 const decision=(start=true)=>JSON.stringify({reply:start?'已交给执行器。':'请说明要处理哪个网站。',start,title:start?'读取页面':null,goal:start?'查看当前页面并报告':null,entryUrl:start?'https://example.com/':null,accountId:null});
 for(const protocol of ['chat','responses'] as const)test(`新交办/${protocol}：意图检查后直接启动，同一会话且重复发送不重复启动`,async t=>{
   const s=await productionModelFixture(t,protocol),th=(await s.request('/api/user/threads',{modelId:'model_test'})).data;
@@ -31,7 +30,10 @@ test('执行器文字和截图引用进入同一聊天，最终答复不触发�
   s.sql.prepare('UPDATE runs SET thread_id=? WHERE id=?').run(th.id,s.run.id);
   const base=`/api/runner/runs/${s.run.id}`;
   assert.equal((await s.request(base+'/messages',{epoch:s.run.leaseEpoch,id:'progress_one',content:'已经打开页面',parts:[{type:'tool',name:'navigate',result:'页面已打开'}]})).status,200);
-  assert.equal((await s.request(base+'/finish',{epoch:s.run.leaseEpoch,status:'succeeded',result:{summary:'实际完成了查询。',outcome:'read_result',evidence:[]}})).status,200);
+  const finish={epoch:s.run.leaseEpoch,status:'succeeded',result:{summary:'实际完成了查询。',outcome:'reported',evidence:[]}};
+  assert.equal((await s.request(base+'/finish',finish)).status,200);
+  assert.equal((await s.request(base+'/finish',finish)).status,200);
+  assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM ai_messages WHERE id=?").get('final_'+s.run.id)!.n,1);
   const page=await s.request(`/api/user/threads/${th.id}`,null,'GET');
   assert.equal(page.data.messages.at(-1).content,'实际完成了查询。');assert.equal(s.jobs(),0);
   assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM conversation_inbox WHERE mode='report'").get()!.n,0);
@@ -42,8 +44,12 @@ test('本人聊天和当前任务模型可读协助回复，普通存储仍为�
   s.replies(JSON.stringify({message:'请输入验证码。',askUser:true,accountId:null}));
   const help={epoch:s.run.leaseEpoch,id:'help_code',origin:'https://example.com',message:'需要验证码'};
   const h=await s.request(`/api/runner/runs/${s.run.id}/help`,help);assert.equal(h.data.ready,false,JSON.stringify(h.data));
+  const pending=(await s.request('/api/user/snapshot',null,'GET')).data;
+  assert.deepEqual(pending.waitingHelp,[{id:'help_code',runId:s.run.id,taskId:s.run.taskId}]);
+  assert.deepEqual(pending.challenges,[]);
   const r=await s.request(`/api/user/threads/${th.id}/messages`,{requestId:'secret_reply',content:'0012Ab!'});
   assert.ok(r.data.messages.some((m:any)=>m.content==='0012Ab!'));
+  assert.deepEqual((await s.request('/api/user/snapshot',null,'GET')).data.waitingHelp,[]);
   assert.doesNotMatch(JSON.stringify(s.sql.prepare('SELECT content FROM ai_messages').all()),/0012Ab/);
   const ctx=await s.request(`/api/runner/runs/${s.run.id}/context`,{epoch:s.run.leaseEpoch});assert.match(JSON.stringify(ctx.data),/0012Ab/);
   s.replies(JSON.stringify({message:'已收到回复，请结合原文继续。',askUser:false,accountId:null}));

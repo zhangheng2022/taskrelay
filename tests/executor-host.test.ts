@@ -161,12 +161,12 @@ test('正式 Host：恢复保留 unknown 与已有终态 outbox，失败上传�
 test('正式 Host：旧指令完成请求被明确拒绝后不保留待上传成功，网络失败仍保留',async t=>{
   const s=fixture(t);
   await s.host.start(s.run('steered'));
-  s.cloud.request=async<T>()=>{throw Error('INSTRUCTIONS_CHANGED');};
+  s.cloud.request=async()=>{throw Error('INSTRUCTIONS_CHANGED');};
   s.children[0].rpc('/api/runner/runs/steered/finish',{epoch:baseRun.leaseEpoch,instructionVersion:0,status:'succeeded'});
   await settle();
   assert.equal(s.journal.pending().length,0);
   assert.ok(s.children[0].messages.some(m=>m.error==='INSTRUCTIONS_CHANGED'));
-  s.cloud.request=async<T>()=>{throw Error('OFFLINE');};
+  s.cloud.request=async()=>{throw Error('OFFLINE');};
   s.children[0].rpc('/api/runner/runs/steered/finish',{epoch:baseRun.leaseEpoch,instructionVersion:1,status:'succeeded'});
   await settle();assert.equal(s.journal.pending().length,1);
 });

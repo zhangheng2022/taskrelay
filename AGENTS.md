@@ -52,14 +52,14 @@ Git 提交信息使用中文：标题和正文均用中文描述改动，代码�
 
 | 任务 | 优先阅读 |
 | --- | --- |
-| 创建对话、确认卡、成功判据、授权、时间规则 | `packages/contracts/src/{index,execution,schedule}.ts`；`packages/ui/src/{task-compose,task-editor,task-summary}.tsx`；`apps/cloud/src/user.ts` |
+| 创建对话、确认卡、成功判据、授权、时间规则 | `packages/contracts/src/{index,execution,schedule}.ts`；`packages/ui/src/{task-compose,task-summary}.tsx`；`apps/cloud/src/user.ts` |
 | 调度、领取、取消、租约、账号锁、只读核查 | `apps/cloud/src/{store,runner,user}.ts`；`tests/{reliability,api}.test.ts` |
 | 模型配置、能力、协议、地区出站 | `apps/cloud/src/{models,egress,egress-state,model-egress}.ts`；`packages/model/src/index.ts`；`tests/{model,structured-production,egress}.test.ts` |
-| 人工协助与敏感回复 | `apps/cloud/src/{challenges,user,runner}.ts`；`apps/desktop/src/executor/runtime.ts`；`packages/ui/src/conversation.tsx` |
+| 人工协助与敏感回复 | `apps/cloud/src/{user,runner}.ts`；`apps/desktop/src/executor/runtime.ts`；`packages/ui/src/conversation.tsx` |
 | 桌面生命周期、恢复、停止、离线 | `apps/desktop/src/main/{index,executor-host,journal,cloud,browser}.ts` |
 | Preload / Renderer 权限 | `apps/desktop/src/preload/index.ts`；`apps/desktop/src/shared/ipc.ts`；`apps/desktop/src/renderer/main.tsx`；Main 的 IPC 注册与参数校验 |
 | 页面动作、站点限制、证据 | `apps/desktop/src/executor/{entry,runtime,proxy}.ts`；`packages/contracts/src/{execution,security}.ts` |
-| 共享 UI | `packages/ui/src/{chat-parts,model-selector,task-compose,conversation,run-report,challenge-panel}.tsx`；宿主 `apps/web/src/main.tsx`、`apps/desktop/src/renderer/main.tsx`；[检查记录](docs/UI-REVIEW.md) |
+| 共享 UI | `packages/ui/src/{chat-parts,model-selector,task-compose,conversation}.tsx`；宿主 `apps/web/src/main.tsx`、`apps/desktop/src/renderer/main.tsx`；[检查记录](docs/UI-REVIEW.md) |
 | Windows 打包与安装 | `apps/desktop/{forge.config,vite.executor.config}.mts`；`scripts/{stage-runtime,prepare-browser,verify-browser,smoke,release-manifest}.mjs` |
 | Cloudflare 绑定、认证、迁移 | `apps/web/wrangler.jsonc`；`apps/cloud/src/{worker,index,auth,pairing,env}.ts`；`apps/cloud/migrations/` |
 

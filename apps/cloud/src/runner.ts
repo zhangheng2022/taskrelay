@@ -5,7 +5,7 @@ import {PROTOCOL_VERSION,idSchema,limits,runResultSchema} from '../../../package
 import {executorTools} from '../../../packages/contracts/src/execution';
 import {publicUrl} from '../../../packages/contracts/src/security';
 import type {AppEnv,Variables} from './env';
-import {claim,requireLease,now,type Row} from './store';
+import {claim,getRun,requireLease,now,type Row} from './store';
 import {generateStructured,getModelProfile,invoke} from './models';
 import {stagehandSchema} from './ai/stagehand-schema';
 import {unseal} from './crypto';
@@ -121,13 +121,27 @@ runner.post('/runs/:id/snapshots',async c=>{
 });
 runner.post('/runs/:id/finish',async c=>{
   const b=lease.extend({status:z.enum(['succeeded','failed','unknown','cancelled']),result:runResultSchema}).parse(await c.req.json());
-  const run=await requireLease(c.env.DB,c.req.param('id'),c.get('deviceId'),b.epoch,true);
-  if(run.writePending)b.status='unknown';else if(run.cancelRequested)b.status='cancelled';
+  const run=await getRun(c.env.DB,c.req.param('id'));
+  if(run.deviceId!==c.get('deviceId')||run.leaseEpoch!==b.epoch)throw Error('LEASE_EXPIRED');
+  const terminal=['succeeded','failed','unknown','cancelled','expired'].includes(run.status);
+  if(terminal){
+    // A lost response may be retried, but cannot replace the committed result.
+    if(JSON.stringify(run.result)!==JSON.stringify(b.result))throw Error('LEASE_EXPIRED');
+  }else{
+    await requireLease(c.env.DB,run.id,c.get('deviceId'),b.epoch,true);
+    const at=now();
+    const [saved]=await c.env.DB.batch([
+      c.env.DB.prepare("UPDATE runs SET status=CASE WHEN write_pending=1 THEN 'unknown' WHEN cancel_requested=1 THEN 'cancelled' ELSE ? END,result=?,lease_expires_at=NULL,updated_at=? WHERE id=? AND lease_epoch=? AND lease_expires_at>? AND status IN ('running','waiting_user','verifying')")
+        .bind(b.status,JSON.stringify(b.result),at,run.id,b.epoch,at),
+      c.env.DB.prepare("UPDATE execution_help SET awaiting_user=0 WHERE run_id=? AND EXISTS(SELECT 1 FROM runs WHERE id=? AND lease_epoch=? AND lease_expires_at IS NULL)").bind(run.id,run.id,b.epoch),
+      c.env.DB.prepare("DELETE FROM account_locks WHERE run_id=? AND EXISTS(SELECT 1 FROM runs WHERE id=? AND lease_epoch=? AND status IN ('succeeded','failed','cancelled','expired'))").bind(run.id,run.id,b.epoch),
+    ]);
+    if(!saved.meta.changes){
+      const savedRun=await getRun(c.env.DB,run.id);
+      if(savedRun.leaseEpoch!==b.epoch||JSON.stringify(savedRun.result)!==JSON.stringify(b.result))throw Error('LEASE_EXPIRED');
+    }
+  }
   const thread=await c.env.DB.prepare('SELECT t.id FROM ai_threads t JOIN runs r ON r.thread_id=t.id WHERE r.id=? AND t.closed=0').bind(run.id).first<{id:string}>();
   if(thread)await appendMessage(c.env,thread.id,{id:`final_${run.id}`,source:'executor',content:b.result.summary,runId:run.id});
-  await c.env.DB.batch([
-    c.env.DB.prepare('UPDATE runs SET status=?,result=?,lease_expires_at=NULL,updated_at=? WHERE id=? AND lease_epoch=?').bind(b.status,JSON.stringify(b.result),now(),run.id,b.epoch),
-    c.env.DB.prepare('UPDATE execution_help SET awaiting_user=0 WHERE run_id=?').bind(run.id),
-    c.env.DB.prepare("DELETE FROM account_locks WHERE run_id=? AND EXISTS(SELECT 1 FROM runs WHERE id=? AND status<>'unknown')").bind(run.id,run.id),
-  ]);return c.json({ok:true});
+  return c.json({ok:true});
 });

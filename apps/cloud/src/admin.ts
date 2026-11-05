@@ -1,4 +1,3 @@
-import {cutover,cutoverPreview} from './ai/lifecycle';
 import { z } from 'zod';
 import { admin } from './user';
 import { uid,now,type Row } from './store';
@@ -46,20 +45,4 @@ admin.post('/accounts/:id/migrate',async c=>{
  c.env.DB.prepare("UPDATE runs SET profile_id=(SELECT profile_id FROM accounts WHERE id=?) WHERE account_key=? AND status='queued'").bind(id,id)]);
  if(results[0].meta.changes!==1) throw new Error('ACCOUNT_MIGRATION_BLOCKED');
  return c.json({ok:true,requiresLogin:true});
-});
-
-admin.get('/cutover',async c=>c.json(await cutoverPreview(c.env)));
-admin.post('/cutover/prepare',async c=>{
- await c.env.DB.batch([c.env.DB.prepare("UPDATE settings SET value='1' WHERE key='maintenance'"),c.env.DB.prepare("UPDATE settings SET value='0' WHERE key='claimsEnabled'")]);
- return c.json(await cutoverPreview(c.env));
-});
-admin.post('/cutover',async c=>{
- const body=z.object({digest:z.string().length(64),deploymentValidated:z.literal(true),executorsStopped:z.literal(true),outboxesDrained:z.literal(true)}).strict().parse(await c.req.json());
- return c.json(await cutover(c.env,body.digest));
-});
-admin.post('/cutover/finish',async c=>{
- z.object({postCutoverValidated:z.literal(true)}).strict().parse(await c.req.json());
- if(!await c.env.DB.prepare("SELECT value FROM settings WHERE key='historyEpoch' AND value='3'").first())throw new Error('CUTOVER_NOT_READY');
- await c.env.DB.prepare("UPDATE settings SET value='0' WHERE key='maintenance'").run();
- return c.json({ok:true,claimsEnabled:false});
 });

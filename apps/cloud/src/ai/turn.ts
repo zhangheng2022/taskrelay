@@ -17,12 +17,12 @@ export class AiTurn extends DurableObject<AppEnv> {
     const id=await this.ctx.storage.get<string>('id');
     if(!id)return;
     // Claim in D1 before any inference. Alarm retries cannot replay an uncertain call.
-    const row=await this.env.DB.prepare("UPDATE ai_dispatch SET started=1 WHERE turn_id=? AND started=0 RETURNING thread_id,owner,mode").bind(id).first<{thread_id:string;owner:string;mode:'chat'|'report'}>();
+    const row=await this.env.DB.prepare("UPDATE ai_dispatch SET started=1 WHERE turn_id=? AND started=0 RETURNING thread_id,owner").bind(id).first<{thread_id:string;owner:string}>();
     if(!row){await this.ctx.storage.deleteAll();return;}
     await this.ctx.storage.put('started',true);
     try{
       await member(this.env.DB,row.owner);
-      await executeTurn({...this.env,requestUserId:row.owner},row.thread_id,id,row.mode);
+      await executeTurn({...this.env,requestUserId:row.owner},row.thread_id,id);
     }catch{
       await this.env.DB.batch([
         this.env.DB.prepare("UPDATE ai_turns SET status='unknown',error='TURN_OUTCOME_UNKNOWN' WHERE id=? AND status='running'").bind(id),

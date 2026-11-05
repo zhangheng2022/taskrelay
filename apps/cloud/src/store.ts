@@ -3,8 +3,6 @@ import {
   limits,
   type TaskRun,
   type TaskDefinition,
-  type RunResult,
-  type RunStatus,
 } from "../../../packages/contracts/src/index";
 import {
   latestDue,
@@ -207,85 +205,6 @@ export async function requireLease(
   if (run.cancelRequested && !allowCancelled)
     throw new Error("CANCEL_REQUESTED");
   return run;
-}
-export async function finish(
-  db: D1Database,
-  run: TaskRun,
-  status: RunStatus,
-  result: RunResult,
-) {
-  if ((run.writePending || run.mayHaveWritten) && status !== "succeeded")
-    status = "unknown";
-  const at = now();
-  const statements = [
-    db
-      .prepare(
-        "UPDATE runs SET status=?,result=?,updated_at=?,lease_expires_at=NULL WHERE id=? AND lease_epoch=? AND status IN ('running','waiting_user','verifying') AND (?<>'succeeded' OR (instruction_version=? AND NOT EXISTS(SELECT 1 FROM conversation_inbox i JOIN ai_threads t ON t.id=i.thread_id WHERE t.task_id=runs.task_id AND t.closed=0 AND i.mode='chat' AND i.status IN ('pending','processing'))))",
-      )
-      .bind(status, JSON.stringify(result), at, run.id, run.leaseEpoch,status,run.instructionVersion??0),
-    db
-      .prepare(
-        "UPDATE challenges SET status='expired',secret=NULL WHERE run_id=? AND status<>'consumed'",
-      )
-      .bind(run.id),
-  ];
-  if (run.reconciliationOf) {
-    if (status === "succeeded")
-      statements.push(
-        db
-          .prepare(
-            "UPDATE runs SET status='succeeded',write_pending=0,result=?,updated_at=? WHERE id=? AND status='unknown' AND EXISTS(SELECT 1 FROM runs WHERE id=? AND status='succeeded' AND lease_epoch=?)",
-          )
-          .bind(
-            JSON.stringify({
-              ...result,
-              summary: "只读核查已确认成功判据：" + result.summary,
-              outcome: "already_done",
-            }),
-            at,
-            run.reconciliationOf,
-            run.id,
-            run.leaseEpoch,
-          ),
-      );
-    else
-      statements.push(
-        db
-          .prepare(
-            "UPDATE account_locks SET run_id=? WHERE run_id=? AND EXISTS(SELECT 1 FROM runs WHERE id=? AND status IN ('failed','cancelled','unknown','expired'))",
-          )
-          .bind(run.reconciliationOf, run.id, run.id),
-      );
-  }
-  if (status !== "unknown")
-    statements.push(
-      db
-        .prepare(
-          "DELETE FROM account_locks WHERE run_id=? AND EXISTS(SELECT 1 FROM runs WHERE id=? AND lease_epoch=? AND status IN ('succeeded','failed','cancelled','expired'))",
-        )
-        .bind(run.id, run.id, run.leaseEpoch),
-    );
-  if (status === "succeeded" && !run.task.confirmedCondition)
-    statements.push(
-      db
-        .prepare(
-          "UPDATE tasks SET status='needs_input',next_run_at=NULL,updated_at=? WHERE id=? AND version=? AND confirmed_condition IS NULL AND status IN ('active','pending_validation') AND EXISTS(SELECT 1 FROM runs WHERE id=? AND lease_epoch=? AND status='succeeded')",
-        )
-        .bind(
-          at,
-          run.taskId,
-          run.task.version,
-          run.id,
-          run.leaseEpoch,
-        ),
-    );
-  const committed=await db.batch(statements);
-  if(status==='succeeded'&&!committed[0].meta.changes){
-    const current=await getRun(db,run.id);
-    if(current.status==='succeeded')return;
-    await db.prepare("UPDATE runs SET status='running' WHERE id=? AND lease_epoch=? AND status='verifying'").bind(run.id,run.leaseEpoch).run();
-    throw Error('INSTRUCTIONS_CHANGED');
-  }
 }
 export async function tick(db: D1Database) {
   if((await db.prepare("SELECT value FROM settings WHERE key='maintenance'").first<{value:string}>())?.value==='1') return;

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Snapshot, TaskDefinition, Transport } from '../../contracts/src/index';
+import type { Snapshot, Transport } from '../../contracts/src/index';
 import { useThread } from './use-thread';
 import { canUseModel, ModelSelector } from './model-selector';
 import { Thread, ChatMessage, Composer, PendingMessage } from './chat-parts';
@@ -7,13 +7,13 @@ import { MessageScrollerItem } from './components/ui/message-scroller';
 import { Button } from './components/ui/button';
 import { ErrorText, LoadFeedback } from './feedback';
 
-export function TaskCompose({transport,snapshot,initial,offline,onSaved,onSettings}: {
-  transport:Transport;snapshot:Snapshot;initial?:TaskDefinition;offline:boolean;
-  onSaved:(id:string)=>Promise<void>;onSettings:()=>void;onCancel?:()=>void;
+export function TaskCompose({transport,snapshot,offline,onSaved,onSettings}: {
+  transport:Transport;snapshot:Snapshot;offline:boolean;
+  onSaved:(id:string)=>Promise<void>;onSettings:()=>void;
 }) {
   const available=snapshot.models.filter(canUseModel);
-  const [modelId,setModelId]=useState(initial?.modelId??(available.length===1?available[0].id:''));
-  const thread=useThread(transport,'compose',modelId,initial?.id);
+  const [modelId,setModelId]=useState(available.length===1?available[0].id:'');
+  const thread=useThread(transport,'compose',modelId);
   const [text,setText]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState('');
   const flight=useRef(false),opened=useRef('');
   useEffect(()=>{const id=thread.page?.taskId;if(id&&opened.current!==id){opened.current=id;void onSaved(id).catch(e=>{opened.current='';setError(e.message);});}},[thread.page?.taskId,onSaved]);

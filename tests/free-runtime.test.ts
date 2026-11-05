@@ -39,9 +39,9 @@ test('异步提交原子保存待执行回合，唤醒丢失后仍可执行且�
  assert.equal(row.turn_id,queued.data.turnId);assert.equal(row.owner,'legacy_owner');
  assert.equal((await s.request(`/api/user/threads/${thread.id}/messages`,body)).data.turnId,row.turn_id);
  s.replies(JSON.stringify({reply:'请补充判据',task:null,partial:'查看页面',missing:['判据']}));
- const done=await executeTurn({...s.env,requestUserId:'legacy_owner'},thread.id,String(row.turn_id),'chat');
+ const done=await executeTurn({...s.env,requestUserId:'legacy_owner'},thread.id,String(row.turn_id));
  assert.equal(done.status,'done');assert.equal(s.jobs(),1);
- await assert.rejects(executeTurn({...s.env,requestUserId:'legacy_owner'},thread.id,String(row.turn_id),'chat'),/TURN_STALE/);
+ await assert.rejects(executeTurn({...s.env,requestUserId:'legacy_owner'},thread.id,String(row.turn_id)),/TURN_STALE/);
  assert.equal(s.jobs(),1);
 });
 
@@ -51,7 +51,7 @@ test('已删除异步会话不能执行',async t=>{
  const thread=(await s.request('/api/user/threads',{modelId:'model_test'})).data;
  const queued=await s.request(`/api/user/threads/${thread.id}/messages`,{requestId:'cancel_async',content:'https://example.com/'});
  await s.request(`/api/user/threads/${thread.id}`,{},'DELETE');
- await assert.rejects(executeTurn({...s.env,requestUserId:'legacy_owner'},thread.id,queued.data.turnId,'chat'),/TURN_STALE/);
+ await assert.rejects(executeTurn({...s.env,requestUserId:'legacy_owner'},thread.id,queued.data.turnId),/TURN_STALE/);
  assert.equal(s.jobs(),0);
 
 });

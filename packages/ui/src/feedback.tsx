@@ -43,14 +43,14 @@ export function formatDate(value: string | null | undefined) {
       }).format(new Date(value))
     : "—";
 }
-export function Status({ value }: { value: string }) {
+export function Status({ value, outcome }: { value: string; outcome?: string }) {
   return (
     <Badge
       variant={
         value === "failed" || value === "unknown" ? "destructive" : "outline"
       }
     >
-      {labels[value] ?? value}
+      {value==='succeeded'&&outcome==='reported'?'已回复':labels[value] ?? value}
     </Badge>
   );
 }

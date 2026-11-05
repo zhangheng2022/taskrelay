@@ -7,12 +7,7 @@ import { D1Checkpointer } from "../apps/cloud/src/ai/checkpointer";
 import { D1MemoryStore } from "../apps/cloud/src/ai/memory";
 import { structuredGraph } from "../apps/cloud/src/ai/graph";
 import { invoke } from "../apps/cloud/src/models";
-import {
-  cutover,
-  cutoverPreview,
-  retainHistory,
-} from "../apps/cloud/src/ai/lifecycle";
-import { quotaSummary } from "../apps/cloud/src/tenancy";
+import { retainHistory } from "../apps/cloud/src/ai/lifecycle";
 import { testDb } from "./helpers";
 import { productionModelFixture } from "./production-model-fixture";
 const secret = Buffer.alloc(32, 3).toString("base64");
@@ -154,7 +149,7 @@ test("真实 graph 从 D1 恢复终态不再调用模型，改变输入拒绝；
   );
 });
 
-test("超过200条历史完整分页；显式记忆变更失效摘要和派生结果，删除会话后不能回填", async (t) => {
+test("超过200条历史完整分页；未接入执行的偏好变更不影响对话，删除会话后不能回填", async (t) => {
   const s = await productionModelFixture(t);
   s.sql.exec("UPDATE runs SET status='succeeded'");
   const th = (
@@ -205,6 +200,8 @@ test("超过200条历史完整分页；显式记忆变更失效摘要和派生�
     (s.sql.prepare("SELECT COUNT(*) n FROM ai_checkpoints").get()!
       .n as number) > 0,
   );
+  const checkpointCount = s.sql.prepare("SELECT COUNT(*) n FROM ai_checkpoints").get()!.n;
+  const resultCount = s.sql.prepare("SELECT COUNT(*) n FROM ai_calls WHERE result IS NOT NULL").get()!.n;
   assert.equal(
     (
       await s.request(
@@ -217,19 +214,19 @@ test("超过200条历史完整分页；显式记忆变更失效摘要和派生�
   );
   assert.equal(
     s.sql.prepare("SELECT COUNT(*) n FROM ai_checkpoints").get()!.n,
-    0,
+    checkpointCount,
   );
   assert.equal(
     s.sql
       .prepare("SELECT COUNT(*) n FROM ai_calls WHERE result IS NOT NULL")
       .get()!.n,
-    0,
+    resultCount,
   );
   const restored = (
     await s.request("/api/user/threads/" + th.id, undefined, "GET")
   ).data;
   assert.equal(restored.messages.length, 2);
-  assert.equal(restored.version, 2);
+  assert.equal(restored.version, 1);
   await s.request("/api/user/threads/" + th.id, undefined, "DELETE");
   assert.equal(
     (await s.request("/api/user/threads/" + th.id, undefined, "GET")).status,
@@ -287,41 +284,6 @@ test("并发同一消息只执行一次，另一消息不能抢占 active turn",
   assert.ok(results.some((r) => r.data.status === "done"));
   assert.equal(results[2].data.status, "queued");
   assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM conversation_inbox WHERE status='pending'").get()!.n,1);
-});
-
-test("清理先阻止 unknown 和未就绪设备；保留身份、账号、模型、设备、当天额度，且不自动恢复调度", async (t) => {
-  const s = await productionModelFixture(t);
-  s.env.requestUserId = "legacy_owner";
-  s.env.EVIDENCE = { delete: async () => {} } as any;
-  s.sql.exec(
-    "UPDATE settings SET value='1' WHERE key='maintenance';UPDATE settings SET value='0' WHERE key='claimsEnabled';UPDATE devices SET cutover_ready_at=strftime('%Y-%m-%dT%H:%M:%fZ','now');UPDATE runs SET status='unknown';",
-  );
-  const before = await cutoverPreview(s.env);
-  await assert.rejects(() => cutover(s.env, before.digest), /CUTOVER_BLOCKED/);
-  s.sql.exec(
-    "UPDATE runs SET status='succeeded',write_pending=0;DELETE FROM account_locks;",
-  );
-  const ready = await cutoverPreview(s.env);
-  assert.equal(ready.blockers, 0);
-  const used = (await quotaSummary(s.db, "legacy_owner")).used.runs;
-  const result = await cutover(s.env, ready.digest);
-  assert.equal(result.historyEpoch, 3);
-  assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM tasks").get()!.n, 0);
-  assert.equal(
-    s.sql.prepare("SELECT COUNT(*) n FROM model_profiles").get()!.n,
-    2,
-  );
-  assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM devices").get()!.n, 1);
-  assert.equal((await quotaSummary(s.db, "legacy_owner")).used.runs, used);
-  assert.equal(
-    s.sql.prepare("SELECT value FROM settings WHERE key='claimsEnabled'").get()!
-      .value,
-    "0",
-  );
-  await assert.rejects(
-    () => cutover(s.env, ready.digest),
-    /CUTOVER_ALREADY_COMPLETED/,
-  );
 });
 
 test("保留策略删除正文和派生结果，但保留请求墓碑阻止重放", async (t) => {

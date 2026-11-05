@@ -1,3 +1,4 @@
+import { finishRequest } from './runner-request';
 import test from "node:test";
 import assert from "node:assert/strict";
 import { testDb, task, insertTask } from "./helpers";
@@ -7,7 +8,6 @@ import {
   getRun,
   requireLease,
   tick,
-  finish,
 } from "../apps/cloud/src/store";
 import { nextOccurrence, latestDue } from "../packages/contracts/src/schedule";
 import {
@@ -67,7 +67,7 @@ test("无写意图的租约过期安全失败并释放账号", async () => {
 });
 test("调度只补最近一次，重复 tick 不重复排队", async () => {
   const { db } = testDb();
-  const t = await insertTask(
+  await insertTask(
     db,
     task({
       schedule: {
@@ -102,11 +102,11 @@ test("手动运行允许暂停任务，不能据此自动启用", async () => {
   await enqueue(db, t, "manual:test:request");
   const r = await claim(db, "device_a", "req_a");
   assert.ok(r);
-  await finish(db, r, "succeeded", {
+  assert.equal((await finishRequest(db, r, "succeeded", {
     summary: "ok",
-    outcome: "read_result",
+    outcome: "reported",
     evidence: [],
-  });
+  })).status,200);
   assert.equal(
     (await db.prepare("SELECT status FROM tasks").first<{ status: string }>())
       ?.status,
@@ -159,52 +159,33 @@ test("时区调度不使用系统本地时区", () => {
     "2026-11-03T01:00:00.000Z",
   );
 });
-test("只读核查失败归还原账号锁，成功后才释放", async () => {
-  const { db } = testDb();
-  const t = await insertTask(db);
-  await enqueue(db, t, "first");
-  const original = (await claim(db, "device_a", "c1"))!;
-  await db
-    .prepare("UPDATE runs SET status='unknown',write_pending=1 WHERE id=?")
-    .bind(original.id)
-    .run();
-  const inspection = await enqueue(
-    db,
-    { ...t, allowedActions: ["read", "navigate"] },
-    "reconcile:first",
-  );
-  await db
-    .prepare("UPDATE runs SET reconciliation_of=? WHERE id=?")
-    .bind(original.id, inspection.id)
-    .run();
-  const claimed = (await claim(db, "device_b", "c2"))!;
-  assert.equal(claimed.id, inspection.id);
-  await finish(db, claimed, "failed", {
-    summary: "尚未确认",
-    outcome: "unconfirmed",
-    evidence: [],
-  });
-  assert.equal(
-    (await db.prepare("SELECT run_id FROM account_locks").first<any>()).run_id,
-    original.id,
-  );
-  const second = await enqueue(
-    db,
-    { ...t, allowedActions: ["read", "navigate"] },
-    "reconcile:second",
-  );
-  await db
-    .prepare("UPDATE runs SET reconciliation_of=? WHERE id=?")
-    .bind(original.id, second.id)
-    .run();
-  const active = (await claim(db, "device_b", "c3"))!;
-  await finish(db, active, "succeeded", {
-    summary: "已确认",
-    outcome: "already_done",
-    evidence: [
-      { url: t.entryUrl, quote: "成功", capturedAt: new Date().toISOString() },
-    ],
-  });
-  assert.equal((await getRun(db, original.id)).status, "succeeded");
-  assert.equal(await db.prepare("SELECT * FROM account_locks").first(), null);
+test('真实收尾入口：未决操作保留 unknown 与锁，取消优先于模型回复',async()=>{
+  for(const pending of [false,true]){
+    const {db,sql}=testDb();
+    try{
+      const t=await insertTask(db);await enqueue(db,t,'run');const run=(await claim(db,'device_a','claim'))!;
+      sql.prepare('UPDATE runs SET cancel_requested=1,write_pending=? WHERE id=?').run(Number(pending),run.id);
+      const result={summary:'实际进度',outcome:'reported' as const,evidence:[]};
+      assert.equal((await finishRequest(db,run,'succeeded',result)).status,200);
+      assert.equal((await getRun(db,run.id)).status,pending?'unknown':'cancelled');
+      assert.equal(sql.prepare('SELECT COUNT(*) n FROM account_locks').get()!.n,pending?1:0);
+      assert.equal((await finishRequest(db,run,'succeeded',result)).status,200);
+      assert.equal((await finishRequest(db,run,'succeeded',{...result,summary:'替换结果'})).status,409);
+    }finally{sql.close();}
+  }
+});
+test('真实收尾拒绝旧租约及其他设备，关闭聊天后仍可收尾且不挂到新聊天',async()=>{
+  const {db,sql}=testDb();
+  try{
+    const task=await insertTask(db);await enqueue(db,task,'run');const run=(await claim(db,'device_a','claim'))!;
+    const result={summary:'已回复',outcome:'reported' as const,evidence:[]};
+    assert.equal((await finishRequest(db,run,'succeeded',result,run.leaseEpoch+1)).status,409);
+    assert.equal((await finishRequest(db,run,'succeeded',result,run.leaseEpoch,'device_b')).status,409);
+    sql.prepare("INSERT INTO ai_threads(id,user_id,task_id,kind,model_id,model_version,closed,created_at,updated_at) VALUES('old','legacy_owner',?,'chat','model_test',1,1,?,?)").run(task.id,task.createdAt,task.createdAt);
+    sql.prepare("INSERT INTO ai_threads(id,user_id,task_id,kind,model_id,model_version,created_at,updated_at) VALUES('new','legacy_owner',?,'chat','model_test',1,?,?)").run(task.id,task.createdAt,task.createdAt);
+    sql.prepare("UPDATE runs SET thread_id='old' WHERE id=?").run(run.id);
+    assert.equal((await finishRequest(db,run,'succeeded',result)).status,200);
+    assert.equal((await getRun(db,run.id)).status,'succeeded');
+    assert.equal(sql.prepare('SELECT COUNT(*) n FROM ai_messages').get()!.n,0);
+  }finally{sql.close();}
 });

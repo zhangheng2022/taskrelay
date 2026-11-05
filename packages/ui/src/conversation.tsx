@@ -1,5 +1,5 @@
 import {useState,useRef} from 'react';
-import type {Snapshot,TaskDefinition,TaskRun,HumanChallenge,Transport} from '../../contracts/src/index';
+import type {TaskDefinition,TaskRun,Transport} from '../../contracts/src/index';
 import {useThread} from './use-thread';
 import {Thread,Composer,ChatMessage,PendingMessage} from './chat-parts';
 import {MessageScrollerItem} from './components/ui/message-scroller';
@@ -8,8 +8,8 @@ import {ErrorText,LoadFeedback} from './feedback';
 import {ChatAttachments} from './chat-attachments';
 
 export function Conversation({transport,task,run,offline,refresh}: {
-  transport:Transport;snapshot:Snapshot;task:TaskDefinition;run:TaskRun|null;challenges:HumanChallenge[];
-  refresh:()=>Promise<void>;onEdit:()=>void;offline:boolean;
+  transport:Transport;task:TaskDefinition;run:TaskRun|null;
+  refresh:()=>Promise<void>;offline:boolean;
 }){
   const thread=useThread(transport,'chat',task.modelId,task.id);
   const [text,setText]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState('');

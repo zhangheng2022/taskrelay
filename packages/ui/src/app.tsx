@@ -10,9 +10,7 @@ import {
   Sun,
 } from "lucide-react";
 import type {
-  DesktopStatus,
   Snapshot,
-  TaskDefinition,
   Transport,
 } from "../../contracts/src/index";
 import { Button } from "./components/ui/button";
@@ -62,7 +60,6 @@ import { TaskCompose } from "./task-compose";
 import { TaskSummary, scheduleLabel } from "./task-summary";
 import { ErrorText, Status, formatDate, LoadingState } from "./feedback";
 import { useTheme } from "./use-theme";
-import "./styles.css";
 export { ErrorText, Status, formatDate } from "./feedback";
 const empty: Snapshot = {
   tasks: [],
@@ -93,15 +90,14 @@ function Workspace({ transport }: { transport: Transport }) {
       () => location.hash.slice(1) || null,
     ),
     [runId, setRunId] = useState<string | null>(null);
-  const [edit, setEdit] = useState<TaskDefinition | null>(null),
-    [detail, setDetail] = useState(false),
+  const [detail, setDetail] = useState(false),
     [search, setSearch] = useState(""),
     [draftKey, setDraftKey] = useState(0);
-  const [desktop, setDesktop] = useState<DesktopStatus | null>(null);
   const [theme, setTheme] = useTheme();
   const { setOpenMobile } = useSidebar();
   const loading = useRef<Promise<void> | null>(null),
     mounted = useRef(true);
+  const focusComposer = useRef(false);
   const load = useCallback(
     async (fresh = false) => {
       // A mutation must refresh after an older poll has finished, not reuse its snapshot.
@@ -112,23 +108,13 @@ function Workspace({ transport }: { transport: Transport }) {
       setRefreshing(true);
       const request = (async () => {
         try {
-          const status = await transport.desktop?.status();
-          if (!mounted.current) return;
-          if (status) {
-            setDesktop(status);
-            if (!status.paired) {
-              setPage("settings");
-              setError("");
-              return;
-            }
-          }
           const data = await transport.request<Snapshot>(
             "GET",
             "/api/user/snapshot",
           );
           if (mounted.current) {
             setSnapshot(data);
-            setError(status && !status.online ? "OFFLINE" : "");
+            setError("");
           }
         } catch (e) {
           if (mounted.current) setError((e as Error).message || "OFFLINE");
@@ -150,12 +136,10 @@ function Workspace({ transport }: { transport: Transport }) {
     void load();
     const timer = setInterval(() => {if(!document.hidden)void load();}, transport.subscribe ? 60000 : 15000);
     const updates=transport.subscribe?.(()=>void load());
-    const unsub = transport.desktop?.subscribe(() => void load());
     return () => {
       mounted.current = false;
       clearInterval(timer);
       updates?.();
-      unsub?.();
     };
   }, [load, transport]);
   async function act(path: string, body?: unknown) {
@@ -178,12 +162,12 @@ function Workspace({ transport }: { transport: Transport }) {
     data.runs.find((r) => r.id === runId) ??
     (task ? data.runs.find((r) => r.taskId === task.id) : null) ??
     null;
-  const pending = data.challenges.filter((c) => c.status === "pending");
+  const activeRun = task ? data.runs.find(r=>r.taskId===task.id && ["queued","running","waiting_user","verifying"].includes(r.status)) ?? null : null;
+  const pending = data.waitingHelp ?? [];
   function choose(id: string | null, rid: string | null = null) {
     setSelected(id);
     setRunId(rid);
     setPage("tasks");
-    setEdit(null);
     setActionError("");
     setOpenMobile(false);
     history.replaceState(
@@ -196,7 +180,7 @@ function Workspace({ transport }: { transport: Transport }) {
     choose(null);
     setDraftKey((k) => k + 1);
   }
-  const offline = !!error || (!!desktop && !desktop.paired);
+  const offline = !!error;
   return (
     <>
       <Sidebar>
@@ -291,17 +275,7 @@ function Workspace({ transport }: { transport: Transport }) {
                 setOpenMobile(false);
               }}
             >
-              {desktop
-                ? desktop.activeRunId
-                  ? "执行器运行中"
-                  : desktop.paused
-                    ? "已暂停领取"
-                    : desktop.paired
-                      ? desktop.online
-                        ? "执行器在线"
-                        : "执行器离线"
-                      : "连接执行器"
-                : data.devices.some((d) => !d.revoked)
+              {data.devices.some((d) => !d.revoked)
                   ? "执行设备已连接"
                   : "连接 Windows 执行器"}
             </button>
@@ -341,9 +315,7 @@ function Workspace({ transport }: { transport: Transport }) {
                 ? "设置"
                 : page === "runs"
                   ? "运行记录"
-                  : edit
-                    ? "调整任务"
-                    : (task?.title ?? "新任务")}
+                  : (task?.title ?? "新任务")}
             </h1>
             {task && page === "tasks" && (
               <p className="truncate text-xs text-muted-foreground">
@@ -351,28 +323,34 @@ function Workspace({ transport }: { transport: Transport }) {
               </p>
             )}
           </div>
-          {task && page === "tasks" && !edit && (
+          {task && page === "tasks" && (
             <>
-              <Status value={run?.status ?? task.status} />
+              <Status value={activeRun?.status ?? run?.status ?? task.status} outcome={(activeRun ?? run)?.result?.outcome} />
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="icon" aria-label="任务操作">
                     <Ellipsis data-icon="inline-start" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
+                <DropdownMenuContent align="end" onCloseAutoFocus={(event) => {
+                  if (focusComposer.current) {
+                    event.preventDefault();
+                    focusComposer.current = false;
+                    document.querySelector<HTMLTextAreaElement>('[aria-label="消息"]')?.focus();
+                  }
+                }}>
                   <DropdownMenuGroup>
                     <DropdownMenuItem onSelect={() => setDetail(true)}>
                       任务详情与历史
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       disabled={offline}
-                      onSelect={() => { setDetail(false); document.querySelector<HTMLTextAreaElement>('[aria-label="任务对话回复"]')?.focus(); }}
+                      onSelect={() => { setDetail(false); focusComposer.current = true; }}
                     >
                       调整任务
                     </DropdownMenuItem>
                     <DropdownMenuItem
-                      disabled={offline || busy}
+                      disabled={offline || busy || !!activeRun}
                       onSelect={() =>
                         void act(`/api/user/tasks/${task.id}/run`, {
                           requestId: crypto.randomUUID(),
@@ -381,6 +359,7 @@ function Workspace({ transport }: { transport: Transport }) {
                     >
                       立即运行
                     </DropdownMenuItem>
+                    {task.confirmedCondition && <>
                     <DropdownMenuItem
                       disabled={offline || busy}
                       onSelect={() =>
@@ -391,6 +370,7 @@ function Workspace({ transport }: { transport: Transport }) {
                     >
                       {task.status === "active" ? "暂停调度" : "启用调度"}
                     </DropdownMenuItem>
+                    </>}
                   </DropdownMenuGroup>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -408,20 +388,7 @@ function Workspace({ transport }: { transport: Transport }) {
             <Button variant="outline" size="sm" disabled={refreshing} onClick={() => void load()}>
               {refreshing ? "正在重新连接…" : "重新连接"}
             </Button>
-            {desktop?.activeRunId && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  void transport
-                    .desktop!.stop()
-                    .then(refresh)
-                    .catch((e) => setActionError(e.message))
-                }
-              >
-                停止本机任务
-              </Button>
-            )}
+
           </div>
         )}
         {actionError && (
@@ -431,7 +398,7 @@ function Workspace({ transport }: { transport: Transport }) {
         )}
         <PairingNotice transport={transport} refresh={refresh} />
         {pending.length > 0 &&
-          !(task && pending.some((c) => c.runId === run?.id)) && (
+          !(task && pending.some((c) => c.taskId === task.id)) && (
             <div className="px-4 py-2">
               <Button
                 variant="secondary"
@@ -479,7 +446,7 @@ function Workspace({ transport }: { transport: Transport }) {
                         {r.result?.summary ?? formatDate(r.createdAt)}
                       </span>
                     </div>
-                    <Status value={r.status} />
+                    <Status value={r.status} outcome={r.result?.outcome} />
                   </Button>
                 ))
               ) : (
@@ -494,14 +461,12 @@ function Workspace({ transport }: { transport: Transport }) {
               )}
             </div>
           </div>
-        ) : edit || !task ? (
+        ) : !task ? (
           <TaskCompose
-            key={edit?.id ?? draftKey}
+            key={draftKey}
             transport={transport}
             snapshot={data}
-            initial={edit ?? undefined}
             offline={offline}
-            onCancel={() => setEdit(null)}
             onSettings={() => setPage("settings")}
             onSaved={async (id) => {
               await refresh();
@@ -510,14 +475,11 @@ function Workspace({ transport }: { transport: Transport }) {
           />
         ) : (
           <Conversation
-            snapshot={data}
-            key={task.id + ":" + (run?.id ?? "")}
+            key={task.id}
             transport={transport}
             task={task}
-            run={run}
-            challenges={data.challenges.filter((c) => c.runId === run?.id)}
+            run={activeRun}
             refresh={refresh}
-            onEdit={() => setEdit(task)}
             offline={offline}
           />
         )}
@@ -551,7 +513,7 @@ function Workspace({ transport }: { transport: Transport }) {
                       setDetail(false);
                     }}
                   >
-                    {formatDate(r.createdAt)} · <Status value={r.status} />
+                    {formatDate(r.createdAt)} · <Status value={r.status} outcome={r.result?.outcome} />
                   </Button>
                 ))}
             </div>

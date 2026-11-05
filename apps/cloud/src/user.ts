@@ -8,7 +8,6 @@ import { egress } from "./egress";
 import { drizzle } from "drizzle-orm/d1";
 import { desc, eq } from "drizzle-orm";
 import {
-  taskInputSchema,
   scheduleSchema,
   idSchema,
   type TaskDefinition,
@@ -34,12 +33,9 @@ import {
   storeModel,
   probe,
   probeVision,
-  generate,
   validateEndpoint,
 } from "./models";
 import { seal, unseal } from "./crypto";
-import { challengeFrom } from "./challenges";
-import { ownedThread } from './ai/conversations';
 export const user = new Hono<{ Bindings: AppEnv; Variables: Variables }>();
 export const admin = new Hono<{ Bindings: AppEnv; Variables: Variables }>();
 user.use('*', async (c,next) => {
@@ -78,9 +74,9 @@ user.get("/snapshot", async (c) => {
     ),
     db
       .prepare(
-        "SELECT c.* FROM challenges c JOIN runs r ON r.id=c.run_id WHERE r.user_id=? AND c.status IN ('pending','answered','consuming') AND c.expires_at>? ORDER BY c.expires_at",
+        "SELECT h.id,h.run_id AS runId,r.task_id AS taskId FROM execution_help h JOIN runs r ON r.id=h.run_id JOIN ai_threads t ON t.id=h.thread_id AND t.id=r.thread_id AND t.user_id=r.user_id WHERE r.user_id=? AND t.closed=0 AND h.awaiting_user=1 AND h.reply_message_id IS NULL AND r.status IN ('running','waiting_user') ORDER BY h.created_at",
       )
-      .bind(c.get("userId"),now()),
+      .bind(c.get("userId")),
   ]);
   const r = results.map((x) => x.results as Row[]);
   const reasons=await queueReasons(db,c.get('userId'));
@@ -105,7 +101,8 @@ user.get("/snapshot", async (c) => {
       revoked: !!x.revoked,
       protocolVersion: x.protocol_version,
     })),
-    challenges: r[5].map(challengeFrom),
+    challenges: [],
+    waitingHelp: r[5],
     serverTime: now(),
   });
 });

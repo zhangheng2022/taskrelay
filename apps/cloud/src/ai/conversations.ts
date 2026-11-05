@@ -1,24 +1,20 @@
 import {compactMessages} from '../model-context';
 import {appendMessage,conversationContext} from '../chat-messages';
 import {deleteEvidence} from '../evidence';
-import { decisionSchema, conditionsSchema, commitDecision, drainCommands } from './commands';
-import { assertPrivateAI } from "./privacy";
+import { commitDecision } from './commands';
 import { Hono } from "hono";
 import { z } from "zod";
-import { tool } from "langchain";
 import type { AppEnv, Variables } from "../env";
 import { getModelProfile } from "../models";
 import { now, uid, taskFrom, type Row } from "../store";
 import { reserve } from "../tenancy";
 import { hash } from "../../../../packages/contracts/src/security";
-import { nextOccurrence } from "../../../../packages/contracts/src/schedule";
 import {
   taskInputSchema,
   idSchema,
   type TaskInput,
 } from "../../../../packages/contracts/src/index";
 import type { Message } from "../../../../packages/model/src/index";
-import { suppliedTaskUrls } from "../task-sites";
 import { structuredGraph } from "./graph";
 import { D1MemoryStore } from "./memory";
 import { seal, unseal } from '../crypto';
@@ -27,7 +23,6 @@ export const conversations = new Hono<{
   Bindings: AppEnv;
   Variables: Variables;
 }>();
-const textInput = z.string().trim().min(1).max(6000);
 export async function ownedThread(env: AppEnv, id: string) {
   const row = await env.DB.prepare(
     "SELECT * FROM ai_threads WHERE id=? AND user_id=? AND closed=0",
@@ -208,7 +203,7 @@ export async function promoteInbox(env:AppEnv,threadId:string) {
   ]);
   if(!rows[0].meta.changes)return;
   if(env.AI_TURNS)await env.AI_TURNS.getByName(item.id).enqueue(item.id).catch(()=>{});
-  else if(env.DEV_MODE==='1')await executeTurn(env,threadId,item.id,item.mode);
+  else if(env.DEV_MODE==='1')await executeTurn(env,threadId,item.id);
 }
 
 conversations.post("/threads/:id/messages", async c=>{
@@ -251,30 +246,6 @@ conversations.get("/memories", async (c) =>
     ),
   ),
 );
-async function invalidate(
-  env: AppEnv,
-  owner: string,
-  mutation: D1PreparedStatement,
-) {
-  await env.DB.batch([
-    mutation,
-    env.DB.prepare(
-      "UPDATE ai_turns SET status='cancelled',error='MEMORY_CHANGED' WHERE thread_id IN(SELECT id FROM ai_threads WHERE user_id=?) AND status='running'",
-    ).bind(owner),
-    env.DB.prepare(
-      "UPDATE ai_threads SET version=version+1,active_turn=NULL,summary='',summary_seq=0 WHERE user_id=?",
-    ).bind(owner),
-    env.DB.prepare("UPDATE ai_graph_inputs SET active=0 WHERE owner=?").bind(
-      owner,
-    ),
-    env.DB.prepare(
-      "UPDATE ai_calls SET status='unknown',result=NULL,error='MEMORY_CHANGED' WHERE user_id=? AND graph_id IS NOT NULL",
-    ).bind(owner),
-    ...["ai_checkpoints", "ai_writes"].map((table) =>
-      env.DB.prepare(`DELETE FROM ${table} WHERE owner=?`).bind(owner),
-    ),
-  ]);
-}
 conversations.put("/memories/:id", async (c) => {
   const b = z
     .object({
@@ -284,30 +255,22 @@ conversations.put("/memories/:id", async (c) => {
     .strict()
     .parse(await c.req.json());
   const key = idSchema.parse(c.req.param("id"));
-  await invalidate(
-    c.env,
-    c.get("userId"),
-    await new D1MemoryStore(
+  await (await new D1MemoryStore(
       c.env.DB,
       c.get("userId"),
       c.env.MASTER_KEY,
     ).mutation(["preferences"], key, {
       text: b.text,
       source: "user-confirmed",
-    }),
-  );
+    })).run();
   return c.json({ ok: true });
 });
 conversations.delete("/memories/:id", async (c) => {
-  await invalidate(
-    c.env,
-    c.get("userId"),
-    await new D1MemoryStore(
+  await (await new D1MemoryStore(
       c.env.DB,
       c.get("userId"),
       c.env.MASTER_KEY,
-    ).mutation(["preferences"], idSchema.parse(c.req.param("id")), null),
-  );
+    ).mutation(["preferences"], idSchema.parse(c.req.param("id")), null)).run();
   return c.json({ ok: true });
 });
 conversations.delete("/threads/:id", async (c) => {
@@ -347,7 +310,7 @@ conversations.delete("/threads/:id", async (c) => {
   return c.json({ ok: true });
 });
 
-export async function executeTurn(env:AppEnv,threadId:string,turnId:string,mode:'chat'|'report') {
+export async function executeTurn(env:AppEnv,threadId:string,turnId:string) {
   const turn=await env.DB.prepare("SELECT created_at,status,run_id FROM ai_turns WHERE id=? AND thread_id=?").bind(turnId,threadId).first<{created_at:string;status:string;run_id:string|null}>();
   if(!turn||turn.status!=='running')throw new Error('TURN_STALE');
   const at=turn.created_at;
@@ -370,10 +333,10 @@ export async function executeTurn(env:AppEnv,threadId:string,turnId:string,mode:
     const reply=decision.reply;
     if(decision.start){
       if(!decision.goal||!decision.entryUrl)throw Error('HANDOFF_INCOMPLETE');
-      await commitDecision(env,t,turnId,{reply,operation:'start',scope:'current',startWhen:'now',task:{
+      await commitDecision(env,t,turnId,{
         title:decision.title??decision.goal.slice(0,100),goal:decision.goal,entryUrl:decision.entryUrl,accountId:decision.accountId,
         allowedActions:['read','navigate','fill','submit','publish'],verification:{kind:'goal',value:decision.goal.slice(0,2000)},schedule:{kind:'manual'},
-      }});
+      });
     }
     await guard();
     const committed = await env.DB.batch([

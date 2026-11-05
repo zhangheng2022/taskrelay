@@ -4,14 +4,11 @@ import { AccountSecurity } from "./auth-gate";
 import { useEffect, useState } from "react";
 import {
   CheckCircle2,
-  ExternalLink,
   Loader2,
-  Monitor,
   Plus,
   ShieldCheck,
 } from "lucide-react";
 import type {
-  DesktopStatus,
   ModelInput,
   ModelProfile,
   Snapshot,
@@ -26,7 +23,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "./components/ui/dialog";
-import { Switch } from "./components/ui/switch";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "./components/ui/tabs";
 import { NativeSelect } from "./components/ui/native-select";
 import { FieldGroup } from "./components/ui/field";
@@ -38,7 +34,7 @@ import {
   EmptyDescription,
   EmptyContent,
 } from "./components/ui/empty";
-import { Field } from "./task-editor";
+import { Field } from "./form-field";
 import { ErrorText, formatDate } from "./feedback";
 const presets = {
   openai: { name: "OpenAI", baseUrl: "https://api.openai.com/v1" },
@@ -64,11 +60,7 @@ export function Settings({
     [account, setAccount] = useState(false),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(""),
-    [desktop, setDesktop] = useState<DesktopStatus | null>(null),
-    [url, setUrl] = useState("https://taskrelay.zhangheng.workers.dev"),
-    [pair, setPair] = useState<{ code: string; url: string } | null>(null),
-    [days, setDays] = useState(30),
-    [note, setNote] = useState("");
+    [days, setDays] = useState(30);
   const act = async (id: string, fn: () => Promise<unknown>) => {
     setBusy(id);
     setError("");
@@ -82,41 +74,12 @@ export function Settings({
     }
   };
   useEffect(() => {
-    if (!transport.desktop) return;
-    const update = () =>
-      void transport
-        .desktop!.status()
-        .then(setDesktop)
-        .catch((e) => setError(e.message));
-    update();
-    return transport.desktop.subscribe(update);
-  }, [transport]);
-  useEffect(() => {
     if(!isAdmin)return;
     void transport
       .request<{ retentionDays: number }>("GET", "/api/admin/settings")
       .then((x) => setDays(x.retentionDays))
       .catch(() => {});
   }, [transport]);
-  useEffect(() => {
-    if (!pair || !transport.desktop) return;
-    const timer = setInterval(() => {
-      void transport
-        .desktop!.pairPoll()
-        .then(async (done) => {
-          if (done) {
-            setPair(null);
-            setDesktop(await transport.desktop!.status());
-            await refresh();
-          }
-        })
-        .catch((e) => {
-          setError(e.message);
-          setPair(null);
-        });
-    }, 3000);
-    return () => clearInterval(timer);
-  }, [pair, transport, refresh]);
   return (
     <Tabs className="settings" value={tab} onValueChange={setTab}>
       <TabsList className="w-full flex-wrap group-data-[orientation=horizontal]/tabs:h-auto">

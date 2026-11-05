@@ -1,14 +1,13 @@
+import "../../../packages/ui/src/styles.css";
 // Dedicated development-only UI fixture; not imported by the production entry.
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "../../../packages/ui/src/app";
 import { ExecutorApp } from '../../../packages/ui/src/executor-app';
 import { AuthGate } from '../../../packages/ui/src/auth-gate';
-import { taskInputSchema } from "../../../packages/contracts/src/index";
 import type {
   Snapshot,
   TaskDefinition,
-  TaskInput,
   Transport,
   DesktopStatus,
 } from "../../../packages/contracts/src/index";
@@ -30,17 +29,13 @@ const definition: TaskDefinition = {
   createdAt: new Date().toISOString(),
   nextRunAt: null,
   title: "演示 · 每日查询",
-  goal: "每天上午九点查询 https://example.com 的信息",
+  goal: "查询 https://example.com 的信息",
   entryUrl: "https://example.com/",
   accountId: null,
   modelId: "fixture_model",
   allowedActions: ["read", "navigate"],
   verification: { kind: "goal", value: "操作成功" },
-  schedule: {
-    kind: "cron",
-    expression: "0 9 * * *",
-    timezone: "Asia/Shanghai",
-  },
+  schedule: { kind: "manual" },
 };
 const snapshot: Snapshot = {
   tasks: state === "new" ? [] : [definition],
@@ -97,7 +92,7 @@ if (state !== "new")
         ? null
         : {
             summary: "演示结果：页面信息已整理。",
-            outcome: "read_result",
+            outcome: "reported",
             data: {
               title: "页面公告",
               content: "这是用于验证结果布局的演示数据。",
@@ -126,34 +121,8 @@ if(options.has('batch')&&snapshot.runs[0]?.result){
     {id:'four',label:'记录四：需要继续核查的长名称项目，用于检查手机上的换行与完整显示',status:'unknown'},
   ].map(item=>({...item,status:item.status as 'completed'|'already_done'|'excluded'|'unknown',reason:item.status==='excluded'?'已归档记录':'',evidence:{url:'https://example.com/',quote:item.status==='unknown'?'提交结果尚未确认':'已读取对应项目状态',capturedAt:new Date().toISOString()}}))};
 }
-if (assistance)
-  snapshot.challenges.push({
-    id: "demo_challenge",
-    runId: "demo_run",
-    leaseEpoch: 1,
-    version: 1,
-    stepId: "demo_step",
-    kind:
-      state === "approval"
-        ? "approval"
-        : state === "scan"
-          ? "scan"
-          : state === "unsupported"
-            ? "unsupported"
-            : "code",
-    instruction:
-      state === "approval"
-        ? "演示操作：删除 example.com 中标题为“临时草稿”的内容。仅模拟确认，不连接真实网站。"
-        : state === "scan"
-          ? "请在站点应用完成扫码或外部确认，再检查状态。本演示不会访问真实站点。"
-          : state === "unsupported"
-            ? "此步骤要求现场生物识别，无法在当前对话中完成。"
-            : "演示验证：请输入 0012aB。此页面不连接真实网站。",
-    expiresAt: new Date(
-      Date.now() + (state === "expired" ? -1000 : 300000),
-    ).toISOString(),
-    status: state === "answered" ? "answered" : "pending",
-  });
+if (assistance && state !== "answered")
+  snapshot.waitingHelp = [{id:"demo_help",runId:"demo_run",taskId:definition.id}];
 const messages: { id: string; role: string; content: string; at: string }[] =
   options.has("history")
     ? Array.from({ length: 24 }, (_, i) => ({
@@ -166,7 +135,6 @@ const messages: { id: string; role: string; content: string; at: string }[] =
         at: new Date().toISOString(),
       }))
     : [];
-const created = new Map<string, string>();
 const threads=new Map<string,any>();
 const memories=new Map<string,any>();
 let failed = false;
@@ -195,75 +163,28 @@ const transport: Transport = {
     if (path === "/api/user/snapshot") result = structuredClone(snapshot);
     else if(path==='/api/user/threads') {
       if(method==='GET')result=[...threads.values()].map(t=>({...t,model_id:t.modelId,task_id:t.taskId??null}));
-      else {const id=crypto.randomUUID();const page={id,kind:body.kind,taskId:body.taskId,modelId:body.modelId,version:0,draft:null,partial:{},messages:body.kind==='chat'?messages.map((m,i)=>({...m,seq:i+1})):[],activeTurn:null,nextCursor:null};threads.set(id,page);result=structuredClone(page);}
+      else {const id=crypto.randomUUID();const page={id,kind:body.kind,taskId:body.taskId,modelId:body.modelId,version:0,messages:body.kind==='chat'?messages.map((m,i)=>({...m,seq:i+1})):[],activeTurn:null,nextCursor:null,waiting:assistance&&state!=='answered'?{id:'demo_help'}:null};
+        if(body.kind==='chat'&&assistance)page.messages.push({id:'help-message',seq:page.messages.length+1,role:'assistant',content:'请在同一聊天提供登录所需信息，或说明下一步要求。',at:new Date().toISOString()});
+        if(body.kind==='chat'&&snapshot.runs[0]?.result)page.messages.push({id:'final-message',seq:page.messages.length+1,role:'assistant',content:snapshot.runs[0].result.summary,at:new Date().toISOString()});
+        threads.set(id,page);result=structuredClone(page);}
+
     } else if(path.startsWith('/api/user/threads/')) {
       const id=path.split('/')[4],page=threads.get(id);
       if(method==='DELETE'){threads.delete(id);result={ok:true};}
       else if(path.endsWith('/messages')) {
         if(options.has('fail')&&!failed){failed=true;throw new Error('MODEL_EGRESS_TIMEOUT');}
         page.version++;
-        if(page.kind==='compose'&&/https:\/\//.test(body.content))page.draft={...taskInputSchema.strip().parse(definition),title:'演示 · 新建任务',goal:body.content};
-        page.messages.push({id:crypto.randomUUID(),seq:page.messages.length+1,role:'user',content:body.content},{id:crypto.randomUUID(),seq:page.messages.length+2,role:'assistant',content:page.kind==='chat'?'这是界面演示回复。':page.draft?'已整理好任务，请核对范围后试运行。':'请提供要操作的网站地址。'});
+        page.messages.push({id:crypto.randomUUID(),seq:page.messages.length+1,role:'user',content:body.content},{id:crypto.randomUUID(),seq:page.messages.length+2,role:'assistant',content:'这是界面演示回复，不会执行真实任务。'});
+        page.waiting=null;snapshot.waitingHelp=[];
         result={...structuredClone(page),status:'done'};
-      } else if(path.endsWith('/draft')){page.draft=body.draft;page.version++;result=structuredClone(page);}
+      }
       else result=structuredClone(page);
     } else if(path==='/api/user/memories')result=[...memories.values()];
     else if(path.startsWith('/api/user/memories/')){const key=path.split('/').at(-1)!;if(method==='DELETE')memories.delete(key);else memories.set(key,{key,value:{text:body.text}});result={ok:true};}
-     else if (path === "/api/user/tasks" && method === "POST") {
-      let id = created.get(body.requestId);
-      if (!id) {
-        id = "demo_created_" + created.size;
-        created.set(body.requestId, id);
-        snapshot.tasks.unshift({
-          ...definition,
-          ...body.task,
-          id,
-          status: "pending_validation",
-        });
-      }
-      result = { id };
-    } else if (path.match(/tasks\/[^/]+$/) && method === "PUT") {
-      const task = snapshot.tasks.find((t) => path.endsWith(t.id))!;
-      Object.assign(task, body.task, { version: task.version + 1 });
-      result = { id: task.id };
-    } else if (path.endsWith("/chat")) {
-      if (method === "POST") {
-        messages.push(
-          {
-            id: crypto.randomUUID(),
-            role: "user",
-            content: body.content,
-            at: new Date().toISOString(),
-          },
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content: "这是界面演示回复。",
-            at: new Date().toISOString(),
-          },
-        );
-        result = { ok: true };
-      } else result = structuredClone(messages);
-    } else if (path.includes("/challenges/")) {
-      const current = snapshot.challenges[0];
-      if (
-        current.status !== "pending" ||
-        current.version !== body.version ||
-        current.leaseEpoch !== body.leaseEpoch ||
-        current.stepId !== body.stepId ||
-        current.runId !== body.runId ||
-        Date.parse(current.expiresAt) <= Date.now()
-      )
-        throw new Error("CHALLENGE_STALE");
-      if (current.kind === "code" && body.text !== "0012aB")
-        throw new Error("REPLY_INVALID");
-      current.status = "answered";
-      result = { ok: true };
-    } else if (path.endsWith("/cancel")) {
+ else if (path.endsWith("/cancel")) {
       snapshot.runs[0].cancelRequested = true;
       result = { ok: true };
-    } else if (path.endsWith("/reconcile")) {
-      result = { id: "demo_readonly_check" };
+
     } else if (path.startsWith("/api/user/runs/"))
       result = {
         events: [

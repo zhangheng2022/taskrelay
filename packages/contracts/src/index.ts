@@ -193,6 +193,7 @@ export interface Snapshot {
   accounts: SiteAccount[];
   devices: Device[];
   challenges: HumanChallenge[];
+  waitingHelp?: {id:string;runId:string;taskId:string}[];
   serverTime: string;
 }
 export interface DesktopStatus {

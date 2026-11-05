@@ -1,15 +1,4 @@
-# TaskRelay
-
-## 0.11.0 聊天与 Stagehand AI 执行（2026-11-05）
-
-本节取代下方历史版本的运行流程描述。明确交办经云端意图检查后直接交给执行器；执行器拥有完整 AI 工具循环，遇到问题先向云端求助，云端无法解决再在同一聊天询问用户。工具反馈、截图和执行器最终答复使用同一消息流；移除旧云端 plan、批量核验、挑战回复及独立报告生产入口。
-
-原始消息整体交给执行器和 Stagehand，由 AI 理解账号密码、用户补充与实际页面。不要求输入字段分类、自定义动作计划或最终结果枚举；执行器直接回复实际结果。
-
-迁移 0019 保留历史与连接配置，绑定运行/截图到原聊天，导入旧运行事件；图片由私有加密 Evidence 保存，长期保留至聊天删除。协议 14 只领取新版运行。个人次数限制不恢复。条件卡和定时暂不扩展。
-
-已通过新主链生产接口集成：多项目处理、云端求助、原聊天私密回复、继续执行、图片与最终答复；模型使用隔离提供方响应，不能代替部署环境真实模型验收。当前源码验证、打包、部署及现场验收仍在进行，尚不宣称已安装或真实积分通过。
-
+# TaskRelay · 任务接力
 
 <!-- impeccable:product-schema 1 -->
 
@@ -17,37 +6,27 @@
 web
 
 ## Stack
-React, Vite, TypeScript, shadcn/ui, Tailwind CSS; Electron Forge Windows x64 desktop; Stagehand 4.3.0; Cloudflare Workers, Hono, D1, Drizzle and encrypted SQLite Durable Objects for short-lived evidence. npm workspaces. Production has no R2 binding.
+React、Vite、TypeScript、shadcn/ui、Tailwind CSS；Electron Forge Windows x64 执行器；Stagehand 4.3.0；Cloudflare Workers、Hono、D1 与加密 SQLite Durable Objects。npm workspaces，生产不绑定 R2。
 
 ## Users
-Registered users manage their own browser tasks on the website, including from a phone. Administrators maintain a shared pool of trusted Windows execution devices.
+注册用户在网站拥有隔离的浏览器任务空间，支持手机访问。管理员维护共享模型与可信 Windows 设备池。公开注册默认关闭。
 
 ## Product Purpose
-Describe a browser task once, schedule it centrally, execute on an administrator-authorized shared device, and inspect verifiable results. Human verification always uses the website task conversation.
+用户在同一聊天交办、补充、提供协助并查看执行结果。明确任务由云端检查意图后交给执行器；信息含糊才询问。执行器独立完成观察、规划、操作、纠错和最终回复，云端不逐步规划或另起报告。
 
 ## Capabilities and Constraints
-Cloud is authoritative for identity, ownership, quotas, scheduling and leases. The Windows app only connects, claims, executes, requests assistance, reports results and recovers; its small window and tray expose status, pause, stop, autostart and diagnostics. It has no task editor, chat, model settings, account manager or history browser. Administrators configure shared models; users cannot read keys or change provider settings. Chat Completions and Responses remain supported without a GPT-only restriction. No direct browser takeover or remote desktop, paid plans, user-provided models or user-contributed devices. Never infer success from a model claim alone or replay uncertain external writes. Shared devices are trusted administrator environments; separate browser profiles do not hide data from device administrators.
+- 网站负责任务、聊天、图片、历史、账号与设置；桌面只负责连接、执行、暂停、停止、自启动和诊断。
+- 普通与批量目标共用 AI 工具循环，依实际反馈报告进度、部分完成或受阻。没有固定项目身份、强制核验表、文字/地址成功硬匹配或独立报告阶段。
+- 账号、密码与验证码按用户要求可在本人聊天显示并由当前任务 AI 使用；敏感回复独立加密，平台密钥与设备令牌不进入任务上下文。
+- 不设网站授权名单；保留身份隔离、公网访问、凭据所属站点、设备并发、租约、停止与同次工具调用防重。未知结果不自动重放。
+- Chat Completions 与 Responses 均支持，模型名自由输入。能力不足明确拒绝，不静默切换模型或提供方；所有模型请求统一经过美国区域后台链路。
+- 当前新任务按手动交办执行。条件卡、频率、模型和账号确认保留为产品方向，尚不生成新条件卡。保存偏好尚未进入执行上下文，界面明确说明。
+- Cloudflare 保持 Free，个人次数限制保持关闭；不自动购买或切换付费服务，模型费用由提供方计费。
 
 ## Brand Commitments
-The installed Windows executor checks for releases and notifies the operator. Download and installation require confirmation; updates wait for active tasks and result delivery to finish. All update traffic passes through Cloudflare, with no direct client connection to GitHub.
+中文界面，默认中性色、浅色/深色/系统主题。侧栏、会话主区与底部输入区布局遵循 shadcn/ui AI Elements，交办、补充和协助共用一个输入框。reported 显示“已回复”，不承诺业务全部成功。
 
-TaskRelay / 任务接力. Chinese UI. React and official shadcn/ui default neutral styles. The responsive website owns task conversations; the Windows client is a standalone executor. Light, dark and system themes. [shadcn/ui AI Elements](https://ui.shadcn.com/docs/ai-elements) is the reference for task chat, prompt input, model selection, execution steps, results and confirmation. Codex-like refers to the task sidebar, conversation and bottom composer layout. Clear assignments start execution directly; questions do not. Keep creation, steering, assistance and reports in the same conversation. After success, the user reviews the generated running conditions and confirms frequency, model and account before repeated execution. Implementation rules live in [AGENTS.md](AGENTS.md#ui-专项要求).
-
-## Product Principles
-
-- 通用批量任务：用户确认业务目标、列表范围、处理资格及排除项；系统执行时发现清单、逐项读取状态并复核覆盖。全部完成判断由 AI 基于实际观察作出，不提供文字、URL 或数量硬匹配条件。无完整证据或超过限额时报告实际进度与未核实项目，不要求用户预先提供页面原文或数量。AI 根据实际页面规划、判断业务结果和纠错；总数可未知，范围结论须说明证据。不能保证任意网页流程自动完成。
-- Cloud task versions and durable execution facts drive state.
-- Ordinary instructions affect the current run; explicit future instructions update long-term requirements. Sensitive assistance remains bound to its live challenge.
-- Show uncertainty and capability limits explicitly.
-- Secrets never enter ordinary logs or exported diagnostics.
+Windows 关闭窗口保留托盘，明确退出停止自有进程，自启动默认关闭。安装版下载更新须确认，等待任务与回传结束才安装；更新流量经 Cloudflare，不直连 GitHub。
 
 ## Evidence on Hand
-Implemented web, Workers and Windows desktop code, with source tests, development-machine packaging/installation smoke evidence, and a real Responses read-only browser-task loop recorded in docs/ACCEPTANCE.md. The standalone smoke path does not exercise the full task executor or recovery flow; dedicated tests now call the production Host and execute implementations with isolated platform adapters. Clean-machine acceptance, additional model protocols/providers and seven-day observation require separate evidence. RewardPilot was examined only as an architecture reference.
-`2026-11-04`：目标和授权范围来自用户交办，网页可观察信息留给执行阶段判断。时间未指定只执行一次。仅要求未来执行时不提前运行；首次未来运行结束后也须用户确认条件卡才重复执行。失败、部分完成和未知结果只报告实际进度，不生成成功经验。个人次数限制保持用户指定的关闭状态，不自动恢复。项目级每日平台预算和全站模型总额度已删除；保留实际用量记录，Cloudflare 和模型提供方的外部限制仍由其各自执行。
-
-网站访问不设授权名单；用户用品牌或产品名交办时，AI 可识别公开入口并继续任务，只有关键歧义才追问。凭据仅交给其所属网站，公开地址与 DNS 安全检查不变。
-
-
-协助和补充要求共用一个输入框，由 AI 自主判断回复意图，不要求用户切换消息用途。按用户强制要求，账号、密码和验证码可在本人会话显示，并供当前任务 AI 理解和使用；协助回复仍加密保存。Stagehand 提供 AI 观察、动作和信息提取，高层规划不要求选择器。
-
-AI 根据实际页面理解动作用途；登录、筛选、导航、编辑和业务处理无需预先建立批量项目。进度用于报告，动作账本用于未知结果保护和防重复提交。报告只总结所选运行，长证据压缩不会触发重新执行。
+源码、开发机打包/系统安装、真实模型与有引导的网站执行证据见 [验收记录](docs/ACCEPTANCE.md)。尚不能认定无人引导的完整自主执行、干净 Windows、更多提供方、休眠/断网故障和长期观察全部通过。工程约束见 [AGENTS.md](AGENTS.md)，当前实现见 [架构](docs/ARCHITECTURE.md)。

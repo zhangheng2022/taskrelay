@@ -5,29 +5,12 @@ import { useState } from "react";
 import { render, fireEvent, cleanup, waitFor, act } from "@testing-library/react";
 import { Composer } from "../packages/ui/src/chat-parts";
 import { TaskCompose } from "../packages/ui/src/task-compose";
-import { TaskEditor } from "../packages/ui/src/task-editor";
-import { taskInputSchema } from "../packages/contracts/src/index";
 import { ModelSelector } from "../packages/ui/src/model-selector";
-import { snapshot, task, transportWith, threadPage } from "./ui-fixtures";
+import { snapshot, transportWith, threadPage } from "./ui-fixtures";
 
 afterEach(() => {
   cleanup();
   localStorage.clear();
-});
-test("task editor accepts public website changes without an allowlist and rejects private addresses", async () => {
-  const applied: unknown[]=[];
-  const view=render(<TaskEditor initial={taskInputSchema.strip().parse(task)} snapshot={snapshot} onClose={()=>{}} onApply={v=>applied.push(v)}/>);
-  fireEvent.change(view.getByRole('textbox',{name:'网站地址'}),{target:{value:'http://127.0.0.1'}});
-  fireEvent.click(view.getByRole('button',{name:'更新确认卡'}));
-  assert.match(view.getByRole('alert').textContent??'',/公网 HTTPS/);
-  assert.equal(applied.length,0);
-  fireEvent.change(view.getByRole('textbox',{name:'网站地址'}),{target:{value:'https://other.example.com/'}});
-  fireEvent.click(view.getByRole('button',{name:'更新确认卡'}));
-  assert.equal(applied.length,1);
-  assert.equal(view.queryByLabelText('允许访问的站点'),null);
-  fireEvent.change(view.getByRole('textbox',{name:'网站地址'}),{target:{value:task.entryUrl}});
-  fireEvent.click(view.getByRole('button',{name:'更新确认卡'}));
-  assert.equal(applied.length,2);
 });
 test("交办通过消息启动，异步完成保留会话并允许继续补充", async () => {
  let page:any={...threadPage},listener:(()=>void)|undefined;const sent:any[]=[],opened:string[]=[];

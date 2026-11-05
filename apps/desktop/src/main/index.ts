@@ -32,7 +32,6 @@ import { releaseSchema } from '../../../../packages/contracts/src/updates';
 import { cloudUrlSchema } from "../shared/ipc";
 import type {
   DesktopStatus,
-  TaskRun,
 } from "../../../../packages/contracts/src/index";
 import { packagedSmoke } from "./smoke";
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;

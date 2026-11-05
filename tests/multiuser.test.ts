@@ -1,3 +1,4 @@
+import { finishRequest } from './runner-request';
 import { commitDecision } from '../apps/cloud/src/ai/commands';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -5,7 +6,7 @@ import { hashPassword } from 'better-auth/crypto';
 import { app } from '../apps/cloud/src/index';
 import type { AppEnv } from '../apps/cloud/src/env';
 import { testDb,task,insertTask } from './helpers';
-import { claim,enqueue,finish,getRun,queueReasons } from '../apps/cloud/src/store';
+import { claim,enqueue,queueReasons } from '../apps/cloud/src/store';
 import { quotaDay,quotaReset,reserve,quotaSummary } from '../apps/cloud/src/tenancy';
 import { hash } from '../packages/contracts/src/security';
 import { seal } from '../apps/cloud/src/crypto';
@@ -60,7 +61,7 @@ test('个人日限额支持到期或手动恢复，不绕过用户隔离、禁�
   s.sql.prepare("UPDATE members SET disabled=1 WHERE id='alice'").run();
   await assert.rejects(()=>reserve(s.env,'alice','chat'),/CHAT_QUOTA_EXCEEDED/);
   s.sql.prepare("UPDATE members SET disabled=0,daily_quota_paused_until='2000-01-01T00:00:00.000Z' WHERE id='alice'").run();
-  await finish(s.db,run,'succeeded',{summary:'read only',evidence:[],outcome:'already_done'});
+  assert.equal((await finishRequest(s.db,run,'succeeded',{summary:'read only',evidence:[],outcome:'reported'})).status,200);
   assert.equal((await quotaSummary(s.db,'alice')).pausedUntil,null);
   assert.equal((await quotaSummary(s.db,'alice')).limits.runs,0,'原额度没有被覆盖');
   assert.equal(await claim(s.db,'d1','expired-pause'),null);
@@ -71,7 +72,7 @@ test('个人日限额支持到期或手动恢复，不绕过用户隔离、禁�
   assert.equal(manual.paused,true);assert.equal(manual.pausedUntil,null,'手动关闭不受已到期时间影响');
   await reserve(s.env,'alice','chat');
   const resumed=(await claim(s.db,'d1','manual-pause'))!;assert.equal(resumed.id,next.id);
-  await finish(s.db,resumed,'succeeded',{summary:'read only',evidence:[],outcome:'already_done'});
+  assert.equal((await finishRequest(s.db,resumed,'succeeded',{summary:'read only',evidence:[],outcome:'reported'})).status,200);
   s.sql.prepare("UPDATE members SET daily_quota_paused=0 WHERE id='alice'").run();
   assert.equal((await quotaSummary(s.db,'alice')).paused,false);
   await assert.rejects(()=>reserve(s.env,'alice','chat'),/CHAT_QUOTA_EXCEEDED/);
@@ -112,7 +113,7 @@ test('两用户两设备公平领取，并发一，领取重试只记一次额�
  assert.equal((await claim(s.db,'d1','first'))?.id,first.id);
  assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM runs WHERE started_day IS NOT NULL").get()!.n,2);
  s.sql.prepare("UPDATE runs SET status='waiting_user' WHERE id=?").run(second.id);
- await finish(s.db,first,'succeeded',{summary:'done',evidence:[],outcome:'completed_now'});
+ assert.equal((await finishRequest(s.db,first,'succeeded',{summary:'done',evidence:[],outcome:'reported'})).status,200);
  assert.equal(await claim(s.db,'d1','third'),null);
 });
 
@@ -147,8 +148,8 @@ test('两用户使用同一幂等编号仍各自创建任务；账号、协助�
   s.sql.prepare('UPDATE ai_threads SET active_turn=? WHERE id=?').run(turnId,thread.id);
   const t=s.sql.prepare('SELECT * FROM ai_threads WHERE id=?').get(thread.id)!;
   const {modelId,...task}=input;
-  await commitDecision({...s.env,requestUserId:who},t,turnId,{reply:'开始',operation:'start',scope:'current',startWhen:'now',task});
-  await commitDecision({...s.env,requestUserId:who},t,turnId,{reply:'开始',operation:'start',scope:'current',startWhen:'now',task});
+  await commitDecision({...s.env,requestUserId:who},t,turnId,task);
+  await commitDecision({...s.env,requestUserId:who},t,turnId,task);
   return String(s.sql.prepare('SELECT task_id FROM ai_threads WHERE id=?').get(thread.id)!.task_id);
  }
  const accounts:Record<string,string>={},tasks:Record<string,string>={},runs:Record<string,string>={};
