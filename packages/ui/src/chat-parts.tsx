@@ -1,5 +1,5 @@
-import type { ReactNode } from "react";
-import { ArrowUp, Loader2 } from "lucide-react";
+import { useLayoutEffect, type ReactNode } from "react";
+import { ArrowUp, Loader2, CirclePause } from "lucide-react";
 import {
   InputGroup,
   InputGroupAddon,
@@ -15,10 +15,18 @@ import {
   MessageScrollerContent,
   MessageScrollerButton,
   MessageScrollerItem,
+  useMessageScroller,
 } from "./components/ui/message-scroller";
 import { Marker, MarkerIcon, MarkerContent } from "./components/ui/marker";
 
-export function Thread({ children }: { children: ReactNode }) {
+// 普通更新由官方组件跟随底部或保留上翻位置；只有本地发送请求才主动回到最新。
+// 不将历史用户行设为 turn anchor，避免同数量节点替换重新定位到旧问题。
+function FollowSend({ request }: { request?: string }) {
+  const { scrollToEnd } = useMessageScroller();
+  useLayoutEffect(() => { if (request) scrollToEnd({ behavior: "auto" }); }, [request, scrollToEnd]);
+  return null;
+}
+export function Thread({ children, followRequest }: { children: ReactNode; followRequest?: string }) {
   return (
     <MessageScrollerProvider autoScroll>
       <MessageScroller>
@@ -29,6 +37,7 @@ export function Thread({ children }: { children: ReactNode }) {
         </MessageScrollerViewport>
         <MessageScrollerButton aria-label="回到最新消息" />
       </MessageScroller>
+      <FollowSend request={followRequest}/>
     </MessageScrollerProvider>
   );
 }
@@ -57,23 +66,31 @@ export function ChatMessage({
     </Message>
   );
 }
-export function PendingMessage({ children }: { children: ReactNode }) {
+export function PendingMessage({ children, paused = false }: { children: ReactNode; paused?: boolean }) {
   return (
     <Marker role="status">
       <MarkerIcon>
-        <Loader2 className="animate-spin" />
+        {paused ? <CirclePause/> : <span className="chat-status-spinner block size-full animate-spin"><Loader2/></span>}
       </MarkerIcon>
       <MarkerContent>{children}</MarkerContent>
     </Marker>
   );
 }
+// 状态复用同一个 DOM 行，发送→推理时不重启动画；持续渲染避开 WebKit 离屏动画恢复缺陷。
+export function ThreadActivity({ children, offline, error }: { children: ReactNode; offline: boolean; error: string }) {
+  if (!children) return null;
+  const interrupted = offline || !!error;
+  let content = children;
+  if (offline) content = '连接已中断，等待恢复后更新状态';
+  else if (error) content = '状态更新失败，请重试';
+  return <MessageScrollerItem messageId="activity" deferRendering={false}>
+    <PendingMessage paused={interrupted}>{content}</PendingMessage>
+  </MessageScrollerItem>;
+}
 // 新交办和既有聊天共用发送回显。确认后由服务端消息替换，失败后原文回到输入框重试。
 export function SendingMessage({message}:{message:{id:string;content:string}|null}){
   if(!message)return null;
-  return <>
-    <MessageScrollerItem messageId={message.id} scrollAnchor><ChatMessage role="user">{message.content}</ChatMessage></MessageScrollerItem>
-    <MessageScrollerItem messageId={`${message.id}_status`}><PendingMessage>正在发送…</PendingMessage></MessageScrollerItem>
-  </>;
+  return <MessageScrollerItem messageId={message.id}><ChatMessage role="user">{message.content}</ChatMessage></MessageScrollerItem>;
 }
 export function Composer({
   text,

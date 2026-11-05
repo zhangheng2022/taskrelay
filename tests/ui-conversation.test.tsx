@@ -7,6 +7,48 @@ import {task,run,transportWith,threadPage} from './ui-fixtures';
 import type {ThreadPage} from '../packages/ui/src/use-thread';
 afterEach(cleanup);
 
+test('发送确认沿用同一动画状态行，不把历史消息重新注册为滚动锚点',async()=>{
+ let resolvePost!:(value:unknown)=>void;
+ let page:ThreadPage={...threadPage,activeTurn:'turn',messages:Array.from({length:24},(_,i)=>({id:`history-${i}`,seq:i+1,role:i%2?'assistant':'user',content:`历史 ${i}`,at:new Date(1700000000000+i*1000).toISOString()}))};
+ const transport=transportWith(async(method,path)=>{
+  if(path==='/api/user/threads')return [{id:page.id,model_id:task.modelId,task_id:task.id}];
+  if(method==='POST')return new Promise(resolve=>{resolvePost=resolve;});
+  return page;
+ });
+ const v=render(<Conversation transport={transport} task={task} run={null} offline={false} refresh={async()=>{}}/>);
+ await waitFor(()=>assert.ok(v.getByText('云端助手正在处理…')));
+ const status=v.getByRole('status'),spinner=status.querySelector('.chat-status-spinner');
+ assert.ok(spinner);assert.equal(spinner.tagName,'SPAN');
+ assert.equal(status.closest('[data-message-id]')?.className.includes('content-visibility:auto'),false);
+ fireEvent.change(v.getByRole('textbox'),{target:{value:'继续查看'}});fireEvent.click(v.getByRole('button',{name:'发送消息'}));
+ assert.equal(v.getByRole('status'),status);assert.ok(v.getByText('正在发送…'));
+ page={...page,messages:[...page.messages,{id:'confirmed',seq:25,role:'user',content:'继续查看',at:new Date().toISOString()}]};
+ await act(async()=>resolvePost(page));
+ assert.equal(v.getByRole('status'),status);assert.equal(status.querySelector('.chat-status-spinner'),spinner);
+ assert.ok(v.getByText('云端助手正在处理…'));assert.equal(v.getAllByText('继续查看').length,1);
+ assert.equal(v.container.querySelectorAll('[data-scroll-anchor="true"]').length,0);
+});
+
+test('刷新失败和离线不继续显示旧的云端处理中，恢复后以新状态收尾',async()=>{
+ let notify=()=>{},failed=false;
+ let page:ThreadPage={...threadPage,activeTurn:'turn'};
+ const transport=transportWith(async(_method,path)=>{
+  if(path==='/api/user/threads')return [{id:page.id,model_id:task.modelId,task_id:task.id}];
+  if(failed)throw Error('OFFLINE');return page;
+ });
+ transport.subscribe=fn=>{notify=fn;return()=>{};};
+ const props={transport,task,run:null,refresh:async()=>{}};
+ const v=render(<Conversation {...props} offline={false}/>);
+ await waitFor(()=>assert.ok(v.getByText('云端助手正在处理…')));
+ failed=true;await act(async()=>notify());
+ assert.ok(v.getByText('状态更新失败，请重试'));assert.equal(v.queryByText('云端助手正在处理…'),null);
+ assert.equal(v.getByRole('status').querySelector('.chat-status-spinner'),null);
+ v.rerender(<Conversation {...props} offline/>);assert.ok(v.getByText('连接已中断，等待恢复后更新状态'));
+ failed=false;page={...page,activeTurn:null,messages:[{id:'answer',seq:1,role:'assistant',content:'处理完成',at:new Date().toISOString()}]};
+ v.rerender(<Conversation {...props} offline={false}/>);await act(async()=>notify());
+ await waitFor(()=>assert.ok(v.getByText('处理完成')));assert.equal(v.queryByRole('status'),null);
+});
+
 test('发送立即回显及显示发送中，写入期间通知合并并在返回后补读，不等轮询也不重复消息',async()=>{
  let notify=()=>{},resolvePost!:(value:unknown)=>void,reads=0;
  const sent='请查询最新结果';

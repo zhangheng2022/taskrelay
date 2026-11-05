@@ -1,7 +1,7 @@
 import {useState,useRef} from 'react';
 import type {TaskDefinition,TaskRun,Transport} from '../../contracts/src/index';
 import {useThread} from './use-thread';
-import {Thread,Composer,ChatMessage,PendingMessage,SendingMessage} from './chat-parts';
+import {Thread,Composer,ChatMessage,ThreadActivity,SendingMessage} from './chat-parts';
 import {MessageScrollerItem} from './components/ui/message-scroller';
 import {Button} from './components/ui/button';
 import {ErrorText,LoadFeedback} from './feedback';
@@ -19,6 +19,15 @@ export function Conversation({transport,task,run,offline,refresh}: {
   const [confirmClear,setConfirmClear]=useState(false),[stopping,setStopping]=useState(false);
   const sending=useRef(false);
   const active=run&&['queued','running','waiting_user','verifying'].includes(run.status);
+  let activity:string|null=null;
+  if(thread.sending)activity='正在发送…';
+  else if(thread.page?.activeTurn)activity='云端助手正在处理…';
+  else if(active){
+    if(thread.page?.waiting)activity='等待你的回复';
+    else if(run.status==='queued')activity='等待执行设备';
+    else if(run.cancelRequested)activity='正在停止…';
+    else activity='执行器正在处理…';
+  }
   const messages=[...(thread.page?.messages??[]),...(thread.page?.replies??[]).map(m=>({...m,seq:m.cursor}))].sort((a,b)=>(a.at??'').localeCompare(b.at??'')||a.seq-b.seq);
   async function send(){
     if(sending.current||!text.trim()||offline)return;
@@ -30,10 +39,10 @@ export function Conversation({transport,task,run,offline,refresh}: {
     try{await transport.request('POST',`/api/user/runs/${run.id}/cancel`,{});await refresh();}catch(e){setError((e as Error).message);}finally{setStopping(false);}
   }
   return <div className="flex min-h-0 flex-1 flex-col">
-    <Thread>
+    <Thread followRequest={thread.sending?.id}>
       {(thread.loading||thread.error)&&<MessageScrollerItem messageId="loading"><LoadFeedback loading={thread.loading} error={thread.error} label="正在加载聊天…" onRetry={thread.retry}/></MessageScrollerItem>}
       {(thread.page?.nextCursor||thread.page?.nextReplyCursor)&&<MessageScrollerItem messageId="older"><Button variant="ghost" onClick={()=>void thread.older()}>加载更早消息</Button></MessageScrollerItem>}
-      {conversationRows(messages).map(({id,message:m,events})=><MessageScrollerItem key={id} messageId={id} scrollAnchor={m.role==='user'}>
+      {conversationRows(messages).map(({id,message:m,events})=><MessageScrollerItem key={id} messageId={id}>
         {events?<ExecutionProgress events={events} transport={transport}/>:
         <ChatMessage role={m.role}>
           {'source' in m&&m.role!=='user'&&<div className="text-xs text-muted-foreground">{m.source==='executor'?'执行器':'云端助手'}</div>}
@@ -43,8 +52,7 @@ export function Conversation({transport,task,run,offline,refresh}: {
       </MessageScrollerItem>)}
       {thread.page?.queued?.map(m=><MessageScrollerItem key={m.id} messageId={m.id}><ChatMessage role="user">{m.content}</ChatMessage></MessageScrollerItem>)}
       <SendingMessage message={thread.sending}/>
-      {!thread.sending&&thread.page?.activeTurn&&<MessageScrollerItem messageId="thinking"><PendingMessage>云端助手正在处理…</PendingMessage></MessageScrollerItem>}
-      {!thread.sending&&active&&<MessageScrollerItem messageId="activity"><PendingMessage>{thread.page?.waiting?'等待你的回复':run.status==='queued'?'等待执行设备':run.cancelRequested?'正在停止…':'执行器正在处理…'}</PendingMessage></MessageScrollerItem>}
+      <ThreadActivity offline={offline} error={thread.error}>{activity}</ThreadActivity>
       {(error||thread.page?.latestTurn?.error)&&<MessageScrollerItem messageId="error"><ErrorText error={error||thread.page?.latestTurn?.error||''}/></MessageScrollerItem>}
     </Thread>
     <Composer text={text} setText={setText} onSend={()=>void send()} busy={busy} disabled={offline||!thread.page} label="消息" placeholder={thread.page?.waiting?'在这里回复，执行器会继续…':'发送消息或补充要求…'}>

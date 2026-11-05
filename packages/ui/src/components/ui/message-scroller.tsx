@@ -64,14 +64,17 @@ function MessageScrollerContent({
 function MessageScrollerItem({
   className,
   scrollAnchor = false,
+  deferRendering = true,
   ...props
-}: React.ComponentProps<typeof MessageScrollerPrimitive.Item>) {
+}: React.ComponentProps<typeof MessageScrollerPrimitive.Item> & { deferRendering?: boolean }) {
   return (
     <MessageScrollerPrimitive.Item
       data-slot="message-scroller-item"
       scrollAnchor={scrollAnchor}
       className={cn(
-        "min-w-0 shrink-0 [contain-intrinsic-size:auto_10rem] [content-visibility:auto]",
+        "min-w-0 shrink-0",
+        // 历史消息延迟渲染；持续动画状态行必须保持渲染，避免 Safari 离屏后冻结。
+        deferRendering && "[contain-intrinsic-size:auto_10rem] [content-visibility:auto]",
         className,
       )}
       {...props}

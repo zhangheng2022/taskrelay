@@ -175,4 +175,8 @@
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+  /* 尊重减少动态效果；不用 0.01ms 的无限旋转制造假静止或闪烁。文字仍表示真实状态。 */
+  .chat-status-spinner {
+    animation: none !important;
+  }
 }
