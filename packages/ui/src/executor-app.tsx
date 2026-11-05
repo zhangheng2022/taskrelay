@@ -8,6 +8,8 @@ import { Field,FieldLabel,FieldDescription,FieldGroup,FieldContent } from './com
 import { ErrorText, LoadingState } from './feedback';
 import { BrandMark } from './brand-mark';
 import { ExecutorUpdate } from './executor-update';
+// Windows 状态窗口仅通过命名接口管理连接、领取开关、停止与更新；任务和聊天留在网站。
+// 本机状态与云端在线状态分别展示，因此断网时仍可停止正在执行的任务。
 export function ExecutorApp({executor}:{executor:NonNullable<Transport['desktop']>}) {
  const [status,setStatus]=useState<DesktopStatus|null>(null),[url,setUrl]=useState(''),[pair,setPair]=useState<{code:string}|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[note,setNote]=useState('');
  const [loadError,setLoadError]=useState('');

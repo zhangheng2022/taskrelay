@@ -16,7 +16,8 @@ const config: ForgeConfig = {
     name: "TaskRelay",
     executableName: "TaskRelay",
     icon: path.join(root, "resources/icon.ico"),
-    asar: true,
+    // sharp loads its platform addon and companion DLLs from the same directory.
+    asar: { unpack: "**/node_modules/@img/**/*" },
     prune: false,
     extraResource: [
       "browser",

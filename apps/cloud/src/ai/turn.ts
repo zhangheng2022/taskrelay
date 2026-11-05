@@ -1,3 +1,7 @@
+/**
+ * 每张云端图对应一个 Durable Object，由 alarm 消费 D1 中的持久化事件。
+ * 定时唤醒负责补投遗留工作；图状态、请求去重和未知结果处理仍由各自存储模块负责。
+ */
 import { DurableObject } from "cloudflare:workers";
 import type { AppEnv } from "../env";
 import { promoteInbox } from "./conversations";

@@ -1,3 +1,4 @@
+/** 设备执行协议：用租约约束上下文、模型转发、协助与动作登记；终态独立提交后回填原聊天。 */
 import {Buffer} from 'node:buffer';
 import {Hono} from 'hono';
 import {z} from 'zod';

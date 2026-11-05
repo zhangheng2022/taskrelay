@@ -5,6 +5,9 @@ import { limits, type TaskRun } from "../../../../packages/contracts/src/index";
 import type { Cloud } from "./cloud";
 import { Journal } from "./journal";
 import { OwnedBrowser } from "./browser";
+/** 管理单个执行子进程及其 generation，将串行 RPC、租约心跳和本地恢复记录接到 Main。
+ * 子进程退出后先收回自有浏览器，再根据 journal/outbox 收尾；不恢复浏览器操作。
+ */
 export class ExecutorHost {
   private child: UtilityProcess | null = null;
   private generation = "";

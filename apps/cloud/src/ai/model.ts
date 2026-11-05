@@ -1,3 +1,7 @@
+/**
+ * 将 LangChain 消息、工具和结构化输出适配到现有云端模型入口，复用能力校验与用量记录。
+ * 所有请求仍经统一地区出站；关闭 SDK 隐式重试，避免重发结果未知的模型调用。
+ */
 import { BaseChatModel, type BaseChatModelCallOptions, type BindToolsInput } from '@langchain/core/language_models/chat_models';
 import type { BaseLanguageModelInput, StructuredOutputMethodOptions } from '@langchain/core/language_models/base';
 import { type BaseMessage } from '@langchain/core/messages';

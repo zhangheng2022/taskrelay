@@ -48,6 +48,11 @@ export async function startProxy():Promise<{port:number;close:()=>Promise<void>;
     socket.on("close", () => sockets.delete(socket));
   });
   server.on("connect", (req, client, head) => {
+    // CONNECT transfers socket ownership to us before DNS resolves. Install the
+    // error handler immediately, including failed setup and browser cancellation.
+    let target: net.Socket | undefined;
+    client.on("error", () => { client.destroy(); target?.destroy(); });
+    client.on("close", () => target?.destroy());
     void (async () => {
       const url = new URL(`https://${req.url}`);
       if (url.username || url.password || (url.port && url.port !== "443"))
@@ -57,33 +62,31 @@ export async function startProxy():Promise<{port:number;close:()=>Promise<void>;
       if (!addresses.length || addresses.some((a) => !isPublicIp(a.address)))
         throw new Error("PRIVATE_NETWORK_BLOCKED");
       if (client.destroyed) return;
-      const target = net.connect({
+      const upstream = target = net.connect({
         host: addresses[0].address,
         port: 443,
         family: addresses[0].family,
       });
-      sockets.add(target);
+      sockets.add(upstream);
       const abortTunnel = (code:string) => {
         record(hostname,code);
         client.destroy();
-        target.destroy();
+        upstream.destroy();
       };
-      target.on("close", () => {
-        sockets.delete(target);
+      upstream.on("close", () => {
+        sockets.delete(upstream);
         // pipe forwards a normal FIN and drains buffered bytes. A destroyed
         // upstream does not emit end: explicitly retire the browser's tunnel.
-        if (!target.readableEnded && !client.destroyed) abortTunnel('TUNNEL_CLOSED');
+        if (!upstream.readableEnded && !client.destroyed) abortTunnel('TUNNEL_CLOSED');
       });
-      target.on("error", () => abortTunnel('TUNNEL_CONNECTION_FAILED'));
-      client.on("error", () => target.destroy());
-      client.on("close", () => target.destroy());
-      target.setTimeout(60000, () => abortTunnel('TUNNEL_IDLE_TIMEOUT'));
-      target.once("connect", () => {
-        if (client.destroyed) { target.destroy(); return; }
+      upstream.on("error", () => abortTunnel('TUNNEL_CONNECTION_FAILED'));
+      upstream.setTimeout(60000, () => abortTunnel('TUNNEL_IDLE_TIMEOUT'));
+      upstream.once("connect", () => {
+        if (client.destroyed) { upstream.destroy(); return; }
         client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-        if (head.length) target.write(head);
-        client.pipe(target);
-        target.pipe(client);
+        if (head.length) upstream.write(head);
+        client.pipe(upstream);
+        upstream.pipe(client);
       });
     })().catch((error) => {
       const code=error instanceof Error&&['DNS_TRANSPORT_FAILED','DNS_LOOKUP_FAILED','PRIVATE_NETWORK_BLOCKED'].includes(error.message)?error.message:'TUNNEL_SETUP_FAILED';

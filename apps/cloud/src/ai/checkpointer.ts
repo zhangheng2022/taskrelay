@@ -1,3 +1,7 @@
+/**
+ * LangGraph 的 D1 存储适配：加密保存检查点及未合并写入，并按用户和图隔离读取。
+ * 生产写入同时校验会话、图代次和执行租约，阻止失效回合重新写入已清理的上下文。
+ */
 import {
   BaseCheckpointSaver,
   WRITES_IDX_MAP,

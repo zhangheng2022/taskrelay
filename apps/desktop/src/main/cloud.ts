@@ -2,6 +2,9 @@ import { PROTOCOL_VERSION, HISTORY_EPOCH } from "../../../../packages/contracts/
 import { safeStorage } from "electron";
 import { Journal } from "./journal";
 import WebSocket from 'ws';
+/** Main 的云端适配器：保存设备令牌、协商协议与历史代次，并提供 HTTP 请求和变更通知。
+ * WebSocket 仅触发重新读取；运行、租约和任务状态仍以鉴权后的 HTTP 响应为准。
+ */
 export class Cloud {
   online = false;
   private readyUntil=0;

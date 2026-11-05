@@ -14,6 +14,9 @@ type NativeUpdater = Pick<AutoUpdater, 'setFeedURL' | 'checkForUpdates'> & {
   on(event:'error'|'update-not-available',listener:()=>void):unknown;
   on(event:'update-downloaded',listener:(event:unknown,notes:string,version:string)=>void):unknown;
 };
+/** 更新流程分为发现版本、用户确认后下载校验、等待执行器空闲、调用本地安装器。
+ * waiting/installing 阻止新领取，busy 回调统一检查任务、领取请求和待回传记录。
+ */
 export class DesktopUpdater {
   private value: DesktopUpdateStatus;
   private feed: string | null = null;

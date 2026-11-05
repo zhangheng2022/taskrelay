@@ -1,3 +1,7 @@
+/**
+ * 将云端交办决策转为任务快照与待投递命令，在同一事务中保存二者。
+ * 后续投递以回合标识去重，使中断后的补投不会重复创建执行批次。
+ */
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { enqueue, now, taskFrom, type Row } from "../store";

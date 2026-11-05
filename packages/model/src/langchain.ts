@@ -1,3 +1,7 @@
+/**
+ * LangChain 消息与内部传输格式之间的双向转换，保留图片、工具标识、调用顺序与用量。
+ * 无效工具参数作为反馈数据保留，交给执行循环处理，不在转换层猜测或修正操作。
+ */
 import { AIMessage, HumanMessage, SystemMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages';
 import type { Message, ModelResponse } from './index';
 

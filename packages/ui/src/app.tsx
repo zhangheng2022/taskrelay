@@ -79,6 +79,8 @@ export function App({ transport }: { transport: Transport }) {
     </TooltipProvider>
   );
 }
+// 工作空间只编排导航、云端快照和当前运行选择；会话读写交给共享聊天组件。
+// 通知与轮询共用加载入口，写操作完成后额外刷新，避免旧快照覆盖操作结果。
 function Workspace({ transport }: { transport: Transport }) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null),
     [error, setError] = useState(""),

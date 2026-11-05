@@ -6,6 +6,9 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { Journal } from "./journal";
 const exec = promisify(execFile);
+/** 按 Profile 启动并回收应用自有 Chromium，记录进程所有权并配置代理、调试与下载边界。
+ * launch/close 共享生命周期状态，避免停止期间的异步启动重新留下浏览器进程。
+ */
 export class OwnedBrowser {
   private child: ChildProcess | null = null;
   private generation = 0;

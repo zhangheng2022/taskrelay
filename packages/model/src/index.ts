@@ -1,3 +1,7 @@
+/**
+ * 模型协议适配：把统一消息转换为 Chat Completions 或 Responses 请求，并归一化结果。
+ * 此模块不决定路由或重试；生产由区域出站入口调用，公开错误仅返回固定分类。
+ */
 import type { ModelProfile } from "../../contracts/src/index";
 import { outputSchema } from "./schema";
 

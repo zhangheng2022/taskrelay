@@ -4,6 +4,7 @@ import {execute,type RuntimePort} from '../apps/desktop/src/executor/runtime';
 import {run} from './ui-fixtures';
 import type {ModelResponse} from '../packages/model/src/index';
 import type {ClientLLM} from '@browserbasehq/stagehand';
+import sharp from 'sharp';
 const answer=(text:string):ModelResponse=>({text,calls:[],usage:{input:null,output:null}});
 const tool=(name:string,args:Record<string,unknown>={}):ModelResponse=>({...answer(''),calls:[{id:crypto.randomUUID(),name,arguments:JSON.stringify(args)}]});
 async function scenario(turns:ModelResponse[],options:{actionError?:boolean;actionRejected?:boolean;emptyObserve?:boolean;navigationError?:boolean;cancelConnect?:boolean;createError?:boolean;closeError?:boolean;original?:string;origin?:string;fill?:string;method?:string;helpMessage?:string;cancel?:boolean;cancelStagehand?:boolean;newInstruction?:boolean;compact?:boolean;navigationObservationFailure?:boolean;unknownActionResult?:boolean;helpWaits?:number;cancelHelp?:boolean;executionOutline?:string[];finalShotInstruction?:boolean;finalMessageInstruction?:boolean;finalRpcInstruction?:boolean}={}){
@@ -13,9 +14,10 @@ async function scenario(turns:ModelResponse[],options:{actionError?:boolean;acti
  const original=options.original??'请处理当前页面';
  const chat:any[]=[{seq:1,role:'user',source:'user',content:original,private:!!options.original,origin:options.origin??'https://example.com'}];
  const changeInstructions=()=>{if(!changed){changed=true;chat.push({seq:2,role:'user',source:'user',content:'请先核对新补充要求，再结束。'});}};
- const page={url:async()=> 'https://example.com/',goto:async()=>{navigations++;if(options.navigationError)throw Error('NAVIGATION_FAILED');},screenshot:async()=>{if(options.finalShotInstruction&&finalReply)changeInstructions();return Buffer.from('png');},
+ const screenshot=await sharp({create:{width:1,height:1,channels:4,background:'#fff'}}).png().toBuffer();
+ const page={url:async()=> 'https://example.com/',goto:async()=>{navigations++;if(options.navigationError)throw Error('NAVIGATION_FAILED');},screenshot:async()=>{if(options.finalShotInstruction&&finalReply)changeInstructions();return screenshot;},
   snapshot:async()=>{if(snapshotFailures>0){snapshotFailures--;throw Error('Execution context destroyed during navigation');}return {formattedTree:'[1] button 继续登录\n[2] textbox 密码',xpathMap:{},urlMap:{}};},
-  evaluate:async()=>({readyState:'complete'}),locator:()=>{throw Error('RAW_SELECTOR_PATH_MUST_NOT_BE_USED');},
+  evaluate:async()=>({readyState:'complete',width:1,height:1,text:[]}),locator:()=>{throw Error('RAW_SELECTOR_PATH_MUST_NOT_BE_USED');},
  };
  const port:RuntimePort={cancelled:()=>cancelled,checkpoint:async(state,payload)=>{checkpoints.push({state,payload});},rpc:async<T>(path:string,body?:any)=>{
   calls.push({path,body});if(path==='local:browser')return {cdpUrl:'test'} as T;

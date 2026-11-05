@@ -1,3 +1,4 @@
+/** 云端队列与租约：固化运行快照、按用户公平领取、维护账号锁，并清理过期运行及推进已确认调度。 */
 import { quotaDay } from './tenancy';
 import {
   limits,

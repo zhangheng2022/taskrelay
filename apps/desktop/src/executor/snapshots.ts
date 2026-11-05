@@ -1,16 +1,17 @@
 import type {Page} from '@browserbasehq/stagehand';
 import {Buffer} from 'node:buffer';
+import sharp from 'sharp';
 
 export function redactSnapshot(value:string,secrets:Iterable<string>){
   for(const secret of secrets)if(secret)value=value.split(secret).join('[已隐藏]');
   return value.replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi,'[已隐藏邮箱]');
 }
 
-/** Fixed visual-only masks; never changes input values or executes model scripts. */
+/** 固定遮蔽控件与媒体；敏感文本仅在执行进程中匹配和涂色，秘密不进入网页执行环境。 */
 export async function maskedScreenshot(page:Page,secrets:string[]){
   const marker='taskrelay-mask-'+crypto.randomUUID();
   try{
-    await page.evaluate(({marker,secrets})=>{
+    const layout = await page.evaluate((marker)=>{
       const cover=(rect:DOMRect)=>{
         if(!rect.width||!rect.height)return;
         const mask=document.createElement('div');mask.setAttribute('data-taskrelay-mask',marker);
@@ -27,14 +28,28 @@ export async function maskedScreenshot(page:Page,secrets:string[]){
       });
       const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT),nodes:Node[]=[];
       for(let n=walker.nextNode();n;n=walker.nextNode())nodes.push(n);
-      for(const n of nodes){const text=n.textContent??'';
-        if(secrets.some(s=>s&&text.includes(s))||/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(text)){
-          const range=document.createRange();range.selectNodeContents(n);for(const rect of range.getClientRects())cover(rect);
-        }
+      const text = nodes.map(n=>{
+        const range=document.createRange();range.selectNodeContents(n);
+        return {value:n.textContent??'',rects:Array.from(range.getClientRects(),r=>({left:r.left,top:r.top,width:r.width,height:r.height}))};
+      });
+      return {width:innerWidth,height:innerHeight,text};
+    },marker);
+    if(!Number.isFinite(layout.width)||!Number.isFinite(layout.height)||layout.width<=0||layout.height<=0)throw Error('SNAPSHOT_LAYOUT_INVALID');
+    // No secret-dependent selectors, rectangles or matching results go back to the
+    // page. Even a hostile page overriding native prototypes cannot observe them.
+    const capture=await page.screenshot({type:'png',fullPage:false,scale:'css'});
+    const {data,info}=await sharp(Buffer.from(capture),{limitInputPixels:16_000_000}).toColourspace('srgb').ensureAlpha().raw().toBuffer({resolveWithObject:true});
+    const sx=info.width/layout.width,sy=info.height/layout.height;
+    for(const text of layout.text){
+      if(!secrets.some(s=>s&&text.value.includes(s))&&!/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(text.value))continue;
+      for(const rect of text.rects){
+        if(![rect.left,rect.top,rect.width,rect.height].every(Number.isFinite)||rect.width<=0||rect.height<=0)continue;
+        const left=Math.max(0,Math.floor(rect.left*sx)-1),top=Math.max(0,Math.floor(rect.top*sy)-1);
+        const right=Math.min(info.width,Math.ceil((rect.left+rect.width)*sx)+1),bottom=Math.min(info.height,Math.ceil((rect.top+rect.height)*sy)+1);
+        for(let y=top;y<bottom;y++)for(let x=left;x<right;x++)data.writeUInt32BE(0x777777ff,(y*info.width+x)*4);
       }
-      return true;
-    },{marker,secrets});
-    return Buffer.from(await page.screenshot({type:'png'})).toString('base64');
+    }
+    return (await sharp(data,{raw:{width:info.width,height:info.height,channels:4}}).png().toBuffer()).toString('base64');
   }finally{await page.evaluate(marker=>{
     document.querySelectorAll('[data-taskrelay-mask]').forEach(e=>{if(e.getAttribute('data-taskrelay-mask')===marker)e.remove();});
     document.querySelectorAll<HTMLElement>('[data-taskrelay-media-mask]').forEach(e=>{

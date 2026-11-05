@@ -7,6 +7,7 @@ import { MessageScrollerItem } from './components/ui/message-scroller';
 import { Button } from './components/ui/button';
 import { ErrorText, LoadFeedback } from './feedback';
 
+// 新任务以普通聊天交办；云端返回 taskId 后沿用原会话进入任务页，不在本地创建执行计划。
 export function TaskCompose({transport,snapshot,offline,onSaved,onSettings}: {
   transport:Transport;snapshot:Snapshot;offline:boolean;
   onSaved:(id:string)=>Promise<void>;onSettings:()=>void;

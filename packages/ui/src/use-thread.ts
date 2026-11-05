@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { TaskInput, Transport } from "../../contracts/src/index";
+// 管理新任务和既有任务共用的聊天生命周期：查找/创建、通知刷新、发送、历史分页与清空。
+// generation 隔离会话切换，revision 隔离读写交错；attempt 保存待确认发送的原文和幂等标识。
 export type ThreadPage = {
   id: string;
   version: number;
@@ -116,7 +118,8 @@ export function useThread(
       next.version >= (current.current?.version ?? 0)
     ) {
       setError("");
-      if (!next.activeTurn) attempt.current = null;
+      // An idle turn does not acknowledge a particular POST. Keep its requestId
+      // across refreshes until an explicit retry receives the write response.
       accept({
         ...next,
         replies:mergeReplies(current.current?.replies,next.replies),
@@ -213,6 +216,7 @@ export function useThread(
     await transport.request("DELETE", `/api/user/threads/${p.id}`);
     if(g!==generation.current)return;
     const nextGeneration=++generation.current;
+    writing.current=false;
     current.current=null;setPage(null);
     revision.current++;
     attempt.current = null;

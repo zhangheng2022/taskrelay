@@ -5,6 +5,7 @@ import { hash, randomToken } from "../../../packages/contracts/src/security";
 import type { AppEnv, Variables } from "./env";
 import { seal, unseal } from "./crypto";
 import { now, uid, type Row } from "./store";
+import { limitRequest } from "./identity";
 export const pairing = new Hono<{ Bindings: AppEnv; Variables: Variables }>();
 pairing.post("/start", async (c) => {
   const { name } = z
@@ -14,6 +15,11 @@ pairing.post("/start", async (c) => {
     })
     .strict()
     .parse(await c.req.json());
+  // Use Cloudflare's ingress address, never caller-supplied forwarding headers.
+  // Reserve at most five attempts per source over the pairing lifetime, before
+  // consuming the shared capacity; D1's atomic limiter also covers parallel calls.
+  const source=await hash(c.req.header('cf-connecting-ip')??'local');
+  await limitRequest(c.env,`pair:${source}`,5,600000);
   const count = await c.env.DB.prepare(
     "SELECT COUNT(*) n FROM pairings WHERE expires_at>?",
   )

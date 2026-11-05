@@ -1,3 +1,7 @@
+/**
+ * 统一聊天消息的幂等写入、敏感正文加密与执行上下文读取，供交办和执行协助共用。
+ * 消息绑定原会话，关闭的会话拒绝新写入；运行上下文解密前校验任务与会话归属。
+ */
 import type { AppEnv } from "./env";
 import { now, type Row } from "./store";
 import { seal, unseal } from "./crypto";

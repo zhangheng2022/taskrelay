@@ -2,6 +2,9 @@ import { HISTORY_EPOCH } from "../../../../packages/contracts/src/index";
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
+/** Main 的本地持久化边界：config/cache 保存配置与缓存，journal 记录执行检查点，
+ * outbox 暂存待确认的终态事实。恢复只回传事实，不把检查点当作浏览器重放脚本。
+ */
 export class Journal {
   private db: DatabaseSync;
   constructor(directory: string) {

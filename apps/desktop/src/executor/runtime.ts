@@ -31,6 +31,9 @@ export async function connectExecutionBrowser(sdk:typeof import('@browserbasehq/
 interface ChatContext {seq:number;role:string;content:string;source:string;private?:boolean;run_id?:string|null;origin?:string|null;}
 type ToolCall=ModelResponse['calls'][number];
 
+/** 将执行图需要的能力接到当前租约：读取原始聊天、调用 Stagehand、登记动作、交付协助与收尾。
+ * 图决定下一步，本层维护页面与私有上下文；写给 Main 的恢复记录不包含站点凭据，也不用于重放操作。
+ */
 export async function execute(run:TaskRun,port:RuntimePort,adapters={loadSdk:()=>import('@browserbasehq/stagehand'),startProxy,delay}){
   let proxy:Awaited<ReturnType<typeof startProxy>>|undefined,page:Page|undefined;
   let session:Awaited<ReturnType<typeof connectExecutionBrowser>>['session']|undefined;

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {JSDOM} from 'jsdom';
+import sharp from 'sharp';
 import {execute,type RuntimePort} from '../apps/desktop/src/executor/runtime';
 import {productionModelFixture} from './production-model-fixture';
 const tool=(name:string,args:Record<string,unknown>)=>JSON.stringify({__model:{text:'',calls:[{id:crypto.randomUUID(),name,arguments:JSON.stringify(args)}]}});
@@ -13,8 +14,10 @@ test('完整生产链：执行器模型转发、多项目操作、云端求助�
  (dom.window as any).__name=(fn:unknown)=>fn;
  Object.defineProperty(dom.window.HTMLElement.prototype,'innerText',{get(){return this.textContent;}});
  dom.window.HTMLElement.prototype.getClientRects=(()=>[{width:100,height:20}]) as any;
+ dom.window.Range.prototype.getClientRects=(()=>[]) as any;
+ const screenshot=await sharp({create:{width:1024,height:768,channels:4,background:'#fff'}}).png().toBuffer();
  let first=0,second=0;let sdkModel:any;
- const page={snapshot:async()=>({formattedTree:dom.window.document.body.textContent,xpathMap:{},urlMap:{}}),url:async()=>dom.window.location.href,goto:async()=>{},screenshot:async()=>Buffer.from([137,80,78,71,13,10,26,10]),evaluate:async(fn:Function,arg?:unknown)=>dom.window.eval(`(${fn.toString()})(${JSON.stringify(arg)??'undefined'})`),locator:(selector:string)=>({
+ const page={snapshot:async()=>({formattedTree:dom.window.document.body.textContent,xpathMap:{},urlMap:{}}),url:async()=>dom.window.location.href,goto:async()=>{},screenshot:async()=>screenshot,evaluate:async(fn:Function,arg?:unknown)=>dom.window.eval(`(${fn.toString()})(${JSON.stringify(arg)??'undefined'})`),locator:(selector:string)=>({
    click:async()=>{if(selector==='#one')first++;if(selector==='#two')second++;dom.window.document.querySelector('#result')!.textContent=`已处理 ${first+second} 项`;},
    fill:async(value:string)=>{(dom.window.document.querySelector(selector) as HTMLInputElement).value=value;},inputValue:async()=>(dom.window.document.querySelector(selector) as HTMLInputElement).value,
  })};

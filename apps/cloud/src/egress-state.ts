@@ -1,3 +1,7 @@
+/**
+ * 单次模型出站作业的持久状态机：分块保存加密请求，alarm 执行，原始 RPC 等待结果。
+ * 一旦进入 running，进程中断后按结果未知收尾，不自动重发；终态确认或过期后清理密文。
+ */
 import { seal, unseal } from "./crypto";
 
 type Storage = Pick<

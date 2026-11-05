@@ -7,6 +7,8 @@ import {Button} from './components/ui/button';
 import {ErrorText,LoadFeedback} from './feedback';
 import {ChatAttachments} from './chat-attachments';
 
+// 将用户消息、云端协助和执行器反馈合并到同一聊天；停止直接调用运行控制接口。
+// run 由工作空间选择当前活动运行，历史记录入口不会把停止按钮绑定到旧运行。
 export function Conversation({transport,task,run,offline,refresh}: {
   transport:Transport;task:TaskDefinition;run:TaskRun|null;
   refresh:()=>Promise<void>;offline:boolean;

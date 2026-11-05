@@ -1,3 +1,4 @@
+/** 网站认证：配置 Better Auth、验证邮箱后绑定业务成员，并为注册和邮件入口实施准入校验。 */
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from '@better-auth/drizzle-adapter';
 import { drizzle } from 'drizzle-orm/d1';

@@ -1,3 +1,4 @@
+/** 用户工作空间接口：先核对资源归属，再读取任务/运行/图片或提交账号与控制请求；管理员配置单独挂载。 */
 import { conditionsSchema } from './ai/commands';
 import {getEvidence} from './evidence';
 import {Buffer} from 'node:buffer';

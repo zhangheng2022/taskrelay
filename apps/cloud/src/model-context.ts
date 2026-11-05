@@ -1,3 +1,7 @@
+/**
+ * 按配置的上下文窗口压缩执行历史，保留用户原话、目标、大步骤及尚未闭合的工具调用。
+ * 摘要同样经过统一模型入口；必须保留的信息已超出窗口时明确报错，不静默截断。
+ */
 import {z} from 'zod';
 import type {AppEnv} from './env';
 import type {Message} from '../../../packages/model/src/index';

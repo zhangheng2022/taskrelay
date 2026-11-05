@@ -8,6 +8,7 @@ export default defineConfig({
     },
     rollupOptions: {
       external: [
+        "sharp",
         /^@browserbasehq\/stagehand(?:\/|$)/,
         /^@langchain\/(?:core|langgraph|langgraph-checkpoint)(?:\/|$)/,
       ],

@@ -3,7 +3,7 @@ import { Buffer } from 'node:buffer';
 import { seal,unseal } from './crypto';
 import type { AppEnv } from './env';
 
-/** One object per short-lived artifact; no public URL or cross-owner lookup. */
+/** 每张图片独立分块加密存储：临时证据由 alarm 到期清理，聊天图片保留到所属聊天删除；不提供公开地址。 */
 export class Evidence extends DurableObject<AppEnv> {
   async put(key:string,bytes:ArrayBuffer,expires:number|null) {
     if(bytes.byteLength>2_000_000||(expires!==null&&(expires<=Date.now()||expires>Date.now()+600_000)))throw new Error('EVIDENCE_INVALID');

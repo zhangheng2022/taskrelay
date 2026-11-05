@@ -1,3 +1,7 @@
+/**
+ * 聊天交办入口：管理所属会话、消息队列与交办回合，并将运行中的补充送给执行器。
+ * 云端只生成业务大步骤；任务启动通过持久化命令交接，具体页面操作由桌面完成。
+ */
 import { queueHelpReply } from "../execution-help";
 import { dispatchGraphEvent, wakeGraph } from "./dispatch";
 import { appendMessage, conversationContext } from "../chat-messages";
@@ -348,6 +352,26 @@ conversations.post("/threads/:id/messages", async (c) => {
     // would resurrect an already interpreted reply after AI asks a new question.
     return c.json(await threadPage(c.env, t.id));
   }
+  const digest = await hash(b.content),
+    turnId = "turn_" + (await hash(t.id + ":" + b.requestId));
+  const prior = await c.env.DB.prepare(
+    "SELECT digest,status FROM conversation_inbox WHERE id=?",
+  )
+    .bind(turnId)
+    .first<{ digest: string; status: string }>();
+  if (prior) {
+    if (prior.digest !== digest) throw Error("MESSAGE_CONFLICT");
+    // A lost handoff response can be retried after the task has already started.
+    // Its original inbox identity still wins over the active-run message branch.
+    if (prior.status === "pending") {
+      await expireTurn(c.env, t);
+      await promoteInbox(c.env, t.id);
+    }
+    const turn = await c.env.DB.prepare("SELECT status,error FROM ai_turns WHERE id=?")
+      .bind(turnId).first<Row>();
+    return c.json({ turnId, status: turn?.status ?? "queued", error: turn?.error,
+      ...(await threadPage(c.env, t.id)) }, 202);
+  }
   const active = t.task_id
     ? await c.env.DB.prepare(
         "SELECT id FROM runs WHERE task_id=? AND status IN ('queued','running','waiting_user','verifying') ORDER BY created_at DESC LIMIT 1",
@@ -389,14 +413,6 @@ conversations.post("/threads/:id/messages", async (c) => {
     }
     return c.json(await threadPage(c.env, t.id), 202);
   }
-  const digest = await hash(b.content),
-    turnId = "turn_" + (await hash(t.id + ":" + b.requestId));
-  const prior = await c.env.DB.prepare(
-    "SELECT digest FROM conversation_inbox WHERE id=?",
-  )
-    .bind(turnId)
-    .first<{ digest: string }>();
-  if (prior && prior.digest !== digest) throw Error("MESSAGE_CONFLICT");
   await c.env.DB.prepare(
     "INSERT OR IGNORE INTO conversation_inbox(id,thread_id,request_id,digest,content,mode,created_at) VALUES(?,?,?,?,?,'chat',?)",
   )

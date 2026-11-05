@@ -1,3 +1,7 @@
+/**
+ * 模型服务入口：管理配置版本、能力探测、调用去重、结构化校验与实际用量。
+ * 普通调用只提交加密出站作业；仅美国区域 ModelEgress 的 alarm 可调用提供方适配器。
+ */
 import { reserve } from './tenancy';
 import { z } from "zod";
 import {

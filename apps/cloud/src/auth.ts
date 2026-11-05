@@ -1,3 +1,4 @@
+/** API 身份入口：公开认证/配对、设备令牌和用户会话分别校验；路由分片不授予权限。 */
 import type { MiddlewareHandler } from 'hono';
 import type { AppEnv,Variables } from './env';
 import { hash } from '../../../packages/contracts/src/security';

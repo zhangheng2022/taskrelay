@@ -4,6 +4,7 @@ import {JSDOM} from 'jsdom';
 import {productionModelFixture} from './production-model-fixture';
 import {app} from '../apps/cloud/src/index';
 import {maskedScreenshot,redactSnapshot} from '../apps/desktop/src/executor/snapshots';
+import sharp from 'sharp';
 
 test('私有快照：生产上传校验租约、文件类型、归属及过期，重试不重复存储',async t=>{
  const s=await productionModelFixture(t),images=new Map<string,ArrayBuffer>();let puts=0;
@@ -33,11 +34,11 @@ for(const fails of [false,true])test('截图遮蔽不改变登录字段，成功
   dom.window.HTMLElement.prototype.getBoundingClientRect=()=>({x:0,y:0,left:0,top:0,width:100,height:30,right:100,bottom:30,toJSON:()=>({})});
   dom.window.Range.prototype.getClientRects=(()=>[{left:0,top:50,width:100,height:20}]) as any;
   const page={evaluate:async(fn:Function,arg:unknown)=>dom.window.eval(`(${fn.toString()})(${JSON.stringify(arg)})`),screenshot:async()=>{
-   assert.equal(dom.window.document.querySelectorAll('[data-taskrelay-mask]').length,2);
+   assert.equal(dom.window.document.querySelectorAll('[data-taskrelay-mask]').length,1);
    assert.equal(dom.window.document.querySelector('img')!.style.visibility,'hidden');
    assert.equal(dom.window.document.querySelector('iframe')!.style.visibility,'hidden');
    assert.equal(dom.window.document.querySelector('input')!.value,'synthetic-secret');
-   if(fails)throw Error('CAPTURE_FAILED');return new Uint8Array([137,80,78,71]);
+   if(fails)throw Error('CAPTURE_FAILED');return sharp({create:{width:1024,height:768,channels:4,background:'#fff'}}).png().toBuffer();
   }};
   if(fails)await assert.rejects(maskedScreenshot(page as any,['synthetic-secret']),/CAPTURE_FAILED/);else await maskedScreenshot(page as any,['synthetic-secret']);
   assert.equal(dom.window.document.querySelectorAll('[data-taskrelay-mask]').length,0);
@@ -46,5 +47,27 @@ for(const fails of [false,true])test('截图遮蔽不改变登录字段，成功
   assert.equal(dom.window.document.querySelector('img')!.style.getPropertyPriority('visibility'),'important');
   assert.equal(dom.window.document.querySelector('input')!.value,'synthetic-secret');
   assert.doesNotMatch(redactSnapshot('synthetic-secret fixture@example.com',['synthetic-secret']),/synthetic-secret|fixture@example/);
+ }finally{dom.window.close();}
+});
+
+test('不可信页面无法通过截图读取其他站点秘密；敏感文字在本地像素中遮蔽',async()=>{
+ const dom=new JSDOM('<body><p>visible-secret</p><p>ordinary text</p></body>',{url:'https://other.example',runScripts:'outside-only'});
+ try{
+  (dom.window as any).__name=(f:unknown)=>f;
+  dom.window.eval(`window.captured=[];const original=Array.prototype.some;Array.prototype.some=function(...args){window.captured.push(...this);return original.apply(this,args);};`);
+  dom.window.Range.prototype.getClientRects=function(this:Range){return [{left:10,top:this.startContainer.textContent==='visible-secret'?10:60,width:100,height:20}];} as any;
+  const inputs:string[]=[];
+  const page={evaluate:async(fn:Function,arg:unknown)=>{
+   inputs.push(fn.toString()+JSON.stringify(arg));
+   return dom.window.eval(`(${fn.toString()})(${JSON.stringify(arg)})`);
+  },screenshot:async()=>sharp({create:{width:1024,height:768,channels:4,background:'#fff'}}).png().toBuffer()};
+  const image=await maskedScreenshot(page as any,['visible-secret','other-site-password','001234']);
+  assert.doesNotMatch(inputs.join('\n'),/visible-secret|other-site-password|001234/);
+  assert.deepEqual(Array.from((dom.window as any).captured),[]);
+  const {data,info}=await sharp(Buffer.from(image,'base64')).ensureAlpha().raw().toBuffer({resolveWithObject:true});
+  const pixel=(x:number,y:number)=>Array.from(data.subarray((y*info.width+x)*4,(y*info.width+x)*4+4));
+  assert.deepEqual(pixel(20,20),[119,119,119,255]);
+  assert.deepEqual(pixel(20,70),[255,255,255,255]);
+  assert.equal(dom.window.document.querySelectorAll('[data-taskrelay-mask]').length,0);
  }finally{dom.window.close();}
 });

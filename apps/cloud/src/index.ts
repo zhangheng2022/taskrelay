@@ -1,3 +1,4 @@
+/** 应用路由与维护入口：统一请求大小、来源、身份和错误响应；定时清理委托给队列与聊天生命周期模块。 */
 import {deleteEvidence} from './evidence';
 import {notifyUser,notifyDevices} from './notifications';
 import {retainHistory} from './ai/lifecycle';

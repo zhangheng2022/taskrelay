@@ -1,7 +1,7 @@
 {
   "name": "@taskrelay/desktop",
   "productName": "TaskRelay",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "private": true,
   "description": "TaskRelay shared browser task executor",
   "author": "TaskRelay",
@@ -12,6 +12,7 @@
     "make": "electron-forge make --platform=win32 --arch=x64"
   },
   "dependencies": {
+    "sharp": "0.35.5",
     "@browserbasehq/stagehand": "4.3.0",
     "electron-squirrel-startup": "1.0.1",
     "ws": "8.22.0",

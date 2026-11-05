@@ -1,3 +1,4 @@
+/** 休眠 WebSocket 仅通知“数据已变化”；每次推送重新检查会话或设备，业务数据仍由鉴权 API 读取。 */
 import { DurableObject } from 'cloudflare:workers';
 import type { AppEnv } from './env';
 type Subscriber={owner?:string;session?:string;device?:string;expires:number};

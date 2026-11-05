@@ -1,3 +1,7 @@
+/**
+ * 交办图按“理解意图 → 可选任务交接 → 回复”推进；明确交办时产出可调整的大步骤。
+ * 检查点保存图状态，命令模块承担任务交接的幂等性，不在此规划页面控件操作。
+ */
 import { Annotation, StateGraph, START, END } from "@langchain/langgraph";
 import { z } from "zod";
 import type { Message } from "../../../../packages/model/src/index";

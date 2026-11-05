@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {productionModelFixture} from './production-model-fixture';
+import {hash} from '../packages/contracts/src/security';
 const decision=(start=true)=>JSON.stringify({reply:start?'已交给执行器。':'请说明要处理哪个网站。',start,title:start?'读取页面':null,goal:start?'查看当前页面并报告':null,entryUrl:start?'https://example.com/':null,accountId:null,executionOutline:start?['打开目标网站','读取页面内容并反馈']:[]});
 for(const protocol of ['chat','responses'] as const)test(`新交办/${protocol}：意图检查后直接启动，同一会话且重复发送不重复启动`,async t=>{
   const s=await productionModelFixture(t,protocol),th=(await s.request('/api/user/threads',{modelId:'model_test'})).data;
@@ -9,6 +10,7 @@ for(const protocol of ['chat','responses'] as const)test(`新交办/${protocol}�
   assert.equal(r.status,202,JSON.stringify(r.data));assert.ok(r.data.taskId,JSON.stringify(r.data));
   const retry=await s.request(`/api/user/threads/${th.id}/messages`,b);
   assert.equal(retry.data.id,th.id);assert.equal(s.jobs(),1);
+  assert.equal(retry.data.messages.filter((m:{role:string})=>m.role==='user').length,1,'重试已启动交办不能再追加一条执行中补充');
   assert.equal(s.sql.prepare('SELECT COUNT(*) n FROM runs WHERE task_id=?').get(r.data.taskId)!.n,1);
   assert.equal(s.sql.prepare('SELECT execution_protocol FROM runs WHERE task_id=?').get(r.data.taskId)!.execution_protocol,15);
 });
@@ -16,6 +18,20 @@ test('意图不明只追问，不创建运行',async t=>{
   const s=await productionModelFixture(t),th=(await s.request('/api/user/threads',{modelId:'model_test'})).data;
   s.replies(decision(false));const r=await s.request(`/api/user/threads/${th.id}/messages`,{requestId:'question',content:'帮我处理一下'});
   assert.equal(r.data.taskId,null);assert.match(r.data.messages.at(-1).content,/请说明/);
+});
+
+test('交办已入队但尚未提升时，原请求重试继续处理且不重复入队',async t=>{
+ const s=await productionModelFixture(t),th=(await s.request('/api/user/threads',{modelId:'model_test'})).data;
+ const body={requestId:'queued_retry',content:'查看 example.com'};
+ const turnId='turn_'+await hash(th.id+':'+body.requestId);
+ s.sql.prepare("INSERT INTO conversation_inbox(id,thread_id,request_id,digest,content,mode,created_at) VALUES(?,?,?,?,?,'chat',?)")
+  .run(turnId,th.id,body.requestId,await hash(body.content),body.content,new Date().toISOString());
+ s.replies(decision());
+ const reply=await s.request(`/api/user/threads/${th.id}/messages`,body);
+ assert.equal(reply.data.status,'done',JSON.stringify(reply.data));
+ assert.equal(s.jobs(),1);
+ assert.equal(s.sql.prepare('SELECT COUNT(*) n FROM conversation_inbox WHERE thread_id=?').get(th.id)!.n,1);
+ assert.equal(reply.data.messages.filter((m:{role:string})=>m.role==='user').length,1);
 });
 test('执行中补充直接进入聊天，不调用第二个云端规划模型',async t=>{
   const s=await productionModelFixture(t),th=(await s.request('/api/user/threads',{modelId:'model_test',taskId:s.run.taskId})).data;
