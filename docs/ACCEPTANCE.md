@@ -8,6 +8,14 @@
 
 完整 **261/261 项测试通过**，类型检查、Web 构建、仓库与差异检查通过。新增生产接口隔离回归覆盖账号密码同发、分次输入、错误密码更正、验证码前导零、Stagehand 接收完整原文、当前登录来源绑定、本人回显与密文存储；取消、租约过期和聊天关闭后，已送达回复不能继续调用模型恢复旧协助。提供方与网页为虚构夹具，此证据不代表真实 Microsoft 登录或积分到账。
 
+生产代码提交 `3eb40fb` 已推送并部署，云端版本为 `7e87f574-96fc-497d-9915-8cca49e2b39a`；主域与 workers.dev 的健康及权限边界自检通过。本次没有数据库结构变更，不新增生产迁移，也未修改 MASTER_KEY、注册或领取开关。首次远程 Windows CI 暴露聊天刷新测试在订阅 effect 建立前模拟通知的问题；`bed0765` 仅修正测试等待条件，生产代码与安装包不变。[后续 CI](https://github.com/zhangheng2022/taskrelay/actions/runs/42025264851) 的 Windows / Ubuntu 均通过完整 261 项测试、类型检查、Web 构建与仓库检查。
+
+安装包从干净提交 `3eb40fb` 构建，经系统 Explorer 安装；结束空闲进程后，从实际桌面 `TaskRelay.lnk` 再次启动，系统进程路径为 `C:/Users/96227/AppData/Local/TaskRelay/app-0.12.3/TaskRelay.exe`，界面显示 0.12.3、在线等待任务。安装前后配置、Local State 哈希和 24 个 Profile 目录列表一致，SQLite quick_check 为 ok，outbox 与未完成 journal 均为 0。
+
+本次包内与真实系统安装 smoke 均通过，后者于北京时间 **20:14:59** 由系统 Explorer 启动独立自检入口生成。两份报告与物理安装 ASAR 的 SHA-256 均为 `69594af51b930e5df665d6f7192e72a7cc1e0d9dc9fcb279381055b3f86ba5e5`；安装器 SHA-256 为 `38cd6a7280151d26b1f9af2353c2df673978d398f70b71315102edcef4782d78`。发布清单在仅含测试修正的 `bed0765` 生成，`sourceDirty=false`、`installedAsarMatches=true`，安装路径经只读映射核验为系统物理目录。没有发布 GitHub Release 或切换自动更新目录。
+
+OCR preview/rule 成功执行，宿主补审默认排除的测试和锁文件；本轮代码与文档差异共 11 个文件全部 reviewed、0 skipped、覆盖率 100%，无遗留发现。关系图为 4434 节点、7163 边，23 个 SQL 文件仍因缺少 tree_sitter_sql 未解析。本轮独立 smoke 不等同于真实网站完成；干净 Windows、休眠断网与连续观察仍未验证。
+
 ## 2026-11-05 生产迁移、云端部署与 Windows 安装（0.12.2 / 协议 15）
 
 已按本次授权推送 `master` 至 `05789de81dc377510536249a45abac4705f24254`，从该干净提交重新构建。本提交 [远程 CI](https://github.com/zhangheng2022/taskrelay/actions/runs/42019037637) 的 Ubuntu / Windows、Node 24 均通过，含完整 256 项测试、类型检查、Web 构建、仓库及差异检查。下方两节“尚未部署/安装”描述的是先前源码修复阶段，本节记录后续交付。
