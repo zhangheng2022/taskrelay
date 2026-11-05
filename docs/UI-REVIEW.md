@@ -4,6 +4,8 @@
 
 网站使用 packages/ui 的 App、TaskCompose、Conversation、Settings；桌面使用独立 ExecutorApp。共用主题和原语，桌面没有网站的聊天与编辑功能。设备配对确认仍在网站 PairingNotice 完成。
 
+2026-11-05 / 0.12.5：真实 Edge 历史聊天已验证 19 次工具调用汇总为一个 Trace，八次读取展开可查；390×844 下过程与输入控件可访问，Enter 可折叠，验证后恢复视口。实际系统安装窗口显示 0.12.5 在线。这里只验证本次过程聚合与桌面版本入口，未新增全主题、真实手机、输入法或业务无人干预验收；其余较早记录按各轮范围理解。
+
 聊天使用 shadcn/ui AI Elements 的 MessageScroller / Message / Bubble、InputGroup 与 Composer、ModelSelector。执行过程按运行合并到 Trace，展示调用次数、读取次数与最后更新时间；展开可查看所有真实记录和脱敏反馈，内部反馈仍可展开。协助问题和最终回复独立显示，重复通知按消息 ID 合并，不能把相同文案的新问题吞掉。交办、执行补充和协助共用输入框；Enter 发送，Shift+Enter 换行，中文组合输入不发送。模型、加载、失败、离线和停止取自真实状态。
 
 本轮移除未被当前产品入口使用的 TaskEditor、RunConditions、RunReport 和 ChallengePanel，设置所需 Field 单独保留。CSS 由宿主入口加载；应用组件可直接挂载测试。

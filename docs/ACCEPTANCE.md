@@ -8,7 +8,13 @@
 
 OCR preview/rule 已执行，宿主逐项审查全部 25 个变更文件（补审默认排除的测试、锁文件及文档），25 reviewed、0 skipped、覆盖率 100%。修复审查中发现的“上传未发布仍被当作已有聊天图片”问题。图更新为 4450 节点、7230 边；23 个 SQL 因缺少 tree_sitter_sql 未解析，4 个测试文件没有提取符号，已直接审查源码。Hono CLI 直接加载命名 app 导出报 INVALID_APP；接口验证使用现有生产 app.request 集成测试，不将该 CLI 命令称为通过。
 
-发布与安装证据待本轮实际操作后补充。测试网站和模型为隔离夹具，不代表新版真实 Microsoft 积分业务已验收，也不能保证 AI 在任何网站都不会重复读取。
+源码提交 `9ba3d511e6819ead7839c00fac073cc5b472f513` 已推送，[Windows / Ubuntu Node 24 CI](https://github.com/zhangheng2022/taskrelay/actions/runs/42036882734) 均通过；单独 UI 测试 38/38 通过。云端版本为 `f6f7a752-5348-4899-b1c8-57508a94c080`，主域及 workers.dev 健康与权限检查通过。生产 D1 最新迁移仍为 `0022_checkpoint_chunks.sql`，本轮无结构迁移；领取 1、维护 0、historyEpoch 4，发布前后活动运行均为 0。
+
+实际 Edge 原聊天显示一个执行过程区域，计数为 19 次调用（act 6 / observe 5 / extract 8），展开保留全部八次读取明细。390×844 视口下仍可访问过程、计数和输入控件，Enter 可折叠过程，完成后恢复默认视口；没有读取或复制原聊天的密码内容。该项是历史 UI 验证，不是新版浏览器业务执行。真实手机、全主题布局和输入法未另作完整验收。
+
+从干净源码构建 0.12.5，经系统 Explorer 安装并从实际桌面快捷方式重新启动；系统进程路径为 `C:/Users/96227/AppData/Local/TaskRelay/app-0.12.5/TaskRelay.exe`，界面显示 0.12.5、在线等待任务。包内和实际安装 smoke 均通过，安装报告生成于北京时间 **21:38:30**。安装与构建 ASAR SHA-256 均为 `e2a51203db5312b64cee08bbe8aedba86e906d978918933905435f32b13dc021`；安装器 SHA-256 为 `5a98db9986e3fc733f7d186b6b0725682e00ff794bff696c0089a66cc6ab7acb`。release-manifest 的 sourceDirty=false、installedAsarMatches=true；物理系统路径经只读映射核验，未把 Codex 重定向副本当作系统安装。
+
+配置、Local State 哈希及 24 个 Profile 目录列表安装前后一致，SQLite quick_check=ok，outbox 与未完成 journal 为 0。未发布 GitHub Release 或切换自动更新目录。测试网站和模型为隔离夹具，smoke 不替代实际 execute / ExecutorHost 全调度验证；本轮没有再次运行 Microsoft 积分任务，不能保证 AI 在任何网站都不会重复读取。干净 Windows、真实验证码及连续无人干预业务仍未验收。
 
 ## 2026-11-05 真实登录、积分读取与提前回复修复（0.12.4）
 

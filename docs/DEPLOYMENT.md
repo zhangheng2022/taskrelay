@@ -2,6 +2,10 @@
 
 ## 最近已记录部署
 
+2026-11-05 最新部署为消息防重与按需截图修复：源码 `9ba3d511e6819ead7839c00fac073cc5b472f513`，Worker 版本 `f6f7a752-5348-4899-b1c8-57508a94c080`，Windows 实际安装版本 **0.12.5**。两域名健康及权限自检、Windows / Ubuntu CI、包内与实际安装 smoke 均通过；本轮无 SQL 结构迁移，沿用协议 15 和迁移 0022。系统快捷方式启动、配置保留与 ASAR 哈希证据见 [ACCEPTANCE](ACCEPTANCE.md)。未发布 GitHub Release 或切换自动更新目录。
+
+以下为 0.12.2 的迁移部署基线：
+
 2026-11-05 从干净源码提交 `05789de81dc377510536249a45abac4705f24254` 部署云端/Web，版本为 `ad3876af-4ada-4a2c-891f-f08eb55d5232`，协议 15，生产 D1 已迁移至 `0022_checkpoint_chunks.sql`。两个生产域名的健康、权限拒绝与静态资源哈希检查通过；领取恢复为 1、维护恢复为 0，设备心跳正常。该源码的 Ubuntu / Windows、Node 24 [远程 CI](https://github.com/zhangheng2022/taskrelay/actions/runs/42019037637) 均通过。
 
 同一提交已生成并实际安装 Windows **0.12.2**。从桌面快捷方式启动的进程位于系统 `C:/Users/96227/AppData/Local/TaskRelay/app-0.12.2/TaskRelay.exe`，安装与构建 ASAR SHA-256 均为 `29b98cfb520fba6877c0c532700e1303b7c46015d283b309d8d2b1d6e29d9b17`；包内 smoke、实际安装 smoke 与 release-manifest 均通过。本地配置及 23 个 Profile 目录保留，没有清空历史或更改 MASTER_KEY；未发布 GitHub Release 或切换自动更新目录。证据与未验证范围见 [ACCEPTANCE](ACCEPTANCE.md)。
