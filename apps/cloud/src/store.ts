@@ -97,7 +97,7 @@ export async function enqueue(
     .prepare(
       `INSERT OR IGNORE INTO runs(id,task_id,task_snapshot,status,scheduled_for,deadline,account_key,idempotency_key,created_at,updated_at,user_id,profile_id,execution_protocol,thread_id)
       SELECT ?,?,?,'queued',?,?,?,?,?,?,?,?,${PROTOCOL_VERSION},${command ? '?' : '(SELECT id FROM ai_threads WHERE task_id=? AND closed=0 LIMIT 1)'}
-      WHERE EXISTS(SELECT 1 FROM tasks WHERE id=? AND version=? AND context_withdrawn=0)
+      WHERE EXISTS(SELECT 1 FROM tasks WHERE id=? AND version=? AND context_withdrawn=0 AND deleted=0)
       ${command ? `AND EXISTS(SELECT 1 FROM conversation_commands c JOIN ai_threads t ON t.id=c.thread_id
         WHERE c.id=? AND c.thread_id=? AND c.task_id=? AND c.state='committed' AND c.run_task IS NOT NULL AND t.closed=0 AND t.user_id=?)` : ''}`,
     )

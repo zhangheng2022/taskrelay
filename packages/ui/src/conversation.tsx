@@ -16,7 +16,7 @@ export function Conversation({transport,task,run,offline,refresh}: {
 }){
   const thread=useThread(transport,'chat',task.modelId,task.id);
   const [text,setText]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState('');
-  const [confirmClear,setConfirmClear]=useState(false),[stopping,setStopping]=useState(false);
+  const [stopping,setStopping]=useState(false);
   const sending=useRef(false);
   const active=run&&['queued','running','waiting_user','verifying'].includes(run.status);
   let activity:string|null=null;
@@ -57,8 +57,6 @@ export function Conversation({transport,task,run,offline,refresh}: {
     </Thread>
     <Composer text={text} setText={setText} onSend={()=>void send()} busy={busy} disabled={offline||!thread.page} label="消息" placeholder={thread.page?.waiting?'在这里回复，执行器会继续…':'发送消息或补充要求…'}>
       {active&&<Button type="button" variant="outline" disabled={stopping||!!run.cancelRequested} onClick={()=>void stop()}>停止执行</Button>}
-      <Button type="button" variant="ghost" onClick={()=>setConfirmClear(true)}>清空聊天</Button>
-      {confirmClear&&<><Button type="button" variant="destructive" onClick={()=>void thread.clear().then(()=>setConfirmClear(false)).catch(e=>setError(e.message))}>确认清空</Button><Button type="button" variant="ghost" onClick={()=>setConfirmClear(false)}>取消</Button></>}
     </Composer>
   </div>;
 }

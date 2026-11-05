@@ -222,3 +222,10 @@ Windows 0.12.0 make、包内 smoke、实际系统目录安装 smoke、release-ma
 - 更多模型和提供方的真实浏览器闭环仍待补齐；Responses 能力测试不能代表 Chat Completions 与所有模型均已通过。
 - 独立 smoke 不调用 runtime.execute 或 ExecutorHost；生产入口隔离测试、JSDOM 和 SQLite stand-in 分别不替代真实设备流程、布局滚动和 D1 并发。
 - 自主推进和自动收尾效率、偶发 OFFLINE 的完整原因仍未解决；不能把有引导完成写成无人值守通过。
+
+## 2026-11-05 聊天清理交付
+
+- 新增删除单聊、清空当前、一键清理全部，服务端持久捕获范围、取消执行、分批回收，账号/模型/设备保留。回归覆盖重复请求、跨用户、清理期间新建聊天、发送中清空、图片失败重试、密文/检查点/运行模型缓存清理、迟到 finish 的 unknown 与账号锁保护、旧 DELETE 兼容、线程创建撞上清空的旧草稿保护。
+- `npm test` 287/287、`npm run test:ui` 45/45、类型检查、仓库检查和 Web 构建通过；构建仍有既有大 chunk 提示。测试使用生产 Hono 路由和 SQLite D1 adapter；Hono CLI 因默认导出为 Worker 对象返回 INVALID_APP，未把失败算作 CLI 通过。
+- Edge 本机隔离页面通过桌面清空与 390×844 窄屏全部清理，确认框默认取消、任务暂停、返回新任务和可输入均已观察；无生产聊天删除、实际 iPhone Safari、独立 Windows 安装或真实模型业务复验。本次不改桌面执行协议或安装包。
+- OCR 委托仅执行确定性 preview/rule，由宿主审查完整差异，补审默认排除的测试与文档，并核对 SQL；审查中发现并修复旧草稿回填竞争。本次 27 个变更文件全部已审，reviewed_files=27、skipped_files=0、coverage_rate=100%；无未解决审查发现。隔离本地 D1 的 0001–0023 迁移全部通过。源码图更新为 4475 节点/7347 边；24 个 SQL 文件缺 tree_sitter_sql，另有 2 个测试文件未提取符号，不能算图覆盖。

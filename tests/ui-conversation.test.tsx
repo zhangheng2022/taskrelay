@@ -129,32 +129,6 @@ test('响应丢失后收到空闲会话通知，重试仍使用原 requestId',as
  assert.equal(ids[0],ids[1]);
 });
 
-test('发送未完成时清空聊天，旧请求结束后新会话可以发送',async()=>{
- let finish!:(value:unknown)=>void,created=false;
- const writes:string[]=[];
- const transport=transportWith(async(method,path)=>{
-  if(path==='/api/user/threads'){
-   if(method==='GET')return [{id:threadPage.id,model_id:task.modelId,task_id:task.id}];
-   created=true;return {...threadPage,id:'new-thread',taskId:task.id};
-  }
-  if(method==='POST'&&path.endsWith('/messages')){
-   writes.push(path);
-   if(writes.length===1)return new Promise(resolve=>{finish=resolve;});
-   return {...threadPage,id:'new-thread',taskId:task.id};
-  }
-  return {...threadPage,taskId:task.id};
- });
- const view=render(<Conversation transport={transport} task={task} run={null} offline={false} refresh={async()=>{}}/>);
- await waitFor(()=>assert.equal(view.getByRole('textbox').hasAttribute('disabled'),false));
- fireEvent.change(view.getByRole('textbox'),{target:{value:'旧消息'}});fireEvent.click(view.getByRole('button',{name:'发送消息'}));
- await waitFor(()=>assert.equal(writes.length,1));
- fireEvent.click(view.getByRole('button',{name:'清空聊天'}));fireEvent.click(view.getByRole('button',{name:'确认清空'}));
- await waitFor(()=>assert.equal(created,true));
- await act(async()=>finish(threadPage));
- fireEvent.change(view.getByRole('textbox'),{target:{value:'新消息'}});fireEvent.click(view.getByRole('button',{name:'发送消息'}));
- await waitFor(()=>assert.equal(writes.length,2));
- assert.equal(writes[1],'/api/user/threads/new-thread/messages');
-});
 test('统一聊天：协助和补充都使用同一个输入框与消息入口',async()=>{
  const writes:any[]=[];let page:any={...threadPage,taskId:task.id,waiting:{id:'help',request:'{}'},messages:[{id:'help-message',seq:1,role:'assistant',source:'cloud',content:'请输入验证码',parts:[]}]};
  const transport=transportWith(async(method,path,body)=>{

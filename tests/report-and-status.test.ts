@@ -15,7 +15,9 @@ test('图片删除暂时失败后本人可以重试，删除标记阻止新写�
  const s=await productionModelFixture(t),th=(await s.request('/api/user/threads',{modelId:'model_test',taskId:s.run.taskId})).data;
  s.sql.prepare("INSERT INTO artifacts(id,run_id,object_key,content_type,expires_at,thread_id,persistent) VALUES('delete_retry',?,'image','image/png','9999-01-01',?,1)").run(s.run.id,th.id);
  let fails=true;s.env.EVIDENCE_STORE={getByName:()=>({remove:async()=>{if(fails)throw Error('STORAGE_OFFLINE');}})} as any;
- assert.notEqual((await s.request(`/api/user/threads/${th.id}`,{},'DELETE')).status,200);
+ const accepted=await s.request(`/api/user/threads/${th.id}`,{},'DELETE');
+ assert.equal(accepted.status,200);
+ assert.equal(s.sql.prepare('SELECT error FROM history_cleanup_jobs WHERE id=?').get(accepted.data.job.id)?.error,'CLEANUP_RETRYING');
  assert.equal(s.sql.prepare('SELECT deleted FROM ai_threads WHERE id=?').get(th.id)!.deleted,1);
  fails=false;assert.equal((await s.request(`/api/user/threads/${th.id}`,{},'DELETE')).status,200);
  assert.equal(s.sql.prepare('SELECT COUNT(*) n FROM artifacts WHERE thread_id=?').get(th.id)!.n,0);

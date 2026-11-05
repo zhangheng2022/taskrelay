@@ -7,7 +7,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { egress } from "./egress";
 import { drizzle } from "drizzle-orm/d1";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import {
   scheduleSchema,
   idSchema,
@@ -45,10 +45,10 @@ user.use('*', async (c,next) => {
  if(match && !(match[1]==='tasks' && ['compose','draft'].includes(match[2]))) {
   const id=decodeURIComponent(match[2]);
   const queries:Record<string,string>={
-   tasks:'SELECT id FROM tasks WHERE id=? AND user_id=?',
-   runs:'SELECT id FROM runs WHERE id=? AND user_id=?',
-   challenges:'SELECT c.id FROM challenges c JOIN runs r ON r.id=c.run_id WHERE c.id=? AND r.user_id=?',
-   artifacts:'SELECT a.id FROM artifacts a JOIN runs r ON r.id=a.run_id WHERE a.id=? AND r.user_id=?',
+   tasks:'SELECT id FROM tasks WHERE id=? AND user_id=? AND deleted=0',
+   runs:'SELECT id FROM runs WHERE id=? AND user_id=? AND history_deleted=0',
+   challenges:'SELECT c.id FROM challenges c JOIN runs r ON r.id=c.run_id WHERE c.id=? AND r.user_id=? AND r.history_deleted=0',
+   artifacts:'SELECT a.id FROM artifacts a JOIN runs r ON r.id=a.run_id WHERE a.id=? AND r.user_id=? AND r.history_deleted=0',
   };
   if(!await c.env.DB.prepare(queries[match[1]]).bind(id,c.get('userId')).first()) return c.json({error:'RESOURCE_NOT_FOUND'},404);
  }
@@ -64,8 +64,8 @@ user.get("/snapshot", async (c) => {
     await tick(c.env.DB);
   const db = c.env.DB;
   const results = await db.batch([
-    db.prepare("SELECT * FROM tasks WHERE user_id=? ORDER BY created_at DESC LIMIT 200").bind(c.get("userId")),
-    db.prepare("SELECT * FROM runs WHERE user_id=? ORDER BY created_at DESC LIMIT 200").bind(c.get("userId")),
+    db.prepare("SELECT * FROM tasks WHERE user_id=? AND deleted=0 ORDER BY created_at DESC LIMIT 200").bind(c.get("userId")),
+    db.prepare("SELECT * FROM runs WHERE user_id=? AND history_deleted=0 ORDER BY created_at DESC LIMIT 200").bind(c.get("userId")),
     db.prepare(
       "SELECT m.id,m.version,m.config,m.capabilities FROM model_profiles m WHERE version=(SELECT MAX(version) FROM model_profiles x WHERE x.id=m.id) ORDER BY created_at DESC",
     ),
@@ -113,7 +113,7 @@ user.get("/tasks", async (c) =>
       await drizzle(c.env.DB)
         .select()
         .from(tasksTable)
-        .where(eq(tasksTable.userId,c.get("userId")))
+        .where(and(eq(tasksTable.userId,c.get("userId")),eq(tasksTable.deleted,0)))
         .orderBy(desc(tasksTable.createdAt))
     ).map((row) => ({
       ...JSON.parse(row.definition),
@@ -219,7 +219,7 @@ user.post("/tasks/:id/state", async (c) => {
     if(!row.confirmed_condition)throw Error("CONDITIONS_CONFIRMATION_REQUIRED");
   }
   const saved = await c.env.DB.prepare(
-    "UPDATE tasks SET status=?,next_run_at=?,updated_at=? WHERE id=? AND (?=0 OR context_withdrawn=0)",
+    "UPDATE tasks SET status=?,next_run_at=?,updated_at=? WHERE id=? AND deleted=0 AND (?=0 OR context_withdrawn=0)",
   )
     .bind(
       enabled ? "active" : "paused",

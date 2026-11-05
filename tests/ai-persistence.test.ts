@@ -1,3 +1,4 @@
+import {drainHistoryCleanups} from '../apps/cloud/src/history-cleanup';
 import test from "node:test";
 import assert from "node:assert/strict";
 import { z } from "zod";
@@ -215,6 +216,7 @@ test("超过200条历史完整分页；未接入执行的偏好变更不影响�
   assert.equal(restored.messages.length, 2);
   assert.equal(restored.version, 1);
   await s.request("/api/user/threads/" + th.id, undefined, "DELETE");
+  for(let i=0;i<20;i++)if(!await drainHistoryCleanups(s.env))break;
   assert.equal(
     (await s.request("/api/user/threads/" + th.id, undefined, "GET")).status,
     404,

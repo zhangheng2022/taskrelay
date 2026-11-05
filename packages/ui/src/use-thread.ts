@@ -236,26 +236,6 @@ export function useThread(
     } catch(e){if(g===generation.current)setError((e as Error).message);}
     finally {if(loadingOlder.current===ticket)loadingOlder.current=null;}
   }
-  async function clear() {
-    const p = current.current;
-    if (!p) return;
-    const g=generation.current;
-    await transport.request("DELETE", `/api/user/threads/${p.id}`);
-    if(g!==generation.current)return;
-    const nextGeneration=++generation.current;
-    writing.current=false;
-    refreshing.current=null;refreshQueued.current=false;setSending(null);
-    loadingOlder.current=null;
-    current.current=null;setPage(null);
-    revision.current++;
-    attempt.current = null;
-    const next = await transport.request<ThreadPage>(
-      "POST",
-      "/api/user/threads",
-      { modelId, ...(taskId ? { taskId } : {}) },
-    );
-    if(nextGeneration===generation.current)accept(next);
-  }
   function retry() {
     if(loading)return;
     if(!current.current){setRetryIndex(x=>x+1);return;}
@@ -264,5 +244,5 @@ export function useThread(
     void refresh().catch(e=>{if(g===generation.current)setError(e.message);})
       .finally(()=>{if(g===generation.current)setLoading(false);});
   }
-  return { page, error, loading, sending, retry, send, refresh, older, clear };
+  return { page, error, loading, sending, retry, send, refresh, older };
 }

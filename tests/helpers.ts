@@ -26,6 +26,7 @@ export function testDb() {
     "0020_graph_orchestration.sql",
     "0021_context_withdrawal.sql",
     "0022_checkpoint_chunks.sql",
+    "0023_history_cleanup.sql",
   ])
     sql.exec(
       readFileSync(

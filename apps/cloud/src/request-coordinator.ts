@@ -22,8 +22,13 @@ export class Scheduler extends DurableObject<AppEnv> {
     if(await this.ctx.storage.getAlarm()===null)await this.ctx.storage.setAlarm(Date.now()+1);
   }
   async alarm() {
+    // 先设看门狗；失败或进程中断后仍可重试持久清理作业。
+    await this.ctx.storage.setAlarm(Date.now()+60_000);
     await maintenance(this.env); await wakeTurns(this.env);
     const pending=await this.env.DB.prepare("SELECT id FROM runs WHERE status='queued' LIMIT 1").first();
     if(pending)await notifyDevices(this.env);
+    const cleanup=await this.env.DB.prepare("SELECT id FROM history_cleanup_jobs WHERE status='pending' LIMIT 1").first();
+    if(cleanup)await this.ctx.storage.setAlarm(Date.now()+2_000);
+    else await this.ctx.storage.deleteAlarm();
   }
 }

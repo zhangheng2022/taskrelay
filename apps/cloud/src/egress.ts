@@ -34,7 +34,7 @@ export async function egress<T>(env: AppEnv, job: EgressJob, persist?: (result:T
     id,
     await seal(job, env.MASTER_KEY, `egress:${id}:request`),
   );
-  let persisted = false;
+  let persisted = false,discarded=false;
   try {
     if (result.status !== "done" || !result.cipher)
       throw new Error(result.error ?? "MODEL_EGRESS_FAILED");
@@ -46,10 +46,14 @@ export async function egress<T>(env: AppEnv, job: EgressJob, persist?: (result:T
     if(persist) await persist(value);
     persisted = true;
     return value;
+  } catch(error) {
+    // 删除/撤回使持久化 fence 拒收结果时，终态响应也应立即清掉，不能再作为恢复缓存。
+    discarded=(error as Error).message==='MODEL_CALL_DISCARDED';
+    throw error;
   } finally {
     // Only acknowledge terminal results; never re-enter an executing alarm.
     // A failed acknowledgement must not discard an already received model result.
-    if ((result.status !== 'done' || persisted) && result.status !== "pending" && result.status !== "running")
+    if ((result.status !== 'done' || persisted || discarded) && result.status !== "pending" && result.status !== "running")
       await stub.ack().catch(() => {});
   }
 }

@@ -1,3 +1,4 @@
+import {HistoryCleanup,type CleanupSelection} from './history-cleanup';
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
@@ -28,6 +29,7 @@ import {
   SidebarMenu,
   SidebarMenuItem,
   SidebarMenuButton,
+  SidebarMenuAction,
   SidebarInset,
   SidebarTrigger,
   useSidebar,
@@ -95,6 +97,8 @@ function Workspace({ transport }: { transport: Transport }) {
   const [detail, setDetail] = useState(false),
     [search, setSearch] = useState(""),
     [draftKey, setDraftKey] = useState(0);
+  const [cleanupSelection,setCleanupSelection]=useState<CleanupSelection|null>(null);
+  const [chatEpoch,setChatEpoch]=useState(0);
   const [theme, setTheme] = useTheme();
   const { setOpenMobile } = useSidebar();
   const loading = useRef<Promise<void> | null>(null),
@@ -183,13 +187,22 @@ function Workspace({ transport }: { transport: Transport }) {
     setDraftKey((k) => k + 1);
   }
   const offline = !!error;
+  function requestCleanup(scope:CleanupSelection['scope'],target?:{id:string;title:string}){
+    setCleanupSelection({scope,targetId:target?.id,title:target?.title,requestId:crypto.randomUUID()});
+  }
+  async function cleanupAccepted(value:CleanupSelection){
+    if(value.scope==='all'||(value.scope==='task'&&value.targetId===selected))newTask();
+    if(value.scope==='clear'&&value.targetId===selected)setChatEpoch(n=>n+1);
+    await refresh();
+  }
   return (
     <>
       <Sidebar>
         <SidebarHeader>
           <div className="flex items-center justify-between px-2 py-2">
             <span className="flex items-center gap-2 text-sm font-semibold"><BrandMark />TaskRelay</span>
-            <span className="text-xs text-muted-foreground">我的任务</span>
+            <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="聊天列表操作"><Ellipsis/></Button></DropdownMenuTrigger>
+            <DropdownMenuContent align="end"><DropdownMenuGroup><DropdownMenuItem disabled={offline} onSelect={()=>requestCleanup('all')}>一键清理全部聊天</DropdownMenuItem></DropdownMenuGroup></DropdownMenuContent></DropdownMenu>
           </div>
           <Button variant="outline" onClick={newTask}>
             <Plus data-icon="inline-start" />
@@ -231,6 +244,8 @@ function Workspace({ transport }: { transport: Transport }) {
                           <span className="ml-auto text-xs">待协助</span>
                         )}
                       </SidebarMenuButton>
+                      <DropdownMenu><DropdownMenuTrigger asChild><SidebarMenuAction aria-label={`操作：${t.title}`}><Ellipsis/></SidebarMenuAction></DropdownMenuTrigger>
+                      <DropdownMenuContent align="end"><DropdownMenuGroup><DropdownMenuItem disabled={offline} onSelect={()=>requestCleanup('task',t)}>删除聊天</DropdownMenuItem></DropdownMenuGroup></DropdownMenuContent></DropdownMenu>
                     </SidebarMenuItem>
                   );
                 })}
@@ -308,6 +323,7 @@ function Workspace({ transport }: { transport: Transport }) {
         </SidebarFooter>
       </Sidebar>
       <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
+        <HistoryCleanup transport={transport} selection={cleanupSelection} onClose={()=>setCleanupSelection(null)} onAccepted={cleanupAccepted}/>
         <header className="flex h-14 shrink-0 items-center gap-2 border-b px-3 md:px-6">
           <SidebarTrigger />
           <BrandMark className="w-6 md:hidden" />
@@ -373,6 +389,8 @@ function Workspace({ transport }: { transport: Transport }) {
                       {task.status === "active" ? "暂停调度" : "启用调度"}
                     </DropdownMenuItem>
                     </>}
+                    <DropdownMenuItem disabled={offline} onSelect={()=>requestCleanup('clear',task)}>清空当前聊天</DropdownMenuItem>
+                    <DropdownMenuItem disabled={offline} onSelect={()=>requestCleanup('task',task)}>删除聊天</DropdownMenuItem>
                   </DropdownMenuGroup>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -477,7 +495,7 @@ function Workspace({ transport }: { transport: Transport }) {
           />
         ) : (
           <Conversation
-            key={task.id}
+            key={`${task.id}:${chatEpoch}`}
             transport={transport}
             task={task}
             run={activeRun}

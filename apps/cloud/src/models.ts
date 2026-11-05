@@ -116,8 +116,10 @@ export async function invoke(
   if(!userId) throw new Error('MODEL_ACTOR_REQUIRED');
   const callId=operationId ?? crypto.randomUUID();
   const digest=await hash(JSON.stringify({userId,id,version,request,runId}));
-  const fence=graphId?graphWriteFence(userId,graphId,graphGeneration):undefined;
-  const inserted=await env.DB.prepare(`INSERT OR IGNORE INTO ai_calls(id,user_id,graph_id,digest,status,created_at,updated_at) SELECT ?,?,?,?,'reserved',?,? ${fence?`WHERE ${fence.sql}`:''}`).bind(callId,userId,graphId??null,digest,now(),now(),...(fence?.values??[])).run();
+  const graphFence=graphId?graphWriteFence(userId,graphId,graphGeneration):undefined;
+  // 桌面原生工具循环没有云端 graphId，仍须按运行关联缓存并原子拒绝清理后的迟到结果。
+  const fence=graphFence??(runId?{sql:'EXISTS(SELECT 1 FROM runs WHERE id=? AND user_id=? AND history_deleted=0)',values:[runId,userId]}:undefined);
+  const inserted=await env.DB.prepare(`INSERT OR IGNORE INTO ai_calls(id,user_id,graph_id,run_id,digest,status,created_at,updated_at) SELECT ?,?,?,?,?,'reserved',?,? ${fence?`WHERE ${fence.sql}`:''}`).bind(callId,userId,graphId??null,runId,digest,now(),now(),...(fence?.values??[])).run();
   if(!inserted.meta.changes) {
     // A deduplicated result still belongs to its original live graph. Replaying
     // an operation must not bypass deletion, cancellation, or generation fences.

@@ -156,15 +156,16 @@ runner.post('/runs/:id/finish',async c=>{
   const b=lease.extend({status:z.enum(['succeeded','failed','unknown','cancelled']),result:runResultSchema,expectedUserSeq:z.number().int().nonnegative().optional()}).parse(await c.req.json());
   const run=await getRun(c.env.DB,c.req.param('id'));
   if(run.deviceId!==c.get('deviceId')||run.leaseEpoch!==b.epoch)throw Error('LEASE_EXPIRED');
+  const hidden=!!await c.env.DB.prepare('SELECT id FROM runs WHERE id=? AND history_deleted=1').bind(run.id).first();
   const terminal=['succeeded','failed','unknown','cancelled','expired'].includes(run.status);
   if(terminal){
     // A lost response may be retried, but cannot replace the committed result.
-    if(JSON.stringify(run.result)!==JSON.stringify(b.result))throw Error('LEASE_EXPIRED');
+    if(!hidden&&JSON.stringify(run.result)!==JSON.stringify(b.result))throw Error('LEASE_EXPIRED');
   }else{
     await requireLease(c.env.DB,run.id,c.get('deviceId'),b.epoch,true);
     const at=now();
     const [saved]=await c.env.DB.batch([
-      c.env.DB.prepare(`UPDATE runs SET status=CASE WHEN write_pending=1 THEN 'unknown' WHEN cancel_requested=1 THEN 'cancelled' ELSE ? END,result=?,lease_expires_at=NULL,updated_at=?
+      c.env.DB.prepare(`UPDATE runs SET status=CASE WHEN write_pending=1 THEN 'unknown' WHEN cancel_requested=1 THEN 'cancelled' ELSE ? END,result=CASE WHEN history_deleted=1 THEN NULL ELSE ? END,lease_expires_at=NULL,updated_at=?
         WHERE id=? AND lease_epoch=? AND lease_expires_at>? AND status IN ('running','waiting_user','verifying')
         AND (? IS NULL OR cancel_requested=1 OR (SELECT COALESCE(MAX(seq),0) FROM ai_messages WHERE thread_id=runs.thread_id AND role='user')=?)`)
         .bind(b.status,JSON.stringify(b.result),at,run.id,b.epoch,at,b.expectedUserSeq??null,b.expectedUserSeq??null),
@@ -177,7 +178,7 @@ runner.post('/runs/:id/finish',async c=>{
         const latest=await c.env.DB.prepare("SELECT COALESCE(MAX(seq),0) seq FROM ai_messages WHERE thread_id=(SELECT thread_id FROM runs WHERE id=?) AND role='user'").bind(run.id).first<{seq:number}>();
         if(latest?.seq!==b.expectedUserSeq)throw Error('INSTRUCTIONS_CHANGED');
       }
-      if(savedRun.leaseEpoch!==b.epoch||JSON.stringify(savedRun.result)!==JSON.stringify(b.result))throw Error('LEASE_EXPIRED');
+      if(savedRun.leaseEpoch!==b.epoch||(!hidden&&JSON.stringify(savedRun.result)!==JSON.stringify(b.result)))throw Error('LEASE_EXPIRED');
     }
   }
   const thread=await c.env.DB.prepare('SELECT t.id FROM ai_threads t JOIN runs r ON r.thread_id=t.id WHERE r.id=? AND t.closed=0').bind(run.id).first<{id:string}>();

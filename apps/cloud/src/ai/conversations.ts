@@ -5,7 +5,7 @@
 import { queueHelpReply } from "../execution-help";
 import { dispatchGraphEvent, wakeGraph } from "./dispatch";
 import { appendMessage, conversationContext } from "../chat-messages";
-import { deleteEvidence } from "../evidence";
+import {beginCleanup,cleanupJobs,drainHistoryCleanups} from "../history-cleanup";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv, Variables } from "../env";
@@ -163,18 +163,20 @@ conversations.post("/threads", async (c) => {
     .strict()
     .parse(await c.req.json());
   let task: TaskInput | null = null;
+  let taskVersion:number|null=null;
   if (b.taskId) {
     const r = await c.env.DB.prepare(
-      "SELECT * FROM tasks WHERE id=? AND user_id=?",
+      "SELECT * FROM tasks WHERE id=? AND user_id=? AND deleted=0",
     )
       .bind(b.taskId, c.get("userId"))
       .first<Row>();
     if (!r) throw new Error("TASK_NOT_FOUND");
+    taskVersion=r.version;
     task = taskInputSchema.strip().parse(taskFrom(r));
   }
   const bound = b.taskId
     ? await c.env.DB.prepare(
-        "SELECT definition FROM tasks WHERE id=? AND user_id=?",
+        "SELECT definition FROM tasks WHERE id=? AND user_id=? AND deleted=0",
       )
         .bind(b.taskId, c.get("userId"))
         .first<{ definition: string }>()
@@ -193,7 +195,7 @@ conversations.post("/threads", async (c) => {
     throw new Error("MODEL_CAPABILITIES_REQUIRED");
   const id = uid("thread");
   await c.env.DB.prepare(
-    "INSERT OR IGNORE INTO ai_threads(id,user_id,task_id,kind,model_id,model_version,draft,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+    "INSERT OR IGNORE INTO ai_threads(id,user_id,task_id,kind,model_id,model_version,draft,created_at,updated_at) SELECT ?,?,?,?,?,?,?,?,? WHERE ? IS NULL OR EXISTS(SELECT 1 FROM tasks WHERE id=? AND user_id=? AND deleted=0 AND version=?)",
   )
     .bind(
       id,
@@ -205,6 +207,7 @@ conversations.post("/threads", async (c) => {
       task ? JSON.stringify(task) : null,
       now(),
       now(),
+      b.taskId ?? null, b.taskId ?? null, c.get("userId"), taskVersion,
     )
     .run();
   const existing = await c.env.DB.prepare(
@@ -212,6 +215,7 @@ conversations.post("/threads", async (c) => {
   )
     .bind(c.get("userId"), b.taskId ?? null)
     .first<{ id: string }>();
+  if(b.taskId&&!existing)throw Error("TASK_NOT_FOUND");
   return c.json(await threadPage(c.env, b.taskId ? existing!.id : id));
 });
 conversations.get("/threads/:id", async (c) =>
@@ -486,74 +490,34 @@ conversations.delete("/memories/:id", async (c) => {
   ).run();
   return c.json({ ok: true });
 });
+// 兼容已打开的旧版网页：同一 thread 的 DELETE 固定使用同一个清理作业。
 conversations.delete("/threads/:id", async (c) => {
-  const t = await c.env.DB.prepare(
-    "SELECT * FROM ai_threads WHERE id=? AND user_id=?",
-  )
-    .bind(c.req.param("id"), c.get("userId"))
-    .first<Row>();
-  if (!t) throw Error("THREAD_NOT_FOUND");
-  await c.env.DB.batch([
-    c.env.DB.prepare(
-      "UPDATE ai_threads SET closed=1,deleted=1 WHERE id=?",
-    ).bind(t.id),
-    c.env.DB.prepare(
-      "UPDATE runs SET cancel_requested=1,status=CASE WHEN status='queued' THEN 'cancelled' ELSE status END WHERE thread_id=? AND status IN ('queued','running','waiting_user','verifying')",
-    ).bind(t.id),
-  ]);
-  const images = await c.env.DB.prepare(
-    "SELECT id,object_key FROM artifacts WHERE thread_id=?",
-  )
-    .bind(t.id)
-    .all<Row>();
-  for (const image of images.results) {
-    await deleteEvidence(c.env, image.object_key);
-    await c.env.DB.prepare("DELETE FROM artifacts WHERE id=?")
-      .bind(image.id)
-      .run();
-  }
-  if (t.task_id)
-    await c.env.DB.prepare(
-      "UPDATE runs SET cancel_requested=1 WHERE task_id=? AND status IN ('queued','running','waiting_user','verifying')",
-    )
-      .bind(t.task_id)
-      .run();
-  await c.env.DB.prepare("DELETE FROM execution_help WHERE thread_id=?")
-    .bind(t.id)
-    .run();
-  await c.env.DB.batch([
-    c.env.DB.prepare(
-      "UPDATE ai_threads SET closed=1,deleted=1,version=version+1,active_turn=NULL,draft=NULL,partial='{}',summary='',summary_seq=0 WHERE id=?",
-    ).bind(t.id),
-    c.env.DB.prepare(
-      "UPDATE ai_turns SET status='cancelled',result=NULL,error='THREAD_DELETED' WHERE thread_id=?",
-    ).bind(t.id),
-    c.env.DB.prepare("DELETE FROM ai_messages WHERE thread_id=?").bind(t.id),
-    c.env.DB.prepare("DELETE FROM assistance_replies WHERE thread_id=?").bind(
-      t.id,
-    ),
-    c.env.DB.prepare(
-      "UPDATE conversation_inbox SET content='',status='failed' WHERE thread_id=?",
-    ).bind(t.id),
-    c.env.DB.prepare(
-      "UPDATE conversation_commands SET run_task=NULL,state='done' WHERE thread_id=?",
-    ).bind(t.id),
-    c.env.DB.prepare(
-      "UPDATE ai_dispatch SET state='retired',message_id=NULL,error='THREAD_DELETED' WHERE thread_id=?",
-    ).bind(t.id),
-    c.env.DB.prepare(
-      "UPDATE ai_graph_inputs SET active=0,generation=generation+1,status='cancelled' WHERE owner=? AND parent_thread=?",
-    ).bind(t.user_id, t.id),
-    c.env.DB.prepare(
-      "UPDATE ai_calls SET status='unknown',result=NULL,error='THREAD_DELETED' WHERE graph_id IN(SELECT id FROM ai_graph_inputs WHERE owner=? AND parent_thread=?)",
-    ).bind(t.user_id, t.id),
-    ...["ai_checkpoints", "ai_writes"].map((table) =>
-      c.env.DB.prepare(
-        `DELETE FROM ${table} WHERE owner=? AND thread IN (SELECT id FROM ai_graph_inputs WHERE owner=? AND parent_thread=?)`,
-      ).bind(t.user_id, t.user_id, t.id),
-    ),
-  ]);
-  return c.json({ ok: true });
+ const job=await beginCleanup(c.env,c.get('userId'),'thread',c.req.param('id'),`thread_${c.req.param('id')}`);
+ await drainHistoryCleanups(c.env);
+ return c.json({ok:true,job});
+});
+conversations.get('/history-cleanups-preview',async c=>{
+ const scope=z.enum(['all','task','clear']).parse(c.req.query('scope'));
+ const target=scope==='all'?null:idSchema.parse(c.req.query('targetId'));
+ const userId=c.get('userId');
+ if(target&&!await c.env.DB.prepare('SELECT id FROM tasks WHERE id=? AND user_id=? AND deleted=0').bind(target,userId).first())throw Error('TASK_NOT_FOUND');
+ const tasks=await c.env.DB.prepare(`SELECT COUNT(*) n FROM tasks WHERE user_id=? AND deleted=0 ${target?'AND id=?':''}`).bind(userId,...(target?[target]:[])).first<{n:number}>();
+ const drafts=scope==='all'?await c.env.DB.prepare('SELECT COUNT(*) n FROM ai_threads WHERE user_id=? AND task_id IS NULL AND deleted=0').bind(userId).first<{n:number}>():null;
+ const active=await c.env.DB.prepare(`SELECT COUNT(*) n FROM runs WHERE user_id=? AND history_deleted=0 AND status IN ('queued','running','waiting_user','verifying') ${target?'AND task_id=?':''}`).bind(userId,...(target?[target]:[])).first<{n:number}>();
+ return c.json({chats:(tasks?.n??0)+(drafts?.n??0),active:active?.n??0});
+});
+conversations.get('/history-cleanups',async c=>c.json(await cleanupJobs(c.env,c.get('userId'))));
+conversations.get('/history-cleanups/:id',async c=>{
+ const job=(await cleanupJobs(c.env,c.get('userId'),c.req.param('id')))[0];
+ if(!job)throw Error('CLEANUP_NOT_FOUND');
+ return c.json(job);
+});
+conversations.post('/history-cleanups',async c=>{
+ const b=z.object({scope:z.enum(['all','task','clear']),targetId:idSchema.nullable().optional(),requestId:idSchema}).strict().parse(await c.req.json());
+ if(b.scope!=='all'&&!b.targetId)throw Error('TARGET_REQUIRED');
+ if(b.scope==='all'&&b.targetId)throw Error('TARGET_INVALID');
+ const job=await beginCleanup(c.env,c.get('userId'),b.scope,b.targetId??null,b.requestId);
+ return c.json(job,202);
 });
 
 export async function executeTurn(

@@ -146,6 +146,8 @@ export function createFixtureTransport(options: URLSearchParams): Transport {
   if(updatePhase&&['available','downloading','waiting','installing','error'].includes(updatePhase)){
     desktop.version='0.4.7';desktop.update={phase:updatePhase as DesktopStatus['update']['phase'],release:{version:'0.4.8',sha1:'a'.repeat(40),sha256:'a'.repeat(64),bytes:1024,notes:'改进执行器的稳定性和更新体验。',publishedAt:new Date().toISOString()},progress:42,checkedAt:null,error:updatePhase==='error'?'更新下载或完整性校验失败，请重试。':null};
   }
+  const cleanupJobs=new Map<string,{id:string;status:string;total:number;completed:number;error:null;readyAt:number}>();
+  let chatCleared=false;
   const transport: Transport = {
     async request<T>(method: string, path: string, body?: unknown): Promise<T> {
       await new Promise((r) => setTimeout(r, options.get('network')==='slow'?12000:200));
@@ -153,6 +155,23 @@ export function createFixtureTransport(options: URLSearchParams): Transport {
       if(options.get('network')==='fail-once'&&path==='/api/user/threads'&&threadFailures++<2)throw new Error('OFFLINE');
       let result: unknown;
       if (path === "/api/user/snapshot") result = structuredClone(snapshot);
+      else if(path.startsWith('/api/user/history-cleanups-preview'))result={chats:snapshot.tasks.length,active:snapshot.runs.filter(r=>['queued','running','waiting_user','verifying'].includes(r.status)).length};
+      else if(path==='/api/user/history-cleanups'){
+        if(method==='GET')result=[...cleanupJobs.values()].filter(j=>Date.now()<j.readyAt);
+        else{
+          const input=body as {scope:string;targetId:string|null;requestId:string};
+          let job=cleanupJobs.get(input.requestId);
+          if(!job){
+            job={id:crypto.randomUUID(),status:'pending',total:3,completed:0,error:null,readyAt:Date.now()+6000};cleanupJobs.set(input.requestId,job);
+            for(const [id,page] of threads)if(input.scope==='all'||page.taskId===input.targetId)threads.delete(id);
+            snapshot.runs=snapshot.runs.filter(r=>input.scope!=='all'&&r.taskId!==input.targetId);
+            snapshot.waitingHelp=[];
+            if(input.scope==='clear'){chatCleared=true;definition.status='paused';definition.goal='请重新交办任务';definition.schedule={kind:'manual'};}
+            else snapshot.tasks=snapshot.tasks.filter(t=>input.scope!=='all'&&t.id!==input.targetId);
+          }
+          result=job;
+        }
+      }
       else if(path==='/api/user/threads') {
         if(method==='GET')result=[...threads.values()].map(t=>({...t,model_id:t.modelId,task_id:t.taskId??null}));
         else {
@@ -163,8 +182,8 @@ export function createFixtureTransport(options: URLSearchParams): Transport {
           const page: ThreadPage & {kind: 'chat'} = {
             id, kind:'chat', taskId:input.taskId??null, modelId:input.modelId,
             version:0, draft:boundTask??null, partial:{}, activeTurn:null, nextCursor:null,
-            messages:boundTask?messages.map((m,i)=>({...m,seq:i+1})):[],
-            waiting:boundTask&&assistance&&state!=='answered'?{id:'demo_help',request:'{}'}:null,
+            messages:boundTask&&!chatCleared?messages.map((m,i)=>({...m,seq:i+1})):[],
+            waiting:boundTask&&!chatCleared&&assistance&&state!=='answered'?{id:'demo_help',request:'{}'}:null,
           };
           if(page.waiting)page.messages.push({id:'help-message',seq:page.messages.length+1,role:'assistant',content:'请在同一聊天提供登录所需信息，或说明下一步要求。',at:new Date().toISOString()});
           if(boundTask&&snapshot.runs[0]?.result)page.messages.push({id:'final-message',seq:page.messages.length+1,role:'assistant',content:snapshot.runs[0].result.summary,at:new Date().toISOString()});
