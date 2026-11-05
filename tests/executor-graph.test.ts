@@ -1,0 +1,98 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {Annotation,Command,END,START,StateGraph,interrupt} from '@langchain/langgraph';
+import {JsonPlusSerializer} from '@langchain/langgraph-checkpoint';
+import {SessionCheckpointer} from '../apps/desktop/src/executor/session-checkpointer';
+import {runExecutionGraph,type ExecutionGraphPort} from '../apps/desktop/src/executor/execution-graph';
+import {smokeExecutionGraph} from '../apps/desktop/src/executor/graph-smoke';
+import type {Message,ModelResponse} from '../packages/model/src/index';
+
+const response=(calls:ModelResponse['calls']=[],text=''):ModelResponse=>({text,calls,usage:{input:null,output:null}});
+const call=(id:string,name='act')=>({id,name,arguments:JSON.stringify(name==='ask'?{message:'请提供验证码'}:{instruction:id})});
+
+test('安装 smoke 使用真实执行图验证包内工具消息与协助中断恢复',async()=>{
+  assert.deepEqual(await smokeExecutionGraph(),{langgraphExecution:true,langchainToolMessages:true,graphInterruptResume:true,graphToolExecutions:1,graphHelpRegistrations:1});
+});
+
+function harness(turns:ModelResponse[]){
+  const sent:Message[][]=[],performed:string[]=[],recorded:unknown[]=[];
+  let userSeq=1,registered=0,polled=0,consumed=0,final='';
+  const port:ExecutionGraphPort={
+    guard:()=>{},
+    observe:async()=>({messages:[{role:'system',content:'执行测试'},{role:'user',content:JSON.stringify({userMessages:[{content:'原文'}],userSeq})}],userSeq}),
+    decide:async messages=>{sent.push(messages);return {response:turns.shift()??response([],'完成'),compacted:false};},
+    changed:async seq=>seq!==userSeq,
+    perform:async tool=>{performed.push(tool.id);return {observed:true};},
+    registerHelp:async args=>{registered++;return {request:{id:'stable_help',message:String(args.message),origin:'https://example.com'},answer:{ready:false}};},
+    pollHelp:async request=>{polled++;assert.equal(request.id,'stable_help');userSeq++;return {ready:true,message:'0012'};},
+    consumeHelp:async(request,answer)=>{consumed++;assert.equal(request.id,'stable_help');return answer.message;},
+    record:(_call,result)=>{recorded.push(result);},error:async()=>{},say:async()=>{},finish:async text=>{final=text;return true;},
+  };
+  return {port,sent,performed,recorded,change:()=>{userSeq++;},result:()=>({registered,polled,consumed,final})};
+}
+
+test('图中断恢复只登记一次协助，不重跑前一浏览器动作，未执行调用保留原生配对',async()=>{
+  const h=harness([response([call('before'),call('help','ask'),call('stale')]),response([call('after')]),response([],'已完成')]);
+  await runExecutionGraph(h.port);
+  assert.deepEqual(h.performed,['before','after']);
+  assert.deepEqual(h.result(),{registered:1,polled:1,consumed:1,final:'已完成'});
+  const followup=h.sent[1];
+  assert.deepEqual(followup.filter(m=>m.role==='tool').map(m=>m.tool_call_id),['before','help','stale']);
+  assert.match(followup.find(m=>m.tool_call_id==='stale')!.content,/REPLAN_AFTER_HELP/);
+  assert.equal(followup.find(m=>m.tool_call_id==='help')!.content,'"0012"');
+});
+
+test('同批工具严格串行，用户补充使剩余调用失效而不是并发执行',async()=>{
+  const h=harness([response([call('first'),call('second')]),response([],'已按新要求处理')]);
+  let active=0,maxActive=0;
+  h.port.perform=async tool=>{active++;maxActive=Math.max(active,maxActive);await Promise.resolve();h.performed.push(tool.id);h.change();active--;return 'done';};
+  await runExecutionGraph(h.port);
+  assert.equal(maxActive,1);assert.deepEqual(h.performed,['first']);
+  const cancelled=h.sent[1].find(m=>m.tool_call_id==='second');assert.match(cancelled!.content,/INSTRUCTIONS_CHANGED/);
+  assert.deepEqual(h.sent[1].filter(m=>m.role==='tool').map(m=>m.tool_call_id),['first','second']);
+});
+
+test('工具异常和非法参数均回到模型，不重试副作用且保持调用结果配对',async()=>{
+  const invalid={id:'invalid',name:'act',arguments:'{broken'};
+  const h=harness([response([call('error'),invalid]),response([],'受阻')]);
+  let attempted=0;h.port.perform=async()=>{attempted++;throw Error('SENT_RESULT_UNKNOWN');};
+  await runExecutionGraph(h.port);
+  assert.equal(attempted,1);assert.equal(h.result().final,'受阻');
+  assert.deepEqual(h.sent[1].filter(m=>m.role==='tool').map(m=>m.tool_call_id),['error','invalid']);
+  assert.match(h.sent[1].find(m=>m.tool_call_id==='error')!.content,/SENT_RESULT_UNKNOWN/);
+});
+
+test('摘要后保留本轮原生工具调用配对，旧配对不继续积累',async()=>{
+  const h=harness([response([call('first')]),response([call('second')]),response([],'完成')]);
+  const decide=h.port.decide;let count=0;
+  h.port.decide=async messages=>({...await decide(messages),compacted:++count===2});
+  await runExecutionGraph(h.port);
+  assert.deepEqual(h.sent[2].filter(m=>m.role==='tool').map(m=>m.tool_call_id),['second']);
+  assert.deepEqual(h.sent[2].find(m=>m.role==='assistant')!.tool_calls?.map(c=>c.id),['second']);
+});
+
+test('同代 checkpoint 保留最新和父节点，超过默认步数后可中断恢复但全新 saver 不能恢复',async()=>{
+  const serializer=new JsonPlusSerializer();let typedReads=0;
+  const saver=new SessionCheckpointer({
+    dumpsTyped:async value=>{const [type,bytes]=await serializer.dumpsTyped(value);return [`session:${type}`,bytes];},
+    loadsTyped:async(type,bytes)=>{assert.ok(type.startsWith('session:'));typedReads++;return serializer.loadsTyped(type.slice(8),bytes);},
+  });
+  const State=Annotation.Root({count:Annotation<number>({reducer:(_,v)=>v,default:()=>0}),reply:Annotation<string>(),payload:Annotation<Uint8Array>()});
+  let effects=0;
+  const graph=new StateGraph(State)
+    .addNode('step',state=>{effects++;return {count:state.count+1};})
+    .addNode('wait',()=>({reply:interrupt<string,string>('验证码')}))
+    .addEdge(START,'step').addConditionalEdges('step',state=>state.count<40?'step':'wait',['step','wait']).addEdge('wait',END)
+    .compile({checkpointer:saver});
+  const config={configurable:{thread_id:'one_generation'},recursionLimit:Infinity,durability:'sync' as const};
+  await graph.invoke({payload:new Uint8Array([0,127,255])},config);
+  assert.equal(effects,40);assert.ok((await graph.getState(config)).tasks.some(t=>t.interrupts?.length));
+  let snapshots=0;for await(const _ of saver.list(config))snapshots++;assert.equal(snapshots,2);
+  await graph.invoke(new Command({resume:'0012'}),config);
+  assert.equal(effects,40);assert.equal((await graph.getState(config)).values.reply,'0012');
+  assert.deepEqual((await graph.getState(config)).values.payload,new Uint8Array([0,127,255]));
+  snapshots=0;for await(const _ of saver.list(config))snapshots++;assert.equal(snapshots,2);
+  assert.equal(await new SessionCheckpointer().getTuple(config),undefined);
+  assert.ok(typedReads>0);
+  await saver.deleteThread('one_generation');assert.equal(await saver.getTuple(config),undefined);
+});

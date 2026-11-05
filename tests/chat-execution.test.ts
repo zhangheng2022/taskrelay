@@ -45,7 +45,7 @@ test('完整生产链：执行器模型转发、多项目操作、云端求助�
   else await page.locator('#answer').fill('0012Ab!');
   return {data:{success:true,message:'实际完成当前操作',actions:[]}};
  }}}},localBrowser:{connect:async()=>({context:{setDomainPolicy:async()=>{},pages:async()=>[page]}})}} as any),startProxy:async()=>({port:1,close:async()=>{}}),delay:async()=>{}});
- assert.equal(first,1);assert.equal(second,1);assert.equal((dom.window.document.querySelector('#answer') as HTMLInputElement).value,'0012Ab!');
+ assert.equal(first,1);assert.equal(second,1,JSON.stringify(s.sql.prepare('SELECT content,parts FROM ai_messages WHERE source=\'executor\'').all()));assert.equal((dom.window.document.querySelector('#answer') as HTMLInputElement).value,'0012Ab!');
  const saved=s.sql.prepare('SELECT status,result FROM runs WHERE id=?').get(s.run.id)!;assert.equal(saved.status,'succeeded',String(saved.result));
  const chat=(await s.request(`/api/user/threads/${thread.id}`,null,'GET')).data;
  assert.ok(chat.messages.some((m:any)=>m.source==='cloud'&&/确认码/.test(m.content)));

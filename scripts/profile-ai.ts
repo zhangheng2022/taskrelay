@@ -12,7 +12,7 @@ import { emptyCheckpoint } from '@langchain/langgraph-checkpoint';
 import { productionModelFixture } from '../tests/production-model-fixture';
 import { identity } from '../apps/cloud/src/identity';
 import { app } from '../apps/cloud/src/index';
-import { structuredGraph } from '../apps/cloud/src/ai/graph';
+import { RelayChatModel } from '../apps/cloud/src/ai/model';
 import { D1Checkpointer } from '../apps/cloud/src/ai/checkpointer';
 import { seal, unseal } from '../apps/cloud/src/crypto';
 
@@ -62,16 +62,16 @@ test('isolated application CPU profile', async t => {
     const saved=await saver.put(c,cp,{source:'input',step:0,parents:{}});assert.ok(await saver.getTuple(saved));
   });
   const schema=z.object({reply:z.string()});
-  await measure('structured-graph',async i=>{
-    assert.deepEqual(await structuredGraph({env:s.env,owner:'legacy_owner',id:'profile-graph-'+i,kind:'chat',modelId:'model_test',version:1,schema,messages:[{role:'user',content:'只读查询'}]}),{reply:'ok'});
+  await measure('langchain-structured',async i=>{
+    assert.deepEqual(await new RelayChatModel(s.env,'model_test',1,'profile-model-'+i).withStructuredOutput(schema).invoke('只读查询'),{reply:'ok'});
   },async()=>{s.replies('{"reply":"ok"}');});
   let thread:any;
   await measure('compose-route',async i=>{
-    const result=await request(`/api/user/threads/${thread.id}/messages`,{requestId:'profile-'+i,expectedVersion:0,content:'只读检查 https://example.com/ 的页面正文。'});
+    const result=await request(`/api/user/threads/${thread.id}/messages`,{requestId:'profile-'+i,content:'只读检查 https://example.com/ 的页面正文。'});
     assert.equal(result.status,'done',JSON.stringify(result));
   },async()=>{
-    thread=await request('/api/user/threads',{kind:'compose',modelId:'model_test'});
-    s.replies(JSON.stringify({reply:'请提供成功判据',task:null,partial:'只读检查 example.com',missing:['成功判据']}));
+    thread=await request('/api/user/threads',{modelId:'model_test'});
+    s.replies(JSON.stringify({reply:'请描述任务目标',start:false,title:null,goal:null,entryUrl:null,accountId:null,executionOutline:[]}));
   });
   profiler.disconnect();
   report.providerCalls=s.requests.length;

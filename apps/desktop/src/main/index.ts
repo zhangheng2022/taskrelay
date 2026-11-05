@@ -1,3 +1,4 @@
+import { PROTOCOL_VERSION } from "../../../../packages/contracts/src/index";
 import {
   app,
   BrowserWindow,
@@ -163,7 +164,7 @@ function registerIpc() {
     }>(
       "POST",
       "/api/pair/start",
-      { name: require("node:os").hostname(), protocolVersion: 14 },
+      { name: require("node:os").hostname(), protocolVersion: PROTOCOL_VERSION },
       true,
     );
     if (new URL(result.url).origin !== url)

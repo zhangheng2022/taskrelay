@@ -7,7 +7,7 @@
 | 层 | 职责 |
 | --- | --- |
 | 网站 / packages/ui | 用户隔离的任务聊天、模型选择、账号与设置、执行过程和图片；一个输入框承接交办、补充和协助 |
-| Cloudflare | 应用鉴权、任务版本、运行快照、调度、租约、设备分配、云端意图检查与协助、模型出站 |
+| Cloudflare | 应用鉴权、任务版本、运行快照、调度、租约、设备分配、粗步骤规划与协助图、模型出站 |
 | Windows Main | 云端连接、safeStorage 设备令牌、SQLite journal/outbox、浏览器与执行子进程生命周期 |
 | Preload / Renderer | 校验后的命名入口、连接与运行状态、暂停、停止、自启动和诊断；不提供聊天、任务编辑和模型管理 |
 | Executor utilityProcess | 独立 Stagehand 4.3.0，完整观察、规划、操作、纠错与最终回复循环 |
@@ -18,16 +18,30 @@ Cloudflare 保持 Free，不设置项目级每日平台预算或全站模型上�
 
 ## 当前聊天与执行流程
 
-协议为 14，桌面源码版本为 0.11.1；安装和部署状态见验收记录。
+协议为 15，桌面源码版本为 0.12.0，图版本为 `relay-graph-1`；安装和部署状态见验收记录。
 
-1. 用户在网站交办。云端 AI 检查意图；明确任务直接交接，缺少关键信息才询问，咨询直接回答。
-2. conversation_inbox 以 requestId/digest 接收消息；线程内串行处理回合。commitDecision 只提交当前手动任务与 conversation_commands，随后幂等排队，不再处理旧的创建确认、调整范围或报告阶段分支。
+1. 用户在网站交办。云端规划图检查意图；明确任务生成可调整的粗步骤并交接，缺少关键信息才询问，咨询直接回答。粗步骤随任务版本固化为 `executionOutline`，不含选择器，也不是强制执行清单；原话和后续补充仍完整传给桌面。
+2. conversation_inbox 以 requestId/digest 接收消息；线程内串行处理回合。规划图经 understand → handoff（仅任务）→ respond，commitDecision 原子提交任务、版本与 conversation_commands，随后幂等排队。聊天展示本次真实生成的粗步骤。
 3. 云端领取事务检查身份、设备并发、账号锁与租约；任务及模型配置版本固定在运行快照。Main 保存本地检查点后创建带 generation 的执行子进程，拒绝旧代次消息。
-4. Executor 使用模型原生工具调用，执行 Stagehand 的 snapshot、act、observe、extract，以及导航、切换页面、等待和求助。高层 AI 给出自然语言操作，不生成选择器、自定义动作计划或业务完成枚举。
-5. 执行器先向云端 AI 求助。云端读取已有上下文与可用账号，无法解决时才在原聊天询问用户。普通补充和当前协助回复共用消息入口。
+4. Executor 的 LangGraph 负责观察、决策、串行工具、反馈和收尾，使用 LangChain 原生 AIMessage / ToolMessage。模型结合粗步骤与实时页面决定具体操作：Stagehand snapshot、act、observe、extract，以及导航、切换页面、等待和求助。高层 AI 给出自然语言单步操作，不生成选择器或业务完成枚举。
+5. 执行器先向云端协助图求助。云端读取已有上下文与可用账号，无法解决时才在原聊天询问用户，并停在无副作用的 interrupt 节点；回复以持久事件绑定当前问题和轮次后恢复。桌面也停在纯等待节点，轮询只读取已有协助结果，不重复浏览器操作。普通补充和当前协助回复共用消息入口。
 6. 执行器用普通助手文字回复实际进度或结果；云端保存转发，不另起报告模型。reported 表示“已回复”，不代表业务全部完成，部分完成或受阻也可正常收尾。
 
 当前新交办采用 manual；条件卡与频率确认保留为产品方向，不产生新条件草稿，也不构成执行前提。旧已确认条件的兼容路由和调度底层保留；没有 confirmedCondition 的任务不显示调度开关。用户偏好可保存，但当前执行上下文未消费这些偏好，修改偏好不会撤销运行或聊天回合。
+
+### 图与平台模块的边界
+
+| 模块 | 管理的知识与状态 |
+| --- | --- |
+| `ai/planning-graph.ts`、`ai/help-graph.ts` | 云端规划、协助分支与恢复点；不操作浏览器 |
+| `ai/graph.ts`、`ai/checkpointer.ts` | 图版本、输入摘要、generation、用户归属、加密 D1 checkpoint 与 pending writes；写入同时检查聊天、回合和运行租约 |
+| `ai/dispatch.ts`、`ai/turn.ts` | 持久事件认领与 alarm 唤醒；只推进图，不重复实现模型决策循环 |
+| `ai/model.ts`、`packages/model/src/langchain.ts` | 标准模型接口与消息适配；结构化输出仍由现有出站 adapter 校验和发送 |
+| `executor/execution-graph.ts` | 唯一桌面工具循环，串行执行工具，补齐取消调用的 ToolMessage，处理同进程协助恢复 |
+| `executor/runtime.ts` | 浏览器、页面、凭据、截图、动作登记、停止与云端通信；实现图需要的执行能力 |
+| `executor/session-checkpointer.ts` | 当前 utilityProcess 内最新与父 checkpoint，保留完整序列化类型；不是浏览器崩溃恢复日志 |
+
+云端图状态加密持久化；桌面图不跨 generation 恢复，进程故障仍由 Main journal/outbox 与租约收尾。模型结果未知不自动重试，浏览器结果未知不自动重放。图使用同步 checkpoint 和无固定回合数的递归配置；没有旧手写循环与新图同时运行。迁移保留旧记录为退休版本，不把旧 checkpoint 当作新图入口。
 
 ## 原始上下文与 Stagehand
 
@@ -65,7 +79,7 @@ submitAndWait 一次 RPC 完成提交与等待，循环在对象内部。alarm �
 
 模型名自由输入，支持 Chat Completions 与 Responses。缺少必需能力时拒绝使用，不暗换模型或提供方。自定义服务仅允许校验后的公网 HTTPS，拒绝跨域重定向传递凭据；上游错误映射公开分类，不返回响应正文。用量来自实际响应，缺少 token 或价格显示“未知”。
 
-LangGraph、RelayChatModel、D1Checkpointer、D1MemoryStore 保留；删除这些 adapter 会把模型出站、加密或持久化知识扩散到调用方。未使用的顶层 langchain 聚合依赖已移除，实际使用的 @langchain 包仍保留。本轮不重写 LangGraph。
+LangChain 的 `RelayChatModel` 提供 `bindTools`、`withStructuredOutput` 和标准消息转换；LangGraph 实际负责云端规划/协助与桌面执行。RelayChatModel、D1Checkpointer 和 SessionCheckpointer 隔离模型出站、加密持久化及同代状态知识，保留这些平台 adapter。没有引入顶层 langchain 聚合包，也不允许默认外部 tracing 或框架隐式网络重试。
 
 ## 数据与认证
 
@@ -79,4 +93,4 @@ Main 使用系统 safeStorage 保存设备令牌。MASTER_KEY 保护现有密文
 
 Stagehand 固定 4.3.0，Executor 保留原生动态 import；只暂存实际运行依赖，不打入整个 node_modules。Chromium 与扩展位于 ASAR 外，打包前校验资源哈希。extension adapter 在应用自有目录按内容哈希准备运行扩展，保留安装路径与文件完整性检查。
 
-Web build 不包含桌面打包。smoke 只执行独立 Stagehand 自建站流程，不调用 runtime.execute 或 ExecutorHost；真实执行/恢复另有生产入口隔离测试。JSDOM 不证明布局滚动，SQLite stand-in 不证明真实 D1 并发，模型能力测试不证明真实网站闭环。交付还须核对实际系统入口、安装路径、版本与 ASAR，MSIX 重定向副本不能代替系统安装。
+Web build 不包含桌面打包。smoke 执行独立 Stagehand 自建站流程，以及包内执行图的工具消息和 interrupt/resume 检查，使用确定性回调；不调用 runtime.execute 或 ExecutorHost。真实执行/恢复另有生产入口隔离测试。JSDOM 不证明布局滚动，SQLite stand-in 不证明真实 D1 并发，模型能力测试不证明真实网站闭环。交付还须核对实际系统入口、安装路径、版本与 ASAR，MSIX 重定向副本不能代替系统安装。

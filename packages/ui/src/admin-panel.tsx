@@ -1,5 +1,5 @@
 import { useEffect,useState } from 'react';
-import type { Transport } from '../../contracts/src/index';
+import { PROTOCOL_VERSION, type Transport } from '../../contracts/src/index';
 import { Button } from './components/ui/button';
 import { Input } from './components/ui/input';
 import { NativeSelect } from './components/ui/native-select';
@@ -29,7 +29,7 @@ export function AdminPanel({transport}:{transport:Transport}) {
  <Card><CardHeader><CardTitle>账号执行设备迁移</CardTitle><CardDescription>迁移后需要重新登录网站。先确认旧设备已经停止执行；待核查的账号不能迁移。</CardDescription></CardHeader><CardContent className="flex flex-col gap-5">
  {data.accounts.map(a=><form key={a.id+String(a.assigned_device_id)} onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);void action(()=>transport.request('POST',`/api/admin/accounts/${a.id}/migrate`,{deviceId:f.get('device'),oldExecutionStopped:f.get('stopped')==='on'}));}}><FieldGroup>
  <p className="break-all text-sm">账号 {a.id} · 用户 {data.users.find(u=>u.id===a.user_id)?.email||a.user_id} · 当前设备 {data.devices.find(d=>d.id===a.assigned_device_id)?.name||'未分配'}</p>
- <Field><FieldLabel htmlFor={a.id+'device'}>目标设备</FieldLabel><NativeSelect id={a.id+'device'} name="device" required defaultValue=""><option value="" disabled>选择设备</option>{data.devices.filter(d=>!d.revoked&&d.protocol_version===14).map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</NativeSelect></Field>
+ <Field><FieldLabel htmlFor={a.id+'device'}>目标设备</FieldLabel><NativeSelect id={a.id+'device'} name="device" required defaultValue=""><option value="" disabled>选择设备</option>{data.devices.filter(d=>!d.revoked&&d.protocol_version===PROTOCOL_VERSION).map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</NativeSelect></Field>
  <Field orientation="horizontal"><Input className="size-4" id={a.id+'stopped'} name="stopped" type="checkbox" required/><FieldLabel htmlFor={a.id+'stopped'}>已确认旧设备停止该账号的执行</FieldLabel></Field><Button variant="outline" disabled={busy}>迁移并重新登录</Button>
  </FieldGroup></form>)}{!data.accounts.length&&<p>暂无账号。</p>}</CardContent></Card>
  <Card><CardHeader><CardTitle>运行状态</CardTitle><CardDescription>仅展示运维信息，不展示用户任务内容。</CardDescription></CardHeader><CardContent className="flex flex-col gap-3">{data.runs.map(r=><div className="flex flex-wrap items-center gap-2 border-b pb-3" key={r.id}><Status value={r.status}/><span className="break-all text-xs">{r.id} · {formatDate(r.created_at)} · {r.error_code||'—'}</span></div>)}</CardContent></Card>

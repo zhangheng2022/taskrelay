@@ -34,12 +34,12 @@ try{
  const command=(method,params={})=>new Promise((resolve,reject)=>{const seq=++id;pending.set(seq,{resolve,reject});socket.send(JSON.stringify({id:seq,method,params}));});
  await command('Profiler.enable');await command('Profiler.setSamplingInterval',{interval:100});
  const report={runtime:'local workerd inspector, synthetic provider, local D1',cases:{}};
- for(const [name,route,units] of [['authenticated-read','/api/user/me',1],['crypto-roundtrip','/bench/crypto',10],['checkpoint-roundtrip','/bench/checkpoint',10],['structured-graph','/bench/graph',1],['compose-route',null,1]]){
+ for(const [name,route,units] of [['authenticated-read','/api/user/me',1],['crypto-roundtrip','/bench/crypto',10],['checkpoint-roundtrip','/bench/checkpoint',10],['langchain-structured','/bench/model',1],['compose-route',null,1]]){
   const requests=Number(process.env.PROFILE_REQUESTS??24),threads=[];
-  if(!route)for(let i=0;i<requests;i++)threads.push(await req('/api/user/threads',{kind:'compose',modelId:'model_test'}));
+  if(!route)for(let i=0;i<requests;i++)threads.push(await req('/api/user/threads',{modelId:'model_test'}));
   await command('Profiler.start');
   for(let i=0;i<requests;i++){
-   const r=await req(route??`/api/user/threads/${threads[i].id}/messages`,route?undefined:{requestId:'profile-'+i,expectedVersion:0,content:'只读检查 https://example.com/ 的页面正文。'});
+   const r=await req(route??`/api/user/threads/${threads[i].id}/messages`,route?undefined:{requestId:'profile-'+i,content:'只读检查 https://example.com/ 的页面正文。'});
    if(!route&&r.status!=='done')throw Error(JSON.stringify(r));
   }
   const {profile}=await command('Profiler.stop');

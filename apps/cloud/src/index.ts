@@ -9,7 +9,7 @@ import { pairing } from "./pairing";
 import { user } from "./user";
 import { admin } from "./admin";
 import { authHandler } from "./identity";
-import { PROTOCOL_VERSION } from "../../../packages/contracts/src/index";
+import { PROTOCOL_VERSION, HISTORY_EPOCH } from "../../../packages/contracts/src/index";
 import { quotaReset } from "./tenancy";
 import { runner } from "./runner";
 import { conversations } from './ai/conversations';
@@ -75,11 +75,11 @@ app.route("/api/admin", admin);
 app.get('/api/auth/config',c=>c.json({registrationOpen:c.env.REGISTRATION_OPEN==='1',siteKey:c.env.TURNSTILE_SITE_KEY||''}));
 app.all('/api/auth/*',c=>authHandler(c.req.raw,c.env));
 app.post('/api/device/upgrade',async c=>{
- z.object({protocolVersion:z.literal(14),localReady:z.literal(true)}).strict().parse(await c.req.json());
- const result=await c.env.DB.prepare("UPDATE devices SET protocol_version=14,cutover_ready_at=? WHERE id=? AND revoked=0 AND (EXISTS(SELECT 1 FROM settings WHERE key='historyEpoch' AND value='3') OR (EXISTS(SELECT 1 FROM settings WHERE key='maintenance' AND value='1') AND EXISTS(SELECT 1 FROM settings WHERE key='claimsEnabled' AND value='0'))) AND NOT EXISTS(SELECT 1 FROM runs WHERE device_id=? AND status IN ('running','waiting_user','verifying'))").bind(now(),c.get('deviceId'),c.get('deviceId')).run();
+ z.object({protocolVersion:z.literal(PROTOCOL_VERSION),localReady:z.literal(true)}).strict().parse(await c.req.json());
+ const result=await c.env.DB.prepare(`UPDATE devices SET protocol_version=${PROTOCOL_VERSION},cutover_ready_at=? WHERE id=? AND revoked=0 AND (EXISTS(SELECT 1 FROM settings WHERE key='historyEpoch' AND value='${HISTORY_EPOCH}') OR (EXISTS(SELECT 1 FROM settings WHERE key='maintenance' AND value='1') AND EXISTS(SELECT 1 FROM settings WHERE key='claimsEnabled' AND value='0'))) AND NOT EXISTS(SELECT 1 FROM runs WHERE device_id=? AND status IN ('running','waiting_user','verifying'))`).bind(now(),c.get('deviceId'),c.get('deviceId')).run();
  if(!result.meta.changes)throw new Error('CUTOVER_NOT_READY');
  const epoch=await c.env.DB.prepare("SELECT value FROM settings WHERE key='historyEpoch'").first<{value:string}>();
- return c.json({protocolVersion:14,historyEpoch:Number(epoch?.value??0)});
+ return c.json({protocolVersion:PROTOCOL_VERSION,historyEpoch:Number(epoch?.value??0)});
 });
 app.get('/api/device/status',async c=>{
  const rows=await c.env.DB.prepare("SELECT key,value FROM settings WHERE key IN ('maintenance','historyEpoch')").all<{key:string;value:string}>();

@@ -1,5 +1,33 @@
 # TaskRelay 验收记录
 
+## 2026-11-05 云端粗步骤与 LangChain / LangGraph（0.12.0 / 协议 15）
+
+一次切换至新的云端规划图、协助图和桌面执行图，没有并行保留旧手写工具循环。粗步骤作为 `executionOutline` 进入任务版本，桌面根据原话、补充和真实页面执行单步操作。标准 LangChain 消息与工具接口经 RelayChatModel 连接原有美国 alarm 出站；Stagehand 仍固定 4.3.0。
+
+完整 **209 项测试通过**，包含 UI、实际 execute/Host、云端规划与协助生产接口；类型检查、Web 构建、仓库检查及 diff 检查通过。专项覆盖等待恢复不重复副作用、超过 40 次动作、停止与 unknown、用户原话不压缩、首次求助期间新补充自动唤醒、最终截图及收尾请求期间用户纠正、租约/generation/聊天删除的原子写入保护、协助结果与聊天事务回滚。源码图已更新，仍缺 `tree_sitter_sql`，21 个 SQL 文件未解析；不能据此声称数据库关系图完整。Web 构建仍提示大分块。
+
+`0020_graph_orchestration.sql` 已应用生产 D1；云端/Web 最新部署版本 `e15c198a-968f-430a-a368-c4ee994923e3`（含 Worker 异步上下文修复）。前次部署的生产健康和匿名/Bearer 归属检查通过。设备已升级协议 15，注册保持关闭，个人次数限制保持关闭，领取恢复为 1、维护恢复为 0。未更改 MASTER_KEY 或增加模型直连。
+
+Windows 0.12.0 make、包内 smoke、实际系统目录安装 smoke、release-manifest 均通过。实际桌面快捷方式指向系统 `AppData/Local/TaskRelay/TaskRelay.exe`，启动进程为 `app-0.12.0/TaskRelay.exe`；实际安装与构建 ASAR SHA-256 一致，为 `d09ce5aadff134d73f1bb8a2b77a5a01cb29f15118864318fa346d4b9b7dc1f8`。报告位于 `out/packaged-smoke.json`、`out/installed-smoke.json`、`out/release-manifest.json`；这是未提交源码构建，不是公开更新发布。包内 smoke 验证原生 Stagehand、自建站操作、LangGraph 工具消息及一次 interrupt/resume，不等于真实模型完整任务。
+
+### 已授权旧历史重置
+
+维护窗口确认无活动运行，先关闭聊天及图写入，再清任务派生记录。线上任务/运行/图片原为 0，本轮删除 1 个空聊天及 947 条旧额度预留；清理后任务、运行、聊天、图状态均为 0。Evidence 目录 130 个对象均无存储数据标记。用户 1、模型 2、设备 1、账号 0、认证数据、偏好及独立用量表逐项比较保持一致，historyEpoch 更新为 4。后续新建的验收任务属于本轮新记录，不属于旧历史残留。
+
+本地当前两处 userData、开发 D1 与旧数据库备份共 12 库完成任务历史清理，共清除 63 条旧 journal；两处当前库 historyEpoch=4，旧 claimRequest 移除，配置和登录 Profile 保留。3 份混合 SQL 备份只移除 1620 条任务历史 INSERT，保留 schema、账号、模型、设备、用量及偏好语句并比较哈希。Codex 重定向库完整性正常；系统库及 5 份旧备份在清理前后均报告 config 自动索引异常。系统库重复键为 historyEpoch（值不同）与 paused（值相同），没有据此选择新偏好或改写凭据。
+
+随后先在旧备份验证，再受控重建系统库 config：historyEpoch 按本次授权统一为 4，相同 paused 值去重，7 行恢复为 5 个唯一键。非 historyEpoch 配置与所有其他表哈希一致，数据库版本不变，系统库 quick_check 恢复正常。其他旧备份的不同配置未擅自选值或去重。
+
+**文件清理未完成**：49 张旧任务截图和 7 份任务导出保留。批量删除及缩小到单个任务文件的删除均被自动审批拒绝，仅返回 `blocked by policy`；没有换工具绕过，不能声称全部本地历史文件已擦除。系统安装/设置截图、源码、运行依赖、浏览器 Profile 未纳入删除。
+
+### 真实模型虚构站验收
+
+首轮 `run_1bf4858e28c548a9b895db4f35d3d9db`：云端生成三条粗步骤并入聊天，系统安装的桌面打开页面并回传截图，云端发布协助问题；进入等待节点时报 `AI_GRAPH_FAILED`。没有填写或点击，验收站次数仍为 1，不能记为完整闭环通过。定位到 Worker 条件导出未自动初始化 LangChain AsyncLocalStorage，Node 测试的自动初始化掩盖了差异。`node scripts/test-free-runtime.mjs` 使用实际 workerd、ProductionAiTurn alarm 与加密 D1 checkpoint，在修复前复现同一错误；显式初始化后验证询问 → 持久等待 → 原文回复恢复 → 完成，同时多块证据及 WebSocket 撤销检查通过。209 项 Node 测试再次通过。
+
+修复已部署，第二次真实复验创建 `run_e6d671db68664904aab178f50225a2be`；用户通过物理 Escape 停止电脑操作，随后已对本次验收运行发出取消，不继续控制电脑。因此本轮真实模型的完整浏览器闭环仍未确认，不能将 workerd 隔离回归替代现场通过。
+
+干净 Windows、真实业务站点、多提供方、锁屏/休眠/断网及连续观察不由上述测试覆盖。
+
 ## 2026-11-05 Stagehand 规则对齐（0.11.1 源码与打包验证）
 
 依据官方 v4 AI rules，并核对本地 4.3.0 类型和实现：补充单步 act 指引，明确 observe 仅返回候选、空结果不代表完成，执行历史保留 data/metadata，导航错误不再显示为已打开。初始化返回后重新检查停止；打包自测在异常时也关闭 Stagehand，并校验提取值。SDK browser.close() 会发送 Browser.close，生产 Chromium 继续由 Main/Host 回收，未改为执行器直接关闭。

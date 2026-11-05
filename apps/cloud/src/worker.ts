@@ -1,3 +1,4 @@
+import { PROTOCOL_VERSION } from "../../../packages/contracts/src/index";
 import type { AppEnv } from "./env";
 import { serveUpdate } from './updates';
 export default {
@@ -5,7 +6,7 @@ export default {
     const url = new URL(request.url);
     if(url.pathname.startsWith('/api/updates/'))return serveUpdate(request);
     if(!url.pathname.startsWith('/api/'))return env.ASSETS.fetch(request);
-    if(url.pathname==='/api/health')return Response.json({service:'TaskRelay',protocolVersion:14});
+    if(url.pathname==='/api/health')return Response.json({service:'TaskRelay',protocolVersion:PROTOCOL_VERSION});
     const credential=request.headers.get('authorization')||request.headers.get('cookie')||request.headers.get('cf-connecting-ip')||'anonymous';
     if(credential.length>16384)return new Response(null,{status:431});
     const digest=new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(credential)));

@@ -2,7 +2,7 @@
 import { app } from '../../apps/cloud/src/index';
 import { identity } from '../../apps/cloud/src/identity';
 import { seal,unseal } from '../../apps/cloud/src/crypto';
-import { structuredGraph } from '../../apps/cloud/src/ai/graph';
+import { RelayChatModel } from '../../apps/cloud/src/ai/model';
 import { D1Checkpointer } from '../../apps/cloud/src/ai/checkpointer';
 import { emptyCheckpoint } from '@langchain/langgraph-checkpoint';
 import { attachTestEgress } from '../../tests/egress-helpers';
@@ -10,7 +10,7 @@ import { hashPassword } from 'better-auth/crypto';
 import { z } from 'zod';
 import type { AppEnv } from '../../apps/cloud/src/env';
 
-const reply={reply:'请提供成功判据',task:null,partial:'只读检查 example.com',missing:['成功判据']};
+const reply={reply:'请描述任务目标',start:false,title:null,goal:null,entryUrl:null,accountId:null,executionOutline:[]};
 // No network is allowed, including accidental requests to a real provider.
 globalThis.fetch=async(input)=>{
  const url=String(input);
@@ -47,6 +47,6 @@ export default {async fetch(request:Request,bindings:AppEnv){
   }
   return Response.json({ok:true,operations:10});
  }
- if(path==='/bench/graph')return Response.json(await structuredGraph({env,owner:'legacy_owner',id:crypto.randomUUID(),kind:'chat',modelId:'model_test',version:1,schema,messages:[{role:'user',content:'只读查询'}]}));
+ if(path==='/bench/model')return Response.json(await new RelayChatModel(env,'model_test',1,crypto.randomUUID()).withStructuredOutput(schema).invoke('只读查询'));
  return app.fetch(request,env);
 }};

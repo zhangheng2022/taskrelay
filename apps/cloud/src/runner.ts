@@ -6,8 +6,10 @@ import {executorTools} from '../../../packages/contracts/src/execution';
 import {publicUrl} from '../../../packages/contracts/src/security';
 import type {AppEnv,Variables} from './env';
 import {claim,getRun,requireLease,now,type Row} from './store';
-import {generateStructured,getModelProfile,invoke} from './models';
-import {stagehandSchema} from './ai/stagehand-schema';
+import {getModelProfile} from './models';
+import {RelayChatModel} from './ai/model';
+import {AIMessage} from '@langchain/core/messages';
+import {aiMessageToModelResponse,toLangChainMessages} from '../../../packages/model/src/langchain';
 import {unseal} from './crypto';
 import {putEvidence,deleteEvidence} from './evidence';
 import {appendMessage,conversationContext,runThread} from './chat-messages';
@@ -16,6 +18,12 @@ import {compactMessages} from './model-context';
 
 export const runner=new Hono<{Bindings:AppEnv;Variables:Variables}>();
 const lease=z.object({epoch:z.number().int().positive()});
+const modelMessage=z.object({
+  role:z.enum(['system','user','assistant','tool']),content:z.string(),
+  tool_call_id:z.string().min(1).optional(),
+  tool_calls:z.array(z.object({id:z.string().min(1),type:z.literal('function'),function:z.object({name:z.string().min(1),arguments:z.string()})})).optional(),
+  content_blocks:z.array(z.discriminatedUnion('type',[z.object({type:z.literal('text'),text:z.string()}),z.object({type:z.literal('image_url'),image_url:z.object({url:z.string()})})])).optional(),
+}).superRefine((message,ctx)=>{if(message.role==='tool'&&!message.tool_call_id)ctx.addIssue({code:'custom',message:'MODEL_TOOL_CALL_ID_REQUIRED'});});
 const parts=z.array(z.discriminatedUnion('type',[
   z.object({type:z.literal('image'),artifactId:idSchema,alt:z.string()}),
   z.object({type:z.literal('tool'),name:z.string(),result:z.string()}),
@@ -43,7 +51,7 @@ runner.post('/runs/:id/messages',async c=>{
 });
 // The executor owns the prompt and tool loop; this endpoint only relays inference.
 runner.post('/runs/:id/model',async c=>{
-  const b=lease.extend({requestId:idSchema,messages:z.array(z.object({role:z.enum(['system','user','assistant']),content:z.string()}))}).parse(await c.req.json());
+  const b=lease.extend({requestId:idSchema,messages:z.array(modelMessage)}).parse(await c.req.json());
   const run=await requireLease(c.env.DB,c.req.param('id'),c.get('deviceId'),b.epoch);
   const {profile}=await getModelProfile(c.env,run.task.modelId,run.task.modelVersion);
   const images=await c.env.DB.prepare(`SELECT COUNT(*) AS count FROM ai_messages m,json_each(m.parts) p
@@ -52,9 +60,13 @@ runner.post('/runs/:id/model',async c=>{
   // Delivery facts belong to this relay; they are not business outcome checks.
   const input=[{role:'system' as const,content:`运行能力与聊天附件反馈：本次运行已关联到聊天的截图数量=${images?.count??0}。执行器会自动在最终答复前附上当前页面截图；保存与展示截图不需要视觉模型。只报告实际结果，不把工具一次失败等同于整个任务失败。`},...b.messages];
   const messages=await compactMessages(c.env,run.task.modelId,run.task.modelVersion,input,run.id,b.requestId,()=>requireLease(c.env.DB,run.id,c.get('deviceId'),b.epoch));
-  const response=await invoke(c.env,run.task.modelId,run.task.modelVersion,{messages,tools:executorTools,toolChoice:'auto',maxTokens:profile.outputTokens??4096},run.id,`execute_${run.id}_${b.requestId}`);
+  const model=new RelayChatModel(c.env,run.task.modelId,run.task.modelVersion,`execute_${run.id}_${b.requestId}`,run.id);
+  const response=aiMessageToModelResponse(await model.bindTools(executorTools.map(tool=>({type:'function',function:tool})),{tool_choice:'auto',maxTokens:profile.outputTokens??4096}).invoke(toLangChainMessages(messages)));
   let memory:Record<string,unknown>|null=null;
-  if(messages!==input){memory=JSON.parse(messages.at(-1)!.content);delete memory!.untrustedPage;delete memory!.userMessages;}
+  if(messages!==input){
+    const summary=messages.find(message=>message.role==='user'&&message.content.includes('"summaries"'));
+    if(summary){memory=JSON.parse(summary.content);delete memory!.untrustedPage;delete memory!.userMessages;delete memory!.executionOutline;}
+  }
   await requireLease(c.env.DB,run.id,c.get('deviceId'),b.epoch);return c.json({response,memory});
 });
 // Never summarize Stagehand's tree/element IDs independently of its schema.
@@ -64,10 +76,16 @@ runner.post('/runs/:id/stagehand',async c=>{
   const {profile}=await getModelProfile(c.env,run.task.modelId,run.task.modelVersion);
   if(b.image&&!profile.capabilities.vision)throw Error('VISION_NOT_SUPPORTED');
   const operation=`stagehand_${run.id}_${b.requestId}`;
-  const response=b.schema?(await generateStructured(c.env,run.task.modelId,run.task.modelVersion,b.schema,stagehandSchema(b.schema),b.messages,run.id,'STAGEHAND_SCHEMA_INVALID',operation,undefined,b.image?{image:b.image}:undefined)).response:
-    await invoke(c.env,run.task.modelId,run.task.modelVersion,{messages:b.messages,image:b.image,maxTokens:profile.outputTokens??4096},run.id,operation);
+  const model=new RelayChatModel(c.env,run.task.modelId,run.task.modelVersion,operation,run.id);
+  const options={image:b.image,maxTokens:profile.outputTokens??4096,invalidCode:'STAGEHAND_SCHEMA_INVALID'};
+  let response;
+  if(b.schema){
+    const result=await model.withStructuredOutput(b.schema,{includeRaw:true}).invoke(toLangChainMessages(b.messages),options);
+    if(!(result.raw instanceof AIMessage))throw Error('MODEL_INVALID_RESPONSE');
+    response={...aiMessageToModelResponse(result.raw),structured:result.parsed};
+  }else response=aiMessageToModelResponse(await model.invoke(toLangChainMessages(b.messages),options));
   await requireLease(c.env.DB,run.id,c.get('deviceId'),b.epoch);
-  return c.json({text:response.text,...(b.schema?{structured:JSON.parse(response.text)}:{})});
+  return c.json({text:response.text,...(b.schema?{structured:response.structured}:{})});
 });
 runner.post('/runs/:id/help',async c=>{
   const b=lease.extend({id:idSchema,message:z.string(),origin:z.url()}).parse(await c.req.json());
@@ -120,7 +138,7 @@ runner.post('/runs/:id/snapshots',async c=>{
   }catch(error){await deleteEvidence(c.env,key);throw error;}return c.json({id});
 });
 runner.post('/runs/:id/finish',async c=>{
-  const b=lease.extend({status:z.enum(['succeeded','failed','unknown','cancelled']),result:runResultSchema}).parse(await c.req.json());
+  const b=lease.extend({status:z.enum(['succeeded','failed','unknown','cancelled']),result:runResultSchema,expectedUserSeq:z.number().int().nonnegative().optional()}).parse(await c.req.json());
   const run=await getRun(c.env.DB,c.req.param('id'));
   if(run.deviceId!==c.get('deviceId')||run.leaseEpoch!==b.epoch)throw Error('LEASE_EXPIRED');
   const terminal=['succeeded','failed','unknown','cancelled','expired'].includes(run.status);
@@ -131,13 +149,19 @@ runner.post('/runs/:id/finish',async c=>{
     await requireLease(c.env.DB,run.id,c.get('deviceId'),b.epoch,true);
     const at=now();
     const [saved]=await c.env.DB.batch([
-      c.env.DB.prepare("UPDATE runs SET status=CASE WHEN write_pending=1 THEN 'unknown' WHEN cancel_requested=1 THEN 'cancelled' ELSE ? END,result=?,lease_expires_at=NULL,updated_at=? WHERE id=? AND lease_epoch=? AND lease_expires_at>? AND status IN ('running','waiting_user','verifying')")
-        .bind(b.status,JSON.stringify(b.result),at,run.id,b.epoch,at),
+      c.env.DB.prepare(`UPDATE runs SET status=CASE WHEN write_pending=1 THEN 'unknown' WHEN cancel_requested=1 THEN 'cancelled' ELSE ? END,result=?,lease_expires_at=NULL,updated_at=?
+        WHERE id=? AND lease_epoch=? AND lease_expires_at>? AND status IN ('running','waiting_user','verifying')
+        AND (? IS NULL OR cancel_requested=1 OR (SELECT COALESCE(MAX(seq),0) FROM ai_messages WHERE thread_id=runs.thread_id AND role='user')=?)`)
+        .bind(b.status,JSON.stringify(b.result),at,run.id,b.epoch,at,b.expectedUserSeq??null,b.expectedUserSeq??null),
       c.env.DB.prepare("UPDATE execution_help SET awaiting_user=0 WHERE run_id=? AND EXISTS(SELECT 1 FROM runs WHERE id=? AND lease_epoch=? AND lease_expires_at IS NULL)").bind(run.id,run.id,b.epoch),
       c.env.DB.prepare("DELETE FROM account_locks WHERE run_id=? AND EXISTS(SELECT 1 FROM runs WHERE id=? AND lease_epoch=? AND status IN ('succeeded','failed','cancelled','expired'))").bind(run.id,run.id,b.epoch),
     ]);
     if(!saved.meta.changes){
       const savedRun=await getRun(c.env.DB,run.id);
+      if(b.expectedUserSeq!==undefined&&savedRun.leaseEpoch===b.epoch&&['running','waiting_user','verifying'].includes(savedRun.status)&&!savedRun.cancelRequested){
+        const latest=await c.env.DB.prepare("SELECT COALESCE(MAX(seq),0) seq FROM ai_messages WHERE thread_id=(SELECT thread_id FROM runs WHERE id=?) AND role='user'").bind(run.id).first<{seq:number}>();
+        if(latest?.seq!==b.expectedUserSeq)throw Error('INSTRUCTIONS_CHANGED');
+      }
       if(savedRun.leaseEpoch!==b.epoch||JSON.stringify(savedRun.result)!==JSON.stringify(b.result))throw Error('LEASE_EXPIRED');
     }
   }

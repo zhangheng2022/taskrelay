@@ -7,7 +7,10 @@ export default defineConfig({
       fileName: () => "executor.cjs",
     },
     rollupOptions: {
-      external: ["@browserbasehq/stagehand"],
+      external: [
+        /^@browserbasehq\/stagehand(?:\/|$)/,
+        /^@langchain\/(?:core|langgraph|langgraph-checkpoint)(?:\/|$)/,
+      ],
       output: { dynamicImportInCjs: true },
     },
   },

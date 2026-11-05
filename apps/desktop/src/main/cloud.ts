@@ -1,3 +1,4 @@
+import { PROTOCOL_VERSION, HISTORY_EPOCH } from "../../../../packages/contracts/src/index";
 import { safeStorage } from "electron";
 import { Journal } from "./journal";
 import WebSocket from 'ws';
@@ -35,15 +36,15 @@ export class Cloud {
     catch(error) {
       if((error as Error).message!=='DEVICE_UPGRADE_REQUIRED')throw error;
       if(!executorIdle||this.journal.pending().length||this.journal.incomplete().length)throw new Error('LOCAL_HISTORY_UNRESOLVED');
-      await this.request('POST','/api/device/upgrade',{protocolVersion:14,localReady:true});
+      await this.request('POST','/api/device/upgrade',{protocolVersion:PROTOCOL_VERSION,localReady:true});
       status=await this.request<Status>('GET','/api/device/status');
     }
     if(!status.maintenance)this.readyUntil=0;
     if(status.maintenance&&Date.now()>this.readyUntil&&executorIdle&&!this.journal.pending().length&&!this.journal.incomplete().length){
-      await this.request('POST','/api/device/upgrade',{protocolVersion:14,localReady:true});
+      await this.request('POST','/api/device/upgrade',{protocolVersion:PROTOCOL_VERSION,localReady:true});
       this.readyUntil=Date.now()+180000;
     }
-    if(status.historyEpoch===3&&this.journal.get('historyEpoch')!==3){if(!executorIdle)throw new Error('EXECUTOR_BUSY');this.journal.clearHistory();}
+    if(status.historyEpoch===HISTORY_EPOCH&&this.journal.get('historyEpoch')!==HISTORY_EPOCH){if(!executorIdle)throw new Error('EXECUTOR_BUSY');this.journal.clearHistory();}
     return status;
   }
   watch(fn:()=>void){
@@ -54,7 +55,7 @@ export class Cloud {
       if(!this.paired){timer=setTimeout(start,30000);return;}
       const url=new URL('/api/device/events',this.url);url.protocol=url.protocol==='https:'?'wss:':'ws:';
       try{
-        socket=new WebSocket(url,{headers:{Authorization:`Bearer ${this.token()}`,'x-taskrelay-protocol':'14'},handshakeTimeout:12000,followRedirects:false});
+        socket=new WebSocket(url,{headers:{Authorization:`Bearer ${this.token()}`,'x-taskrelay-protocol':String(PROTOCOL_VERSION)},handshakeTimeout:12000,followRedirects:false});
         socket.on('open',()=>{failures=0;fn();});
         socket.on('message',()=>fn());
         socket.on('error',()=>socket?.close());
@@ -74,7 +75,7 @@ export class Cloud {
     const response = await fetch(`${this.url}${p}`, {
       method,
       headers: {
-        "x-taskrelay-protocol":"14",
+        "x-taskrelay-protocol":String(PROTOCOL_VERSION),
         ...(publicCall ? {} : { Authorization: `Bearer ${this.token()}` }),
         ...(binary
           ? {

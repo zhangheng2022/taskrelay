@@ -96,7 +96,7 @@ test('真实登录会话隔离任务、运行、对话、协助、证据和用�
  assert.equal((await s.request('/api/admin/operations',s.cookies.alice)).status,403);
  assert.equal((await s.request('/api/admin/operations',s.cookies.owner)).status,200);
  for(const path of ['/api/user/snapshot','/api/admin/operations','/api/device/user/snapshot']) {
-  const r=await app.request('http://localhost'+path,{headers:{"x-taskrelay-protocol":"14", Authorization:'Bearer '+'a'.repeat(64)}},s.env);
+  const r=await app.request('http://localhost'+path,{headers:{"x-taskrelay-protocol":"15", Authorization:'Bearer '+'a'.repeat(64)}},s.env);
   assert.equal(r.status,403,path);
  }
 });

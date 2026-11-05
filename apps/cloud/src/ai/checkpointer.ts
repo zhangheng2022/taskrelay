@@ -12,6 +12,7 @@ import {
 import type { RunnableConfig } from "@langchain/core/runnables";
 import { seal, unseal } from "../crypto";
 import { Buffer } from "node:buffer";
+import { graphWriteFence } from "./fence";
 
 type Saved = {
   id: string;
@@ -36,8 +37,14 @@ export class D1Checkpointer extends BaseCheckpointSaver {
     private key: string,
     private guard: () => Promise<void> = async () => {},
     private fenced = false,
+    private generation?: number,
   ) {
     super();
+  }
+  private fence(thread: string) {
+    return this.fenced
+      ? graphWriteFence(this.owner, thread, this.generation)
+      : { sql: "1", values: [] };
   }
   private scope(c: RunnableConfig) {
     const thread = c.configurable?.thread_id;
@@ -48,20 +55,25 @@ export class D1Checkpointer extends BaseCheckpointSaver {
   private async encode(value: unknown) {
     const [type, bytes] = await this.serde.dumpsTyped(value);
     return seal(
-      { type, bytes: Buffer.from(bytes).toString("base64"), encoding: "base64" },
+      {
+        type,
+        bytes: Buffer.from(bytes).toString("base64"),
+        encoding: "base64",
+      },
       this.key,
       `ai-checkpoint:${this.owner}`,
     );
   }
   private async decode<T>(value: string): Promise<T> {
-    const data = await unseal<{ type: string; bytes: number[] | string; encoding?: "base64" }>(
-      value,
-      this.key,
-      `ai-checkpoint:${this.owner}`,
-    );
+    const data = await unseal<{
+      type: string;
+      bytes: number[] | string;
+      encoding?: "base64";
+    }>(value, this.key, `ai-checkpoint:${this.owner}`);
     let bytes: Uint8Array;
     if (Array.isArray(data.bytes)) bytes = new Uint8Array(data.bytes);
-    else if (data.encoding === "base64") bytes = new Uint8Array(Buffer.from(data.bytes, "base64"));
+    else if (data.encoding === "base64")
+      bytes = new Uint8Array(Buffer.from(data.bytes, "base64"));
     else throw new Error("UNKNOWN_CHECKPOINT_ENCODING");
     return (await this.serde.loadsTyped(data.type, bytes)) as T;
   }
@@ -158,14 +170,15 @@ export class D1Checkpointer extends BaseCheckpointSaver {
     metadata: CheckpointMetadata,
   ) {
     const { thread, ns } = this.scope(config);
+    const fence = this.fence(thread);
     const [data, meta] = await Promise.all([
       this.encode(checkpoint),
       this.encode(metadata),
     ]);
     await this.guard();
-    await this.db
+    const saved = await this.db
       .prepare(
-        `INSERT OR REPLACE INTO ai_checkpoints(owner,thread,ns,id,parent,checkpoint,metadata,at) SELECT ?,?,?,?,?,?,?,? ${this.fenced ? "WHERE EXISTS(SELECT 1 FROM ai_graph_inputs g WHERE owner=? AND id=? AND active=1 AND (parent_turn IS NULL OR EXISTS(SELECT 1 FROM ai_turns t WHERE t.id=g.parent_turn AND t.status IN ('running','done'))))" : ""}`,
+        `INSERT OR REPLACE INTO ai_checkpoints(owner,thread,ns,id,parent,checkpoint,metadata,at) SELECT ?,?,?,?,?,?,?,? WHERE ${fence.sql}`,
       )
       .bind(
         this.owner,
@@ -176,9 +189,10 @@ export class D1Checkpointer extends BaseCheckpointSaver {
         data,
         meta,
         new Date().toISOString(),
-        ...(this.fenced ? [this.owner, thread] : []),
+        ...fence.values,
       )
       .run();
+    if (!saved.meta.changes) throw Error("GRAPH_STALE");
     return {
       configurable: {
         thread_id: thread,
@@ -196,12 +210,13 @@ export class D1Checkpointer extends BaseCheckpointSaver {
     const { thread, ns } = this.scope(config),
       id = config.configurable?.checkpoint_id;
     if (!id) throw new Error("AI_CHECKPOINT_REQUIRED");
+    const fence = this.fence(thread);
     const statements = await Promise.all(
       writes.map(async ([channel, value], i) => {
         const idx = WRITES_IDX_MAP[channel] ?? i;
         return this.db
           .prepare(
-            `INSERT ${idx < 0 ? "OR REPLACE" : "OR IGNORE"} INTO ai_writes(owner,thread,ns,checkpoint,task,path,idx,channel,value) SELECT ?,?,?,?,?,?,?,?,? ${this.fenced ? "WHERE EXISTS(SELECT 1 FROM ai_graph_inputs g WHERE owner=? AND id=? AND active=1 AND (parent_turn IS NULL OR EXISTS(SELECT 1 FROM ai_turns t WHERE t.id=g.parent_turn AND t.status IN ('running','done'))))" : ""}`,
+            `INSERT ${idx < 0 ? "OR REPLACE" : "OR IGNORE"} INTO ai_writes(owner,thread,ns,checkpoint,task,path,idx,channel,value) SELECT ?,?,?,?,?,?,?,?,? WHERE ${fence.sql}`,
           )
           .bind(
             this.owner,
@@ -213,12 +228,20 @@ export class D1Checkpointer extends BaseCheckpointSaver {
             idx,
             channel,
             await this.encode(value),
-            ...(this.fenced ? [this.owner, thread] : []),
+            ...fence.values,
           );
       }),
     );
     await this.guard();
     if (statements.length) await this.db.batch(statements);
+    if (
+      this.fenced &&
+      !(await this.db
+        .prepare(`SELECT 1 WHERE ${fence.sql}`)
+        .bind(...fence.values)
+        .first())
+    )
+      throw Error("GRAPH_STALE");
   }
   async deleteThread(thread: string) {
     await this.db.batch(

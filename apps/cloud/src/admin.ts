@@ -1,3 +1,4 @@
+import { PROTOCOL_VERSION } from "../../../packages/contracts/src/index";
 import { z } from 'zod';
 import { admin } from './user';
 import { uid,now,type Row } from './store';
@@ -38,7 +39,7 @@ admin.post('/accounts/:id/migrate',async c=>{
  const b=z.object({deviceId:z.string().min(1).max(100),oldExecutionStopped:z.literal(true)}).strict().parse(await c.req.json());
  const id=c.req.param('id');
  const results=await c.env.DB.batch([c.env.DB.prepare(`UPDATE accounts SET assigned_device_id=?,profile_id=?,login_reset=1 WHERE id=?
- AND EXISTS(SELECT 1 FROM devices WHERE id=? AND revoked=0 AND protocol_version=14)
+ AND EXISTS(SELECT 1 FROM devices WHERE id=? AND revoked=0 AND protocol_version=${PROTOCOL_VERSION})
  AND NOT EXISTS(SELECT 1 FROM account_locks WHERE account_key=accounts.id)
  AND NOT EXISTS(SELECT 1 FROM runs WHERE account_key=accounts.id AND status IN ('running','waiting_user','verifying','unknown'))`)
  .bind(b.deviceId,uid('profile'),id,b.deviceId),

@@ -16,6 +16,7 @@ import { now, uid, type Row } from "./store";
 import { visionFixture } from "./vision-fixture";
 import { egress } from "./egress";
 import { hash } from '../../../packages/contracts/src/security';
+import { graphWriteFence } from './ai/fence';
 
 export async function validateEndpoint(baseUrl: string) {
   return publicEndpoint(baseUrl, async (host) => {
@@ -105,14 +106,19 @@ export async function invoke(
   runId: string | null = null,
   operationId?: string,
   graphId?: string,
+  graphGeneration?: number,
 ) {
   const userId=runId ? (await env.DB.prepare('SELECT user_id FROM runs WHERE id=?').bind(runId).first<{user_id:string}>())?.user_id : env.requestUserId;
   if(!userId) throw new Error('MODEL_ACTOR_REQUIRED');
   const callId=operationId ?? crypto.randomUUID();
   const digest=await hash(JSON.stringify({userId,id,version,request,runId}));
-  const inserted=await env.DB.prepare(`INSERT OR IGNORE INTO ai_calls(id,user_id,graph_id,digest,status,created_at,updated_at) SELECT ?,?,?,?,'reserved',?,? ${graphId?"WHERE EXISTS(SELECT 1 FROM ai_graph_inputs g WHERE owner=? AND id=? AND active=1 AND (parent_turn IS NULL OR EXISTS(SELECT 1 FROM ai_turns t WHERE t.id=g.parent_turn AND t.status IN ('running','done'))))":''}`).bind(callId,userId,graphId??null,digest,now(),now(),...(graphId?[userId,graphId]:[])).run();
+  const fence=graphId?graphWriteFence(userId,graphId,graphGeneration):undefined;
+  const inserted=await env.DB.prepare(`INSERT OR IGNORE INTO ai_calls(id,user_id,graph_id,digest,status,created_at,updated_at) SELECT ?,?,?,?,'reserved',?,? ${fence?`WHERE ${fence.sql}`:''}`).bind(callId,userId,graphId??null,digest,now(),now(),...(fence?.values??[])).run();
   if(!inserted.meta.changes) {
-    const prior=await env.DB.prepare('SELECT * FROM ai_calls WHERE id=?').bind(callId).first<Row>();
+    // A deduplicated result still belongs to its original live graph. Replaying
+    // an operation must not bypass deletion, cancellation, or generation fences.
+    const prior=await env.DB.prepare(`SELECT * FROM ai_calls WHERE id=? ${fence?`AND ${fence.sql}`:''}`).bind(callId,...(fence?.values??[])).first<Row>();
+    if(!prior&&fence)throw Error('MODEL_CALL_DISCARDED');
     if(!prior || prior.user_id!==userId || prior.digest!==digest) throw new Error('MODEL_CALL_CONFLICT');
     if(prior.status==='done' && prior.result) return unseal<ModelResponse>(prior.result,env.MASTER_KEY,`ai-call:${callId}`);
     throw new Error(prior.status==='failed' ? prior.error : 'MODEL_CALL_OUTCOME_UNKNOWN');
@@ -127,7 +133,7 @@ export async function invoke(
     request,
     runId,
   }, async result=>{
-    const saved=await env.DB.prepare("UPDATE ai_calls SET status='done',result=?,updated_at=? WHERE id=? AND status='running'").bind(await seal(result,env.MASTER_KEY,`ai-call:${callId}`),now(),callId).run();
+    const saved=await env.DB.prepare(`UPDATE ai_calls SET status='done',result=?,updated_at=? WHERE id=? AND status='running' ${fence?`AND ${fence.sql}`:''}`).bind(await seal(result,env.MASTER_KEY,`ai-call:${callId}`),now(),callId,...(fence?.values??[])).run();
     if(!saved.meta.changes)throw new Error('MODEL_CALL_DISCARDED');
   });
   } catch(error) {
@@ -162,23 +168,26 @@ export async function generateStructured<T>(
   id: string,
   version: number,
   schema: Record<string, unknown>,
-  validate: (value: unknown) => T,
+  validate: (value: unknown) => T | Promise<T>,
   messages: Inference["messages"],
   runId: string | null = null,
   invalidCode = "MODEL_INVALID_JSON",
   operationId?: string,
   graphId?: string,
-  media?: {image:string},
+  media?: {image?:string;format?:'schema'|'json'},
+  graphGeneration?: number,
 ): Promise<{ data: T; response: ModelResponse }> {
   const { profile } = await getModelProfile(env, id, version);
   if (profile.capabilities.structured === "none")
     throw new Error("STRUCTURED_OUTPUT_REQUIRED");
+  if(media?.format==='schema'&&profile.capabilities.structured!=='schema')throw Error('STRUCTURED_SCHEMA_REQUIRED');
+  const mode=media?.format??profile.capabilities.structured;
   const format =
-    profile.capabilities.structured === "schema"
+    mode === "schema"
       ? { schema }
       : { jsonMode: true };
   const instructions: Inference["messages"] =
-    profile.capabilities.structured === "json"
+    mode === "json"
       ? [
           {
             role: "system",
@@ -207,15 +216,16 @@ export async function generateStructured<T>(
             ]
           : instructions,
         ...format,
-        ...media,
+        ...(media?.image?{image:media.image}:{}),
         maxTokens: profile.outputTokens ?? 4096,
       },
       runId,
       operationId ? `${operationId}:${attempt}` : undefined,
       graphId,
+      graphGeneration,
     );
     try {
-      return { data: validate(JSON.parse(response.text)), response };
+      return { data: await validate(JSON.parse(response.text)), response };
     } catch {
       if (attempt) throw new Error(invalidCode);
     }
@@ -230,19 +240,18 @@ export async function generate<T>(
   messages: Inference["messages"],
   runId: string | null = null,
   operationId?: string,
+  graph?: {id:string;generation:number},
 ) {
-  const result = await generateStructured(
-    env,
-    id,
-    version,
-    z.toJSONSchema(schema) as Record<string, unknown>,
-    (value) => schema.parse(value),
-    messages,
-    runId,
-    'MODEL_INVALID_JSON',
-    operationId,
-  );
-  return result.data;
+  const { RelayChatModel } = await import('./ai/model');
+  const {toLangChainMessages}=await import('../../../packages/model/src/langchain');
+  return await new RelayChatModel(env,id,version,operationId,runId,graph?.id,graph?.generation).withStructuredOutput(schema).invoke(toLangChainMessages(messages)) as T;
+}
+/** Probes share the production LangChain interface while testing explicit formats. */
+async function probeInference(env:AppEnv,id:string,version:number,request:Inference):Promise<ModelResponse>{
+  const {RelayChatModel}=await import('./ai/model');
+  const {toLangChainMessages,aiMessageToModelResponse}=await import('../../../packages/model/src/langchain');
+  const {messages,toolChoice,...options}=request;
+  return aiMessageToModelResponse(await new RelayChatModel(env,id,version).invoke(toLangChainMessages(messages),{...options,capabilityProbe:true,tool_choice:toolChoice??(request.tools?.length?'required':undefined)}));
 }
 export async function probe(
   env: AppEnv,
@@ -262,7 +271,7 @@ export async function probe(
     profile.capabilities.tokenParameter ?? "max_completion_tokens";
   try {
     try {
-      await invoke(env, id, version, {
+      await probeInference(env, id, version, {
         messages: [{ role: "user", content: "Reply OK." }],
         maxTokens: 512,
       });
@@ -273,7 +282,7 @@ export async function probe(
       )
         throw error;
       caps.tokenParameter = "max_tokens";
-      await invoke(env, id, version, {
+      await probeInference(env, id, version, {
         messages: [{ role: "user", content: "Reply OK." }],
         maxTokens: 512,
         tokenParameter: "max_tokens",
@@ -290,7 +299,7 @@ export async function probe(
   }
   if (caps.connection) {
     try {
-      const r = await invoke(env, id, version, {
+      const r = await probeInference(env, id, version, {
         messages: [{ role: "user", content: "Call check with value 7." }],
         tools: [
           {
@@ -319,7 +328,7 @@ export async function probe(
       additionalProperties: false,
     };
     try {
-      const r = await invoke(env, id, version, {
+      const r = await probeInference(env, id, version, {
         messages: [{ role: "user", content: "Return JSON with ok true." }],
         schema: shape,
       });
@@ -329,7 +338,7 @@ export async function probe(
     }
     if (caps.structured === "none")
       try {
-        const r = await invoke(env, id, version, {
+        const r = await probeInference(env, id, version, {
           messages: [{ role: "user", content: 'Return JSON {"ok":true}.' }],
           jsonMode: true,
         });
@@ -406,7 +415,7 @@ export async function probeVision(env: AppEnv, id: string) {
   const { profile } = await getModelProfile(env, id);
   let vision = false;
   try {
-    const r = await invoke(env, id, profile.version, {
+    const r = await probeInference(env, id, profile.version, {
       messages: [
         {
           role: "user",

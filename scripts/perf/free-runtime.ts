@@ -3,7 +3,10 @@ import { AiTurn as ProductionAiTurn } from '../../apps/cloud/src/ai/turn';
 import worker from '../../apps/cloud/src/worker';
 export {RequestCoordinator,Scheduler,Evidence,NotificationHub,ModelEgress} from '../../apps/cloud/src/worker';
 import {hash} from '../../packages/contracts/src/security';
-import {seal} from '../../apps/cloud/src/crypto';
+import {seal,unseal} from '../../apps/cloud/src/crypto';
+import {enqueue,claim} from '../../apps/cloud/src/store';
+import type {TaskDefinition} from '../../packages/contracts/src/index';
+import {D1Checkpointer} from '../../apps/cloud/src/ai/checkpointer';
 import type {AppEnv} from '../../apps/cloud/src/env';
 import {app} from '../../apps/cloud/src/index';
 import {stagehandSchema} from '../../apps/cloud/src/ai/stagehand-schema';
@@ -19,7 +22,7 @@ export default {async fetch(req:Request,env:AppEnv,ctx:ExecutionContext){
    return Response.json({valid,rejected});
  }
  if(path==='/_init'){
-   await env.DB.prepare("INSERT INTO devices(id,name,token_hash,protocol_version) VALUES('fixture','fixture',?,14)").bind(await hash('d'.repeat(64))).run();
+   await env.DB.prepare("INSERT INTO devices(id,name,token_hash,protocol_version) VALUES('fixture','fixture',?,15)").bind(await hash('d'.repeat(64))).run();
    await env.DB.prepare('INSERT INTO model_profiles(id,version,config,secret,capabilities,created_at) VALUES(?,1,?,?,?,?)').bind('fixture',JSON.stringify({name:'fixture',baseUrl:'https://provider.example/v1',model:'fixture',protocol:'chat',inputPrice:null,outputPrice:null}),await seal('fixture-only',env.MASTER_KEY,'model:fixture:1'),JSON.stringify({connection:true,tools:true,structured:'schema',vision:false}),new Date().toISOString()).run();
    return Response.json({ok:true});
  }
@@ -32,6 +35,20 @@ export default {async fetch(req:Request,env:AppEnv,ctx:ExecutionContext){
    await store.remove();
    return Response.json({size:result?.byteLength,first:result?new Uint8Array(result)[0]:null,other,removed:await store.get('fixture')});
  }
+ if(path==='/_help-init'){
+   const {threadId}=await req.json() as {threadId:string};
+   const task:TaskDefinition={id:'fixture_task',version:1,title:'协助暂停恢复',goal:'仅读取页面并询问测试码',entryUrl:'https://example.com/',accountId:null,modelId:'fixture',modelVersion:1,allowedActions:['read'],verification:{kind:'goal',value:'读取'},schedule:{kind:'manual'},status:'active',createdAt:new Date().toISOString(),nextRunAt:null};
+   await env.DB.prepare('INSERT INTO tasks(id,version,definition,status,created_at,updated_at,user_id) VALUES(?,1,?,?,?, ?,?)').bind(task.id,JSON.stringify(task),'active',task.createdAt,task.createdAt,'legacy_owner').run();
+   await env.DB.prepare('UPDATE ai_threads SET task_id=? WHERE id=?').bind(task.id,threadId).run();
+   await enqueue(env.DB,task,'fixture_help');
+   const run=await claim(env.DB,'fixture','fixture_claim');
+   return Response.json({run});
+ }
+ if(path==='/_help-diagnostics'){
+   const row=await env.DB.prepare("SELECT id,status,error FROM ai_graph_inputs WHERE kind='help' LIMIT 1").first<{id:string;status:string;error:string|null}>();
+   const tuple=row?await new D1Checkpointer(env.DB,'legacy_owner',env.MASTER_KEY).getTuple({configurable:{thread_id:row.id}}):null;
+   return Response.json({graph:row,pendingErrors:tuple?.pendingWrites?.filter(w=>w[1]==='__error__').map(w=>w[2])??[]});
+ }
  if(path==='/_publish'){await env.NOTIFICATIONS.getByName('device:fixture').publish();return Response.json({ok:true});}
  return worker.fetch(req,env,ctx);
 }};
@@ -39,7 +56,13 @@ export default {async fetch(req:Request,env:AppEnv,ctx:ExecutionContext){
 // Test-only synthetic model adapter. The production jurisdiction path is unchanged.
 export class AiTurn extends ProductionAiTurn {
  constructor(ctx:DurableObjectState,env:AppEnv){
-  const model={jurisdiction:()=>({getByName:()=>({submitAndWait:async(id:string)=>({status:'done',cipher:await seal({text:JSON.stringify({reply:'请提供网站和目标',operation:'respond',scope:'current',startWhen:'now',task:null}),usage:{input:10,output:10},toolCalls:[]},env.MASTER_KEY,`egress:${id}:response`)}),ack:async()=>{}})})};
+  const model={jurisdiction:()=>({getByName:()=>({submitAndWait:async(id:string,cipher:string)=>{
+    const job=await unseal<{request:{schema?:{properties?:Record<string,unknown>};messages:unknown[]}}>(cipher,env.MASTER_KEY,`egress:${id}:request`);
+    const isHelp=!!job.request.schema?.properties?.askUser;
+    const replied=JSON.stringify(job.request.messages).includes('workerd-resume-code-0012');
+    const result=isHelp?{message:replied?'已收到完整回复，继续读取。':'请提供测试码。',askUser:!replied,accountId:null}:{reply:'请提供网站和目标',start:false,title:null,goal:null,entryUrl:null,accountId:null,executionOutline:[]};
+    return {status:'done',cipher:await seal({text:JSON.stringify(result),usage:{input:10,output:10},calls:[]},env.MASTER_KEY,`egress:${id}:response`)};
+  },ack:async()=>{}})})};
   super(ctx,{...env,MODEL_EGRESS:model as unknown as AppEnv['MODEL_EGRESS']});
  }
 }

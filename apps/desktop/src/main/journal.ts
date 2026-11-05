@@ -1,3 +1,4 @@
+import { HISTORY_EPOCH } from "../../../../packages/contracts/src/index";
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
@@ -97,7 +98,7 @@ export class Journal {
   clearHistory() {
     if(this.pending().length||this.incomplete().length)throw new Error('LOCAL_HISTORY_UNRESOLVED');
     this.db.exec("BEGIN IMMEDIATE;DELETE FROM cache;DELETE FROM journal;COMMIT;");
-    this.set('historyEpoch',3);
+    this.set('historyEpoch',HISTORY_EPOCH);
   }
   diagnostic() {
     return {

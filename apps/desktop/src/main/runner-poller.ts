@@ -1,3 +1,4 @@
+import { PROTOCOL_VERSION } from "../../../../packages/contracts/src/index";
 import type { Cloud } from './cloud';
 import type { ExecutorHost } from './executor-host';
 import type { Journal } from './journal';
@@ -28,7 +29,7 @@ export class RunnerPoller {
         this.claimRequest ??= crypto.randomUUID();
         this.journal.set('claimRequest',this.claimRequest);
         const {run}=await this.cloud.request<{run:TaskRun|null}>('POST','/api/runner/claim',{
-          requestId:this.claimRequest,protocolVersion:14,
+          requestId:this.claimRequest,protocolVersion:PROTOCOL_VERSION,
         });
         if(run && ['running','waiting_user','verifying'].includes(run.status))await this.host.start(run);
         this.claimRequest=null;this.journal.set('claimRequest',null);

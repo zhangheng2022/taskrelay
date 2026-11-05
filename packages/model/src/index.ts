@@ -4,8 +4,9 @@ import { outputSchema } from "./schema";
 export interface Message {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
+  content_blocks?: Array<{type:'text';text:string}|{type:'image_url';image_url:{url:string}}>;
   tool_call_id?: string;
-  tool_calls?: unknown[];
+  tool_calls?: Array<{id:string;type:'function';function:{name:string;arguments:string}}>;
 }
 export interface Tool {
   name: string;
@@ -45,7 +46,7 @@ export async function infer(
   if (profile.protocol === "chat") {
     body = {
       model: profile.model,
-      messages: request.messages,
+      messages: request.messages.map(({content_blocks,...message})=>({...message,content:content_blocks??message.content})),
       [request.tokenParameter ??
       profile.capabilities?.tokenParameter ??
       "max_completion_tokens"]: request.maxTokens ?? 4096,
@@ -53,7 +54,7 @@ export async function infer(
     };
     if (request.image)
       body.messages = [
-        ...request.messages,
+        ...(body.messages as unknown[]),
         {
           role: "user",
           content: [{ type: "image_url", image_url: { url: request.image } }],
@@ -84,6 +85,7 @@ export async function infer(
           output: m.content,
         });
       else if (m.role === "assistant" && m.tool_calls?.length) {
+        if(m.content)input.push({role:'assistant',content:m.content});
         for (const t of m.tool_calls as {
           id: string;
           function: { name: string; arguments: string };
@@ -94,7 +96,7 @@ export async function infer(
             name: t.function.name,
             arguments: t.function.arguments,
           });
-      } else input.push({ role: m.role, content: m.content });
+      } else input.push({ role: m.role, content: m.content_blocks?.map(part=>part.type==='text'?{type:m.role==='assistant'?'output_text':'input_text',text:part.text}:{type:'input_image',image_url:part.image_url.url,detail:'low'})??m.content });
     }
     body = {
       model: profile.model,

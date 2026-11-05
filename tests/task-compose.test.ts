@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {productionModelFixture} from './production-model-fixture';
-const decision=(start=true)=>JSON.stringify({reply:start?'已交给执行器。':'请说明要处理哪个网站。',start,title:start?'读取页面':null,goal:start?'查看当前页面并报告':null,entryUrl:start?'https://example.com/':null,accountId:null});
+const decision=(start=true)=>JSON.stringify({reply:start?'已交给执行器。':'请说明要处理哪个网站。',start,title:start?'读取页面':null,goal:start?'查看当前页面并报告':null,entryUrl:start?'https://example.com/':null,accountId:null,executionOutline:start?['打开目标网站','读取页面内容并反馈']:[]});
 for(const protocol of ['chat','responses'] as const)test(`新交办/${protocol}：意图检查后直接启动，同一会话且重复发送不重复启动`,async t=>{
   const s=await productionModelFixture(t,protocol),th=(await s.request('/api/user/threads',{modelId:'model_test'})).data;
   s.replies(decision());const b={requestId:'start_one',content:'查看 example.com'};
@@ -10,7 +10,7 @@ for(const protocol of ['chat','responses'] as const)test(`新交办/${protocol}�
   const retry=await s.request(`/api/user/threads/${th.id}/messages`,b);
   assert.equal(retry.data.id,th.id);assert.equal(s.jobs(),1);
   assert.equal(s.sql.prepare('SELECT COUNT(*) n FROM runs WHERE task_id=?').get(r.data.taskId)!.n,1);
-  assert.equal(s.sql.prepare('SELECT execution_protocol FROM runs WHERE task_id=?').get(r.data.taskId)!.execution_protocol,14);
+  assert.equal(s.sql.prepare('SELECT execution_protocol FROM runs WHERE task_id=?').get(r.data.taskId)!.execution_protocol,15);
 });
 test('意图不明只追问，不创建运行',async t=>{
   const s=await productionModelFixture(t),th=(await s.request('/api/user/threads',{modelId:'model_test'})).data;
@@ -55,14 +55,14 @@ test('本人聊天和当前任务模型可读协助回复，普通存储仍为�
   s.replies(JSON.stringify({message:'已收到回复，请结合原文继续。',askUser:false,accountId:null}));
   const delivery=await s.request(`/api/runner/runs/${s.run.id}/help`,help);assert.equal(delivery.data.message,'已收到回复，请结合原文继续。');assert.equal(s.jobs(),2);
 });
-test('小窗口与最长中文交办压缩后仍保留原文，当前输入也纳入预算',async t=>{
+test('最长原始交办超过模型窗口时明确拒绝，不把用户原话压缩后交办',async t=>{
   const s=await productionModelFixture(t),th=(await s.request('/api/user/threads',{modelId:'model_test'})).data;
   s.sql.prepare("UPDATE model_profiles SET config=json_set(config,'$.contextTokens',6000,'$.outputTokens',1024) WHERE id='model_test'").run();
-  s.respond(body=>JSON.stringify(JSON.stringify(body).includes('"summary"')?{summary:'用户要求读取网站信息，保留最新范围，不执行提交。'}:{reply:'请说明目标网站。',start:false,title:null,goal:null,entryUrl:null,accountId:null}));
+  s.respond(body=>JSON.stringify(JSON.stringify(body).includes('"summary"')?{summary:'用户要求读取网站信息，保留最新范围，不执行提交。'}:{reply:'请说明目标网站。',start:false,title:null,goal:null,entryUrl:null,accountId:null,executionOutline:[]}));
   const content='请读取网站信息，不要执行提交。'.repeat(700).slice(0,12000);
   const r=await s.request(`/api/user/threads/${th.id}/messages`,{requestId:'long_request',content});
-  assert.equal(r.data.status,'done',r.data.error);assert.equal(r.data.messages[0].content,content);
-  assert.ok(s.requests.length>1);for(const request of s.requests)assert.ok(JSON.stringify(request.body).length<13000);
+  assert.equal(r.data.status,'failed');assert.equal(r.data.error,'MODEL_CONTEXT_CONFIGURATION_TOO_SMALL');assert.equal(r.data.messages[0].content,content);
+  assert.equal(s.requests.length,0);
 });
 
 test('上下文整理保留最新页面结构与真实选择器',async t=>{

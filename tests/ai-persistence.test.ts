@@ -5,7 +5,7 @@ import { emptyCheckpoint } from "@langchain/langgraph-checkpoint";
 import { HumanMessage } from "@langchain/core/messages";
 import { D1Checkpointer } from "../apps/cloud/src/ai/checkpointer";
 import { D1MemoryStore } from "../apps/cloud/src/ai/memory";
-import { structuredGraph } from "../apps/cloud/src/ai/graph";
+import { planConversation } from "../apps/cloud/src/ai/planning-graph";
 import { invoke } from "../apps/cloud/src/models";
 import { retainHistory } from "../apps/cloud/src/ai/lifecycle";
 import { testDb } from "./helpers";
@@ -105,27 +105,14 @@ test("真实 graph 从 D1 恢复终态不再调用模型，改变输入拒绝；
   const s = await productionModelFixture(t);
   s.env.requestUserId = "legacy_owner";
   s.replies('{"reply":"持久化结果"}');
-  const args = {
-    env: s.env,
-    owner: "legacy_owner",
-    id: "graph_test",
-    kind: "chat" as const,
-    modelId: "model_test",
-    version: 1,
-    schema: z.object({ reply: z.string() }),
-    messages: [{ role: "user" as const, content: "你好" }],
-  };
-  assert.equal((await structuredGraph(args)).reply, "持久化结果");
-  assert.equal((await structuredGraph(args)).reply, "持久化结果");
-  assert.equal(s.jobs(), 1);
-  await assert.rejects(
-    () =>
-      structuredGraph({
-        ...args,
-        messages: [{ role: "user", content: "替换" }],
-      }),
-    /GRAPH_INPUT_CONFLICT/,
-  );
+  const thread=(await s.request('/api/user/threads',{modelId:'model_test'})).data;
+  const scope={env:s.env,owner:'legacy_owner',id:'graph_test',threadId:thread.id,kind:'chat' as const,guard:async()=>{}};
+  const profile={model_id:'model_test',model_version:1};
+  const messages=[{role:'user' as const,content:'你好'}];
+  assert.equal((await planConversation(scope,profile,messages)).reply,'持久化结果');
+  assert.equal((await planConversation(scope,profile,messages)).reply,'持久化结果');
+  assert.equal(s.jobs(),1);
+  await assert.rejects(()=>planConversation(scope,profile,[{role:'user',content:'替换'}]),/GRAPH_INPUT_CONFLICT/);
   s.replies(new Error("MODEL_CALL_OUTCOME_UNKNOWN"));
   const call = () =>
     invoke(
@@ -249,11 +236,11 @@ test("超过200条历史完整分页；未接入执行的偏好变更不影响�
     async () => {},
     true,
   );
-  await fenced.put(
+  await assert.rejects(()=>fenced.put(
     { configurable: { thread_id: graph.id } },
     emptyCheckpoint(),
     { source: "input", step: 0, parents: {} },
-  );
+  ),/GRAPH_STALE/);
   assert.equal(
     s.sql.prepare("SELECT COUNT(*) n FROM ai_checkpoints").get()!.n,
     0,

@@ -21,7 +21,7 @@ export async function productionModelFixture(
   await enqueue(db, task, "model_fixture");
   await db
     .prepare(
-      "INSERT INTO devices(id,name,token_hash,protocol_version) VALUES(?,?,?,14)",
+      "INSERT INTO devices(id,name,token_hash,protocol_version) VALUES(?,?,?,15)",
     )
     .bind("device_test", "fixture", await hash(token))
     .run();
@@ -84,7 +84,7 @@ export async function productionModelFixture(
       // This fixture supplies a model answer, including the current conversation decision contract.
       if(typeof reply==='string')try{
         const v=JSON.parse(reply);
-        if(v.reply&&!('start' in v)&&JSON.stringify(requests.at(-1)?.body).includes('"start"'))reply=JSON.stringify({reply:v.reply,start:false,title:null,goal:null,entryUrl:null,accountId:null});
+        if(v.reply&&!('start' in v)&&JSON.stringify(requests.at(-1)?.body).includes('"start"'))reply=JSON.stringify({reply:v.reply,start:false,title:null,goal:null,entryUrl:null,accountId:null,executionOutline:[]});
         if(v.reply&&!v.operation&&JSON.stringify(requests.at(-1)?.body).includes('"operation"')){
           reply=JSON.stringify({reply:v.reply,operation:v.task?'start':'respond',scope:'current',startWhen:'now',task:v.task?{...v.task,accountId:v.task.accountId??null}:null});
         }
@@ -137,7 +137,7 @@ export async function productionModelFixture(
           method,
           headers: {
             "content-type": "application/json",
-            ...((path.startsWith("/api/runner/")||path.startsWith("/api/device/"))?{"x-taskrelay-protocol":"14", Authorization: `Bearer ${token}`}:{ }),
+            ...((path.startsWith("/api/runner/")||path.startsWith("/api/device/"))?{"x-taskrelay-protocol":"15", Authorization: `Bearer ${token}`}:{ }),
           },
           body: method==='GET'?undefined:JSON.stringify(body),
         },

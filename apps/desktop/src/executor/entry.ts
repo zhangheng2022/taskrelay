@@ -1,4 +1,5 @@
 import { execute,connectExecutionBrowser } from "./runtime";
+import {smokeExecutionGraph} from './graph-smoke';
 import type { TaskRun } from "../../../../packages/contracts/src/index";
 const parent = process.parentPort;
 if (!parent) throw new Error("UTILITY_PROCESS_REQUIRED");
@@ -28,8 +29,10 @@ parent.on("message", async ({ data }) => {
   if (data.type === "smoke" && !started) {
     started = true;
     process.env.STAGEHAND_EXTENSION_DIRECTORY_PATH = data.extensionPath;
-    let phase = "connect";
+    let phase = "execution-graph";
     try {
+      const graphSmoke=await smokeExecutionGraph();
+      phase='connect';
       const sdk = await import("@browserbasehq/stagehand");
       let callbacks = 0;
       const {browser,session:stagehand} = await connectExecutionBrowser(sdk,data.cdpUrl,{
@@ -139,6 +142,7 @@ parent.on("message", async ({ data }) => {
       if(!acted.data.success||await page.evaluate(()=>document.body.dataset.clicked)!=='yes')throw Error('STAGEHAND_AI_ACT_FAILED');
       phase = "close";
       return {
+          ...graphSmoke,
           stagehand: "4.3.0",
           nativeEsmImport: true,
           query: true,

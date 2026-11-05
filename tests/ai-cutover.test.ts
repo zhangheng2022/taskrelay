@@ -8,8 +8,8 @@ import { Journal } from "../apps/desktop/src/main/journal";
 import { productionModelFixture } from "./production-model-fixture";
 import { egress } from "../apps/cloud/src/egress";
 import { seal } from "../apps/cloud/src/crypto";
-import { structuredGraph } from "../apps/cloud/src/ai/graph";
-import { z } from "zod";
+import { planConversation } from "../apps/cloud/src/ai/planning-graph";
+
 
 test("本地清理拒绝未发送 outbox 和未结束 journal；仅清历史，保留设备令牌和配置", (t) => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "taskrelay-ai-"));
@@ -31,7 +31,7 @@ test("本地清理拒绝未发送 outbox 和未结束 journal；仅清历史，�
   assert.equal(journal.get("token"), "opaque-safeStorage-value");
   assert.equal(journal.get("cloudUrl"), "https://cloud.example");
   assert.equal(journal.cached("snapshot"), null);
-  assert.equal(journal.get("historyEpoch"), 3);
+  assert.equal(journal.get("historyEpoch"), 4);
   assert.equal(journal.diagnostic().schema, 3);
 });
 
@@ -56,7 +56,7 @@ test("旧设备原 token 升级须维护和本地就绪；旧协议请求继续�
     (await s.request("/api/device/status", undefined, "GET")).data.error,
     "DEVICE_UPGRADE_REQUIRED",
   );
-  const body = { protocolVersion: 14, localReady: true };
+  const body = { protocolVersion: 15, localReady: true };
   assert.equal(
     (await s.request("/api/device/upgrade", body)).data.error,
     "CUTOVER_NOT_READY",
@@ -73,7 +73,7 @@ test("旧设备原 token 升级须维护和本地就绪；旧协议请求继续�
   assert.equal(
     (await s.request("/api/device/status", undefined, "GET")).data
       .protocolVersion,
-    14,
+    15,
   );
   assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM devices").get()!.n, 1);
 });
@@ -123,16 +123,9 @@ test("启用外部 tracing 的环境在 graph 开始前被拒绝，不上传会�
   });
   await assert.rejects(
     () =>
-      structuredGraph({
-        env: s.env,
-        owner: "legacy_owner",
-        id: "private",
-        kind: "chat",
-        modelId: "model_test",
-        version: 1,
-        schema: z.object({ reply: z.string() }),
-        messages: [{ role: "user", content: "private" }],
-      }),
+      planConversation({
+        env:s.env, owner:'legacy_owner', id:'private', threadId:'private',kind:'chat',guard:async()=>{},
+      },{model_id:'model_test',model_version:1},[{role:'user',content:'private'}]),
     /AI_EXTERNAL_TRACING_DISABLED/,
   );
   assert.equal(s.jobs(), 0);
@@ -140,6 +133,7 @@ test("启用外部 tracing 的环境在 graph 开始前被拒绝，不上传会�
 
 test("历史保持完整，云端意图检查收到当前纠正", async (t) => {
   const s = await productionModelFixture(t);
+  s.sql.prepare("UPDATE model_profiles SET config=json_set(config,'$.contextTokens',20000,'$.outputTokens',2048) WHERE id='model_test' AND version=1").run();
   const th = (
     await s.request("/api/user/threads", {
       modelId: "model_test",
@@ -160,7 +154,7 @@ test("历史保持完整，云端意图检查收到当前纠正", async (t) => {
       );
   s.sql.prepare("UPDATE ai_threads SET version=5 WHERE id=?").run(th.id);
   s.sql.exec("UPDATE runs SET status='succeeded'");
-  s.respond(body=>JSON.stringify(JSON.stringify(body).includes('"summary"')?{summary:'历史要求摘要，保留当前用户纠正。'}:{reply:'采用最新要求',start:false,title:null,goal:null,entryUrl:null,accountId:null}));
+  s.respond(body=>JSON.stringify(JSON.stringify(body).includes('"summary"')?{summary:'历史要求摘要，保留当前用户纠正。'}:{reply:'采用最新要求',start:false,title:null,goal:null,entryUrl:null,accountId:null,executionOutline:[]}));
   const result = await s.request(`/api/user/threads/${th.id}/messages`, {
     requestId: "correct",
     content: "纠正：以后只读，不执行提交",
@@ -169,4 +163,8 @@ test("历史保持完整，云端意图检查收到当前纠正", async (t) => {
   assert.equal(result.data.messages.length, 12);
   assert.ok(s.jobs()>1);
   assert.match(JSON.stringify(s.requests.at(-1)!.body), /以后只读/);
+  const payload=JSON.parse(s.requests.at(-1)!.body.messages.at(-1).content);
+  assert.equal(payload.userMessages.length,6);
+  assert.ok(payload.userMessages.slice(0,5).every((message:{content:string})=>message.content==='旧信息'.repeat(400)));
+  assert.equal(payload.userMessages.at(-1).content,'纠正：以后只读，不执行提交');
 });

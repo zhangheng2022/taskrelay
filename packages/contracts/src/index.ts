@@ -1,7 +1,9 @@
 import { z } from "zod";
 import { batchVerificationSchema, batchReportSchema } from './batch';
 
-export const PROTOCOL_VERSION = 14;
+export const PROTOCOL_VERSION = 15;
+export const EXECUTION_GRAPH_VERSION = "relay-graph-1";
+export const HISTORY_EPOCH = 4;
 export const limits = {
   leaseMs: 90_000,
   heartbeatMs: 15_000,
@@ -41,6 +43,9 @@ export const taskInputSchema = z
   .strict();
 export type TaskInput = z.infer<typeof taskInputSchema>;
 export interface TaskDefinition extends TaskInput {
+  /** Cloud-generated guidance; original user instructions and live observations take precedence. */
+  executionOutline?: string[];
+  graphVersion?: string;
   confirmedCondition?: string | null;
   runConditions?: {goal:string;scope:string;prerequisites:string[];completion:string;assistance:string[]};
   id: string;

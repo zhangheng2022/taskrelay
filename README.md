@@ -2,7 +2,7 @@
 
 **交代任务，在同一聊天跟进结果。**
 
-当前源码 **0.11.0**、协议 **14**：用户原话和补充直接交给执行器 AI 与 Stagehand，云端澄清并转发，同一聊天展示过程、截图、协助及最终回复。不要求输入字段分类、自定义动作计划或独立成功审核。新交办目前按手动任务执行，运行条件卡与定时暂不扩展。部署、安装和真实验收范围见验收记录。
+当前源码 **0.12.0**、协议 **15**：云端 LangGraph 理解意图并生成可调整的大步骤，桌面 LangGraph 负责具体执行；LangChain 统一模型与工具消息，用户原话和补充直接交给执行器 AI 与 Stagehand，同一聊天展示过程、截图、协助及最终回复。不要求输入字段分类、自定义动作计划或独立成功审核。新交办目前按手动任务执行，运行条件卡与定时暂不扩展。部署、安装和真实验收范围见验收记录。
 
 [![CI](https://github.com/zhangheng2022/taskrelay/actions/workflows/ci.yml/badge.svg)](https://github.com/zhangheng2022/taskrelay/actions/workflows/ci.yml)
 [更新记录](CHANGELOG.md) · [验收范围](docs/ACCEPTANCE.md) · [部署说明](docs/DEPLOYMENT.md) · [问题反馈](https://github.com/zhangheng2022/taskrelay/issues)
@@ -157,6 +157,6 @@ node scripts/release-manifest.mjs
 
 本机 CPU 对照采样：`node scripts/profile-worker.mjs .cache/ai-profile/current`。脚本在本机 workerd 使用隔离 D1、合成账号和模型响应，输出 CPU profile 与统计；不读取生产密钥，不验证真实模型地区。统计含本地 D1 绑定开销，不能等同 Cloudflare 计费 CPU 或免费套餐达标证明。保留某次构建后可加 `--reuse-bundle` 重跑同一版本。
 
-云端已接入 LangChain.js、LangGraph 与 D1 持久化。创建对话和任务聊天支持云端恢复、游标历史和滚动摘要；设置中的“我的记忆”管理明确确认的偏好。任务卡确认版本、设备租约和美国模型出站约束保持有效。
+云端以 LangGraph 管理交办、阶段计划和协助，D1 加密保存图检查点；桌面以 LangGraph 管理现场工具循环，协助暂停只在同一执行进程内恢复。LangChain 统一模型和工具消息，平台 adapter 保持设备租约、动作防重和美国模型出站约束。设置中的“我的记忆”仍只管理偏好，不自动影响运行。
 
 本地迁移使用 `npm run db:migrate`；现有生产已完成 [0.3.0 一次性切换](docs/DEPLOYMENT.md#langchain-030-一次性切换)，不得重复清理。免费架构新增 `0007_free_runtime.sql`，保留协议 3 和 SQLite schema 3。源码、安装包与生产验证范围分别记录在 [验收](docs/ACCEPTANCE.md)。

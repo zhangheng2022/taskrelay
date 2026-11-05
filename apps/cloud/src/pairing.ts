@@ -1,3 +1,4 @@
+import { PROTOCOL_VERSION } from "../../../packages/contracts/src/index";
 import { Hono } from "hono";
 import { z } from "zod";
 import { hash, randomToken } from "../../../packages/contracts/src/security";
@@ -9,7 +10,7 @@ pairing.post("/start", async (c) => {
   const { name } = z
     .object({
       name: z.string().trim().min(1).max(100),
-      protocolVersion: z.literal(14),
+      protocolVersion: z.literal(PROTOCOL_VERSION),
     })
     .strict()
     .parse(await c.req.json());

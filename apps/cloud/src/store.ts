@@ -1,6 +1,7 @@
 import { quotaDay } from './tenancy';
 import {
   limits,
+  PROTOCOL_VERSION,
   type TaskRun,
   type TaskDefinition,
 } from "../../../packages/contracts/src/index";
@@ -63,8 +64,8 @@ export async function queueReasons(db: D1Database, userId: string) {
     WHEN ((SELECT COUNT(*) FROM runs used WHERE used.user_id=r.user_id AND used.started_day=?) + COALESCE((SELECT runs FROM quota_carry WHERE user_id=r.user_id AND day=?),0))>=m.daily_runs AND NOT COALESCE(m.daily_quota_paused=1 OR m.daily_quota_paused_until>strftime('%Y-%m-%dT%H:%M:%fZ','now'),0) THEN '今日启动额度已用完，上海时间零点重置'
     WHEN EXISTS(SELECT 1 FROM runs active WHERE active.user_id=r.user_id AND active.status IN ('running','waiting_user','verifying')) THEN '等待你的上一项运行或人工协助结束'
     WHEN EXISTS(SELECT 1 FROM account_locks l WHERE l.account_key=r.account_key AND l.run_id<>COALESCE(r.reconciliation_of,'')) THEN '账号被占用或结果待核查'
-    WHEN NOT EXISTS(SELECT 1 FROM devices d WHERE d.revoked=0 AND d.protocol_version=14 AND d.last_seen>? AND (a.assigned_device_id IS NULL OR d.id=a.assigned_device_id)) THEN '没有最近在线且版本兼容的可用设备'
-    WHEN NOT EXISTS(SELECT 1 FROM devices d WHERE d.revoked=0 AND d.protocol_version=14 AND d.last_seen>? AND (a.assigned_device_id IS NULL OR d.id=a.assigned_device_id) AND NOT EXISTS(SELECT 1 FROM runs busy WHERE busy.device_id=d.id AND busy.status IN ('running','waiting_user','verifying'))) THEN '符合条件的设备正在执行其他任务'
+    WHEN NOT EXISTS(SELECT 1 FROM devices d WHERE d.revoked=0 AND d.protocol_version=${PROTOCOL_VERSION} AND d.last_seen>? AND (a.assigned_device_id IS NULL OR d.id=a.assigned_device_id)) THEN '没有最近在线且版本兼容的可用设备'
+    WHEN NOT EXISTS(SELECT 1 FROM devices d WHERE d.revoked=0 AND d.protocol_version=${PROTOCOL_VERSION} AND d.last_seen>? AND (a.assigned_device_id IS NULL OR d.id=a.assigned_device_id) AND NOT EXISTS(SELECT 1 FROM runs busy WHERE busy.device_id=d.id AND busy.status IN ('running','waiting_user','verifying'))) THEN '符合条件的设备正在执行其他任务'
     ELSE '等待设备领取；设备本地暂停或网络状态可能影响领取' END reason
     FROM runs r JOIN tasks t ON t.id=r.task_id JOIN members m ON m.id=r.user_id
     LEFT JOIN accounts a ON a.id=json_extract(r.task_snapshot,'$.accountId') AND a.user_id=r.user_id
@@ -92,7 +93,7 @@ export async function enqueue(
     ).toISOString();
   await db
     .prepare(
-      "INSERT OR IGNORE INTO runs(id,task_id,task_snapshot,status,scheduled_for,deadline,account_key,idempotency_key,created_at,updated_at,user_id,profile_id,execution_protocol,thread_id) VALUES(?,?,?,'queued',?,?,?,?,?,?,?,?,14,(SELECT id FROM ai_threads WHERE task_id=? AND closed=0 LIMIT 1))",
+      `INSERT OR IGNORE INTO runs(id,task_id,task_snapshot,status,scheduled_for,deadline,account_key,idempotency_key,created_at,updated_at,user_id,profile_id,execution_protocol,thread_id) VALUES(?,?,?,'queued',?,?,?,?,?,?,?,?,${PROTOCOL_VERSION},(SELECT id FROM ai_threads WHERE task_id=? AND closed=0 LIMIT 1))`,
     )
     .bind(
       id,
@@ -136,7 +137,7 @@ export async function claim(
   if (busy) return null;
   const candidate = await db
     .prepare(
-      "SELECT r.* FROM runs r JOIN tasks t ON r.task_id=t.id JOIN members m ON m.id=r.user_id WHERE m.disabled=0 AND NOT EXISTS(SELECT 1 FROM runs active WHERE active.user_id=r.user_id AND active.status IN ('running','waiting_user','verifying')) AND (m.daily_quota_paused=1 OR m.daily_quota_paused_until>strftime('%Y-%m-%dT%H:%M:%fZ','now') OR ((SELECT COUNT(*) FROM runs used WHERE used.user_id=r.user_id AND used.started_day=?) + COALESCE((SELECT runs FROM quota_carry WHERE user_id=r.user_id AND day=?),0))<m.daily_runs) AND NOT EXISTS(SELECT 1 FROM accounts a WHERE a.id=json_extract(r.task_snapshot,'$.accountId') AND a.assigned_device_id IS NOT NULL AND a.assigned_device_id<>?) AND r.execution_protocol=14 AND r.status='queued' AND r.deadline>? AND (NOT EXISTS(SELECT 1 FROM account_locks l WHERE l.account_key=r.account_key) OR EXISTS(SELECT 1 FROM account_locks l JOIN runs old ON old.id=l.run_id WHERE l.account_key=r.account_key AND old.id=r.reconciliation_of AND old.status='unknown')) ORDER BY COALESCE(m.last_claim_at,''),r.created_at,r.id LIMIT 1",
+      `SELECT r.* FROM runs r JOIN tasks t ON r.task_id=t.id JOIN members m ON m.id=r.user_id WHERE m.disabled=0 AND NOT EXISTS(SELECT 1 FROM runs active WHERE active.user_id=r.user_id AND active.status IN ('running','waiting_user','verifying')) AND (m.daily_quota_paused=1 OR m.daily_quota_paused_until>strftime('%Y-%m-%dT%H:%M:%fZ','now') OR ((SELECT COUNT(*) FROM runs used WHERE used.user_id=r.user_id AND used.started_day=?) + COALESCE((SELECT runs FROM quota_carry WHERE user_id=r.user_id AND day=?),0))<m.daily_runs) AND NOT EXISTS(SELECT 1 FROM accounts a WHERE a.id=json_extract(r.task_snapshot,'$.accountId') AND a.assigned_device_id IS NOT NULL AND a.assigned_device_id<>?) AND r.execution_protocol=${PROTOCOL_VERSION} AND r.status='queued' AND r.deadline>? AND (NOT EXISTS(SELECT 1 FROM account_locks l WHERE l.account_key=r.account_key) OR EXISTS(SELECT 1 FROM account_locks l JOIN runs old ON old.id=l.run_id WHERE l.account_key=r.account_key AND old.id=r.reconciliation_of AND old.status='unknown')) ORDER BY COALESCE(m.last_claim_at,''),r.created_at,r.id LIMIT 1`,
     )
     .bind(quotaDay(),quotaDay(),deviceId,at)
     .first<Row>();
