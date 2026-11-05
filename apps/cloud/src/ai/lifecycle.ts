@@ -1,7 +1,9 @@
 import { deleteEvidence } from "../evidence";
 import type { AppEnv } from "../env";
+import { protectLegacyRunInputs } from "../chat-input-protection";
 
 export async function retainHistory(env: AppEnv, cutoff: string) {
+  await protectLegacyRunInputs(env);
   // Expiring a conversation invalidates every derived copy before removing its text.
   await env.DB.batch([
     env.DB.prepare(

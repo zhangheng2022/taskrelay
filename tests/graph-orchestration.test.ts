@@ -112,7 +112,7 @@ test("首次协助推理期间普通补充自动持久唤醒，不要求用户�
           posted.data.messages.find(
             (m: { content: string }) => m.content === original,
           ).reply_to,
-          null,
+          s.help.id,
         );
       }
       return response;

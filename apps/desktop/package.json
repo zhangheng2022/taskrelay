@@ -1,7 +1,7 @@
 {
   "name": "@taskrelay/desktop",
   "productName": "TaskRelay",
-  "version": "0.12.3",
+  "version": "0.12.4",
   "private": true,
   "description": "TaskRelay shared browser task executor",
   "author": "TaskRelay",

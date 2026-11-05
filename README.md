@@ -2,7 +2,7 @@
 
 **交代任务，在同一聊天跟进结果。**
 
-当前源码 **0.12.3**、协议 **15**：云端 LangGraph 理解意图并生成可调整的大步骤，桌面 LangGraph 负责具体执行；LangChain 统一模型与工具消息，用户原话和补充直接交给执行器 AI 与 Stagehand，同一聊天展示过程、截图、协助及最终回复。不要求输入字段分类、自定义动作计划或独立成功审核。新交办目前按手动任务执行，运行条件卡与定时暂不扩展。部署、安装和真实验收范围见验收记录。
+当前源码 **0.12.4**、协议 **15**：云端 LangGraph 理解意图并生成可调整的大步骤，桌面 LangGraph 负责具体执行；LangChain 统一模型与工具消息，用户原话和补充直接交给执行器 AI 与 Stagehand，同一聊天展示过程、截图、协助及最终回复。不要求输入字段分类、自定义动作计划或独立成功审核。新交办目前按手动任务执行，运行条件卡与定时暂不扩展。部署、安装和真实验收范围见验收记录。
 
 [![CI](https://github.com/zhangheng2022/taskrelay/actions/workflows/ci.yml/badge.svg)](https://github.com/zhangheng2022/taskrelay/actions/workflows/ci.yml)
 [更新记录](CHANGELOG.md) · [验收范围](docs/ACCEPTANCE.md) · [部署说明](docs/DEPLOYMENT.md) · [问题反馈](https://github.com/zhangheng2022/taskrelay/issues)
@@ -127,7 +127,7 @@ npm run test:smoke
 从 Windows 系统入口安装，并从实际桌面或开始菜单快捷方式启动，核对版本、进程路径和 ASAR 哈希，再对实际安装的版本运行：
 
 ```powershell
-node scripts/smoke.mjs "$env:LOCALAPPDATA\TaskRelay\app-0.12.3\TaskRelay.exe" out/installed-smoke.json
+node scripts/smoke.mjs "$env:LOCALAPPDATA\TaskRelay\app-0.12.4\TaskRelay.exe" out/installed-smoke.json
 node scripts/release-manifest.mjs
 ```
 

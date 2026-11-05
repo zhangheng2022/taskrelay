@@ -164,7 +164,10 @@ export async function execute(run:TaskRun,port:RuntimePort,adapters={loadSdk:()=
       },
       registerHelp:async args=>{
         const request={id:crypto.randomUUID(),message:args.message as string,origin:new URL(await page!.url()).origin};
-        await say(request.message,await shot());const answer=await api<HelpResponse>('help',request);return {request,answer};
+        // 先登记来源和协助，再展示现场；云端会发布问题，避免提前回显造成回复绑定窗口及重复提问。
+        const answer=await api<HelpResponse>('help',request);
+        if(!answer.ready)await say('等待协助，当前页面。',await shot());
+        return {request,answer};
       },
       pollHelp:async request=>{
         for(;;){guard();await context();await pause(1500);const answer=await api<HelpResponse>('help',{...request});if(answer.ready)return answer;}

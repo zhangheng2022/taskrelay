@@ -166,7 +166,9 @@ test('真实 execute 协助中断以相同请求恢复，不重复登记或重�
  const s=await scenario([tool('act',{instruction:'检查页面'}),tool('ask',{message:'请提供验证码'}),tool('act',{instruction:'按回复继续'})],{helpWaits:2});
  const requests=s.calls.filter(c=>c.path.endsWith('/help'));
  assert.equal(requests.length,3);assert.equal(new Set(requests.map(c=>c.body.id)).size,1);assert.equal(s.clicks,2);
- assert.equal(s.calls.filter(c=>c.path.endsWith('/messages')&&c.body.content==='请提供验证码').length,1);
+ assert.equal(s.calls.filter(c=>c.path.endsWith('/messages')&&c.body.content==='请提供验证码').length,0);
+ const shown=s.calls.findIndex(c=>c.path.endsWith('/messages')&&c.body.content==='等待协助，当前页面。');
+ assert.ok(shown>s.calls.findIndex(c=>c.path.endsWith('/help')));
  assert.equal(s.calls.filter(c=>c.path.includes('/help/')&&c.path.endsWith('/ack')).length,1);
  assert.equal(s.finish.status,'succeeded');
 });

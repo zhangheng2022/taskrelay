@@ -400,12 +400,12 @@ conversations.post("/threads/:id/messages", async (c) => {
     : null;
   if (active) {
     const help = await c.env.DB.prepare(
-      "SELECT * FROM execution_help WHERE run_id=? AND thread_id=? AND awaiting_user=1 ORDER BY created_at DESC LIMIT 1",
+      "SELECT * FROM execution_help WHERE run_id=? AND thread_id=? AND response IS NULL ORDER BY created_at DESC LIMIT 1",
     )
       .bind(active.id, t.id)
       .first<Row>();
-    // Encrypt every pending reply before AI decides whether it is an input value
-    // or a question/change of instructions. Additional replies stay encrypted too.
+    // 云端还在判断是否询问时，用户已可能看到执行器问题并提前回复。
+    // 当前未完成协助立即绑定来源；全部执行中补充先加密，不靠等待状态猜测正文是否敏感。
     await appendMessage(c.env, t.id, {
       id,
       role: "user",
@@ -413,7 +413,7 @@ conversations.post("/threads/:id/messages", async (c) => {
       content: b.content,
       runId: active.id,
       replyTo: help?.id,
-      private: !!help,
+      private: true,
     });
     if (help) {
       await c.env.DB.prepare(

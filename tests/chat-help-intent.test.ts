@@ -11,6 +11,39 @@ async function setup(t:TestContext,protocol:'chat'|'responses'='chat'){
   return {...s,thread,path:`/api/runner/runs/${s.run.id}/help`,help:{epoch:s.run.leaseEpoch,id:'help_context',origin:'https://example.com',message:'如何继续登录？'}};
 }
 const reply=(message:string,askUser=false)=>JSON.stringify({message,askUser,accountId:null});
+test('协助模型尚未发布等待状态时，提前回复也加密并绑定当前来源',async t=>{
+ const s=await setup(t),original='00early-password!';
+ const providerFetch=globalThis.fetch;let inject=true;
+ t.mock.method(globalThis,'fetch',async(input:string|URL|Request,init?:RequestInit)=>{
+  const response=await providerFetch(input,init);
+  if(inject&&String(input).startsWith('https://provider.example/')){
+   inject=false;
+   assert.equal(s.sql.prepare('SELECT awaiting_user FROM execution_help WHERE id=?').get(s.help.id)!.awaiting_user,0);
+   assert.equal((await s.request(`/api/user/threads/${s.thread.id}/messages`,{requestId:'early_reply',content:original})).status,202);
+  }
+  return response;
+ });
+ s.replies(reply('请提供密码。',true));assert.equal((await s.request(s.path,s.help)).data.ready,false);
+ const stored=s.sql.prepare("SELECT * FROM ai_messages WHERE thread_id=? AND role='user'").get(s.thread.id)!;
+ assert.ok(stored.private_content);assert.equal(stored.reply_to,s.help.id);assert.ok(!JSON.stringify(stored).includes(original));
+ const context=await conversationContext(s.env,s.thread.id,0,{runId:s.run.id});
+ assert.ok(context.some(m=>m.content===original&&m.private&&m.origin===s.help.origin));
+ s.replies(reply('已收到密码，继续。'));assert.equal((await s.request(s.path,s.help)).data.ready,true);
+ const payload=JSON.parse(s.requests.at(-1)!.body.messages.at(-1).content);
+ assert.ok(payload.userMessages.some((m:any)=>m.content===original));
+});
+
+test('协助登记前的执行中补充加密，完成的旧协助不会被重新绑定',async t=>{
+ const s=await setup(t);
+ for(const [requestId,content] of [['before_help','账号和密码一起提供 00early!'],['after_help','更正密码 00corrected!']]){
+  await s.request(`/api/user/threads/${s.thread.id}/messages`,{requestId,content});
+  const rows=s.sql.prepare("SELECT * FROM ai_messages WHERE thread_id=? AND role='user' ORDER BY seq DESC").all(s.thread.id);
+  assert.ok(rows[0].private_content);assert.equal(rows[0].reply_to,null);assert.ok(!JSON.stringify(rows).includes(content));
+  const page=(await s.request(`/api/user/threads/${s.thread.id}`,undefined,'GET')).data;
+  assert.ok(page.messages.some((m:any)=>m.content===content));
+  if(requestId==='before_help'){s.replies(reply('已有信息，继续。'));assert.equal((await s.request(s.path,s.help)).data.ready,true);}
+ }
+});
 for(const invalidation of ['cancel','expired','closed'] as const){
  test(`登录协助回复已送达后 ${invalidation}：拒绝继续处理旧运行`,async t=>{
   const s=await setup(t);s.replies(reply('请在本聊天回复登录信息。',true));
