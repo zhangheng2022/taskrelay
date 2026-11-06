@@ -61,8 +61,24 @@ test("真实发布脚本在非主分支或健康异常时阻止所有生产写�
   }
 });
 
-test("真实生产发布入口按 SQL 状态推进，部署失败保留暂停和恢复点", async () => {
-  for (const mode of ["success", "deploy-fails"]) {
+test("真实生产发布入口核对 SQL、安装包和恢复结果，异常保留暂停与恢复点", async () => {
+  const cases: Record<string, { phase?: string; error?: string }> = {
+    success: { phase: "complete" },
+    "deploy-fails": { phase: "deploying", error: "FIXTURE_DEPLOY_FAILED" },
+    desktop: { phase: "complete" },
+    "bad-download": { phase: "registered", error: "CLOUDFLARE_DOWNLOAD_HASH_MISMATCH" },
+    "no-device": { phase: "awaiting-device" },
+    "resume-published": { phase: "complete" },
+    "resume-unknown": { phase: "deploying", error: "DEPLOYMENT_OUTCOME_UNCONFIRMED" },
+    "resume-ready": { phase: "complete" },
+    "wrong-manifest": { error: "RELEASE_ACCEPTANCE_INVALID" },
+    duplicate: { phase: "deploying", error: "RELEASE_RECOVERY_REQUIRED" },
+    "bad-artifact": { error: "ARTIFACT_HASH_MISMATCH" },
+    "bad-smoke": { error: "SMOKE_REPORT_INVALID" },
+    "resume-active": { phase: "deploying", error: "PREVIOUS_RELEASE_STILL_RUNNING" },
+    "resume-artifact-changed": { phase: "publishing", error: "RESUME_ARTIFACT_CHANGED" },
+  };
+  for (const [mode, expected] of Object.entries(cases)) {
     let stdout: string;
     try {
       const result = await exec(
@@ -93,12 +109,12 @@ test("真实生产发布入口按 SQL 状态推进，部署失败保留暂停和
           windowsHide: true,
         },
       );
-      assert.equal(mode, "success");
+      assert.equal(expected.error, undefined, mode);
       stdout = result.stdout;
     } catch (error) {
-      assert.equal(mode, "deploy-fails");
+      assert.ok(expected.error, mode);
       const failed = error as ExecFileException & { stderr: string; stdout: string };
-      assert.ok(failed.stderr.includes("FIXTURE_DEPLOY_FAILED"), failed.stderr);
+      assert.ok(failed.stderr.includes(expected.error), failed.stderr);
       stdout = failed.stdout;
     }
     const output = JSON.parse(
@@ -107,12 +123,29 @@ test("真实生产发布入口按 SQL 状态推进，部署失败保留暂停和
         .find((line) => line.startsWith("RELEASE_FIXTURE_RESULT="))!
         .slice("RELEASE_FIXTURE_RESULT=".length),
     );
-    assert.deepEqual(output.commands, ["migrate", "deploy"]);
+    if (!expected.phase) {
+      assert.deepEqual(output.commands, []);
+      assert.equal(output.state.productionRelease, undefined);
+      assert.equal(output.state.claimsEnabled, "1");
+      assert.equal(output.state.maintenance, "0");
+      assert.equal(output.migrations, 27);
+      continue;
+    }
+    assert.deepEqual(
+      output.commands,
+      mode.startsWith("resume-") || mode === "duplicate" ? [] : ["migrate", "deploy"],
+    );
     assert.equal(output.migrations, 28);
     const state = JSON.parse(output.state.productionRelease);
-    assert.equal(state.phase, mode === "success" ? "complete" : "deploying");
+    const success = expected.phase === "complete";
+    assert.equal(state.phase, expected.phase);
     assert.equal(state.bookmark, "fixture-bookmark");
-    assert.equal(output.state.claimsEnabled, mode === "success" ? "1" : "0");
-    assert.equal(output.state.maintenance, mode === "success" ? "0" : "1");
+    assert.equal(output.state.claimsEnabled, success ? "1" : "0");
+    assert.equal(output.state.maintenance, success || mode === "no-device" ? "0" : "1");
+    if (["desktop", "no-device", "bad-download", "resume-published"].includes(mode))
+      assert.equal(
+        JSON.parse(output.state.desktopReleaseCatalog).latest,
+        mode === "bad-download" ? "0.4.10" : "0.17.1",
+      );
   }
 });

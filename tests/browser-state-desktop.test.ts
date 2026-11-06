@@ -165,12 +165,13 @@ test(
         if (child.exitCode === null && child.pid) {
           const forcedExit = once(child, "exit", { signal: AbortSignal.timeout(5000) });
           void forcedExit.catch(() => {});
-          await new Promise<void>((resolve, reject) =>
+          await new Promise<void>((resolve) =>
             execFile(
               "taskkill.exe",
               ["/PID", String(child.pid), "/T", "/F"],
               { windowsHide: true },
-              (failure) => (failure && child.exitCode === null ? reject(failure) : resolve()),
+              // taskkill 可能仅因某个子进程已退出而返回非零；退出事件才是最终证据。
+              () => resolve(),
             ),
           );
           await forcedExit;

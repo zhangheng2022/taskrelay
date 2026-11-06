@@ -2,10 +2,46 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
+import fs from "node:fs";
+import { Readable } from "node:stream";
+import { createHash } from "node:crypto";
 import childProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import { requestUrl } from "./http-fixture.ts";
-if (!["success", "deploy-fails"].includes(process.env.RELEASE_FIXTURE)) throw Error("FIXTURE_ONLY");
+const mode = process.env.RELEASE_FIXTURE;
+if (
+  ![
+    "success",
+    "deploy-fails",
+    "desktop",
+    "bad-download",
+    "no-device",
+    "resume-published",
+    "resume-unknown",
+    "resume-ready",
+    "wrong-manifest",
+    "duplicate",
+    "bad-artifact",
+    "bad-smoke",
+    "resume-active",
+    "resume-artifact-changed",
+  ].includes(mode)
+)
+  throw Error("FIXTURE_ONLY");
+const desktop = [
+  "desktop",
+  "bad-download",
+  "no-device",
+  "resume-published",
+  "resume-ready",
+  "wrong-manifest",
+  "bad-artifact",
+  "bad-smoke",
+  "resume-artifact-changed",
+].includes(mode);
+const resume = mode.startsWith("resume-");
+if (resume) process.env.RELEASE_MODE = "resume";
+process.env.RELEASE_DESKTOP = String(desktop);
 const sql = new DatabaseSync(":memory:");
 const migrations = readdirSync("apps/cloud/migrations")
   .filter((name) => name.endsWith(".sql"))
@@ -26,17 +62,101 @@ sql
     "INSERT INTO devices(id,name,token_hash,last_seen,protocol_version) VALUES('fixture','fixture','fixture',?,17)",
   )
   .run(new Date().toISOString());
+if (mode === "no-device") sql.exec("UPDATE devices SET claim_ready=0");
 const state = () =>
   Object.fromEntries(
     sql
       .prepare(
-        "SELECT key,value FROM settings WHERE key IN ('claimsEnabled','maintenance','productionRelease')",
+        "SELECT key,value FROM settings WHERE key IN ('claimsEnabled','maintenance','productionRelease','desktopReleaseCatalog')",
       )
       .all()
       .map((row) => [row.key, row.value]),
   );
 const commands = [];
-let deployed = false;
+let deployed = resume;
+const bytes = Buffer.from("fixture immutable package");
+const candidate = {
+  version: "0.17.1",
+  sha256: createHash("sha256").update(bytes).digest("hex"),
+  sha1: createHash("sha1").update(bytes).digest("hex"),
+  bytes: bytes.length,
+  notes: "fixture",
+  publishedAt: "2026-11-06T00:00:00Z",
+};
+const packageName = "TaskRelay-0.17.1-full.nupkg";
+const packageRoot = "artifacts/windows/apps/desktop/out/make/squirrel.windows/x64";
+const manifest = {
+  sourceCommit: process.env.RELEASE_SHA,
+  sourceDirty: false,
+  version: candidate.version,
+  installedAsarMatches: true,
+  systemEntry: { runner: "github-hosted" },
+  actionsRunId: "11",
+  reports: Object.fromEntries(
+    ["packaged-smoke", "installed-smoke"].map((key) => [
+      key,
+      { passed: true, version: candidate.version },
+    ]),
+  ),
+  artifacts: [
+    {
+      file: "apps/desktop/out/make/squirrel.windows/x64/" + packageName,
+      bytes: bytes.length,
+      sha256: candidate.sha256,
+    },
+  ],
+};
+if (mode === "wrong-manifest") manifest.sourceCommit = "b".repeat(40);
+if (mode === "bad-artifact") manifest.artifacts[0].sha256 = "b".repeat(64);
+if (mode === "bad-smoke") manifest.reports["installed-smoke"].passed = false;
+if (resume || mode === "duplicate") {
+  migrate(migrations.slice(-1));
+  sql.exec(
+    "UPDATE settings SET value='0' WHERE key='claimsEnabled'; UPDATE settings SET value='1' WHERE key='maintenance'",
+  );
+  const phase = {
+    "resume-published": "publishing",
+    "resume-unknown": "deploying",
+    "resume-ready": "awaiting-device",
+    duplicate: "deploying",
+    "resume-active": "deploying",
+    "resume-artifact-changed": "publishing",
+  }[mode];
+  sql.prepare("INSERT INTO settings(key,value) VALUES('productionRelease',?)").run(
+    JSON.stringify({
+      sha: process.env.RELEASE_SHA,
+      cloud: true,
+      desktop,
+      phase,
+      runId: "10",
+      artifactRunId: "11",
+      oldClaims: "1",
+      oldMaintenance: "0",
+      bookmark: "fixture-bookmark",
+      packageSha256: mode === "resume-artifact-changed" ? "b".repeat(64) : candidate.sha256,
+    }),
+  );
+}
+const readOriginal = fs.readFileSync;
+fs.readFileSync = (file, ...args) => {
+  const normalized = String(file).replaceAll("\\", "/");
+  if (normalized === "artifacts/windows/out/release-manifest.json") return JSON.stringify(manifest);
+  if (normalized === "artifacts/windows/out/desktop-release.json") return JSON.stringify(candidate);
+  if (normalized === packageRoot + "/" + packageName) return bytes;
+  return readOriginal(file, ...args);
+};
+fs.createReadStream = (file) => {
+  assert.equal(String(file).replaceAll("\\", "/"), packageRoot + "/" + packageName);
+  return Readable.from([bytes]);
+};
+let release;
+if (mode === "resume-published")
+  release = {
+    id: 2,
+    draft: false,
+    target_commitish: process.env.RELEASE_SHA,
+    assets: [{ name: packageName, size: bytes.length, digest: "sha256:" + candidate.sha256 }],
+  };
 const originalExec = childProcess.execFileSync;
 childProcess.execFileSync = (file, args) => {
   if (file === "git" && args.join(" ") === "rev-parse HEAD") return process.env.RELEASE_SHA + "\n";
@@ -62,6 +182,8 @@ childProcess.execFileSync = (file, args) => {
 syncBuiltinESMExports();
 globalThis.fetch = async (input, options) => {
   const url = requestUrl(input);
+  if (url === "https://api.github.com/repos/zhangheng2022/taskrelay/actions/runs/10")
+    return Response.json({ status: mode === "resume-active" ? "in_progress" : "completed" });
   if (
     url.startsWith(
       "https://api.github.com/repos/zhangheng2022/taskrelay/actions/workflows/ci.yml/runs?",
@@ -92,8 +214,44 @@ globalThis.fetch = async (input, options) => {
     return Response.json({
       service: "TaskRelay",
       protocolVersion: 17,
-      sourceCommit: process.env.RELEASE_SHA,
+      sourceCommit: mode === "resume-unknown" ? "b".repeat(40) : process.env.RELEASE_SHA,
     });
+  }
+  if (url === "https://api.github.com/repos/zhangheng2022/taskrelay/releases/tags/v0.17.1")
+    return release ? Response.json(release) : new Response(null, { status: 404 });
+  if (
+    url === "https://api.github.com/repos/zhangheng2022/taskrelay/releases" &&
+    options.method === "POST"
+  ) {
+    release = { ...JSON.parse(options.body), id: 2, assets: [] };
+    return Response.json(release);
+  }
+  if (
+    url ===
+    "https://uploads.github.com/repos/zhangheng2022/taskrelay/releases/2/assets?name=" + packageName
+  ) {
+    assert.deepEqual(options.body, bytes);
+    assert.equal(release.draft, true);
+    const asset = { name: packageName, size: bytes.length, digest: "sha256:" + candidate.sha256 };
+    release.assets.push(asset);
+    return Response.json(asset);
+  }
+  if (
+    url === "https://api.github.com/repos/zhangheng2022/taskrelay/releases/2" &&
+    options.method === "PATCH"
+  ) {
+    release.draft = JSON.parse(options.body).draft;
+    return Response.json(release);
+  }
+  if (
+    url ===
+    `https://taskrelay.zhangheng.workers.dev/api/updates/windows-x64/0.17.1/${candidate.sha256}/${packageName}`
+  ) {
+    const catalog = JSON.parse(state().desktopReleaseCatalog);
+    assert.equal(release.draft, false);
+    assert.notEqual(catalog.latest, candidate.version);
+    assert.equal(catalog.releases.at(-1).sha256, candidate.sha256);
+    return new Response(mode === "bad-download" ? Buffer.alloc(bytes.length) : bytes);
   }
   const db =
     "https://api.cloudflare.com/client/v4/accounts/b3a410496c5e49e582b4af19d2f2eec6/d1/database/9d387f48-6e34-4af4-a2a0-10f958d65a16";
