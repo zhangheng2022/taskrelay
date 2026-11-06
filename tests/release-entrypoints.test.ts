@@ -60,3 +60,59 @@ test("真实发布脚本在非主分支或健康异常时阻止所有生产写�
     );
   }
 });
+
+test("真实生产发布入口按 SQL 状态推进，部署失败保留暂停和恢复点", async () => {
+  for (const mode of ["success", "deploy-fails"]) {
+    let stdout: string;
+    try {
+      const result = await exec(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          "--import",
+          "./tests/release-production-fixture.mjs",
+          "scripts/release-production.mjs",
+        ],
+        {
+          env: {
+            ...process.env,
+            RELEASE_FIXTURE: mode,
+            RELEASE_SHA: "a".repeat(40),
+            GITHUB_REF: "refs/heads/master",
+            GITHUB_ACTIONS: "true",
+            GITHUB_RUN_ID: "11",
+            ARTIFACT_RUN_ID: "11",
+            GH_TOKEN: "fixture-only",
+            CLOUDFLARE_API_TOKEN: "fixture-only",
+            RELEASE_MODE: "publish",
+            RELEASE_CLOUD: "true",
+            RELEASE_DESKTOP: "false",
+            GITHUB_STEP_SUMMARY: "",
+          },
+          windowsHide: true,
+        },
+      );
+      assert.equal(mode, "success");
+      stdout = result.stdout;
+    } catch (error) {
+      assert.equal(mode, "deploy-fails");
+      const failed = error as ExecFileException & { stderr: string; stdout: string };
+      assert.ok(failed.stderr.includes("FIXTURE_DEPLOY_FAILED"), failed.stderr);
+      stdout = failed.stdout;
+    }
+    const output = JSON.parse(
+      stdout
+        .split(/\r?\n/)
+        .find((line) => line.startsWith("RELEASE_FIXTURE_RESULT="))!
+        .slice("RELEASE_FIXTURE_RESULT=".length),
+    );
+    assert.deepEqual(output.commands, ["migrate", "deploy"]);
+    assert.equal(output.migrations, 28);
+    const state = JSON.parse(output.state.productionRelease);
+    assert.equal(state.phase, mode === "success" ? "complete" : "deploying");
+    assert.equal(state.bookmark, "fixture-bookmark");
+    assert.equal(output.state.claimsEnabled, mode === "success" ? "1" : "0");
+    assert.equal(output.state.maintenance, mode === "success" ? "0" : "1");
+  }
+});
