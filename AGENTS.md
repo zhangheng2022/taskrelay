@@ -94,10 +94,10 @@ CLI 故障按技能处理并说明替代方式，未执行成功不称为 OCR �
 基于 [官方 TypeScript AI rules](https://docs.stagehand.dev/v4/first-steps/ai-rules)，以本项目授权、运行和出站约束为准。
 
 1. 涉及 Stagehand 先通过 `stagehand-docs` 的 `search_stagehand` 查 v4 API，再用 `query_docs_filesystem_stagehand` 读返回路径，不猜路径。MCP 不可用则说明并读官方网页。查询仅含技术问题，不发送私有运行数据；配置见 [`.codex/config.toml`](.codex/config.toml)。
-2. 固定 **4.3.0**；文档与安装版不符时核对 `dist/index.d.mts` 和实现，不擅自升级或用 `any` 掩盖差异。生产用 `localBrowser.connect({ cdpUrl })` 连接 Main 管理的 Chromium，再 `await Stagehand.create({ browser, model, ... })`；不使用旧 `new/init` 或 `agent()`。
+2. 跟随经过验证的最新正式版本，直接依赖和锁文件固定本轮解析版本；升级时核对 `dist/index.d.mts`、实现和生产入口测试，不用 `any` 掩盖差异。生产用 `localBrowser.connect({ cdpUrl })` 连接 Main 管理的 Chromium，再 `await Stagehand.create({ browser, model, ... })`；不使用旧 `new/init` 或 `agent()`。
 3. 保留 Executor 原生动态 `import()`。正常、异常和停止均清理资源：先关闭 Stagehand，再由 Main/Host 按所有权回收浏览器。调用后仍检查停止/租约。
 4. 页面来自 `browser.context`，多页显式传 `{ page }`；在 Stagehand 实例调用 act/observe/extract。act 是清晰的单步自然语言操作，不塞整个流程，不让高层 AI 生成 CSS/XPath。原生页面结构/控件编号不经过聊天摘要；定位失败交 AI 重新观察。
-5. 消费 `{ data, metadata }`，检查 act 的 `data.success` 和错误，处理 observe 空候选；observe 不证明执行或完成。已知结构用就近 Zod Schema / `z.infer`，URL 按语义校验；保留 4.3.0 合法的无 Schema extract 路径，不强套模板。
+5. 消费 `{ data, metadata }`，检查 act 的 `data.success` 和错误，处理 observe 空候选；observe 不证明执行或完成。已知结构用就近 Zod Schema / `z.infer`，URL 按语义校验；保留当前 SDK 合法的无 Schema extract 路径，不强套模板。
 6. 复用 `stagehand-model.ts` 的 ClientLLM 与云端 `/stagehand` 链路；不引入提供方直连、额外密钥或 Browserbase 托管浏览器。保持 `cache:false`、`selfHeal:false`、`logging:{level:"off"}`；不借候选/缓存绕过动作登记、停止、租约和凭据校验。官方 variables 示例不改变已确认的原文与敏感输入授权。
 
 相关验证优先覆盖 `tests/{stagehand-relay,executor-runtime,chat-execution,structured-production}.test.ts`，资源生命周期和打包另按下表验证。

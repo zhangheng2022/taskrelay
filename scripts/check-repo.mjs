@@ -5,8 +5,17 @@ const failures = [];
 const desktop = JSON.parse(
   await readFile(path.join(root, "apps/desktop/package.json"), "utf8"),
 );
-if (desktop.dependencies["@browserbasehq/stagehand"] !== "4.3.0")
-  failures.push("Stagehand must be pinned to 4.3.0");
+const repository = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
+const runtimeLock = JSON.parse(await readFile(path.join(root, "scripts/runtime-package-lock.json"), "utf8"));
+const runtimeDependencies = runtimeLock.packages[""].dependencies;
+if (JSON.stringify(Object.entries(runtimeDependencies).sort()) !== JSON.stringify(Object.entries(desktop.dependencies).sort()))
+  failures.push("Desktop runtime lock must be refreshed with node scripts/stage-runtime.mjs --update-lock");
+// 同一个执行进程不能混用框架版本；版本由经过验收的清单决定，不在检查器内固定旧版。
+for (const name of ["@browserbasehq/stagehand", "@langchain/core", "@langchain/langgraph", "@langchain/langgraph-checkpoint", "langchain", "p-limit"]) {
+  const version = desktop.dependencies[name];
+  if (!/^\d+\.\d+\.\d+$/.test(version ?? "") || version !== repository.dependencies[name])
+    failures.push(`${name} must use the same exact release in root and desktop`);
+}
 for (const relative of [
   "apps/desktop/src/main/index.ts",
   "apps/desktop/src/preload/index.ts",

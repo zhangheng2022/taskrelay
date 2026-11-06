@@ -65,7 +65,7 @@ const manifest = {
   generatedAt: new Date().toISOString(),
   platform: "Windows x64",
   signed: false,
-  stagehand: "4.3.0",
+  stagehand: desktop.dependencies["@browserbasehq/stagehand"],
   artifacts,
   reports,
   installedAsarPath: realpathSync.native(installedAsar),

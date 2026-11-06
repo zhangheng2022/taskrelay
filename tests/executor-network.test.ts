@@ -97,7 +97,7 @@ test('上游正常结束完整交付缓冲响应，浏览器断开清理上游',
   const f=await tunnelFixture(t),client=await f.open();
   await f.send(client,'read-request');
   const payload=Buffer.alloc(256*1024,'x'),chunks:Buffer[]=[];
-  client.on('data',chunk=>chunks.push(chunk));
+  client.on('data',chunk=>chunks.push(typeof chunk==='string'?Buffer.from(chunk):chunk));
   const ended=once(client,'end');f.origins[0].end(payload);await ended;
   assert.deepEqual(Buffer.concat(chunks),payload);
   const second=await f.open();await f.send(second,'another-request');

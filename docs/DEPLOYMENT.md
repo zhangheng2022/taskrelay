@@ -102,6 +102,10 @@ Main 在产生浏览器副作用前记录 SQLite 检查点。云端也先记录�
 
 ## Windows 更新交付
 
+依赖清单固定经过验证的解析版本；Dependabot 每周一北京时间 09:00 创建更新 PR，不自动合并或部署。框架与桌面依赖升级须重新运行生产入口回归、浏览器资源准备、打包及实际安装验证。`prepare:browser`、资源校验和发布清单共同读取桌面清单的 Stagehand 版本；不在脚本中另外固定旧版本。Cloudflare 工具链现有 Miniflare beta、Hono CLI next 通道保持显式版本，其他直接依赖使用正式 release。
+
+桌面生产依赖另由 `scripts/runtime-package-lock.json` 锁定；依赖更新后执行 `node scripts/stage-runtime.mjs --update-lock` 并审查该锁文件，普通打包只执行 `npm ci`。每个 Stagehand release 的公开扩展标识保存在 `resources/stagehand-<版本>-public-key.txt`，新增版本须一同提交；它只固定 Chromium 扩展身份，不是账号加密密钥。启动时仅启用当前版本扩展，避免旧 Profile 的扩展运行缓存与新 SDK 混用，保留站点存储。
+
 先提升 `apps/desktop/package.json` 版本并同步锁文件，再运行 `npm run make` 和本次产物的 smoke。暂存运行时包使用桌面应用版本，Squirrel 的版本目录和 nupkg 必须一致。交付不能停留在直接运行 `out/TaskRelay-win32-x64/TaskRelay.exe`。
 
 安装前保存本地数据并检查未完成运行；安装后从桌面或开始菜单的实际入口启动，核对进程路径、版本和 `resources/app.asar` 的 SHA-256，再验证安装目录 smoke。`node scripts/release-manifest.mjs` 会拒绝旧报告、错误版本或不匹配的 ASAR；安装路径取自实际自检报告，不按环境变量猜测。报告同时记录执行程序、资源目录与运行扩展路径。0.4.6 起扩展从应用自有内容寻址目录加载，文件集合和字节哈希必须与安装资源一致，不修改原始安装文件或系统访问控制。

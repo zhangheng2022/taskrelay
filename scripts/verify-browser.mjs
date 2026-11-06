@@ -2,11 +2,12 @@ import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
 const root = path.resolve(import.meta.dirname, "../resources/browser");
+const desktop = JSON.parse(await readFile(path.resolve(import.meta.dirname, "../apps/desktop/package.json"), "utf8"));
 const manifest = JSON.parse(
   await readFile(path.join(root, "manifest.json"), "utf8"),
 );
 if (
-  manifest.stagehandVersion !== "4.3.0" ||
+  manifest.stagehandVersion !== desktop.dependencies["@browserbasehq/stagehand"] ||
   manifest.platform !== "win64" ||
   !/^\d+(\.\d+){3}$/.test(manifest.buildId)
 )

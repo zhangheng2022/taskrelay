@@ -1,7 +1,7 @@
 {
   "name": "@taskrelay/desktop",
   "productName": "TaskRelay",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "private": true,
   "description": "TaskRelay shared browser task executor",
   "author": "TaskRelay",
@@ -13,18 +13,21 @@
   },
   "dependencies": {
     "sharp": "0.35.5",
-    "@browserbasehq/stagehand": "4.3.0",
+    "@browserbasehq/stagehand": "4.4.0",
     "electron-squirrel-startup": "1.0.1",
-    "ws": "8.22.0",
+    "ws": "8.22.1",
     "zod": "4.6.7",
-    "@langchain/core": "1.3.4",
-    "@langchain/langgraph": "1.6.0",
-    "@langchain/langgraph-checkpoint": "1.2.2"
+    "@langchain/core": "1.3.5",
+    "@langchain/langgraph": "1.7.1",
+    "@langchain/langgraph-checkpoint": "1.2.2",
+    "langchain": "1.6.2",
+    "p-limit": "7.3.3",
+    "chrome-remote-interface": "0.34.0"
   },
   "config": {
     "forge": "./forge.config.mts"
   },
   "devDependencies": {
-    "electron": "45.2.1"
+    "electron": "45.2.3"
   }
 }

@@ -11,6 +11,8 @@ export default defineConfig({
         "sharp",
         /^@browserbasehq\/stagehand(?:\/|$)/,
         /^@langchain\/(?:core|langgraph|langgraph-checkpoint)(?:\/|$)/,
+        /^langchain(?:\/|$)/,
+        "p-limit",
       ],
       output: { dynamicImportInCjs: true },
     },

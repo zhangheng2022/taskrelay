@@ -10,7 +10,7 @@
 | Cloudflare | 应用鉴权、任务版本、运行快照、调度、租约、设备分配、粗步骤规划与协助图、模型出站 |
 | Windows Main | 云端连接、safeStorage 设备令牌、SQLite journal/outbox、浏览器与执行子进程生命周期 |
 | Preload / Renderer | 校验后的命名入口、连接与运行状态、暂停、停止、自启动和诊断；不提供聊天、任务编辑和模型管理 |
-| Executor utilityProcess | 独立 Stagehand 4.3.0，完整观察、规划、操作、纠错与最终回复循环 |
+| Executor utilityProcess | 独立 Stagehand 4.4.0，完整观察、规划、操作、纠错与最终回复循环 |
 
 普通 Worker 负责静态资源、health 与路由。请求按认证凭据哈希进入 RequestCoordinator 分片后仍执行完整 Hono 鉴权；分片哈希不是用户身份。Scheduler 执行定时工作，AiTurn 通过持久化 dispatch 与 alarm 处理长对话回合，NotificationHub 用休眠 WebSocket 通知变化，客户端仍从归属校验后的接口读取事实。
 
@@ -141,7 +141,9 @@ Main 使用系统 safeStorage 保存设备令牌。MASTER_KEY 保护现有密文
 
 ## 打包与验证边界
 
-Stagehand 固定 4.3.0，Executor 保留原生动态 import；只暂存实际运行依赖，不打入整个 node_modules。Chromium 与扩展位于 ASAR 外，打包前校验资源哈希。extension adapter 在应用自有目录按内容哈希准备运行扩展，保留安装路径与文件完整性检查。
+Stagehand 使用经过验证并锁定的正式版本，Executor 保留原生动态 import；只暂存实际运行依赖，不打入整个 node_modules。Chromium 与扩展位于 ASAR 外，打包前校验资源哈希。extension adapter 在应用自有目录按内容哈希准备运行扩展，保留安装路径与文件完整性检查。
+
+桌面生产锁文件固定实际暂存的间接依赖。Stagehand 每个正式版本固定独立公开扩展身份，Main 在 Chromium 启动参数中仅启用当前扩展，防止复用账号 Profile 时发现旧 SDK 的 Service Worker；账号 ID、Cookie、Local Storage 和凭据加密体系不因此改变。
 
 Web build 不包含桌面打包。smoke 执行独立 Stagehand 自建站流程，以及包内执行图的工具消息和 interrupt/resume 检查，使用确定性回调；不调用 runtime.execute 或 ExecutorHost。真实执行/恢复另有生产入口隔离测试。JSDOM 不证明布局滚动，SQLite stand-in 不证明真实 D1 并发，模型能力测试不证明真实网站闭环。交付还须核对实际系统入口、安装路径、版本与 ASAR，MSIX 重定向副本不能代替系统安装。
 

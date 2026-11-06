@@ -324,6 +324,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
         path.join(root, "browser"),
         path.join(userData, "profiles"),
         journal,
+        extensionPath,
       );
       host = new ExecutorHost(
         cloud,

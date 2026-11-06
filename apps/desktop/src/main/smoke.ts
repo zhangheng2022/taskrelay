@@ -33,6 +33,7 @@ export async function packagedSmoke(
       path.join(resources, "browser"),
       path.join(directory, "profiles"),
       journal,
+      extensionPath,
     );
   let submissions = 0,
     checkins = 0,

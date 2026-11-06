@@ -1,6 +1,6 @@
 TaskRelay
 
 Electron: MIT, https://www.electronjs.org/
-Stagehand 4.3.0: MIT, https://github.com/browserbase/stagehand
+Stagehand 4.4.0: MIT, https://github.com/browserbase/stagehand
 Chromium / Chrome for Testing: bundled browser and its third-party notices remain subject to their respective licenses. See chrome://credits and the browser LICENSE files.
 No RewardPilot source, assets, or UI are included.

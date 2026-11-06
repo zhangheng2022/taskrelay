@@ -58,7 +58,7 @@ flowchart LR
 
 开发机需要 Node.js 24+；最终用户无需 Node.js。
 
-项目级 Codex 配置 [`.codex/config.toml`](.codex/config.toml) 已接入 [Stagehand 官方文档 MCP](https://docs.stagehand.dev/v4/first-steps/ai-rules)，提供文档搜索与读取，无需 API Key。可在项目目录运行 `codex mcp get stagehand-docs` 检查配置；使用时可要求“用 stagehand-docs 查询 act/observe 的用法”。项目须受信任才会加载该配置；文档示例仍须与本项目固定的 Stagehand 4.3.0 核对。
+项目级 Codex 配置 [`.codex/config.toml`](.codex/config.toml) 已接入 [Stagehand 官方文档 MCP](https://docs.stagehand.dev/v4/first-steps/ai-rules)，提供文档搜索与读取，无需 API Key。可在项目目录运行 `codex mcp get stagehand-docs` 检查配置；使用时可要求“用 stagehand-docs 查询 act/observe 的用法”。项目须受信任才会加载该配置；文档示例仍须与本项目锁文件中的 Stagehand 版本核对。
 
 ```powershell
 npm ci
@@ -111,7 +111,7 @@ npm run make
 npm run test:smoke
 ```
 
-`prepare:browser` 从官方 Chrome for Testing 下载 Windows x64 浏览器，固定到生成的版本/哈希清单。资源在 ASAR 外；构建验证浏览器文件哈希。Stagehand 固定 4.3.0，执行器保留原生 `import()` 并单独暂存生产依赖。
+`prepare:browser` 从官方 Chrome for Testing 下载 Windows x64 浏览器，固定到生成的版本/哈希清单。资源在 ASAR 外；构建验证浏览器文件哈希。Stagehand 使用经过验证并锁定的正式版本，执行器保留原生 `import()` 并单独暂存生产依赖。
 
 截图脱敏使用固定版本 sharp；打包将 `@img` 平台模块及伴随 DLL 放在 `app.asar.unpacked`，执行器构建保持 sharp 为运行时依赖。包内 smoke 必须验证实际截图路径，不能仅用 Vite 构建成功证明原生模块可加载。
 

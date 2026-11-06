@@ -19,6 +19,7 @@ export class OwnedBrowser {
     private directory: string,
     private profiles: string,
     private journal: Journal,
+    private extensionPath?: string,
   ) {}
   async recover() {
     const record = this.journal.get<{
@@ -119,6 +120,9 @@ export class OwnedBrowser {
       "about:blank",
     ];
     args.unshift(`--remote-allow-origins=chrome-extension://${extensionId}`);
+    // 在浏览器启动时加载本轮内容寻址的扩展，避免 SDK 先发现 Profile 中的旧版。
+    // 路径只来自 Main 校验过的自有资源，站点 Cookie 和 Profile 继续保留。
+    if(this.extensionPath)args.unshift(`--load-extension=${this.extensionPath}`,`--disable-extensions-except=${this.extensionPath}`);
     args[args.findIndex((a) => a.startsWith("--proxy-bypass-list="))] =
       `--proxy-bypass-list=<-loopback>;127.0.0.1:${port}`;
     const child = spawn(executable, args, {

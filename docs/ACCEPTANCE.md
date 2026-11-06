@@ -1,5 +1,17 @@
 # TaskRelay 验收记录
 
+## 2026-11-06 全仓依赖升级基线（0.14.0，实施中）
+
+直接及开发依赖已按本轮 registry 发布版本锁定：Stagehand 4.4.0、LangChain Core 1.3.5、LangGraph 1.7.1、Electron 45.2.3、Better Auth 1.7.18、TypeScript 7.0.2；新增后续重构所需的官方 Agent、模型 SDK、查询、表单及 CDP 依赖，目前尚未替换执行循环。Cloudflare 的 Miniflare 和已有 Hono CLI 分别跟随 beta、next 通道。GitHub Actions 的 checkout v7.0.1、setup-node v7.1.0 已是核对时的最新 release，继续固定其 SHA。
+
+隔离目录重新解析依赖后，`npm ci`、类型检查、完整回归 **353/353**、Web 构建和仓库检查通过。未使用 force 或 legacy-peer-deps。新版 Node 类型下的网络测试显式区分字符串与 Buffer；未改变网络执行行为。构建资源和发布清单改为读取桌面清单中的 Stagehand 版本，重新准备时清理已核对路径的生成资源，避免新旧扩展混用。
+
+已配置 Dependabot 每周一 Asia/Shanghai 09:00 检查 npm 和 GitHub Actions，更新 PR 分组且不自动合并或部署。上游仍固定的间接旧版本不强制覆盖。桌面打包、实际安装、生产部署和真实网站复验仍在进行，不能将上述源码结果视为已交付。
+
+Windows 0.14.0 重新打包及本次包内 smoke 已通过（Electron 45.2.3、Chrome 157.0.8103.38、Stagehand 4.4.0）。首次升级 smoke 暴露旧 Profile 继续执行旧扩展代码，修复为按 SDK release 固定公开扩展身份并在启动时仅启用本版扩展；同一旧测试 Profile 的连接及完整 smoke 随后通过。未修改 MASTER_KEY 或删除账号 Profile。新增生产依赖锁文件，普通打包改为 `npm ci` 并清理已核对路径的暂存目录；修复后类型检查、Host 21/21 通过。尚未证明系统实际安装或真实网站。
+
+OCR preview/rule 成功；23 个变更文件中 21 个完整审阅、2 个生成锁文件不逐行人工审查，覆盖率 91.3%；两个锁文件已核验 registry 来源、完整性字段及安装／构建／包内 smoke。无未解决发现，未调用 OCR 外部模型。graphify 已更新，28 个 SQL 仍缺少 tree_sitter_sql 解析器，相关行为以源码及测试证据为准。
+
 ## 2026-11-06 账号管理、登录状态与串行账号组（0.13.0）
 
 ### 用户确认后的真实登录状态复用
