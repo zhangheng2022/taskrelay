@@ -86,6 +86,14 @@ test(
     }
     assert.ok(active);
     let cdpUrl = `http://127.0.0.1:${active.split("\n")[0].trim()}`;
+    // DevToolsActivePort 出现不等于 Main 的 launch 已完成；与 OwnedBrowser 一样
+    // 确认默认上下文接受下载禁用策略后，才把浏览器交给状态适配器。
+    const sourceReady = await LocalCdp.connect(cdpUrl);
+    try {
+      await sourceReady.send("Browser.setDownloadBehavior", { behavior: "deny" });
+    } finally {
+      await sourceReady.close();
+    }
     adapter = await BrowserStateAdapter.connect(cdpUrl);
     const cookies = [
       {
@@ -127,6 +135,19 @@ test(
     assert.deepEqual(exported.origins.find((entry) => entry.origin === origin)?.localStorage, [
       ["token", "restored-before-first-script"],
     ]);
+    // 与 Main 的单浏览器所有权保持一致：源环境退出后才启动目标环境，
+    // 避免在同一 Runner 并行初始化两个 Chromium 的存储服务。
+    await adapter.close();
+    const sourceControl = await LocalCdp.connect(cdpUrl);
+    try {
+      const exited = once(child, "exit", { signal: AbortSignal.timeout(5000) });
+      void exited.catch(() => {});
+      await sourceControl.send("Browser.close");
+      await exited;
+      assert.notEqual(child.exitCode, null);
+    } finally {
+      await sourceControl.close();
+    }
     // 在另一份全新 Profile 中恢复源浏览器导出值，再检查网站首次脚本读取。
     const destination = path.join(directory, "destination");
     children.push(
@@ -155,6 +176,12 @@ test(
     assert.ok(active);
     cdpUrl = `http://127.0.0.1:${active.split("\n")[0].trim()}`;
     await adapter.close();
+    const destinationReady = await LocalCdp.connect(cdpUrl);
+    try {
+      await destinationReady.send("Browser.setDownloadBehavior", { behavior: "deny" });
+    } finally {
+      await destinationReady.close();
+    }
     adapter = await BrowserStateAdapter.connect(cdpUrl);
     t.diagnostic("恢复独立环境");
     await adapter.restore(exported);

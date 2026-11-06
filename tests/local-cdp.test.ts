@@ -3,7 +3,8 @@ import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { WebSocketServer } from "ws";
+import { createRequire } from "node:module";
+import WebSocket, { WebSocketServer } from "ws";
 import type { Socket } from "node:net";
 import { LocalCdp } from "../apps/desktop/src/main/local-cdp";
 
@@ -79,6 +80,43 @@ test("CDP SDK 按调用编号配对乱序响应并隔离 session 事件", async 
   );
   assert.deepEqual(sessions, ["b", "a"]);
   off();
+});
+
+test("CDP 回复早于发送回调时仍完成同一次调用，不丢响应或重发", async (t) => {
+  const f = await fixture(t);
+  let received = 0;
+  f.sockets.on("connection", (socket) =>
+    socket.on("message", (raw) => {
+      received++;
+      const message = JSON.parse(socketText(raw));
+      socket.send(JSON.stringify({ id: message.id, result: { value: "first-response" } }));
+    }),
+  );
+  const cdp = await LocalCdp.connect(f.origin);
+  t.after(() => cdp.close());
+  // 保留真实 WebSocket 通信，只延后写完成通知，复现 Windows 快速回复先到的顺序。
+  const sdkRequire = createRequire(
+    createRequire(import.meta.url).resolve("chrome-remote-interface"),
+  );
+  const SdkWebSocket = sdkRequire("ws") as typeof WebSocket;
+  // oxlint-disable-next-line typescript/unbound-method -- 原方法通过 call(this) 保留实际 socket。
+  const send = SdkWebSocket.prototype.send;
+  t.mock.method(
+    SdkWebSocket.prototype,
+    "send",
+    function (this: WebSocket, ...args: Parameters<WebSocket["send"]>) {
+      const [data, options, callback] = args;
+      const complete = typeof options === "function" ? options : callback;
+      if (!complete) return send.call(this, data, options);
+      return send.call(this, data, typeof options === "function" ? {} : options, (error) => {
+        setTimeout(() => complete(error), 50);
+      });
+    },
+  );
+  assert.deepEqual(await cdp.send("Storage.clearCookies", {}, undefined, 300), {
+    value: "first-response",
+  });
+  assert.equal(received, 1);
 });
 test("断连拒绝等待命令，超时关闭连接且不能发送下一命令", async (t) => {
   const f = await fixture(t);
