@@ -18,7 +18,7 @@ Cloudflare 保持 Free，不设置项目级每日平台预算或全站模型上�
 
 ## 当前聊天与执行流程
 
-协议为 15，图版本为 `relay-graph-1`；桌面版本、安装和部署状态见验收记录。
+协议为 16，图版本为 `relay-graph-2`；桌面版本、安装和部署状态见验收记录。
 
 1. 用户在网站交办。云端规划图检查意图；明确任务生成可调整的粗步骤并交接，缺少关键信息才询问，咨询直接回答。粗步骤随任务版本固化为 `executionOutline`，不含选择器，也不是强制执行清单；原话和后续补充仍完整传给桌面。
 2. conversation_inbox 以 requestId/digest 接收消息；线程内串行处理回合。响应未确认时客户端跨刷新保留原 requestId；任务已启动后的重试仍先匹配原交办，不能改投为执行中补充。规划图经 understand → handoff（仅任务）→ respond，commitDecision 原子提交任务、版本与 conversation_commands，随后幂等排队。聊天展示本次真实生成的粗步骤。
@@ -62,6 +62,8 @@ Stagehand 使用 ClientLLM 转发至现有云端模型链路，cache/selfHeal �
 每次 act 以清晰的单步自然语言操作为目标；observe 仅提供候选，空结果如实反馈。执行历史保留工具 data 和 metadata，act 的 success=false 交回 AI 纠正；导航异常不能显示为页面已打开。Stagehand 初始化返回后再次检查停止，正常与异常退出均关闭会话；Chromium 仍由 Main/Host 回收，不能把 SDK 4.3.0 的 browser.close() 当作只断开连接。
 
 ## 写入、停止与终态
+
+运行的业务终态与浏览器清理分别记录。协议 16 领取时设置 cleanup_pending；finish 接收结果但不释放仍未关闭浏览器的账号。Main 正常完成先尝试 Chromium 正常退出，超时才强制回收；停止仍优先立即结束进程。确认自有进程退出后持久回传 browser-closed，再发布候选状态、释放非 unknown 账号锁并推进后续成员。重启只补终态和清理事实；网络超时、租约过期或结果未知不能自动移交仍未确认关闭的环境。Main 每次等待状态下载、启动或恢复之后核对 generation，已停止的旧请求不能重新启动浏览器。
 
 动作调用编号用于同一次工具调用防重，不用 DOM/URL 指纹拦截不同操作。先记录本地检查点和云端动作意图，再发送操作；后续观察只表明已重新读取页面，不代表业务成功。发送后尚未取得观察的动作不能自动重放。
 
@@ -110,6 +112,24 @@ submitAndWait 一次 RPC 完成提交与等待，循环在对象内部。alarm �
 LangChain 的 `RelayChatModel` 提供 `bindTools`、`withStructuredOutput` 和标准消息转换；LangGraph 实际负责云端规划/协助与桌面执行。RelayChatModel、D1Checkpointer 和 SessionCheckpointer 隔离模型出站、加密持久化及同代状态知识，保留这些平台 adapter。没有引入顶层 langchain 聚合包，也不允许默认外部 tracing 或框架隐式网络重试。
 
 ## 数据与认证
+
+### 账号、域名与登录状态
+
+账号是凭据、浏览器状态与设备偏好的统一归属。businessDomains 精确匹配规范化 hostname，loginOrigins 精确限制凭据投递 origin；不自动允许同主域其他子域。浏览器存储按真实 origin 保存，Cookie 保留原生 Domain/Path/SameSite/partitionKey。关联域不是普通浏览白名单。同域多个账号各自拥有 profile 和独占锁；未保存账号的执行使用独立临时目录，防止临时环境转正后再被匿名运行复用。
+
+用户在原聊天提供的完整原文仍交给模型。执行器在实际使用凭据并观察登录成功后，可发 offerAccountSave 卡片；账号持久化必须由本人确认。凭据被实际拒绝时 requestAccountUpdate 在同一执行图 interrupt 等待，保存后只恢复有效的同次租约；新的原聊天消息优先，旧卡片不能抢先恢复旧等待。confirmAccountLogin 只更新凭据验证元数据，不是业务成功审核。普通消息仅存卡片引用，草稿、确认摘要和账号秘密按上下文加密或 HMAC 保护；关闭聊天、撤回、拒绝及过期会失效草稿。
+
+凭据版本与状态失效代次独立记录。普通设置修改供下一次领取使用；当前运行读取冻结的凭据版本。协助卡片确认可更新同次等待的版本。修改认证字段或清除状态会失效旧缓存及迟到上传；重命名不会清除登录。历史私密消息携带账号来源，原文保持完整，实际输入前同时检查站点和当前账号。
+
+D1 负责状态指针、版本和发布；BROWSER_STATES 私有 SQLite DO 保存不可变加密分块，不使用 R2，不分发 MASTER_KEY。候选绑定用户、账号、run、device、lease、凭据代次与基准版本，只有本次浏览器清理确认后条件发布。state_owner_run_id 随成功领取原子转移并在释放锁后保留，阻止后续执行已经接手后旧执行再次发布；发布请求失败时继续保留 cleanup_pending，等待关闭确认重试。快照上限 2 MB，包含 Cookie 和 Local Storage；不包含通用 IndexedDB、sessionStorage 或设备私钥。当前和上一份同代快照可用于数据损坏恢复，但认证项删除或改变、空状态及显式清除会撤销旧备份，避免恢复已退出的会话。DO alarm 通过 D1 退休墓碑回收未发布和废弃对象。
+
+Main 在本地保留完整环境并核对版本；需要恢复时，内部 CDP adapter 在拦截生成的临时 origin 文档中写 Local Storage，再打开网站，避免业务脚本首次读取早于恢复。分区 Cookie 不经过 SDK 的简化 Cookie 转换；不透明分区无法重建时拒绝整份同步，不丢弃分区后转成普通 Cookie。上传期间暂存文件由系统 safeStorage 加密，普通 journal 仅保存元数据；超限、不支持 Cookie 及其他同步失败只持久化固定错误分类，同步失败不覆盖有效快照，也不伪造登录有效。网站可能因设备、IP、验证码或不可迁移存储要求重新登录。
+
+### 多账号与设备分配
+
+AI 根据用户原意生成固定有序 accountIds，服务端复核本人归属和精确业务域名；单次 run 仍只绑定一个账号。account_dispatch_groups/members 在同一聊天下持久保存成员，前一成员终态且清理完成后才 enqueue 下一成员，后续成员不会提前消耗排队期限。普通失败继续，waiting_user 等待，unknown 暂停整组；停止取消当前及未开始成员，已完成成员不重放。手动重跑创建新的完整账号组，撤回、关闭聊天或任务版本变更会退休旧组。
+
+设备选择优先最近成功或管理员设置的设备；该设备须在线、协议兼容、claim_ready 且空闲，否则其他获授权设备可以领取。分配由云端完成，原 assigned_device_id 不再构成永久绑定。所有设备与同用户的未清理运行仍阻止新领取。管理员确认旧设备已停止时可处理非 unknown 的遗留清理，并退休未发布旧候选；保留已发布状态，不强制清空账号或承诺免验证。
 
 D1 负责业务事实；完整结构以 apps/cloud/migrations 的增量 SQL 为准，schema.ts 只覆盖部分 Drizzle 查询。历史迁移不可按“旧代码”删除；兼容已安装数据库，SQLite 遇到高于支持版本的 schema 必须拒绝，不能覆盖重建。
 

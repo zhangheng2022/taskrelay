@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import type { TaskDefinition } from "../packages/contracts/src/index";
+import { seal } from '../apps/cloud/src/crypto';
 export function testDb() {
   const sql = new DatabaseSync(":memory:");
   for (const f of [
@@ -27,6 +28,9 @@ export function testDb() {
     "0021_context_withdrawal.sql",
     "0022_checkpoint_chunks.sql",
     "0023_history_cleanup.sql",
+    "0024_browser_state.sql",
+    "0025_account_dispatch.sql",
+    "0026_account_cards.sql",
   ])
     sql.exec(
       readFileSync(
@@ -106,6 +110,16 @@ export function task(overrides: Partial<TaskDefinition> = {}): TaskDefinition {
   };
 }
 export async function insertTask(db: D1Database, t = task()) {
+  // 协议 16 领取必须引用真实归属账号。只补测试所需缺失账号，不覆盖调用方已配置的账号/密文。
+  if(t.accountId&&!await db.prepare('SELECT id FROM accounts WHERE id=?').bind(t.accountId).first()){
+    const origin=new URL(t.entryUrl).origin;
+    const secret=await seal({username:'fixture',password:'fixture-password'},Buffer.alloc(32,9).toString('base64'),`account:${t.accountId}`);
+    await db.batch([
+      db.prepare(`INSERT INTO accounts(id,name,origin,username_hint,secret,created_at,profile_id,business_domains,login_origins)
+        VALUES(?,?,?,?,?,?,?,?,?)`).bind(t.accountId,'测试账号',origin,'fi***',secret,t.createdAt,t.accountId,JSON.stringify([new URL(origin).hostname]),JSON.stringify([origin])),
+      db.prepare('INSERT INTO account_credential_versions(account_id,version,secret,login_origins,created_at) VALUES(?,1,?,?,?)').bind(t.accountId,secret,JSON.stringify([origin]),t.createdAt),
+    ]);
+  }
   await db
     .prepare(
       "INSERT INTO tasks(id,version,definition,status,next_run_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",

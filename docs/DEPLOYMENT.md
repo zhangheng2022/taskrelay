@@ -1,5 +1,13 @@
 # 部署与恢复
 
+## 账号状态版本的发布要求（0.13.0 源码）
+
+新增 D1 迁移 `0024_browser_state.sql`、`0025_account_dispatch.sql`、`0026_account_cards.sql`，以及 `browser-state-v1` SQLite DO migration 和 `BROWSER_STATES` 绑定。保留现有账号、Profile 和 MASTER_KEY，不重新初始化凭据。执行协议为 16，图为 relay-graph-2；旧版本不领取新协议任务。
+
+上线顺序：先暂停新增领取，等待旧执行终态并核实浏览器退出；备份数据库后应用增量迁移和新云端，再升级执行器并验证设备就绪，最后恢复领取。旧运行若在迁移时仍 active/unknown，会保留 cleanup_pending；不得为恢复调度直接删除未知结果锁。未获得关闭确认的非 unknown 账号可走管理员“已确认旧设备停止”入口，旧候选状态同时退休。
+
+本次源码与本机验证不代表这些迁移已经应用到生产。现用安装和双设备网站验证见 ACCEPTANCE；未上线时不要仅安装协议 16 客户端并据此认定可与旧云端协作。
+
 ## 最近已记录部署
 
 2026-11-05 聊天滚动与 iPhone Loading 兼容修复已从 `1777a1daca056d55a68f61733157c1141e9d81f2` 上线，活动 Worker 版本 `24ce3fa3-484b-4eb3-a06a-cf8312860257`（Cloudflare API 确认 100%）。主域健康、权限、JS/CSS 构建哈希及跨平台 CI 通过。CLI 上传成功后 Cron 核对遇网络错误；API 确认原定时配置正常，无需重复迁移或重建。备用 workers.dev 复检因本机网络连接重置未完成。桌面仍为 0.12.5；iPhone 真机验收未完成，详见 [ACCEPTANCE](ACCEPTANCE.md)。

@@ -13,6 +13,9 @@ import { RunnerPoller } from '../apps/desktop/src/main/runner-poller';
 import { DesktopUpdater } from '../apps/desktop/src/main/updater';
 import { createHash } from 'node:crypto';
 import type {TaskRun} from '../packages/contracts/src/index';
+import {BrowserStateAdapter} from '../apps/desktop/src/main/browser-state';
+import type {ProtectedStateFiles} from '../apps/desktop/src/main/protected-state';
+import {browserStateSchema} from '../packages/contracts/src/accounts';
 
 const settle = () => new Promise<void>(r => setImmediate(r));
 function deferred<T>() {
@@ -29,18 +32,100 @@ class Child extends EventEmitter {
     this.emit('message',{generation:this.messages[0].generation,type:'rpc',id:crypto.randomUUID(),path:p,body});
   }
 }
-function fixture(t: TestContext, beforeFork?:()=>void) {
+function fixture(t: TestContext, beforeFork?:()=>void, protectedStates?:ProtectedStateFiles) {
   const dir=mkdtempSync(path.join(tmpdir(),'relay-host-'));
   const journal=new Journal(dir);
   const children: Child[]=[];
   const browser={launch:async()=>({cdpUrl:'fixture'}),close:async()=>{},recover:async()=>{}};
   const cloud={request:async <T>(_method:string,_path:string,_body?:unknown):Promise<T> => ({leaseExpiresAt:new Date(Date.now()+90000).toISOString(),cancelRequested:false}) as T};
   const host=new ExecutorHost(cloud,journal,browser,'fixture','extension',()=>{},
-    (()=>{beforeFork?.();const c=new Child();children.push(c);return c as unknown as UtilityProcess;}) as typeof utilityProcess.fork);
+    (()=>{beforeFork?.();const c=new Child();children.push(c);return c as unknown as UtilityProcess;}) as typeof utilityProcess.fork,protectedStates);
   const run=(id:string)=>({...baseRun,id,status:'running' as const,leaseExpiresAt:new Date(Date.now()+90000).toISOString()});
   t.after(async()=>{await host.stop();journal.close();rmSync(dir,{recursive:true,force:true});});
   return {dir,journal,children,browser,cloud,host,run};
 }
+
+test('正式 Host 浏览器关闭后才持久化退出确认，子进程不能伪造关闭确认',async t=>{
+ const s=fixture(t),run={...s.run('cleanup'),cleanupPending:true};
+ await s.host.start(run);s.children[0].rpc('/api/runner/runs/cleanup/browser-closed',{epoch:run.leaseEpoch});await settle();await settle();
+ assert.equal(s.children[0].messages.at(-1).error,'RUN_SCOPE_MISMATCH');
+ const closing=deferred<void>();s.browser.close=()=>closing.promise;
+ const stopped=s.host.stop(false);assert.equal(s.journal.pending().length,0);
+ closing.resolve();await stopped;
+ assert.deepEqual(s.journal.pending().map(row=>row.path.split('/').at(-1)),['finish','browser-closed']);
+ s.cloud.request=async()=>{throw Error('OFFLINE');};await assert.rejects(s.host.flush(),/OFFLINE/);assert.equal(s.journal.pending().length,2);
+ const sent:string[]=[];s.cloud.request=async<T>(_method:string,p:string)=>{sent.push(p);return {} as T;};await s.host.flush();
+ assert.deepEqual(sent.map(p=>p.split('/').at(-1)),['finish','browser-closed']);assert.equal(s.journal.pending().length,0);
+});
+test('完成结果已提交但退出确认前重启，恢复只补关闭确认且不重启任务',async t=>{
+ const s=fixture(t);
+ s.journal.set('browserCleanup',{runId:'finished-before-crash',epoch:3,profileId:'profile_fixture'});
+ s.journal.checkpoint('finished-before-crash','old',3,'finished',{status:'succeeded'});
+ await s.host.recover();assert.equal(s.children.length,0);
+ assert.deepEqual(s.journal.pending().map(row=>row.path),['/api/runner/runs/finished-before-crash/browser-closed']);
+ await s.host.recover();assert.equal(s.journal.pending().length,1);
+});
+test('获取浏览器状态期间停止，迟到的云端回复不能在关闭确认后重启浏览器',async t=>{
+ const s=fixture(t),state=deferred<unknown>();let launches=0;
+ s.browser.launch=async()=>{launches++;return {cdpUrl:'fixture'};};
+ s.cloud.request=async<T>()=>await state.promise as T;
+ const run={...s.run('late-browser'),cleanupPending:true};await s.host.start(run);
+ s.children[0].rpc('local:browser',{accountId:run.profileId,proxyPort:1234});await settle();
+ await s.host.stop(false);assert.equal(s.host.active,null);assert.equal(s.host.idleForUpdate,false);
+ assert.ok(s.journal.pending().some(row=>row.path.endsWith('/browser-closed')));
+ state.resolve({accountId:null,credentialVersion:1,stateEpoch:1,revision:0,origins:[],state:null});await settle();await settle();
+ assert.equal(launches,0);assert.equal(s.host.idleForUpdate,true);
+});
+test('领取检查点已写入而关闭标记未写入时崩溃，恢复仍补退出确认',async t=>{
+ const s=fixture(t),run={...s.run('claim-crash'),cleanupPending:true};
+ s.journal.checkpoint(run.id,'old',run.leaseEpoch,'claimed',{run});
+ await s.host.recover();assert.deepEqual(s.journal.pending().map(row=>row.path.split('/').at(-1)),['finish','browser-closed']);
+ assert.equal(s.children.length,0);
+});
+
+for(const reason of ['TOO_LARGE','UNSUPPORTED_COOKIE','SYNC_FAILED'])test(`正式 Host 对 ${reason} 只上传固定原因，跳过快照且不记录秘密`,async t=>{
+ const s=fixture(t,undefined,{put:async()=>{throw Error('MUST_NOT_PERSIST_INVALID_STATE');}} as unknown as ProtectedStateFiles);
+ const access={accountId:'fixture',credentialVersion:1,stateEpoch:1,revision:0,origins:['https://example.com'],state:null};
+ const sent:Array<{path:string;body:unknown}>=[];
+ s.cloud.request=async<T>(_method:string,p:string,body?:unknown)=>{sent.push({path:p,body});return access as T;};
+ t.mock.method(BrowserStateAdapter,'connect',async()=>({close:()=>{},capture:async()=>{
+   if(reason==='TOO_LARGE')return {version:1,cookies:[],origins:[{origin:'https://example.com',localStorage:[['token','x'.repeat(2_000_000)]]}]};
+   if(reason==='UNSUPPORTED_COOKIE')return browserStateSchema.parse({version:1,origins:[],cookies:[{name:'session',value:'private-cookie',domain:'example.com',path:'/',partitionKeyOpaque:true}]});
+   throw Error('NETWORK_FAILURE_private-cookie');
+ }} as unknown as BrowserStateAdapter));
+ const run={...s.run('state-failure'),cleanupPending:true};await s.host.start(run);
+ s.children[0].rpc('local:browser',{accountId:run.profileId,proxyPort:1234});
+ for(let i=0;i<20&&s.children[0].messages.length<2;i++)await settle();
+ assert.equal(s.children[0].messages.at(-1).error,undefined);
+ s.children[0].rpc('local:state-capture');
+ for(let i=0;i<20&&s.children[0].messages.length<3;i++)await settle();
+ assert.deepEqual(s.children[0].messages.at(-1).data,{key:null});
+ assert.deepEqual(sent.find(call=>call.path.endsWith('/sync-failed'))?.body,{epoch:run.leaseEpoch,reason});
+ assert.equal(sent.some(call=>call.path.endsWith('/upload')),false);
+ assert.doesNotMatch(JSON.stringify(sent)+JSON.stringify(s.journal.pending()),/private-cookie/);
+});
+
+test('临时环境确认保存后，Main 以新账号代次和基准发布，保留本次独占 Profile',async t=>{
+ let saved:unknown,upload:Record<string,unknown>|undefined;
+ const files={put:async(value:unknown)=>{saved=value;return 'fixture-ref';},read:async()=>saved,remove:async()=>{}} as unknown as ProtectedStateFiles;
+ const s=fixture(t,undefined,files);
+ const access={accountId:null,credentialVersion:1,stateEpoch:1,revision:0,origins:['https://example.com'],state:null};
+ s.cloud.request=async<T>(_method:string,p:string,body?:unknown)=>{
+   if(p.endsWith('/upload')){upload=body as Record<string,unknown>;return {key:'new-candidate'} as T;}
+   if((body as {metadataOnly?:boolean})?.metadataOnly)return {...access,accountId:'new-account',credentialVersion:2,stateEpoch:4,revision:3} as T;
+   return access as T;
+ };
+ t.mock.method(BrowserStateAdapter,'connect',async()=>({close:()=>{},capture:async()=>({version:1,cookies:[],origins:[]})} as unknown as BrowserStateAdapter));
+ const run={...s.run('adopt-profile'),cleanupPending:true};await s.host.start(run);
+ s.children[0].rpc('local:browser',{accountId:run.profileId,proxyPort:1234});
+ for(let i=0;i<20&&s.children[0].messages.length<2;i++)await settle();
+ const prior=s.journal.get<{profile:string}>(`profileState:${run.profileId}`)!;
+ s.children[0].rpc('local:state-capture');
+ for(let i=0;i<20&&s.children[0].messages.length<3;i++)await settle();
+ assert.equal(upload?.baseRevision,3);assert.equal(s.children[0].messages.at(-1).data.key,'new-candidate');
+ const marker=s.journal.get<Record<string,unknown>>(`profileState:${run.profileId}`)!;
+ assert.equal(marker.profile,prior.profile);assert.equal(marker.credentialVersion,2);assert.equal(marker.stateEpoch,4);assert.equal(marker.revision,3);
+});
 
 test('fork 同步失败保存终态并释放占用，离线回传可重试且不重启失败任务',async t=>{
  let fail=true;
@@ -83,6 +168,7 @@ test('Poller 在 fork 失败后先回传失败再解决原领取请求，不重�
  const ids:string[]=[];
  s.cloud.request=async<T>(_method:string,p:string)=>{assert.ok(p.endsWith('/finish'));finished=true;return {} as T;};
  const cloud={paired:true,connect:async()=>({maintenance:false,historyEpoch:4}),request:async<T>(_method:string,_path:string,body?:unknown)=>{
+  if(_path.endsWith('/readiness'))return {} as T;
   ids.push((body as {requestId:string}).requestId);
   return {run:{...claim,status:finished?'failed':'running'}} as T;
  }};
@@ -135,7 +221,7 @@ test('真实 Poller + Host + Updater：领取响应丢失、人工等待、清�
 
 test('Poller 在 connect 等待后重新检查更新门闩，避免新增租约',async t=>{
   const s=fixture(t),connection=deferred<{maintenance:boolean;historyEpoch:number}>();let blocked=false,claims=0;
-  const cloud={paired:true,connect:()=>connection.promise,request:async<T>()=>{claims++;return {run:null} as T;}};
+  const cloud={paired:true,connect:()=>connection.promise,request:async<T>(_method:string,p:string)=>{if(p.endsWith('/claim'))claims++;return {run:null} as T;}};
   const poller=new RunnerPoller(cloud,s.host,s.journal,{quitting:()=>false,blocksClaims:()=>blocked,installing:()=>false,result:()=>{},settled:()=>{}});
   const pending=poller.poll();blocked=true;connection.resolve({maintenance:false,historyEpoch:3});await pending;
   assert.equal(claims,0);assert.equal(poller.unsettled,false);

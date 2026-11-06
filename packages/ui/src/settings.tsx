@@ -1,4 +1,5 @@
 import { Memories } from './memories';
+import { Accounts } from './accounts';
 import { AdminPanel } from "./admin-panel";
 import { AccountSecurity } from "./auth-gate";
 import { useEffect, useState } from "react";
@@ -6,7 +7,6 @@ import {
   CheckCircle2,
   Loader2,
   Plus,
-  ShieldCheck,
 } from "lucide-react";
 import type {
   ModelInput,
@@ -57,7 +57,6 @@ export function Settings({
   const isAdmin=snapshot.me?.role === "admin";
   const [tab, setTab] = useState(isAdmin ? "models" : "accounts"),
     [model, setModel] = useState<ModelProfile | true | null>(null),
-    [account, setAccount] = useState(false),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(""),
     [days, setDays] = useState(30);
@@ -207,40 +206,7 @@ export function Settings({
             )}
           </>
         ) : tab === "accounts" ? (
-          <>
-            <div className="section-heading">
-              <div>
-                <h2>每个账号，独立浏览器环境</h2>
-                <p>登录密码加密保存。验证码始终在任务对话中提交。</p>
-              </div>
-              <Button onClick={() => setAccount(true)}>
-                <Plus />
-                添加账号
-              </Button>
-            </div>
-            {!snapshot.accounts.length ? (
-              <Empty>
-                <EmptyHeader>
-                  <EmptyTitle>还没有站点账号</EmptyTitle>
-                  <EmptyDescription>
-                    无需登录的查询任务可以直接运行。
-                  </EmptyDescription>
-                </EmptyHeader>
-              </Empty>
-            ) : (
-              snapshot.accounts.map((a) => (
-                <article className="settings-row" key={a.id}>
-                  <div>
-                    <h3>{a.name}</h3>{a.loginReset&&<p>执行设备已迁移，下次任务可能需要重新登录。</p>}
-                    <p>
-                      {a.origin} · {a.usernameHint}
-                    </p>
-                  </div>
-                  <ShieldCheck size={20} />
-                </article>
-              ))
-            )}
-          </>
+          <Accounts snapshot={snapshot} transport={transport} refresh={refresh}/>
         ) : tab === "devices" ? (
           <>
             <div className="section-heading">
@@ -333,16 +299,6 @@ export function Settings({
           onClose={() => setModel(null)}
           onSaved={async () => {
             setModel(null);
-            await refresh();
-          }}
-        />
-      )}
-      {account && (
-        <AccountDialog
-          transport={transport}
-          onClose={() => setAccount(false)}
-          onSaved={async () => {
-            setAccount(false);
             await refresh();
           }}
         />
@@ -529,76 +485,6 @@ function ModelDialog({
             </Button>
             <Button disabled={busy}>
               {busy && <Loader2 className="spin" />}保存配置
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-function AccountDialog({
-  transport,
-  onClose,
-  onSaved,
-}: {
-  transport: Transport;
-  onClose: () => void;
-  onSaved: () => Promise<void>;
-}) {
-  const [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
-  return (
-    <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
-      <DialogContent className="max-h-[90dvh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>添加站点账号</DialogTitle>
-          <DialogDescription>
-            每个账号使用独立浏览器 Profile，凭据只在对应站点填写。
-          </DialogDescription>
-        </DialogHeader>
-        <form
-          className="flex flex-col gap-5"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const f = new FormData(e.currentTarget);
-            setBusy(true);
-            void transport
-              .request("POST", "/api/user/accounts", Object.fromEntries(f))
-              .then(onSaved)
-              .catch((e) => setError(e.message))
-              .finally(() => setBusy(false));
-          }}
-        >
-          <FieldGroup>
-            <Field label="账号名称">
-              <Input name="name" required placeholder="例如：我的工作账号" />
-            </Field>
-            <Field label="登录站点">
-              <Input
-                type="url"
-                name="origin"
-                required
-                placeholder="https://example.com"
-              />
-            </Field>
-            <Field label="用户名">
-              <Input name="username" autoComplete="off" />
-            </Field>
-            <Field label="密码（可选）">
-              <Input
-                name="password"
-                type="password"
-                autoComplete="new-password"
-              />
-            </Field>
-            {error && <ErrorText error={error} />}
-          </FieldGroup>
-          <div className="form-footer">
-            <Button type="button" variant="ghost" onClick={onClose}>
-              取消
-            </Button>
-            <Button disabled={busy}>
-              {busy && <Loader2 className="spin" />}保存账号
             </Button>
           </div>
         </form>

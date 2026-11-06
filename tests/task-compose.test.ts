@@ -12,7 +12,7 @@ for(const protocol of ['chat','responses'] as const)test(`新交办/${protocol}�
   assert.equal(retry.data.id,th.id);assert.equal(s.jobs(),1);
   assert.equal(retry.data.messages.filter((m:{role:string})=>m.role==='user').length,1,'重试已启动交办不能再追加一条执行中补充');
   assert.equal(s.sql.prepare('SELECT COUNT(*) n FROM runs WHERE task_id=?').get(r.data.taskId)!.n,1);
-  assert.equal(s.sql.prepare('SELECT execution_protocol FROM runs WHERE task_id=?').get(r.data.taskId)!.execution_protocol,15);
+  assert.equal(s.sql.prepare('SELECT execution_protocol FROM runs WHERE task_id=?').get(r.data.taskId)!.execution_protocol,16);
 });
 test('意图不明只追问，不创建运行',async t=>{
   const s=await productionModelFixture(t),th=(await s.request('/api/user/threads',{modelId:'model_test'})).data;

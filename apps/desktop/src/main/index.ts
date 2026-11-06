@@ -14,6 +14,7 @@ import {
   utilityProcess,
   autoUpdater,
   Notification,
+  safeStorage,
 } from "electron";
 import squirrelStartup from "electron-squirrel-startup";
 import path from "node:path";
@@ -24,6 +25,7 @@ import { z } from "zod";
 import { Journal } from "./journal";
 import { Cloud } from "./cloud";
 import { OwnedBrowser } from "./browser";
+import { ProtectedStateFiles } from './protected-state';
 import { prepareExtension } from "./extension";
 import { ExecutorHost } from "./executor-host";
 import { DesktopUpdater } from './updater';
@@ -331,6 +333,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
         extensionPath,
         notify,
         utilityProcess.fork,
+        new ProtectedStateFiles(path.join(userData,'pending-browser-states'),safeStorage),
       );
       await host.recover();
       poller = new RunnerPoller(cloud,host,journal,{

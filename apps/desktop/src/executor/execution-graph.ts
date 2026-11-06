@@ -68,14 +68,14 @@ export async function runExecutionGraph(port:ExecutionGraphPort){
         return {text:response.text,route:'finish' as const};
       }
       // ask 的问题只由云端协助图发布，模型随工具附带的提问不再先行回显。
-      if(response.text.trim()&&!response.calls.some(call=>call.name==='ask'))await port.say(response.text,response.calls[0].id);
+      if(response.text.trim()&&!response.calls.some(call=>['ask','offerAccountSave','requestAccountUpdate'].includes(call.name)))await port.say(response.text,response.calls[0].id);
       const message:AIMessage=modelResponseToAIMessage(response);
       return {transcript:[...(reply.compacted?[]:state.transcript),message],calls:response.calls,index:0,help:null,route:'dispatch' as const};
     })
     .addNode('dispatch',async state=>{
       port.guard();
       if(await port.changed(state.userSeq))return {transcript:[...state.transcript,...state.calls.slice(state.index).map(call=>resultMessage(call,{error:'INSTRUCTIONS_CHANGED',executed:false}))],route:'observe' as const};
-      return {route:state.calls[state.index].name==='ask'?'registerHelp' as const:'tools' as const};
+      return {route:['ask','requestAccountUpdate'].includes(state.calls[state.index].name)?'registerHelp' as const:'tools' as const};
     })
     .addNode('tools',async state=>{
       const call=state.calls[state.index];
@@ -100,7 +100,7 @@ export async function runExecutionGraph(port:ExecutionGraphPort){
       const transcript=[...state.transcript,resultMessage(call,state.result)];
       // Assistance may change intent. Return to observation instead of running
       // stale calls from the same model batch, preserving native message pairs.
-      if(call.name==='ask')return {transcript:[...transcript,...state.calls.slice(state.index+1).map(next=>resultMessage(next,{error:'REPLAN_AFTER_HELP',executed:false}))],route:'observe' as const};
+      if(['ask','requestAccountUpdate'].includes(call.name))return {transcript:[...transcript,...state.calls.slice(state.index+1).map(next=>resultMessage(next,{error:'REPLAN_AFTER_HELP',executed:false}))],route:'observe' as const};
       return {transcript,index:state.index+1,route:state.index+1<state.calls.length?'dispatch' as const:'observe' as const};
     })
     .addNode('finish',async state=>{

@@ -18,4 +18,5 @@ export { ModelEgress } from "./model-egress";
 export { RequestCoordinator, Scheduler } from "./request-coordinator";
 export { AiTurn } from "./ai/turn";
 export { Evidence } from './evidence-store';
+export { BrowserStateStore } from './browser-state-store';
 export { NotificationHub } from './notification-hub';

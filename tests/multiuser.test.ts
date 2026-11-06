@@ -1,4 +1,5 @@
-import { finishRequest } from './runner-request';
+import { finishRequest,browserClosedRequest } from './runner-request';
+import { PROTOCOL_VERSION } from '../packages/contracts/src/index';
 import { commitDecision } from '../apps/cloud/src/ai/commands';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -30,7 +31,7 @@ async function fixture() {
   const me=await request('/api/user/me',cookies[id]);
   assert.equal(me.status,200,await me.clone().text());
  }
- for(const d of ['d1','d2']) sql.prepare('INSERT INTO devices(id,name,token_hash,protocol_version,last_seen) VALUES(?,?,?,11,?)').run(d,d,await hash((d==='d1'?'a':'b').repeat(64)),new Date().toISOString());
+ for(const d of ['d1','d2']) sql.prepare('INSERT INTO devices(id,name,token_hash,protocol_version,last_seen) VALUES(?,?,?,?,?)').run(d,d,await hash((d==='d1'?'a':'b').repeat(64)),PROTOCOL_VERSION,new Date().toISOString());
  async function ownedTask(user:string,id:string,accountId:string|null=null) {
   const t=await insertTask(db,task({id,accountId}));
   sql.prepare('UPDATE tasks SET user_id=? WHERE id=?').run(user,id);
@@ -62,6 +63,7 @@ test('个人日限额支持到期或手动恢复，不绕过用户隔离、禁�
   await assert.rejects(()=>reserve(s.env,'alice','chat'),/CHAT_QUOTA_EXCEEDED/);
   s.sql.prepare("UPDATE members SET disabled=0,daily_quota_paused_until='2000-01-01T00:00:00.000Z' WHERE id='alice'").run();
   assert.equal((await finishRequest(s.db,run,'succeeded',{summary:'read only',evidence:[],outcome:'reported'})).status,200);
+  assert.equal((await browserClosedRequest(s.db,run)).status,200);
   assert.equal((await quotaSummary(s.db,'alice')).pausedUntil,null);
   assert.equal((await quotaSummary(s.db,'alice')).limits.runs,0,'原额度没有被覆盖');
   assert.equal(await claim(s.db,'d1','expired-pause'),null);
@@ -73,6 +75,7 @@ test('个人日限额支持到期或手动恢复，不绕过用户隔离、禁�
   await reserve(s.env,'alice','chat');
   const resumed=(await claim(s.db,'d1','manual-pause'))!;assert.equal(resumed.id,next.id);
   assert.equal((await finishRequest(s.db,resumed,'succeeded',{summary:'read only',evidence:[],outcome:'reported'})).status,200);
+  assert.equal((await browserClosedRequest(s.db,resumed)).status,200);
   s.sql.prepare("UPDATE members SET daily_quota_paused=0 WHERE id='alice'").run();
   assert.equal((await quotaSummary(s.db,'alice')).paused,false);
   await assert.rejects(()=>reserve(s.env,'alice','chat'),/CHAT_QUOTA_EXCEEDED/);
@@ -96,7 +99,7 @@ test('真实登录会话隔离任务、运行、对话、协助、证据和用�
  assert.equal((await s.request('/api/admin/operations',s.cookies.alice)).status,403);
  assert.equal((await s.request('/api/admin/operations',s.cookies.owner)).status,200);
  for(const path of ['/api/user/snapshot','/api/admin/operations','/api/device/user/snapshot']) {
-  const r=await app.request('http://localhost'+path,{headers:{"x-taskrelay-protocol":"15", Authorization:'Bearer '+'a'.repeat(64)}},s.env);
+  const r=await app.request('http://localhost'+path,{headers:{"x-taskrelay-protocol":String(PROTOCOL_VERSION), Authorization:'Bearer '+'a'.repeat(64)}},s.env);
   assert.equal(r.status,403,path);
  }
 });
@@ -114,6 +117,7 @@ test('两用户两设备公平领取，并发一，领取重试只记一次额�
  assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM runs WHERE started_day IS NOT NULL").get()!.n,2);
  s.sql.prepare("UPDATE runs SET status='waiting_user' WHERE id=?").run(second.id);
  assert.equal((await finishRequest(s.db,first,'succeeded',{summary:'done',evidence:[],outcome:'reported'})).status,200);
+ assert.equal((await browserClosedRequest(s.db,first)).status,200);
  assert.equal(await claim(s.db,'d1','third'),null);
 });
 

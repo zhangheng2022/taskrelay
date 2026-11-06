@@ -4,7 +4,9 @@
  */
 import { z } from "zod";
 import type { AppEnv } from "../env";
-import { enqueue, now, taskFrom, type Row } from "../store";
+import { now, taskFrom, type Row } from "../store";
+import { advanceDispatchGroups, ensureDispatchGroup } from '../account-dispatch';
+import { accountMatchesDomain } from '../accounts';
 import { getModelProfile } from "../models";
 import { hash, publicUrl } from "../../../../packages/contracts/src/security";
 import {
@@ -27,7 +29,7 @@ export async function commitDecision(
   t: Row,
   turnId: string,
   input: Omit<TaskInput, "modelId">,
-  plan: Pick<TaskDefinition, "executionOutline" | "graphVersion"> = {},
+  plan: Pick<TaskDefinition, "executionOutline" | "graphVersion" | "accountIds"> = {},
 ) {
   if (
     await env.DB.prepare("SELECT id FROM conversation_commands WHERE id=?")
@@ -46,15 +48,15 @@ export async function commitDecision(
   if (
     base &&
     (await env.DB.prepare(
-      "SELECT id FROM runs WHERE task_id=? AND status IN ('queued','running','waiting_user','verifying','unknown')",
+      "SELECT id FROM runs WHERE task_id=? AND (status IN ('queued','running','waiting_user','verifying','unknown') OR cleanup_pending=1) UNION ALL SELECT id FROM account_dispatch_groups WHERE task_id=? AND state IN ('active','paused')",
     )
-      .bind(base.id)
+      .bind(base.id,base.id)
       .first())
   )
     throw Error("RUN_ALREADY_ACTIVE");
   const parsed = taskInputSchema.parse({ ...input, modelId: t.model_id });
   if (parsed.schedule.kind !== "manual") throw Error("SCHEDULE_NOT_SUPPORTED");
-  const origin = publicUrl(parsed.entryUrl).origin;
+  const entry = publicUrl(parsed.entryUrl);
   const { profile } = await getModelProfile(env, t.model_id, t.model_version);
   if (
     !profile.capabilities.connection ||
@@ -62,18 +64,21 @@ export async function commitDecision(
     profile.capabilities.structured === "none"
   )
     throw Error("MODEL_CAPABILITIES_REQUIRED");
-  if (parsed.accountId) {
+  const accountIds = [...new Set(plan.accountIds?.length ? plan.accountIds : parsed.accountId ? [parsed.accountId] : [])];
+  for (const accountId of accountIds) {
     const account = await env.DB.prepare(
-      "SELECT origin FROM accounts WHERE id=? AND user_id=?",
+      "SELECT origin,business_domains FROM accounts WHERE id=? AND user_id=?",
     )
-      .bind(parsed.accountId, t.user_id)
-      .first<{ origin: string }>();
-    if (!account || account.origin !== origin)
+      .bind(accountId, t.user_id)
+      .first<{ origin: string; business_domains:string }>();
+    if (!account || !accountMatchesDomain(account,entry.href))
       throw Error("ACCOUNT_ORIGIN_MISMATCH");
   }
   const definition: TaskDefinition = {
     ...parsed,
     ...plan,
+    accountId: accountIds[0] ?? null,
+    accountIds,
     id: base?.id ?? `task_${(await hash(turnId)).slice(0, 40)}`,
     version: (base?.version ?? 0) + 1,
     modelVersion: t.model_version,
@@ -147,13 +152,8 @@ export async function drainCommands(env: AppEnv, id?: string) {
       try {
         // 读取后聊天仍可能被删除或撤回；把原命令及原聊天的有效性放到
         // INSERT 内原子检查，不能让旧命令重新挂到同任务的新聊天。
-        await enqueue(
-          env.DB,
-          JSON.parse(row.run_task),
-          `manual:conversation:${row.id}`,
-          undefined,
-          { id: row.id, threadId: row.thread_id },
-        );
+        await ensureDispatchGroup(env.DB,row);
+        await advanceDispatchGroups(env.DB,row.id);
       } catch (error) {
         if ((error as Error).message !== 'COMMAND_RETIRED') throw error;
       }

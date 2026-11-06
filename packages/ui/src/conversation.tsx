@@ -10,20 +10,25 @@ import {conversationRows,ExecutionProgress} from './execution-progress';
 
 // 将用户消息、云端协助和执行器反馈合并到同一聊天；停止直接调用运行控制接口。
 // run 由工作空间选择当前活动运行，历史记录入口不会把停止按钮绑定到旧运行。
-export function Conversation({transport,task,run,offline,refresh}: {
+export function Conversation({transport,task,run,runs=[],offline,refresh}: {
   transport:Transport;task:TaskDefinition;run:TaskRun|null;
+  runs?:TaskRun[];
   refresh:()=>Promise<void>;offline:boolean;
 }){
   const thread=useThread(transport,'chat',task.modelId,task.id);
   const [text,setText]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState('');
   const [stopping,setStopping]=useState(false);
   const sending=useRef(false);
-  const active=run&&['queued','running','waiting_user','verifying'].includes(run.status);
+  const active=run&&(['queued','running','waiting_user','verifying'].includes(run.status)||run.cleanupPending||run.dispatchGroupActive);
+  const runLabels=new Map(runs.map(item=>[item.id,item.accountName]));
+  if(run?.accountName)runLabels.set(run.id,run.accountName);
   let activity:string|null=null;
   if(thread.sending)activity='正在发送…';
   else if(thread.page?.activeTurn)activity='云端助手正在处理…';
   else if(active){
-    if(thread.page?.waiting)activity='等待你的回复';
+    if(run.status==='unknown')activity='本次操作结果待核查，后续账号已暂停';
+    else if(run.cleanupPending&&!['running','waiting_user','verifying'].includes(run.status))activity='正在结束本次执行…';
+    else if(thread.page?.waiting||run.status==='waiting_user')activity='等待你的回复';
     else if(run.status==='queued')activity='等待执行设备';
     else if(run.cancelRequested)activity='正在停止…';
     else activity='执行器正在处理…';
@@ -43,19 +48,20 @@ export function Conversation({transport,task,run,offline,refresh}: {
       {(thread.loading||thread.error)&&<MessageScrollerItem messageId="loading"><LoadFeedback loading={thread.loading} error={thread.error} label="正在加载聊天…" onRetry={thread.retry}/></MessageScrollerItem>}
       {(thread.page?.nextCursor||thread.page?.nextReplyCursor)&&<MessageScrollerItem messageId="older"><Button variant="ghost" onClick={()=>void thread.older()}>加载更早消息</Button></MessageScrollerItem>}
       {conversationRows(messages).map(({id,message:m,events})=><MessageScrollerItem key={id} messageId={id}>
-        {events?<ExecutionProgress events={events} transport={transport}/>:
+        {events?<ExecutionProgress events={events} transport={transport} accountLabel={m.run_id?runLabels.get(m.run_id):undefined}/>:
         <ChatMessage role={m.role}>
-          {'source' in m&&m.role!=='user'&&<div className="text-xs text-muted-foreground">{m.source==='executor'?'执行器':'云端助手'}</div>}
+          {'source' in m&&m.role!=='user'&&<div className="text-xs text-muted-foreground">{m.source==='executor'?'执行器':'云端助手'}{'run_id' in m&&m.run_id&&runLabels.get(m.run_id)?` · ${runLabels.get(m.run_id)}`:''}</div>}
           {m.content}
-          {'parts' in m&&<ChatAttachments transport={transport} parts={m.parts??[]}/>}
+          {'parts' in m&&<ChatAttachments transport={transport} parts={m.parts??[]} offline={offline} onAccountSaved={async()=>{await Promise.all([refresh(),thread.refresh()]);}}/>}
         </ChatMessage>}
       </MessageScrollerItem>)}
       {thread.page?.queued?.map(m=><MessageScrollerItem key={m.id} messageId={m.id}><ChatMessage role="user">{m.content}</ChatMessage></MessageScrollerItem>)}
       <SendingMessage message={thread.sending}/>
-      <ThreadActivity offline={offline} error={thread.error}>{activity}</ThreadActivity>
+      <ThreadActivity offline={offline} error={thread.error} paused={run?.status==='unknown'}>{activity}</ThreadActivity>
       {(error||thread.page?.latestTurn?.error)&&<MessageScrollerItem messageId="error"><ErrorText error={error||thread.page?.latestTurn?.error||''}/></MessageScrollerItem>}
     </Thread>
     <Composer text={text} setText={setText} onSend={()=>void send()} busy={busy} disabled={offline||!thread.page} label="消息" placeholder={thread.page?.waiting?'在这里回复，执行器会继续…':'发送消息或补充要求…'}>
+      {active&&run.accountName&&<span className="text-xs text-muted-foreground">{run.accountName}{run.dispatchTotal?` · ${(run.dispatchIndex??0)+1}/${run.dispatchTotal}`:''}</span>}
       {active&&<Button type="button" variant="outline" disabled={stopping||!!run.cancelRequested} onClick={()=>void stop()}>停止执行</Button>}
     </Composer>
   </div>;

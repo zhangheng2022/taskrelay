@@ -20,6 +20,7 @@ interface ContextRow {
   private_content: string | null;
   context_withdrawn: number;
   origin: string | null;
+  accountId:string|null;
 }
 
 export async function runThread(env: AppEnv, runId: string) {
@@ -119,7 +120,8 @@ export async function conversationContext(
     throw Error("THREAD_NOT_FOUND");
   const rows = await env.DB.prepare(
     `SELECT m.id,m.seq,m.role,m.content,m.source,m.parts,m.reply_to,m.run_id,m.private_content,m.context_withdrawn,
-    (SELECT json_extract(h.request,'$.origin') FROM execution_help h WHERE h.thread_id=m.thread_id AND (h.id=m.reply_to OR h.id||'_request'=m.reply_to) LIMIT 1) AS origin
+    (SELECT json_extract(h.request,'$.origin') FROM execution_help h WHERE h.thread_id=m.thread_id AND (h.id=m.reply_to OR h.id||'_request'=m.reply_to) LIMIT 1) AS origin,
+    (SELECT account_id FROM runs WHERE id=m.run_id) AS accountId
     FROM ai_messages m WHERE m.thread_id=? AND m.seq>? ORDER BY m.seq`,
   )
     .bind(threadId, after)

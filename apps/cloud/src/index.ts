@@ -16,6 +16,8 @@ import { quotaReset } from "./tenancy";
 import { runner } from "./runner";
 import { conversations } from './ai/conversations';
 import { tick, now, type Row } from "./store";
+import {advanceDispatchGroups} from './account-dispatch';
+import {cleanupAccountCards} from './account-cards';
 import type { AppEnv, Variables } from "./env";
 const app = new Hono<{ Bindings: AppEnv; Variables: Variables }>();
 app.use(
@@ -47,7 +49,7 @@ app.use('/api/*',async(c,next)=>{
  if(c.req.path.startsWith('/api/user/tasks')||c.req.path.startsWith('/api/admin/')||/^\/api\/user\/(runs\/[^/]+\/cancel|threads\/[^/]+\/messages)$/.test(c.req.path))await notifyDevices(c.env);
  if(c.get('deviceId')&&c.env.NOTIFICATIONS){
    const run=/^\/api\/runner\/runs\/([^/]+)/.exec(c.req.path);
-   if(run&&c.req.path.endsWith('/finish')){
+   if(run&&/\/(finish|account-card|account-status|browser-closed)$/.test(c.req.path)){
      const owner=await c.env.DB.prepare('SELECT user_id FROM runs WHERE id=?').bind(run[1]).first<{user_id:string}>();
      if(owner)await notifyUser(c.env,owner.user_id);
    }
@@ -87,6 +89,11 @@ app.get('/api/device/status',async c=>{
  const rows=await c.env.DB.prepare("SELECT key,value FROM settings WHERE key IN ('maintenance','historyEpoch')").all<{key:string;value:string}>();
  const s=Object.fromEntries(rows.results.map(r=>[r.key,r.value]));
  return c.json({deviceId:c.get('deviceId'),protocolVersion:PROTOCOL_VERSION,maintenance:s.maintenance==='1',historyEpoch:Number(s.historyEpoch??0)});
+});
+app.post('/api/device/readiness',async c=>{
+ const b=z.object({ready:z.boolean()}).parse(await c.req.json());
+ await c.env.DB.prepare('UPDATE devices SET claim_ready=?,last_seen=? WHERE id=? AND revoked=0').bind(b.ready?1:0,now(),c.get('deviceId')).run();
+ return c.json({ok:true});
 });
 app.route("/api/runner", runner);
 app.notFound((c) => c.json({ error: "NOT_FOUND" }, 404));
@@ -129,6 +136,8 @@ export { app };
 export async function maintenance(env: AppEnv) {
         await drainHistoryCleanups(env);
         await tick(env.DB);
+        await cleanupAccountCards(env);
+        await advanceDispatchGroups(env.DB);
         const expired = await env.DB.prepare(
           "SELECT * FROM artifacts WHERE expires_at<=? LIMIT 100",
         )

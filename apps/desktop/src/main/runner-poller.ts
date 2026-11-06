@@ -9,7 +9,7 @@ export class RunnerPoller {
   private polling=false;
   private claimRequest:string|null;
   constructor(private cloud:Pick<Cloud,'paired'|'connect'|'request'>,
-    private host:Pick<ExecutorHost,'active'|'start'|'flush'>,
+    private host:Pick<ExecutorHost,'active'|'start'|'flush'>&Partial<Pick<ExecutorHost,'idleForUpdate'>>,
     private journal:Pick<Journal,'get'|'set'>,
     private controls:{quitting:()=>boolean;blocksClaims:()=>boolean;installing:()=>boolean;
       result:(online:boolean,error:string|null)=>void;settled:()=>void}) {
@@ -23,8 +23,9 @@ export class RunnerPoller {
       const connection=await this.cloud.connect(!this.host.active);
       if(connection.maintenance){this.controls.result(true,'云端维护中，暂不领取任务');return;}
       await this.host.flush();
+      await this.cloud.request('POST','/api/device/readiness',{ready:!this.controls.quitting()&&!this.host.active&&this.host.idleForUpdate!==false&&!this.journal.get<boolean>('paused')&&!this.controls.blocksClaims()});
       // Recheck after awaits. An existing claim must be resolved even when paused/draining.
-      if(!this.controls.quitting() && !this.host.active &&
+      if(!this.controls.quitting() && !this.host.active && this.host.idleForUpdate!==false &&
         (this.claimRequest || (!this.journal.get<boolean>('paused') && !this.controls.blocksClaims()))) {
         this.claimRequest ??= crypto.randomUUID();
         this.journal.set('claimRequest',this.claimRequest);

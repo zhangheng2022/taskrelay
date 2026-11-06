@@ -4,6 +4,7 @@ import type { RequestCoordinator, Scheduler } from "./request-coordinator";
 import type { AiTurn } from "./ai/turn";
 import type { Evidence } from './evidence-store';
 import type { NotificationHub } from './notification-hub';
+import type { BrowserStateStore } from './browser-state-store';
 export type AppEnv = Omit<
   Cloudflare.Env,
   "EVIDENCE" | "DEV_MODE" | "ACCESS_AUD" | "MODEL_EGRESS" | "AUTH_BASE_URL" | "REGISTRATION_OPEN" | "MAIL_FROM" | "TURNSTILE_SITE_KEY"
@@ -13,6 +14,7 @@ export type AppEnv = Omit<
   SCHEDULER: DurableObjectNamespace<Scheduler>;
   AI_TURNS: DurableObjectNamespace<AiTurn>;
   EVIDENCE_STORE: DurableObjectNamespace<Evidence>;
+  BROWSER_STATES: DurableObjectNamespace<BrowserStateStore>;
   NOTIFICATIONS: DurableObjectNamespace<NotificationHub>;
   EVIDENCE?: R2Bucket;
   MASTER_KEY: string;

@@ -16,8 +16,13 @@ import {putEvidence,deleteEvidence} from './evidence';
 import {appendMessage,conversationContext,runThread} from './chat-messages';
 import {resolveHelp} from './execution-help';
 import {compactMessages} from './model-context';
+import {browserStateAccess,stageBrowserState,publishBrowserState} from './browser-state';
+import {advanceDispatchGroups} from './account-dispatch';
+import {pendingCardOrigins,registerAccountRunnerRoutes} from './account-cards';
+import {readRunCredentials} from './accounts';
 
 export const runner=new Hono<{Bindings:AppEnv;Variables:Variables}>();
+registerAccountRunnerRoutes(runner);
 const lease=z.object({epoch:z.number().int().positive()});
 const modelMessage=z.object({
   role:z.enum(['system','user','assistant','tool']),content:z.string(),
@@ -44,7 +49,8 @@ runner.post('/runs/:id/context',async c=>{
   const run=await requireLease(c.env.DB,c.req.param('id'),c.get('deviceId'),b.epoch),thread=await runThread(c.env,run.id);
   const messages=await conversationContext(c.env,thread.id,b.after,{runId:run.id});
   await requireLease(c.env.DB,run.id,c.get('deviceId'),b.epoch);
-  return c.json({messages});
+  const current=await getRun(c.env.DB,run.id);
+  return c.json({messages,accountBinding:{accountId:current.accountId??null,credentialVersion:current.credentialVersion??1,stateEpoch:current.stateEpoch??1}});
 });
 runner.post('/runs/:id/messages',async c=>{
   const b=lease.extend({id:idSchema,content:z.string(),parts:parts.default([]),replyTo:idSchema.optional()}).parse(await c.req.json());
@@ -100,15 +106,49 @@ runner.post('/runs/:id/help/:help/ack',async c=>{
   await c.env.DB.prepare('UPDATE execution_help SET awaiting_user=0 WHERE id=? AND run_id=? AND epoch=?').bind(c.req.param('help'),run.id,b.epoch).run();return c.json({ok:true});
 });
 runner.post('/runs/:id/credentials',async c=>{
-  const b=lease.extend({url:z.url(),helpId:idSchema}).parse(await c.req.json());
+  const b=lease.extend({url:z.url(),helpId:idSchema.optional()}).parse(await c.req.json());
   const run=await requireLease(c.env.DB,c.req.param('id'),c.get('deviceId'),b.epoch);
-  const help=await c.env.DB.prepare('SELECT response FROM execution_help WHERE id=? AND run_id=? AND epoch=?').bind(b.helpId,run.id,b.epoch).first<{response:string}>();
-  const accountId=help?.response?JSON.parse(help.response).accountId:null;
-  if(!accountId)throw Error('CREDENTIAL_NOT_AUTHORIZED');
-  const account=await c.env.DB.prepare('SELECT id,origin,secret FROM accounts WHERE id=? AND user_id=?').bind(accountId,run.userId).first<Row>();
-  if(!account||new URL(b.url).origin!==new URL(account.origin).origin)throw Error('ACCOUNT_ORIGIN_MISMATCH');
-  if(!await c.env.DB.prepare('SELECT a.id FROM accounts a JOIN account_locks l ON l.account_key=a.id WHERE a.id=? AND l.run_id=? AND (a.assigned_device_id IS NULL OR a.assigned_device_id=?)').bind(account.id,run.id,run.deviceId).first())throw Error('ACCOUNT_BUSY');
-  const value=await unseal<Record<string,string>>(account.secret,c.env.MASTER_KEY,`account:${account.id}`);return c.json({account:value,origin:account.origin,accountId:account.id});
+  return c.json(await readRunCredentials(c.env,run,b.url));
+});
+runner.post('/runs/:id/browser-state',async c=>{
+  const b=lease.extend({metadataOnly:z.boolean().optional()}).parse(await c.req.json());
+  const run=await requireLease(c.env.DB,c.req.param('id'),c.get('deviceId'),b.epoch);
+  const result=await browserStateAccess(c.env,run,await pendingCardOrigins(c.env,run.id),!b.metadataOnly);
+  await requireLease(c.env.DB,run.id,c.get('deviceId'),b.epoch);
+  return c.json(b.metadataOnly?{...result,state:null}:result);
+});
+runner.post('/runs/:id/browser-state/upload',async c=>{
+  const b=lease.extend({state:z.unknown(),baseRevision:z.number().int().nonnegative()}).parse(await c.req.json());
+  const run=await requireLease(c.env.DB,c.req.param('id'),c.get('deviceId'),b.epoch);
+  return c.json(await stageBrowserState(c.env,run,b.state,b.baseRevision,await pendingCardOrigins(c.env,run.id)));
+});
+runner.post('/runs/:id/browser-state/sync-failed',async c=>{
+  const b=lease.extend({reason:z.enum(['TOO_LARGE','UNSUPPORTED_COOKIE','SYNC_FAILED']).optional()}).parse(await c.req.json());
+  const run=await requireLease(c.env.DB,c.req.param('id'),c.get('deviceId'),b.epoch);
+  // 只持久化固定分类；浏览器/网络原始错误可能包含 Cookie、地址参数或凭据。
+  await c.env.DB.prepare(`UPDATE accounts SET sync_status='failed',sync_error=? WHERE id=? AND user_id=? AND credential_version=? AND state_epoch=?
+    AND EXISTS(SELECT 1 FROM runs r JOIN account_locks l ON l.run_id=r.id AND l.account_key=r.account_id
+      WHERE r.id=? AND r.account_id=accounts.id AND r.device_id=? AND r.lease_epoch=? AND r.lease_expires_at>?
+      AND r.cancel_requested=0 AND r.context_withdrawn=0 AND r.history_deleted=0 AND r.status IN ('running','waiting_user','verifying'))`)
+    .bind(b.reason??'SYNC_FAILED',run.accountId??null,run.userId,run.credentialVersion??1,run.stateEpoch??1,run.id,run.deviceId,run.leaseEpoch,now()).run();
+  return c.json({ok:true});
+});
+runner.post('/runs/:id/browser-closed',async c=>{
+  const b=lease.parse(await c.req.json()),run=await getRun(c.env.DB,c.req.param('id'));
+  if(run.deviceId!==c.get('deviceId')||run.leaseEpoch!==b.epoch)throw Error('LEASE_EXPIRED');
+  // Main 的退出事实可在终态之后重传。若 finish 丢失，仅结束本次执行，绝不推断业务成功。
+  await c.env.DB.prepare(`UPDATE runs SET cleanup_confirmed=1,
+    status=CASE WHEN status IN ('running','waiting_user','verifying') THEN CASE WHEN write_pending=1 OR may_have_written=1 THEN 'unknown' WHEN cancel_requested=1 THEN 'cancelled' ELSE 'failed' END ELSE status END,
+    lease_expires_at=NULL WHERE id=? AND device_id=? AND lease_epoch=?`).bind(run.id,run.deviceId,b.epoch).run();
+  await publishBrowserState(c.env,run.id);
+  // 退出事实和状态收尾分开确认；发布失败保留阻挡，避免 Scheduler 在重试前释放锁。
+  await c.env.DB.batch([
+    c.env.DB.prepare('UPDATE runs SET cleanup_pending=0 WHERE id=? AND device_id=? AND lease_epoch=? AND cleanup_confirmed=1').bind(run.id,run.deviceId,b.epoch),
+    c.env.DB.prepare("DELETE FROM account_locks WHERE run_id=? AND EXISTS(SELECT 1 FROM runs WHERE id=? AND cleanup_confirmed=1 AND cleanup_pending=0 AND status IN ('succeeded','failed','cancelled','expired'))").bind(run.id,run.id),
+  ]);
+  await advanceDispatchGroups(c.env.DB);
+  const account=await c.env.DB.prepare('SELECT a.state_revision,a.state_object_key,r.state_candidate_key FROM accounts a JOIN runs r ON r.account_id=a.id WHERE r.id=?').bind(run.id).first<Row>();
+  return c.json({ok:true,synced:!!account?.state_object_key&&account.state_object_key===account.state_candidate_key,revision:account?.state_revision??0});
 });
 runner.post('/runs/:id/tool',async c=>{
   const b=lease.extend({id:idSchema,phase:z.enum(['start','result']),digest:z.string(),result:z.string().optional()}).parse(await c.req.json());
@@ -153,7 +193,7 @@ runner.post('/runs/:id/snapshots',async c=>{
   return c.json({id});
 });
 runner.post('/runs/:id/finish',async c=>{
-  const b=lease.extend({status:z.enum(['succeeded','failed','unknown','cancelled']),result:runResultSchema,expectedUserSeq:z.number().int().nonnegative().optional()}).parse(await c.req.json());
+  const b=lease.extend({status:z.enum(['succeeded','failed','unknown','cancelled']),result:runResultSchema,expectedUserSeq:z.number().int().nonnegative().optional(),stateCandidateKey:idSchema.nullable().optional()}).parse(await c.req.json());
   const run=await getRun(c.env.DB,c.req.param('id'));
   if(run.deviceId!==c.get('deviceId')||run.leaseEpoch!==b.epoch)throw Error('LEASE_EXPIRED');
   const hidden=!!await c.env.DB.prepare('SELECT id FROM runs WHERE id=? AND history_deleted=1').bind(run.id).first();
@@ -170,7 +210,8 @@ runner.post('/runs/:id/finish',async c=>{
         AND (? IS NULL OR cancel_requested=1 OR (SELECT COALESCE(MAX(seq),0) FROM ai_messages WHERE thread_id=runs.thread_id AND role='user')=?)`)
         .bind(b.status,JSON.stringify(b.result),at,run.id,b.epoch,at,b.expectedUserSeq??null,b.expectedUserSeq??null),
       c.env.DB.prepare("UPDATE execution_help SET awaiting_user=0 WHERE run_id=? AND EXISTS(SELECT 1 FROM runs WHERE id=? AND lease_epoch=? AND lease_expires_at IS NULL)").bind(run.id,run.id,b.epoch),
-      c.env.DB.prepare("DELETE FROM account_locks WHERE run_id=? AND EXISTS(SELECT 1 FROM runs WHERE id=? AND lease_epoch=? AND status IN ('succeeded','failed','cancelled','expired'))").bind(run.id,run.id,b.epoch),
+      c.env.DB.prepare(`UPDATE runs SET state_candidate_key=? WHERE id=? AND lease_epoch=? AND status IN ('succeeded','failed') AND EXISTS(SELECT 1 FROM browser_state_candidates WHERE object_key=? AND run_id=runs.id AND device_id=runs.device_id AND lease_epoch=runs.lease_epoch AND retired=0)`).bind(b.stateCandidateKey??null,run.id,b.epoch,b.stateCandidateKey??null),
+      c.env.DB.prepare("DELETE FROM account_locks WHERE run_id=? AND EXISTS(SELECT 1 FROM runs WHERE id=? AND lease_epoch=? AND cleanup_pending=0 AND status IN ('succeeded','failed','cancelled','expired'))").bind(run.id,run.id,b.epoch),
     ]);
     if(!saved.meta.changes){
       const savedRun=await getRun(c.env.DB,run.id);

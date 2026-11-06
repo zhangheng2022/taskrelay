@@ -47,6 +47,7 @@ test('撤回与加密回复分离，取消已缓存正文的运行，后续运�
     epoch: s.run.leaseEpoch, status: 'cancelled', result: { summary: '停止旧执行', outcome: 'stopped', evidence: [] },
   })).status, 200);
   await assert.rejects(enqueue(s.db, s.run.task, 'old-snapshot'), /TASK_CONTEXT_OR_VERSION_CHANGED/);
+  assert.equal((await s.request(`/api/runner/runs/${s.run.id}/browser-closed`,{epoch:s.run.leaseEpoch})).status,200);
   s.replies(JSON.stringify({ reply: '新目标已交办', start: true, title: '新目标', goal: '仅读取新页面', entryUrl: 'https://example.com/', accountId: null, executionOutline: ['仅读取页面'] }));
   assert.equal((await s.request(`/api/user/threads/${s.thread.id}/messages`, { requestId: 'fresh-plan', content: '请仅读取新的页面。' })).data.status, 'done');
   assert.ok(!JSON.stringify(s.requests).includes(revoked));

@@ -56,7 +56,7 @@ test("旧设备原 token 升级须维护和本地就绪；旧协议请求继续�
     (await s.request("/api/device/status", undefined, "GET")).data.error,
     "DEVICE_UPGRADE_REQUIRED",
   );
-  const body = { protocolVersion: 15, localReady: true };
+  const body = { protocolVersion: 16, localReady: true };
   assert.equal(
     (await s.request("/api/device/upgrade", body)).data.error,
     "CUTOVER_NOT_READY",
@@ -73,7 +73,7 @@ test("旧设备原 token 升级须维护和本地就绪；旧协议请求继续�
   assert.equal(
     (await s.request("/api/device/status", undefined, "GET")).data
       .protocolVersion,
-    15,
+    16,
   );
   assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM devices").get()!.n, 1);
 });

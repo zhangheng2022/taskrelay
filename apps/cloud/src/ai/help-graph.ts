@@ -30,13 +30,14 @@ import { RelayChatModel } from "./model";
 import type { GraphEvent } from "./dispatch";
 import { graphWriteFence } from "./fence";
 import { toLangChainMessages } from "../../../../packages/model/src/langchain";
+import { accountAllowsOrigin } from '../accounts';
 
 const answerSchema = z.object({
   message: z.string(),
   askUser: z.boolean(),
   accountId: z.string().nullable(),
 });
-type Account = { id: string; name: string; origin: string };
+type Account = { id: string; name: string; origin: string; login_origins:string };
 const State = Annotation.Root({
   round: Annotation<number>({ reducer: (_, v) => v, default: () => 0 }),
   messages: Annotation<Message[]>(),
@@ -118,14 +119,16 @@ export async function executeHelpGraph(env: AppEnv, event: GraphEvent) {
         (m) => m.role !== "user" && !m.private,
       );
       const available = await env.DB.prepare(
-        `SELECT id,name,origin FROM accounts a WHERE user_id=?
-        AND (assigned_device_id IS NULL OR assigned_device_id=?)
-        AND NOT EXISTS(SELECT 1 FROM account_locks l WHERE l.account_key=a.id AND l.run_id<>?)`,
+        `SELECT a.id,a.name,a.origin,v.login_origins FROM accounts a
+        JOIN runs r ON r.account_id=a.id AND r.user_id=a.user_id
+        JOIN account_credential_versions v ON v.account_id=a.id AND v.version=r.account_credential_version
+        JOIN account_locks l ON l.account_key=a.id AND l.run_id=r.id
+        WHERE a.user_id=? AND r.device_id=? AND r.id=?`,
       )
         .bind(run.userId, run.deviceId, run.id)
         .all<Account>();
       const accounts = available.results.filter(
-        (a) => new URL(a.origin).origin === help.origin,
+        (a) => accountAllowsOrigin(a,help.origin),
       );
       const latestUserSeq =
         conversation.filter((m) => m.role === "user").at(-1)?.seq ?? 0;
@@ -139,7 +142,7 @@ export async function executeHelpGraph(env: AppEnv, event: GraphEvent) {
           role: "user",
           content: JSON.stringify({
             goal: run.task.goal,
-            selectedAccount: run.task.accountId,
+            selectedAccount: run.accountId ?? run.task.accountId,
             help,
             accounts,
             userMessages,
@@ -185,33 +188,11 @@ export async function executeHelpGraph(env: AppEnv, event: GraphEvent) {
           : undefined;
       if (!result.askUser && result.accountId && !account)
         throw Error("CREDENTIAL_NOT_AUTHORIZED");
-      if (!result.askUser && account) {
-        await env.DB.prepare(
-          `INSERT OR IGNORE INTO account_locks(account_key,run_id) SELECT ?,?
-          WHERE EXISTS(SELECT 1 FROM runs WHERE id=? AND lease_epoch=? AND lease_expires_at>? AND cancel_requested=0)
-          AND EXISTS(SELECT 1 FROM accounts WHERE id=? AND user_id=? AND origin=? AND (assigned_device_id IS NULL OR assigned_device_id=?))`,
-        )
-          .bind(
-            account.id,
-            run.id,
-            run.id,
-            run.leaseEpoch,
-            now(),
-            account.id,
-            run.userId,
-            account.origin,
-            run.deviceId,
-          )
-          .run();
-        if (
-          !(await env.DB.prepare(
-            "SELECT run_id FROM account_locks WHERE account_key=? AND run_id=?",
-          )
-            .bind(account.id, run.id)
-            .first())
-        )
-          throw Error("ACCOUNT_BUSY");
-      }
+      // 一个浏览器环境只属于一个账号；协助不能绕过调度把其他账号密码填入当前 Profile。
+      if (!result.askUser && account && !(await env.DB.prepare(
+        `SELECT r.id FROM runs r JOIN account_locks l ON l.run_id=r.id AND l.account_key=r.account_id
+         WHERE r.id=? AND r.account_id=? AND r.device_id=? AND r.lease_epoch=? AND r.lease_expires_at>? AND r.cancel_requested=0`,
+      ).bind(run.id,account.id,run.deviceId,run.leaseEpoch,now()).first()))throw Error('ACCOUNT_CONTEXT_MISMATCH');
       const response: HelpResponse = {
         ready: !result.askUser,
         message: result.message,

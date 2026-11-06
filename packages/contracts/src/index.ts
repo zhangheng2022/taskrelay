@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { batchVerificationSchema, batchReportSchema } from './batch';
 
-export const PROTOCOL_VERSION = 15;
-export const EXECUTION_GRAPH_VERSION = "relay-graph-1";
+export const PROTOCOL_VERSION = 16;
+export const EXECUTION_GRAPH_VERSION = "relay-graph-2";
 export const HISTORY_EPOCH = 4;
 export const limits = {
   leaseMs: 90_000,
@@ -43,6 +43,8 @@ export const taskInputSchema = z
   .strict();
 export type TaskInput = z.infer<typeof taskInputSchema>;
 export interface TaskDefinition extends TaskInput {
+  /** 本轮固定的有序账号选择；每个执行仍只绑定一个账号。 */
+  accountIds?: string[];
   /** Cloud-generated guidance; original user instructions and live observations take precedence. */
   executionOutline?: string[];
   graphVersion?: string;
@@ -68,6 +70,15 @@ export const runStatusSchema = z.enum([
 ]);
 export type RunStatus = z.infer<typeof runStatusSchema>;
 export interface TaskRun {
+  accountId?: string | null;
+  credentialVersion?: number;
+  stateEpoch?: number;
+  cleanupPending?: boolean;
+  accountName?: string;
+  dispatchGroupId?: string;
+  dispatchIndex?: number;
+  dispatchTotal?: number;
+  dispatchGroupActive?: boolean;
   instructionVersion?: number;
   userId: string;
   profileId: string;
@@ -174,6 +185,15 @@ export interface ModelProfile extends Omit<ModelInput, "apiKey"> {
   capabilities: ModelCapabilities;
 }
 export interface SiteAccount {
+  businessDomains?: string[];
+  loginOrigins?: string[];
+  credentialVersion?: number;
+  stateEpoch?: number;
+  credentialStatus?: 'unverified' | 'valid' | 'invalid';
+  stateRevision?: number;
+  syncStatus?: 'none' | 'synced' | 'failed';
+  syncError?: string | null;
+  lastDeviceId?: string;
   assignedDeviceId?: string | null;
   loginReset?: boolean;
   id: string;

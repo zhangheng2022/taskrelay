@@ -5,6 +5,9 @@ import { limits, type TaskRun } from "../../../../packages/contracts/src/index";
 import type { Cloud } from "./cloud";
 import { Journal } from "./journal";
 import { OwnedBrowser } from "./browser";
+import { BrowserStateAdapter } from './browser-state';
+import type { ProtectedStateFiles } from './protected-state';
+import { BROWSER_STATE_MAX_BYTES,type BrowserStateAccess } from '../../../../packages/contracts/src/accounts';
 /** 管理单个执行子进程及其 generation，将串行 RPC、租约心跳和本地恢复记录接到 Main。
  * 子进程退出后先收回自有浏览器，再根据 journal/outbox 收尾；不恢复浏览器操作。
  */
@@ -19,6 +22,8 @@ export class ExecutorHost {
   private lastLease = 0;
   private stopPromise: Promise<void> | null = null;
   private exited = new WeakSet<UtilityProcess>();
+  private stateAdapter:BrowserStateAdapter|null=null;
+  private stateAccess:BrowserStateAccess|null=null;
   constructor(
     private cloud: Pick<Cloud, "request">,
     private journal: Journal,
@@ -27,6 +32,7 @@ export class ExecutorHost {
     private extensionPath: string,
     private notify: () => void,
     private fork: typeof utilityProcess.fork,
+    private protectedStates?:ProtectedStateFiles,
   ) {}
   get active() {
     return this.current?.id ?? null;
@@ -36,6 +42,7 @@ export class ExecutorHost {
   }
   async recover() {
     await this.browser.recover();
+    await this.protectedStates?.recover();
     for (const row of this.journal.incomplete()) {
       const payload = JSON.parse(row.payload);
       const uncertain =
@@ -65,12 +72,20 @@ export class ExecutorHost {
         "abandoned",
         { uncertain },
       );
+      if(payload.run?.cleanupPending)this.queueCleanup(row.run_id,row.epoch,payload.run.profileId);
     }
+    const cleanup=this.journal.get<{runId:string;epoch:number;profileId:string}>('browserCleanup');
+    if(cleanup){this.queueCleanup(cleanup.runId,cleanup.epoch,cleanup.profileId);this.journal.set('browserCleanup',null);}
   }
   async flush() {
     for (const row of this.journal.pending()) {
       try {
-        await this.cloud.request("POST", row.path, JSON.parse(row.body));
+        const body=JSON.parse(row.body);
+        const result=await this.cloud.request<{synced?:boolean;revision?:number}>("POST", row.path, body);
+        if(row.path.endsWith('/browser-closed')&&result?.synced){
+          const marker=this.journal.get<Record<string,unknown>>(`profileState:${body.profileId}`);
+          if(marker&&marker.runId===body.runId)this.journal.set(`profileState:${body.profileId}`,{...marker,revision:result.revision,dirty:false});
+        }
         this.journal.remove(row.id);
       } catch (e) {
         if (
@@ -92,6 +107,7 @@ export class ExecutorHost {
     this.alive = Date.now();
     this.lastLease = new Date(run.leaseExpiresAt!).getTime();
     this.journal.checkpoint(run.id, gen, run.leaseEpoch, "claimed", { run });
+    if(run.cleanupPending)this.journal.set('browserCleanup',{runId:run.id,epoch:run.leaseEpoch,profileId:run.profileId});
     let child: UtilityProcess;
     try {
       child = this.fork(this.executorPath, [], {
@@ -118,7 +134,7 @@ export class ExecutorHost {
         return;
       }
       if (message.type === "done" || message.type === "fatal") {
-        void this.stop(false);
+        void this.stop(false,message.type==='done');
         return;
       }
       if (message.type !== "rpc") return;
@@ -168,7 +184,9 @@ export class ExecutorHost {
           this.stopping = true;
           try {
             await this.browser.close();
+            this.stateAdapter?.close();this.stateAdapter=null;
             this.retire(run, gen, false);
+            this.closed(run);
             this.child = null;
             this.current = null;
             this.stopping = false;
@@ -207,12 +225,64 @@ export class ExecutorHost {
     binary?: Uint8Array,
   ) {
     if (p === "local:browser") {
+      const current=()=>{if(this.current?.id!==run.id||this.generation!==gen||this.stopping)throw Error('CANCEL_REQUESTED');};
       const b = z
         .object({ accountId: z.string(), proxyPort: z.number().int() })
         .parse(body);
       if (b.accountId !== run.profileId)
         throw new Error("PROFILE_MISMATCH");
-      return this.browser.launch(b.accountId, b.proxyPort);
+      if(!run.cleanupPending)return this.browser.launch(b.accountId,b.proxyPort);
+      const access=await this.cloud.request<BrowserStateAccess>('POST',`/api/runner/runs/${run.id}/browser-state`,{epoch:run.leaseEpoch});
+      current();
+      const marker=this.journal.get<{profile:string;credentialVersion:number;stateEpoch:number;revision:number;dirty:boolean}>(`profileState:${run.profileId}`);
+      const reuse=!!marker&&marker.credentialVersion===access.credentialVersion&&marker.stateEpoch===access.stateEpoch&&marker.revision===access.revision;
+      const profile=reuse?marker.profile:!marker&&access.stateEpoch===1&&access.credentialVersion===1&&access.revision===0?run.profileId:`profile_${randomUUID()}`;
+      let launch=await this.browser.launch(profile,b.proxyPort),restored=false;
+      current();
+      try {
+        this.stateAdapter=await BrowserStateAdapter.connect(launch.cdpUrl);
+        current();
+        if(access.state){if(reuse){if(!marker.dirty)await this.stateAdapter.restoreMissingCookies(access.state);}else await this.stateAdapter.restore(access.state);restored=true;}
+        current();
+      } catch {
+        current();
+        // 导入部分失败后隔离整份环境，不能把半恢复状态当成登录成功。
+        this.stateAdapter?.close();this.stateAdapter=null;await this.browser.close();
+        current();
+        const freshProfile=`profile_${randomUUID()}`;launch=await this.browser.launch(freshProfile,b.proxyPort);
+        current();
+        this.stateAdapter=await BrowserStateAdapter.connect(launch.cdpUrl).catch(()=>null);
+        current();
+        this.journal.set(`profileState:${run.profileId}`,{profile:freshProfile,credentialVersion:access.credentialVersion,stateEpoch:access.stateEpoch,revision:access.revision,dirty:true,runId:run.id});
+        this.stateAccess=access;return {...launch,state:{...access,state:undefined,restored:false,restoreFailed:true}};
+      }
+      this.stateAccess=access;
+      this.journal.set(`profileState:${run.profileId}`,{profile,credentialVersion:access.credentialVersion,stateEpoch:access.stateEpoch,revision:access.revision,dirty:true,runId:run.id});
+      return {...launch,state:{...access,state:undefined,restored}};
+    }
+    if(p==='local:state-capture'){
+      if(!this.stateAdapter||!this.protectedStates)return {key:null};
+      let reference:string|undefined;
+      try {
+        const access=await this.cloud.request<BrowserStateAccess>('POST',`/api/runner/runs/${run.id}/browser-state`,{epoch:run.leaseEpoch,metadataOnly:true});
+        if(this.current?.id!==run.id||this.generation!==gen||this.stopping)throw Error('CANCEL_REQUESTED');
+        if(this.stateAccess?.accountId!==access.accountId||this.stateAccess?.credentialVersion!==access.credentialVersion||this.stateAccess?.stateEpoch!==access.stateEpoch){
+          this.stateAccess=access;
+          const marker=this.journal.get<Record<string,unknown>>(`profileState:${run.profileId}`);
+          if(marker&&marker.runId===run.id)this.journal.set(`profileState:${run.profileId}`,{...marker,credentialVersion:access.credentialVersion,stateEpoch:access.stateEpoch,revision:access.revision,dirty:true});
+        }
+        const state=await this.stateAdapter.capture(access.origins);
+        if(Buffer.byteLength(JSON.stringify(state),'utf8')>BROWSER_STATE_MAX_BYTES)throw Error('BROWSER_STATE_TOO_LARGE');
+        reference=await this.protectedStates.put({state,baseRevision:this.stateAccess?.revision??access.revision});
+        const payload=await this.protectedStates.read(reference) as Record<string,unknown>;
+        return await this.cloud.request('POST',`/api/runner/runs/${run.id}/browser-state/upload`,{...payload,epoch:run.leaseEpoch});
+      } catch (error) {
+        let reason='SYNC_FAILED';
+        if(error instanceof Error&&error.message==='BROWSER_STATE_TOO_LARGE')reason='TOO_LARGE';
+        if(error instanceof z.ZodError&&error.issues.some(issue=>issue.message==='BROWSER_STATE_UNSUPPORTED_COOKIE'))reason='UNSUPPORTED_COOKIE';
+        await this.cloud.request('POST',`/api/runner/runs/${run.id}/browser-state/sync-failed`,{epoch:run.leaseEpoch,reason}).catch(()=>{});
+        return {key:null};
+      } finally {if(reference)await this.protectedStates.remove(reference);}
     }
     if (p === "local:close-browser") {
       await this.browser.close();
@@ -237,6 +307,7 @@ export class ExecutorHost {
     }
     if (
       !p.startsWith(`/api/runner/runs/${run.id}/`) ||
+      p.endsWith('/browser-closed') ||
       p.includes("..") ||
       body?.epoch !== run.leaseEpoch
     )
@@ -293,7 +364,13 @@ export class ExecutorHost {
       uncertain,
     });
   }
-  stop(requestCancel = true): Promise<void> {
+  private queueCleanup(runId:string,epoch:number,profileId:string){this.journal.queue(`closed_${runId}`,`/api/runner/runs/${runId}/browser-closed`,{epoch,runId,profileId});}
+  private closed(run:TaskRun){
+    if(!run.cleanupPending)return;
+    this.queueCleanup(run.id,run.leaseEpoch,run.profileId);
+    this.journal.set('browserCleanup',null);this.stateAccess=null;
+  }
+  stop(requestCancel = true,graceful=false): Promise<void> {
     if (this.stopPromise) return this.stopPromise;
     if (!this.current) return Promise.resolve();
     this.stopping = true;
@@ -303,7 +380,8 @@ export class ExecutorHost {
     this.stopPromise = (async () => {
       child?.postMessage({ type: "cancel", generation: gen });
       // Offline stopping must not wait for a network request. Stop effects before reporting.
-      await this.browser.close();
+      await this.browser.close(graceful);
+      this.stateAdapter?.close();this.stateAdapter=null;
       if (child && !this.exited.has(child)) {
         let timer: ReturnType<typeof setTimeout> | undefined;
         const exited = new Promise<void>((resolve, reject) => {
@@ -324,6 +402,7 @@ export class ExecutorHost {
         else await exited;
       }
       this.retire(run, gen, child ? requestCancel : false);
+      this.closed(run);
       this.child = null;
       this.current = null;
       this.stopping = false;

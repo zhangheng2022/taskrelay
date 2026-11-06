@@ -262,6 +262,9 @@ test("正常最终回复的用户消息游标在收尾事务里检查，失配�
     expectedUserSeq: seq,
   });
   assert.equal(finished.status, 200);
+  assert.equal(s.sql.prepare('SELECT COUNT(*) n FROM account_locks WHERE run_id=?').get(s.run.id)!.n,1,'结果提交不等于浏览器退出');
+  const closed=await s.request(`/api/runner/runs/${s.run.id}/browser-closed`,{epoch:s.run.leaseEpoch});
+  assert.equal(closed.status,200);
   assert.equal(
     s.sql
       .prepare("SELECT COUNT(*) n FROM account_locks WHERE run_id=?")

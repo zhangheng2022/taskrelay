@@ -1,4 +1,4 @@
-import { finishRequest } from './runner-request';
+import { finishRequest,browserClosedRequest } from './runner-request';
 import test from "node:test";
 import assert from "node:assert/strict";
 import { testDb, task, insertTask } from "./helpers";
@@ -16,8 +16,14 @@ import {
   publicEndpoint,
 } from "../packages/contracts/src/security";
 import { seal, unseal } from "../apps/cloud/src/crypto";
+import { PROTOCOL_VERSION } from '../packages/contracts/src/index';
+async function executorFixture(){
+  const state=testDb();
+  for(const id of ['device_a','device_b'])await state.db.prepare('INSERT INTO devices(id,name,token_hash,protocol_version) VALUES(?,?,?,?)').bind(id,id,`fixture-${id}`,PROTOCOL_VERSION).run();
+  return state;
+}
 test("同账号的并发领取仅一个成功，重复领取幂等", async () => {
-  const { db } = testDb();
+  const { db } = await executorFixture();
   const t = await insertTask(db);
   await enqueue(db, t, "one");
   await enqueue(db, t, "two");
@@ -34,7 +40,7 @@ test("同账号的并发领取仅一个成功，重复领取幂等", async () =>
   assert.equal(await claim(db, winner.deviceId!, "different"), null);
 });
 test("提交后失去租约进入 unknown，账号保持锁定且旧消息拒绝", async () => {
-  const { db } = testDb();
+  const { db } = await executorFixture();
   const t = await insertTask(db);
   await enqueue(db, t, "one");
   const r = (await claim(db, "device_a", "req_a"))!;
@@ -51,8 +57,8 @@ test("提交后失去租约进入 unknown，账号保持锁定且旧消息拒绝
   await enqueue(db, t, "two");
   assert.equal(await claim(db, "device_b", "req_b"), null);
 });
-test("无写意图的租约过期安全失败并释放账号", async () => {
-  const { db } = testDb();
+test("无写意图的租约过期失败，确认浏览器退出后才释放账号", async () => {
+  const { db } = await executorFixture();
   const t = await insertTask(db);
   await enqueue(db, t, "one");
   const r = (await claim(db, "device_a", "req_a"))!;
@@ -63,7 +69,10 @@ test("无写意图的租约过期安全失败并释放账号", async () => {
   await tick(db);
   assert.equal((await getRun(db, r.id)).status, "failed");
   await enqueue(db, t, "two");
-  assert.ok(await claim(db, "device_b", "req_b"));
+  assert.equal(await claim(db, "device_b", "req_b"),null);
+  assert.equal((await browserClosedRequest(db,r)).status,200);
+  await db.prepare("UPDATE devices SET claim_ready=0 WHERE id='device_a'").run();
+  assert.ok(await claim(db, "device_b", "req_b_after_close"));
 });
 test("调度只补最近一次，重复 tick 不重复排队", async () => {
   const { db } = testDb();
@@ -97,7 +106,7 @@ test('实际 tick 不补跑一小时前的一次性任务',async()=>{
   }finally{sql.close();}
 });
 test("手动运行允许暂停任务，不能据此自动启用", async () => {
-  const { db } = testDb();
+  const { db } = await executorFixture();
   const t = await insertTask(db, task({ status: "paused" }));
   await enqueue(db, t, "manual:test:request");
   const r = await claim(db, "device_a", "req_a");
@@ -161,13 +170,15 @@ test("时区调度不使用系统本地时区", () => {
 });
 test('真实收尾入口：未决操作保留 unknown 与锁，取消优先于模型回复',async()=>{
   for(const pending of [false,true]){
-    const {db,sql}=testDb();
+    const {db,sql}=await executorFixture();
     try{
       const t=await insertTask(db);await enqueue(db,t,'run');const run=(await claim(db,'device_a','claim'))!;
       sql.prepare('UPDATE runs SET cancel_requested=1,write_pending=? WHERE id=?').run(Number(pending),run.id);
       const result={summary:'实际进度',outcome:'reported' as const,evidence:[]};
       assert.equal((await finishRequest(db,run,'succeeded',result)).status,200);
       assert.equal((await getRun(db,run.id)).status,pending?'unknown':'cancelled');
+      assert.equal(sql.prepare('SELECT COUNT(*) n FROM account_locks').get()!.n,1,'终态尚未证明浏览器关闭');
+      assert.equal((await browserClosedRequest(db,run)).status,200);
       assert.equal(sql.prepare('SELECT COUNT(*) n FROM account_locks').get()!.n,pending?1:0);
       assert.equal((await finishRequest(db,run,'succeeded',result)).status,200);
       assert.equal((await finishRequest(db,run,'succeeded',{...result,summary:'替换结果'})).status,409);
@@ -175,7 +186,7 @@ test('真实收尾入口：未决操作保留 unknown 与锁，取消优先于�
   }
 });
 test('真实收尾拒绝旧租约及其他设备，关闭聊天后仍可收尾且不挂到新聊天',async()=>{
-  const {db,sql}=testDb();
+  const {db,sql}=await executorFixture();
   try{
     const task=await insertTask(db);await enqueue(db,task,'run');const run=(await claim(db,'device_a','claim'))!;
     const result={summary:'已回复',outcome:'reported' as const,evidence:[]};

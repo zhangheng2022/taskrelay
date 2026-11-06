@@ -168,7 +168,9 @@ function Workspace({ transport }: { transport: Transport }) {
     data.runs.find((r) => r.id === runId) ??
     (task ? data.runs.find((r) => r.taskId === task.id) : null) ??
     null;
-  const activeRun = task ? data.runs.find(r=>r.taskId===task.id && ["queued","running","waiting_user","verifying"].includes(r.status)) ?? null : null;
+  const taskRuns = task ? data.runs.filter(r=>r.taskId===task.id).map(r=>({...r,accountName:r.accountName??data.accounts.find(a=>a.id===(r.accountId??r.task.accountId))?.name})) : [];
+  const activeRun = taskRuns.find(r=>["queued","running","waiting_user","verifying"].includes(r.status))
+    ?? taskRuns.find(r=>r.cleanupPending||r.dispatchGroupActive) ?? null;
   const pending = data.waitingHelp ?? [];
   function choose(id: string | null, rid: string | null = null) {
     setSelected(id);
@@ -499,6 +501,7 @@ function Workspace({ transport }: { transport: Transport }) {
             transport={transport}
             task={task}
             run={activeRun}
+            runs={taskRuns}
             refresh={refresh}
             offline={offline}
           />

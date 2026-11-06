@@ -8,12 +8,13 @@
   "compatibility_date": "2026-11-03",
   "compatibility_flags": ["nodejs_compat"],
   "durable_objects": {
-    "bindings": [{ "name": "MODEL_EGRESS", "class_name": "ModelEgress" }, {"name":"REQUESTS","class_name":"RequestCoordinator"}, {"name":"SCHEDULER","class_name":"Scheduler"}, {"name":"AI_TURNS","class_name":"AiTurn"}, {"name":"EVIDENCE_STORE","class_name":"Evidence"}, {"name":"NOTIFICATIONS","class_name":"NotificationHub"}],
+    "bindings": [{ "name": "MODEL_EGRESS", "class_name": "ModelEgress" }, {"name":"REQUESTS","class_name":"RequestCoordinator"}, {"name":"SCHEDULER","class_name":"Scheduler"}, {"name":"AI_TURNS","class_name":"AiTurn"}, {"name":"EVIDENCE_STORE","class_name":"Evidence"}, {"name":"NOTIFICATIONS","class_name":"NotificationHub"}, {"name":"BROWSER_STATES","class_name":"BrowserStateStore"}],
   },
   "migrations": [
     { "tag": "model-egress-v1", "new_sqlite_classes": ["ModelEgress"] },
     { "tag": "free-runtime-v1", "new_sqlite_classes": ["RequestCoordinator", "Scheduler"] },
     { "tag": "free-turn-v1", "new_sqlite_classes": ["AiTurn", "Evidence", "NotificationHub"] },
+    { "tag": "browser-state-v1", "new_sqlite_classes": ["BrowserStateStore"] },
   ],
   "assets": {
     "binding": "ASSETS",

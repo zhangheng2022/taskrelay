@@ -1,7 +1,7 @@
 import { PROTOCOL_VERSION } from "../../../packages/contracts/src/index";
 import { z } from 'zod';
 import { admin } from './user';
-import { uid,now,type Row } from './store';
+import { now,type Row } from './store';
 import { quotaSummary } from './tenancy';
 export { admin };
 admin.get('/operations',async c=>{
@@ -38,12 +38,19 @@ admin.put('/pool',async c=>{
 admin.post('/accounts/:id/migrate',async c=>{
  const b=z.object({deviceId:z.string().min(1).max(100),oldExecutionStopped:z.literal(true)}).strict().parse(await c.req.json());
  const id=c.req.param('id');
- const results=await c.env.DB.batch([c.env.DB.prepare(`UPDATE accounts SET assigned_device_id=?,profile_id=?,login_reset=1 WHERE id=?
- AND EXISTS(SELECT 1 FROM devices WHERE id=? AND revoked=0 AND protocol_version=${PROTOCOL_VERSION})
- AND NOT EXISTS(SELECT 1 FROM account_locks WHERE account_key=accounts.id)
- AND NOT EXISTS(SELECT 1 FROM runs WHERE account_key=accounts.id AND status IN ('running','waiting_user','verifying','unknown'))`)
- .bind(b.deviceId,uid('profile'),id,b.deviceId),
- c.env.DB.prepare("UPDATE runs SET profile_id=(SELECT profile_id FROM accounts WHERE id=?) WHERE account_key=? AND status='queued'").bind(id,id)]);
- if(results[0].meta.changes!==1) throw new Error('ACCOUNT_MIGRATION_BLOCKED');
- return c.json({ok:true,requiresLogin:true});
+ // 管理员确认旧执行已停止，只能补确认已终态进程；未知业务结果仍保留锁。
+ // 不再旋转 profile 或丢弃云端状态，目标设备下次领取后尝试恢复。
+ const eligible=`EXISTS(SELECT 1 FROM accounts a WHERE a.id=?
+   AND EXISTS(SELECT 1 FROM devices WHERE id=? AND revoked=0 AND protocol_version=${PROTOCOL_VERSION})
+   AND NOT EXISTS(SELECT 1 FROM runs WHERE account_key=a.id AND status IN ('running','waiting_user','verifying','unknown')))`;
+ const results=await c.env.DB.batch([
+  c.env.DB.prepare(`UPDATE browser_state_candidates SET retired=1 WHERE run_id IN(SELECT id FROM runs WHERE account_key=? AND status IN ('succeeded','failed','cancelled','expired')) AND ${eligible}`).bind(id,id,b.deviceId),
+  c.env.DB.prepare(`UPDATE runs SET cleanup_pending=0,cleanup_confirmed=1,state_candidate_key=NULL WHERE account_key=? AND status IN ('succeeded','failed','cancelled','expired') AND ${eligible}`).bind(id,id,b.deviceId),
+  c.env.DB.prepare(`DELETE FROM account_locks WHERE account_key=? AND run_id IN(SELECT id FROM runs WHERE cleanup_pending=0 AND status IN ('succeeded','failed','cancelled','expired')) AND ${eligible}`).bind(id,id,b.deviceId),
+  c.env.DB.prepare(`UPDATE accounts SET assigned_device_id=?,last_device_id=? WHERE id=? AND ${eligible}
+    AND NOT EXISTS(SELECT 1 FROM account_locks WHERE account_key=accounts.id)`).bind(b.deviceId,b.deviceId,id,id,b.deviceId),
+ ]);
+ if(results[3].meta.changes!==1) throw new Error('ACCOUNT_MIGRATION_BLOCKED');
+ const account=await c.env.DB.prepare('SELECT state_revision,login_reset FROM accounts WHERE id=?').bind(id).first<{state_revision:number;login_reset:number}>();
+ return c.json({ok:true,requiresLogin:!account?.state_revision||!!account.login_reset});
 });

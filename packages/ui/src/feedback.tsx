@@ -81,6 +81,16 @@ export function ErrorText({ error }: { error: string }) {
     QUEUE_LIMIT:"排队任务已达上限，请等待已有任务完成或取消排队。",
     SCHEDULE_QUOTA_EXCEEDED:"启用的周期任务已达上限，请先暂停其他周期任务。",
     ACCOUNT_MIGRATION_BLOCKED:"账号仍在执行、等待核查，或目标设备不可用，暂不能迁移。",
+    ACCOUNT_NOT_FOUND:"这个站点账号已不存在，请刷新账号列表。",
+    ACCOUNT_DOMAIN_INVALID:"请填写精确域名，如 example.com，不使用通配符、路径或端口。",
+    ACCOUNT_ORIGIN_MISMATCH:"业务网站需要包含在所属业务域名中，请核对业务和登录地址。",
+    ACCOUNT_VERSION_CONFLICT:"账号已在另一处更新，请重新打开后核对最新信息。",
+    ACCOUNT_CARD_NOT_FOUND:"这张账号卡片已失效，或所在聊天已关闭。",
+    ACCOUNT_CARD_STALE:"这张账号卡片已过期，请在当前聊天中重新验证。",
+    ACCOUNT_CARD_CONFLICT:"这张卡片已保存，不能用另一组信息重复提交，请到账号设置修改。",
+    ACCOUNT_CONTEXT_MISMATCH:"当前执行已关联其他账号，请在聊天中说明需要更换账号。",
+    ACCOUNT_BUSY:"这个账号仍在使用或等待核查，请稍后重试。",
+    CREDENTIAL_ORIGIN_MISMATCH:"当前登录地址尚未关联这个账号，请核对账号的关联登录地址。",
     CANNOT_DISABLE_SELF:"不能停用当前管理员账号。", DEVICE_SCOPE_REJECTED:"执行器不能访问任务管理功能。",
 
     MODEL_HTTP_403_UNSUPPORTED_REGION:

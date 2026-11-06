@@ -77,9 +77,9 @@ export function PendingMessage({ children, paused = false }: { children: ReactNo
   );
 }
 // 状态复用同一个 DOM 行，发送→推理时不重启动画；持续渲染避开 WebKit 离屏动画恢复缺陷。
-export function ThreadActivity({ children, offline, error }: { children: ReactNode; offline: boolean; error: string }) {
+export function ThreadActivity({ children, offline, error, paused = false }: { children: ReactNode; offline: boolean; error: string; paused?: boolean }) {
   if (!children) return null;
-  const interrupted = offline || !!error;
+  const interrupted = offline || !!error || paused;
   let content = children;
   if (offline) content = '连接已中断，等待恢复后更新状态';
   else if (error) content = '状态更新失败，请重试';

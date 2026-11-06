@@ -4,6 +4,7 @@ import type {Transport} from '../../contracts/src/index';
 import {Dialog,DialogContent,DialogTitle,DialogTrigger} from './components/ui/dialog';
 import {Button} from './components/ui/button';
 import {Attachment,AttachmentMedia} from './components/ui/attachment';
+import {AccountCard} from './account-card';
 
 function ChatImage({transport,id,alt}:{transport:Transport;id:string;alt:string}){
   const [image,setImage]=useState(''),[error,setError]=useState('');
@@ -15,6 +16,6 @@ function ChatImage({transport,id,alt}:{transport:Transport;id:string;alt:string}
     </Dialog>}
   </Attachment>;
 }
-export function ChatAttachments({parts,transport}:{parts:ChatPart[];transport:Transport}){
-  return <div className="flex flex-col gap-2">{parts.map((p,i)=>p.type==='image'?<ChatImage key={p.artifactId} transport={transport} id={p.artifactId} alt={p.alt}/>:<details key={i} className="text-xs text-muted-foreground"><summary>操作反馈</summary><p className="whitespace-pre-wrap break-words">{p.result}</p></details>)}</div>;
+export function ChatAttachments({parts,transport,offline,onAccountSaved}:{parts:ChatPart[];transport:Transport;offline?:boolean;onAccountSaved?:()=>Promise<void>}){
+  return <div className="flex flex-col gap-2">{parts.map((p,i)=>p.type==='image'?<ChatImage key={p.artifactId} transport={transport} id={p.artifactId} alt={p.alt}/>:p.type==='account-card'?<AccountCard key={p.cardId} id={p.cardId} transport={transport} offline={offline} onSaved={onAccountSaved}/>:<details key={i} className="text-xs text-muted-foreground"><summary>操作反馈</summary><p className="whitespace-pre-wrap break-words">{p.result}</p></details>)}</div>;
 }

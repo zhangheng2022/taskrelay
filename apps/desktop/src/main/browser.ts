@@ -14,6 +14,7 @@ export class OwnedBrowser {
   private generation = 0;
   private launching: Promise<{ cdpUrl: string }> | null = null;
   private closing: Promise<void> | null = null;
+  private debuggerUrl:string|null=null;
   constructor(
     private directory: string,
     private profiles: string,
@@ -28,7 +29,7 @@ export class OwnedBrowser {
     if (!record) return;
     const quote = (s: string) => "'" + s.replaceAll("'", "''") + "'";
     // PID alone is not ownership. Check both executable and exact profile argument before cleanup.
-    const script = `$p=Get-CimInstance Win32_Process -Filter 'ProcessId = ${Number(record.pid)}'; if($p -and $p.ExecutablePath -eq ${quote(record.executable)} -and $p.CommandLine.Contains(${quote("--user-data-dir=" + record.profile)})){ & taskkill.exe /PID ${Number(record.pid)} /T /F | Out-Null }`;
+    const script = `$p=Get-CimInstance Win32_Process -Filter 'ProcessId = ${Number(record.pid)}'; if($p -and $p.ExecutablePath -eq ${quote(record.executable)} -and $p.CommandLine.Contains(${quote("--user-data-dir=" + record.profile)})){ & taskkill.exe /PID ${Number(record.pid)} /T /F | Out-Null; $remaining=Get-CimInstance Win32_Process -Filter 'ProcessId = ${Number(record.pid)}'; if($remaining -and $remaining.ExecutablePath -eq ${quote(record.executable)} -and $remaining.CommandLine.Contains(${quote("--user-data-dir=" + record.profile)})){ throw 'BROWSER_RECOVERY_FAILED' } }`;
     await exec(
       "powershell.exe",
       [
@@ -145,7 +146,8 @@ export class OwnedBrowser {
         });
         if (r.ok) {
           const info = (await r.json()) as { webSocketDebuggerUrl: string };
-          await this.denyDownloads(info.webSocketDebuggerUrl);
+          this.debuggerUrl=info.webSocketDebuggerUrl;
+          await this.browserCommand(info.webSocketDebuggerUrl,'Browser.setDownloadBehavior',{behavior:'deny'});
           guard();
           return { cdpUrl: `http://127.0.0.1:${port}` };
         }
@@ -157,7 +159,7 @@ export class OwnedBrowser {
     await this.closeChild();
     throw new Error("BROWSER_START_TIMEOUT");
   }
-  private async denyDownloads(url: string) {
+  private async browserCommand(url:string,method:string,params:Record<string,unknown>={}) {
     await new Promise<void>((resolve, reject) => {
       const socket = new WebSocket(url);
       const timer = setTimeout(() => {
@@ -168,8 +170,8 @@ export class OwnedBrowser {
         socket.send(
           JSON.stringify({
             id: 1,
-            method: "Browser.setDownloadBehavior",
-            params: { behavior: "deny" },
+            method,
+            params,
           }),
         );
       socket.onmessage = (event) => {
@@ -193,22 +195,27 @@ export class OwnedBrowser {
         socket.close();
         reject(new Error("CDP_CONNECTION_FAILED"));
       };
+      if(method==='Browser.close')socket.onclose=()=>{clearTimeout(timer);resolve();};
     });
   }
-  close(): Promise<void> {
+  close(graceful=false): Promise<void> {
     if (this.closing) return this.closing;
     ++this.generation;
     const pending = this.launching;
     this.closing = (async () => {
       // Invalidate before waiting: an in-flight launch can no longer spawn or succeed.
       await pending?.catch(() => {});
-      await this.closeChild();
+      await this.closeChild(graceful);
     })().finally(() => { this.closing = null; });
     return this.closing;
   }
-  private async closeChild() {
+  private async closeChild(graceful=false) {
     const child = this.child;
     if (!child) return;
+    if(graceful&&child.exitCode===null&&this.debuggerUrl){
+      await this.browserCommand(this.debuggerUrl,'Browser.close').catch(()=>{});
+      if(child.exitCode===null)await new Promise<void>(resolve=>{const timer=setTimeout(done,3000);function done(){clearTimeout(timer);child!.off('exit',done);resolve();}child.once('exit',done);});
+    }
     if (child.exitCode === null && child.pid) {
       await exec("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], {
         windowsHide: true,
@@ -225,6 +232,7 @@ export class OwnedBrowser {
         ]);
     }
     this.child = null;
+    this.debuggerUrl=null;
     this.journal.set("ownedBrowser", null);
   }
 }

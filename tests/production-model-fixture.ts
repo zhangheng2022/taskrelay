@@ -21,7 +21,7 @@ export async function productionModelFixture(
   await enqueue(db, task, "model_fixture");
   await db
     .prepare(
-      "INSERT INTO devices(id,name,token_hash,protocol_version) VALUES(?,?,?,15)",
+      "INSERT INTO devices(id,name,token_hash,protocol_version) VALUES(?,?,?,16)",
     )
     .bind("device_test", "fixture", await hash(token))
     .run();
@@ -137,7 +137,7 @@ export async function productionModelFixture(
           method,
           headers: {
             "content-type": "application/json",
-            ...((path.startsWith("/api/runner/")||path.startsWith("/api/device/"))?{"x-taskrelay-protocol":"15", Authorization: `Bearer ${token}`}:{ }),
+            ...((path.startsWith("/api/runner/")||path.startsWith("/api/device/"))?{"x-taskrelay-protocol":"16", Authorization: `Bearer ${token}`}:{ }),
           },
           body: method==='GET'?undefined:JSON.stringify(body),
         },

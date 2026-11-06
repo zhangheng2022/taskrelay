@@ -19,6 +19,7 @@ const decisionSchema = z.object({
   goal: z.string().nullable(),
   entryUrl: z.string().nullable(),
   accountId: z.string().nullable(),
+  accountIds: z.array(z.string()).default([]),
   executionOutline: z.array(z.string().min(1)),
 });
 type Decision = z.infer<typeof decisionSchema>;
@@ -91,7 +92,7 @@ export async function planConversation(
           verification: { kind: "goal", value: d.goal!.slice(0, 2000) },
           schedule: { kind: "manual" },
         },
-        { executionOutline: d.executionOutline, graphVersion: GRAPH_VERSION },
+        { executionOutline: d.executionOutline, graphVersion: GRAPH_VERSION, accountIds:d.accountIds },
       );
       return {};
     })

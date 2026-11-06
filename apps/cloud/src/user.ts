@@ -13,17 +13,15 @@ import {
   idSchema,
   type TaskDefinition,
 } from "../../../packages/contracts/src/index";
-import { publicUrl, hash } from "../../../packages/contracts/src/security";
+import { hash } from "../../../packages/contracts/src/security";
 import { nextOccurrence } from "../../../packages/contracts/src/schedule";
 import type { AppEnv, Variables } from "./env";
 import { tasksTable } from "./schema";
 import {
   now,
-  uid,
   taskFrom,
   runFrom,
   getRun,
-  enqueue,
   tick,
   queueReasons,
   type Row,
@@ -37,6 +35,9 @@ import {
   validateEndpoint,
 } from "./models";
 import { seal, unseal } from "./crypto";
+import { accountMatchesDomain, accountSummary, registerAccountRoutes } from './accounts';
+import { registerAccountCardRoutes } from './account-cards';
+import { cancelDispatchGroup, enqueueTaskDispatch } from './account-dispatch';
 export const user = new Hono<{ Bindings: AppEnv; Variables: Variables }>();
 export const admin = new Hono<{ Bindings: AppEnv; Variables: Variables }>();
 user.use('*', async (c,next) => {
@@ -65,11 +66,14 @@ user.get("/snapshot", async (c) => {
   const db = c.env.DB;
   const results = await db.batch([
     db.prepare("SELECT * FROM tasks WHERE user_id=? AND deleted=0 ORDER BY created_at DESC LIMIT 200").bind(c.get("userId")),
-    db.prepare("SELECT * FROM runs WHERE user_id=? AND history_deleted=0 ORDER BY created_at DESC LIMIT 200").bind(c.get("userId")),
+    db.prepare(`SELECT r.*,g.state dispatch_group_state,a.name account_name,
+      (SELECT COUNT(*) FROM account_dispatch_members dm WHERE dm.group_id=r.dispatch_group_id) dispatch_total
+      FROM runs r LEFT JOIN account_dispatch_groups g ON g.id=r.dispatch_group_id LEFT JOIN accounts a ON a.id=r.account_id
+      WHERE r.user_id=? AND r.history_deleted=0 ORDER BY r.created_at DESC LIMIT 200`).bind(c.get("userId")),
     db.prepare(
       "SELECT m.id,m.version,m.config,m.capabilities FROM model_profiles m WHERE version=(SELECT MAX(version) FROM model_profiles x WHERE x.id=m.id) ORDER BY created_at DESC",
     ),
-    db.prepare("SELECT id,name,origin,username_hint,created_at,assigned_device_id,login_reset FROM accounts WHERE user_id=?").bind(c.get("userId")),
+    db.prepare("SELECT * FROM accounts WHERE user_id=?").bind(c.get("userId")),
     db.prepare(
       "SELECT id,name,last_seen,revoked,protocol_version FROM devices",
     ),
@@ -87,14 +91,7 @@ user.get("/snapshot", async (c) => {
     models: r[2].map(modelFrom).map(m=>c.get("actor")==="owner"?m:{...m,baseUrl:"",hasKey:false}),
     me: {id:c.get("userId"),role:c.get("member").role,email:c.get("member").email},
     quota: await quotaSummary(db,c.get("userId"),c.get("member")),
-    accounts: r[3].map((x) => ({
-      id: x.id,
-      name: x.name,
-      origin: x.origin,
-      usernameHint: x.username_hint,
-      assignedDeviceId:x.assigned_device_id,loginReset:!!x.login_reset,
-      createdAt: x.created_at,
-    })),
+    accounts: r[3].map(accountSummary),
     devices: (c.get("actor")==="owner"?r[4]:[]).map((x) => ({
       id: x.id,
       name: x.name,
@@ -141,36 +138,8 @@ admin.post("/models/:id/test", async (c) => {
 admin.post("/models/:id/vision", async (c) =>
   c.json(await probeVision(c.env, c.req.param("id"))),
 );
-user.post("/accounts", async (c) => {
-  const body = z
-    .object({
-      name: z.string().min(1).max(80),
-      origin: z.url(),
-      username: z.string().max(200),
-      password: z.string().max(2000),
-    })
-    .strict()
-    .parse(await c.req.json());
-  const origin = publicUrl(body.origin).origin,
-    id = uid("account");
-  await c.env.DB.prepare(
-    "INSERT INTO accounts(id,name,origin,username_hint,secret,created_at,user_id,profile_id) VALUES(?,?,?,?,?,?,?,?)",
-  )
-    .bind(
-      id,
-      body.name,
-      origin,
-      body.username ? body.username.slice(0, 2) + "***" : "未设置",
-      await seal(
-        { username: body.username, password: body.password },
-        c.env.MASTER_KEY,
-        `account:${id}`,
-      ),
-      now(),c.get("userId"),uid("profile"),
-    )
-    .run();
-  return c.json({ id }, 201);
-});
+registerAccountRoutes(user);
+registerAccountCardRoutes(user);
 user.post('/tasks/:id/conditions',async c=>{
   const b=z.object({requestId:idSchema,runId:idSchema,expectedVersion:z.number().int(),conditions:conditionsSchema,
     schedule:scheduleSchema,modelId:idSchema,accountId:idSchema.nullable()}).strict().parse(await c.req.json());
@@ -188,9 +157,9 @@ user.post('/tasks/:id/conditions',async c=>{
   if(await c.env.DB.prepare('SELECT id FROM ai_threads WHERE task_id=? AND active_turn IS NOT NULL AND closed=0').bind(id).first())throw Error('CONVERSATION_BUSY');
   const base=taskFrom(row),model=await getModel(c.env,b.modelId);
   if(!model.profile.capabilities.connection||!model.profile.capabilities.tools||model.profile.capabilities.structured==='none')throw Error('MODEL_CAPABILITIES_REQUIRED');
-  if(b.accountId){const a=await c.env.DB.prepare('SELECT origin FROM accounts WHERE id=? AND user_id=?').bind(b.accountId,c.get('userId')).first<{origin:string}>();if(!a||a.origin!==new URL(base.entryUrl).origin)throw Error('ACCOUNT_ORIGIN_MISMATCH');}
+  if(b.accountId){const a=await c.env.DB.prepare('SELECT * FROM accounts WHERE id=? AND user_id=?').bind(b.accountId,c.get('userId')).first<Row>();if(!a||!accountMatchesDomain(a,base.entryUrl))throw Error('ACCOUNT_ORIGIN_MISMATCH');}
   const task:TaskDefinition={...base,goal:b.conditions.goal,verification:base.verification.kind==='batch'?{...base.verification,value:b.conditions.completion,scope:b.conditions.scope}:{kind:'goal',value:b.conditions.completion},
-    schedule:b.schedule,modelId:b.modelId,modelVersion:model.profile.version,accountId:b.accountId,version:base.version+1,status:'active',nextRunAt:nextOccurrence(b.schedule),confirmedCondition:b.runId};
+    schedule:b.schedule,modelId:b.modelId,modelVersion:model.profile.version,accountId:b.accountId,accountIds:b.accountId?[b.accountId]:[],version:base.version+1,status:'active',nextRunAt:nextOccurrence(b.schedule),confirmedCondition:b.runId};
   const writes=await c.env.DB.batch([
     c.env.DB.prepare('INSERT OR IGNORE INTO idempotency(key,digest,resource_id) SELECT ?,?,id FROM tasks WHERE id=? AND version=? AND context_withdrawn=0 AND NOT EXISTS(SELECT 1 FROM ai_threads WHERE task_id=tasks.id AND active_turn IS NOT NULL AND closed=0)').bind(key,digest,id,b.expectedVersion),
     c.env.DB.prepare('UPDATE tasks SET version=?,definition=?,status=?,next_run_at=?,confirmed_condition=?,updated_at=? WHERE id=? AND version=? AND context_withdrawn=0 AND EXISTS(SELECT 1 FROM idempotency WHERE key=? AND digest=?)')
@@ -250,7 +219,7 @@ user.post("/tasks/:id/run", async (c) => {
     throw new Error("MODEL_CAPABILITIES_REQUIRED");
   // A manual invocation does not enable periodic scheduling. It is eligible even if paused.
   return c.json(
-    await enqueue(c.env.DB, task, `manual:${task.id}:${requestId}`),
+    await enqueueTaskDispatch(c.env.DB, task, `manual:${task.id}:${requestId}`),
   );
 });
 user.get("/runs/:id", async (c) => {
@@ -287,6 +256,7 @@ user.get("/runs/:id", async (c) => {
 });
 user.post("/runs/:id/cancel", async (c) => {
   const id = c.req.param("id");
+  await cancelDispatchGroup(c.env.DB,id);
   await c.env.DB.prepare(
     "UPDATE runs SET cancel_requested=1,status=CASE WHEN status='queued' THEN 'cancelled' ELSE status END,updated_at=? WHERE id=? AND status IN ('queued','running','waiting_user','verifying')",
   )
