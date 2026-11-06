@@ -43,6 +43,25 @@ test("CodeQL 门槛读取实际规则严重程度，忽略 UI 隐藏不会放行
   assert.throws(() => verifySarif(report(undefined, "error")));
   assert.throws(() => verifySarif({ runs: [] }));
   assert.throws(() => verifySarif(report("NaN")));
+  const extensionReport = {
+    runs: [
+      {
+        tool: {
+          driver: { name: "CodeQL" },
+          extensions: [
+            {
+              name: "codeql/javascript-queries",
+              rules: [{ id: "q", properties: { "security-severity": "8.1" } }],
+            },
+          ],
+        },
+        results: [{ ruleId: "q", rule: { index: 0, toolComponent: { index: 0 } } }],
+      },
+    ],
+  };
+  assert.throws(() => verifySarif(extensionReport), /BLOCKING_FINDINGS/);
+  extensionReport.runs[0].results = [];
+  verifySarif(extensionReport);
 });
 test("覆盖率不能降低基线或漏报，差异行只按新增范围计数", () => {
   const summary = Object.fromEntries(

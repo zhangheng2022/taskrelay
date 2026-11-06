@@ -124,6 +124,13 @@ jobs:
         with:
           output: out/codeql
           upload: always
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: codeql-results
+          path: out/codeql/*.sarif
+          if-no-files-found: error
+          retention-days: 7
       - run: node scripts/quality-gate.mjs sarif out/codeql/javascript.sarif
       - *a4
     permissions:

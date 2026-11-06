@@ -10,7 +10,11 @@
 
 OCR preview/rule 已执行，CLI 只选文件和解析规则，宿主审查变更及上下文；格式批次另核对 244 个文件等于旧内容的 Prettier 输出，测试、配置和脚本补审。完整清理变更清单 total_files=287、reviewed_files=287、skipped_files=0、coverage_rate=100%；范围是本轮差异，纯格式文件采用等价性检查，不宣称未变更行的全文件安全审计。第三方技能、依赖、缓存、生成产物不纳入清理清单，锁文件只审依赖与版本变化。发现并修复新 Runner 缺缓存目录、Linux npm 启动路径、发布版本未拒绝降级、设置写入结果未确认、工作流触发器空值绕过检查等问题。graphify 更新为 5108 节点／9016 边；29 个 SQL 缺 tree_sitter_sql、14 个文件未提取符号，迁移和交付脚本另按源码审查。
 
-GitHub production 环境仅允许 master，部署令牌已配置。尚待：GitHub Quality 全绿、正式 Ubuntu 覆盖率下限、主分支 Ruleset 实际启用、Windows Runner 打包安装、Actions 生产发布、本机更新通道升级及升级后 Microsoft 只读复验。下面历史 0.17.0 的五次验证不能算作 0.17.1 验收。
+首次 [Quality 42219241264](https://github.com/zhangheng2022/taskrelay/actions/runs/42219241264) 中 Windows 和 Ubuntu 均完成 397 项回归、无失败；Ubuntu 全源码统计为行 68.07%、分支 81.21%、函数 78.74%，据此将正式下限固定为 **68% / 81% / 78%**。此前 Windows 的临时函数门槛 79% 不适合作为 Ubuntu 基线。首次运行实际阻断了覆盖率门槛与 CodeQL SARIF 查询包规则解析不兼容的问题；已补解析和行为回归。依赖图、Dependabot 告警和安全更新现已启用，首次审查在初始化前返回不可用，等待新报告复验。
+
+同次托管 Windows 作业完成浏览器资源校验、打包、包内与安装 smoke、系统快捷方式启动及安装/构建 ASAR 一致性检查，版本 0.17.1，ASAR 为 `f48ed81b2a14cba175ebcb92787d1e6564e178d08e4a2f2650ba9bf80be712b1`。这是 PR 验收包，尚未公开；正式发布会对合并提交重新构建并验收。首次 quality-gate 确实因必要检查失败而失败，未得到绿色汇总。
+
+GitHub production 环境仅允许 master，部署令牌已配置。尚待：GitHub Quality 全绿、主分支 Ruleset 实际启用、Actions 生产发布、本机更新通道升级及升级后 Microsoft 只读复验。下面历史 0.17.0 的五次验证不能算作 0.17.1 验收。
 
 ## 2026-11-06 Web 图片改为受鉴权地址
 
