@@ -1,5 +1,9 @@
 # TaskRelay 验收记录
 
+## 2026-11-06 Agent 工具格式修复
+
+0.15.0 首次生产只读验证 `run_8750655b86eb4e8c858c38bac1625c4c` 在第一轮决策返回 MODEL_HTTP_400，未执行浏览器工具；终态 failed、write_pending=0、cleanup_confirmed=1、cleanup_pending=0。已暂停领取排查。发现新 Zod 工具定义包含提供方不支持的 uri 格式，且空参数对象省略 required；Chat／Responses 现统一经过已有 wire Schema 投影，原始 Zod 与运行时校验保留。此项是已定位的兼容缺口，真实复验前不宣称它是该次 400 的唯一原因。完整测试 362/362、类型检查和 Web 构建通过。OCR preview/rule 成功，宿主完整审阅 3 个代码／测试变更和本条验收记录（4/4，100%），无未解决发现；生产复验待完成。
+
 ## 2026-11-06 官方 Agent 与摘要迁移（0.15.0，已部署安装）
 
 源码切换 createAgent v2、p-limit(1) 与官方摘要，删除云端二次摘要和自写分块合并；11 个执行工具统一 Zod 定义。协议 17、图版本 relay-graph-3 使旧执行器不能领取新任务、旧 checkpoint 不能跨版本恢复；不改账号、Profile、快照或 MASTER_KEY，无新增数据库结构迁移。覆盖多工具串行、协助冻结、空回复一次纠正、结束期间新指令、摘要失败及租约失效保留历史、原文保护和未知结果不重放。类型检查、完整回归 360/360（含 UI 58 项）、仓库检查与 Web 构建通过；正式包及实际系统安装 smoke 通过；源码 `976f4ef` 已推送，Worker `038a3ad6-814b-4450-9d3f-369ba004653d` 已部署，D1 保持 0027。通过资源管理器双击桌面 TaskRelay 快捷方式，确认启动系统 `app-0.15.0\TaskRelay.exe`；安装与构建 ASAR SHA-256 同为 `ed9fdfd48a4f3bb39bf1d4b5ba2bec1295129cb005475bf0eca196ff051812b5`。26 个 Profile、配置与 Local State 均未改变，本机 outbox／未完结 journal 为 0；设备协议 17、claim_ready=1，维护关闭、领取恢复。主域 health 200、匿名用户／管理员接口 401。真实网站效率尚待验证。OCR preview/rule 成功，宿主完整审阅 32 个本批变更文件（含测试、文档和仅版本变化的锁文件），覆盖率 100%，无未解决发现；未调用 OCR 外部模型。源码图更新至 4688 节点／8047 边；28 个 SQL 仍缺 tree_sitter_sql，两个测试文件未提取符号，不能算作完整解析覆盖。

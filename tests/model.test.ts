@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { infer } from "../packages/model/src/index";
 import { outputSchema } from "../packages/model/src/schema";
 import type { ModelProfile } from "../packages/contracts/src/index";
+import {executorTools,executorArguments} from '../packages/contracts/src/execution';
 const profile: ModelProfile = {
   id: "test",
   version: 1,
@@ -21,6 +22,20 @@ const profile: ModelProfile = {
     testedAt: null,
   },
 };
+for(const protocol of ['chat','responses'] as const)test(`${protocol} 正式执行工具经过提供方格式投影，本机仍保留完整 Zod 校验`,async()=>{
+  const original=structuredClone(executorTools);
+  await infer({...profile,protocol},'key',{messages:[{role:'user',content:'只读测试'}],tools:executorTools},async(_url,init)=>{
+    const body=JSON.parse(String(init?.body));
+    const tools=protocol==='chat'?body.tools.map((item:{function:unknown})=>item.function):body.tools;
+    assert.equal(tools.length,11);
+    assert.doesNotMatch(JSON.stringify(tools),/"format":"uri"|"minLength"|"maxLength"/);
+    for(const item of tools)assert.deepEqual(item.parameters.required,Object.keys(item.parameters.properties));
+    return Response.json(protocol==='chat'?{choices:[{message:{content:'完成'}}]}:{output:[{type:'message',content:[{type:'output_text',text:'完成'}]}]});
+  });
+  assert.deepEqual(executorTools,original);
+  assert.equal(executorArguments.navigate.safeParse({url:'invalid'}).success,false);
+  assert.equal(executorArguments.act.safeParse({instruction:''}).success,false);
+});
 test("严格输出投影不修改原 Schema，也不把同名业务字段当作关键字删除", () => {
   const schema = {
     type: "object",

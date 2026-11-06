@@ -41,6 +41,8 @@ export function outputSchema(
           ([name, value]) => [name, visit(value)],
         ),
       );
+  // Zod 对无参数工具省略 required；严格工具协议仍需要显式的空列表。
+  if(result.type==='object'&&result.properties&&Object.keys(result.properties).length===0&&!('required' in result))result.required=[];
   for (const key of ["anyOf", "oneOf", "allOf", "prefixItems"])
     if (Array.isArray(result[key]))
       result[key] = (result[key] as unknown[]).map(visit);

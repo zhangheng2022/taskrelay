@@ -44,7 +44,7 @@ export async function infer(
   const root = profile.baseUrl.replace(/\/+$/, "");
   const tools = request.tools?.map((t) => ({
     type: "function",
-    function: { ...t, strict: true },
+    function: { ...t, parameters:outputSchema(t.parameters), strict: true },
   }));
   let body: Record<string, unknown>;
   if (profile.protocol === "chat") {
@@ -119,6 +119,7 @@ export async function infer(
       body.tools = request.tools.map((t) => ({
         type: "function",
         ...t,
+        parameters:outputSchema(t.parameters),
         strict: true,
       }));
       body.tool_choice = request.toolChoice ?? "required";
