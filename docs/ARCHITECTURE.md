@@ -18,12 +18,12 @@ Cloudflare 保持 Free，不设置项目级每日平台预算或全站模型上�
 
 ## 当前聊天与执行流程
 
-协议为 16，图版本为 `relay-graph-2`；桌面版本、安装和部署状态见验收记录。
+协议为 17，图版本为 `relay-graph-3`；桌面版本、安装和部署状态见验收记录。
 
 1. 用户在网站交办。云端规划图检查意图；明确任务生成可调整的粗步骤并交接，缺少关键信息才询问，咨询直接回答。粗步骤随任务版本固化为 `executionOutline`，不含选择器，也不是强制执行清单；原话和后续补充仍完整传给桌面。
 2. conversation_inbox 以 requestId/digest 接收消息；线程内串行处理回合。响应未确认时客户端跨刷新保留原 requestId；任务已启动后的重试仍先匹配原交办，不能改投为执行中补充。规划图经 understand → handoff（仅任务）→ respond，commitDecision 原子提交任务、版本与 conversation_commands，随后幂等排队。聊天展示本次真实生成的粗步骤。
 3. 云端领取事务检查身份、设备并发、账号锁与租约；任务及模型配置版本固定在运行快照。Main 保存本地检查点后创建带 generation 的执行子进程，拒绝旧代次消息。
-4. Executor 的 LangGraph 负责观察、决策、串行工具、反馈和收尾，使用 LangChain 原生 AIMessage / ToolMessage。模型结合粗步骤与实时页面决定具体操作：Stagehand snapshot、act、observe、extract，以及导航、切换页面、等待和求助。高层 AI 给出自然语言单步操作，不生成选择器或业务完成枚举。
+4. Executor 的官方 createAgent v2 负责决策、工具循环和普通文字结束；平台中间件负责观察、串行、协助与最终提交，使用 LangChain 原生 AIMessage / ToolMessage。模型结合粗步骤与实时页面决定具体操作：Stagehand snapshot、act、observe、extract，以及导航、切换页面、等待和求助。高层 AI 给出自然语言单步操作，不生成选择器或业务完成枚举。
 5. 执行器先向云端协助图求助。云端读取已有上下文与可用账号，无法解决时才在原聊天询问用户，并停在无副作用的 interrupt 节点；回复以持久事件绑定当前问题和轮次后恢复。桌面也停在纯等待节点，轮询只读取已有协助结果，不重复浏览器操作。普通补充和当前协助回复共用消息入口。
 6. 执行器用普通助手文字回复实际进度或结果；云端保存转发，不另起报告模型。reported 表示“已回复”，不代表业务全部完成，部分完成或受阻也可正常收尾。
 
@@ -40,10 +40,12 @@ Cloudflare 保持 Free，不设置项目级每日平台预算或全站模型上�
 | `ai/planning-graph.ts`、`ai/help-graph.ts` | 云端规划、协助分支与恢复点；不操作浏览器 |
 | `ai/graph.ts`、`ai/checkpointer.ts` | 图版本、输入摘要、generation、用户归属、加密 D1 checkpoint 与 pending writes；写入同时检查聊天、回合和运行租约 |
 | `ai/dispatch.ts`、`ai/turn.ts` | 持久事件认领与 alarm 唤醒；只推进图，不重复实现模型决策循环 |
-| `ai/model.ts`、`packages/model/src/langchain.ts` | 标准模型接口与消息适配；结构化输出仍由现有出站 adapter 校验和发送 |
-| `executor/execution-graph.ts` | 唯一桌面工具循环，串行执行工具，补齐取消调用的 ToolMessage，处理同进程协助恢复 |
+| `ai/model.ts`、`packages/model/src/langchain.ts` | 标准模型接口、云端推理 Agent 与消息适配；结构化输出仍由现有出站 adapter 校验和发送 |
+| `executor/execution-graph.ts` | 官方 createAgent v2 的执行边界，p-limit(1) 按原始调用序号串行执行工具，补齐取消调用的 ToolMessage，处理同进程协助恢复 |
 | `executor/runtime.ts` | 浏览器、页面、凭据、截图、动作登记、停止与云端通信；实现图需要的执行能力 |
 | `executor/session-checkpointer.ts` | 当前 utilityProcess 内最新与父 checkpoint，保留完整序列化类型；不是浏览器崩溃恢复日志 |
+
+执行工具由同一份 Zod Schema 生成模型定义并进行运行时校验。afterModel 登记原始工具序号，wrapToolCall 在每次工具前重新校验停止、租约和用户指令；不依赖 maxConcurrency 保证串行。协助先冻结本批剩余调用并执行无副作用 interrupt，外层再登记云端协助；恢复后剩余旧操作返回未执行。空模型回复仅允许一次明确错误反馈后的纠正，结果未知的请求不重发。最终截图或结果提交遇到新指令时沿用同一线程继续。
 
 云端图状态加密持久化；桌面图不跨 generation 恢复，进程故障仍由 Main journal/outbox 与租约收尾。模型结果未知不自动重试，浏览器结果未知不自动重放。图使用同步 checkpoint 和无固定回合数的递归配置；没有旧手写循环与新图同时运行。迁移保留旧记录为退休版本，不把旧 checkpoint 当作新图入口。
 
@@ -55,11 +57,13 @@ conversation_commands 的排队 INSERT 同时校验命令仍为 committed、原�
 
 用户原话、补充及加密协助回复整体进入执行器与 Stagehand，不拆账号、密码或验证码，不提取 target/value 或原文片段。当前任务 AI 可读取用户提供的站点登录信息；平台模型密钥、设备令牌和其他用户数据不在此范围。
 
-历史执行记录可按实际编码消息大小分块摘要并保存游标；原始用户输入不被摘要覆盖，Stagehand 原生页面树、控件编号和 Schema 不经过聊天摘要。每个摘要回合仍检查停止和租约。
+历史由官方 summarizationMiddleware 压缩；先扣除完整用户原文、账号、当前现场、工具定义与输出预留，在剩余预算的 80% 触发并保留约 30% 近期历史。摘要采用任务固定模型并走同一美国出站。公开钩子包装禁止默认裁剪，失败、空摘要、停止、租约失效、工具配对破坏或压缩后仍超限时不提交历史替换；不再自写分块和递归合并。
+
+主决策只接收网址、标题、标签页、加载状态及工具反馈，页面内容通过 observe/extract 按需读取。Stagehand 原生页面树、控件编号和 Schema 不经过聊天摘要；动作后仍要求实际读取页面，不能仅凭 URL 清除未知操作。用户原文、账号和现场保存在运行闭包中，在每次模型调用完整注入。云端规划、协助保留业务 StateGraph，其推理节点使用 createAgent 和同一摘要适配；模型转发接口只转发，区分 decision/summary 并返回任务固定的预算元数据。
 
 Stagehand 使用 ClientLLM 转发至现有云端模型链路，cache/selfHeal 自动重放关闭。定位失败返回工具反馈，由 AI 重新观察纠正。没有任意脚本、Shell 或主机文件工具。网站无授权名单，但公网地址、DNS、凭据所属站点和设备校验保留，网页不能扩大用户授权。
 
-每次 act 以清晰的单步自然语言操作为目标；observe 仅提供候选，空结果如实反馈。执行历史保留工具 data 和 metadata，act 的 success=false 交回 AI 纠正；导航异常不能显示为页面已打开。Stagehand 初始化返回后再次检查停止，正常与异常退出均关闭会话；Chromium 仍由 Main/Host 回收，不能把 SDK 4.3.0 的 browser.close() 当作只断开连接。
+每次 act 以清晰的单步自然语言操作为目标；observe 仅提供候选，空结果如实反馈。执行历史保留工具 data 和 metadata，act 的 success=false 交回 AI 纠正；导航异常不能显示为页面已打开。Stagehand 初始化返回后再次检查停止，正常与异常退出均关闭会话；Chromium 仍由 Main/Host 回收，不能把 SDK 4.4.0 的 browser.close() 当作只断开连接。
 
 ## 写入、停止与终态
 

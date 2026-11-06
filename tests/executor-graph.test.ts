@@ -19,8 +19,8 @@ function harness(turns:ModelResponse[]){
   let userSeq=1,registered=0,polled=0,consumed=0,final='';
   const port:ExecutionGraphPort={
     guard:()=>{},
-    observe:async()=>({messages:[{role:'system',content:'执行测试'},{role:'user',content:JSON.stringify({userMessages:[{content:'原文'}],userSeq})}],userSeq}),
-    decide:async messages=>{sent.push(messages);return {response:turns.shift()??response([],'完成'),compacted:false};},
+    observe:async()=>({messages:[{role:'system',content:'执行测试'},{role:'user',content:JSON.stringify({userMessages:[{content:'完整秘密输入 0012Ab'}],userSeq})}],userSeq}),
+    decide:async messages=>{sent.push(messages);return {response:turns.shift()??response([],'完成')};},
     changed:async seq=>seq!==userSeq,
     perform:async tool=>{performed.push(tool.id);return {observed:true};},
     registerHelp:async args=>{registered++;return {request:{id:'stable_help',message:String(args.message),origin:'https://example.com'},answer:{ready:false}};},
@@ -62,13 +62,37 @@ test('工具异常和非法参数均回到模型，不重试副作用且保持�
   assert.match(h.sent[1].find(m=>m.tool_call_id==='error')!.content,/SENT_RESULT_UNKNOWN/);
 });
 
-test('摘要后保留本轮原生工具调用配对，旧配对不继续积累',async()=>{
+test('官方摘要保留近期工具配对，用户原文不进入摘要',async()=>{
   const h=harness([response([call('first')]),response([call('second')]),response([],'完成')]);
-  const decide=h.port.decide;let count=0;
-  h.port.decide=async messages=>({...await decide(messages),compacted:++count===2});
+  const decide=h.port.decide;const summaries:Message[][]=[];
+  h.port.budget=()=>({contextTokens:11000,outputTokens:1024});
+  h.port.perform=async tool=>{h.performed.push(tool.id);return {feedback:tool.id==='first'?'x'.repeat(12000):'近期结果'};};
+  h.port.decide=async(messages,purpose)=>{if(purpose==='summary'){summaries.push(messages);return {response:response([],'已完成 first，结果已读取。')};}return decide(messages,purpose);};
   await runExecutionGraph(h.port);
+  assert.ok(summaries.length>0);assert.doesNotMatch(JSON.stringify(summaries),/0012Ab/);
+  assert.match(JSON.stringify(h.sent[2]),/0012Ab/);
   assert.deepEqual(h.sent[2].filter(m=>m.role==='tool').map(m=>m.tool_call_id),['second']);
   assert.deepEqual(h.sent[2].find(m=>m.role==='assistant')!.tool_calls?.map(c=>c.id),['second']);
+});
+
+test('无用户变更的三个工具全部按原始顺序执行，最大并发为一',async()=>{
+  const h=harness([response([call('a'),call('b'),call('c')]),response([],'完成')]);let active=0,max=0;
+  h.port.perform=async tool=>{active++;max=Math.max(max,active);await new Promise(resolve=>setTimeout(resolve,5));h.performed.push(tool.id);active--;return {ok:true};};
+  await runExecutionGraph(h.port);assert.deepEqual(h.performed,['a','b','c']);assert.equal(max,1);
+});
+
+test('空模型回复仅允许一次有反馈的纠正，未知模型结果不重发',async()=>{
+  const h=harness([response(),response()]);await assert.rejects(runExecutionGraph(h.port),/MODEL_EMPTY_REPLY/);
+  assert.equal(h.sent.length,2);assert.match(JSON.stringify(h.sent[1]),/上一条模型回复为空/);
+  let calls=0;h.port.decide=async()=>{calls++;throw Error('MODEL_CALL_OUTCOME_UNKNOWN');};
+  await assert.rejects(runExecutionGraph(h.port),/MODEL_CALL_OUTCOME_UNKNOWN/);assert.equal(calls,1);
+});
+
+test('普通最终文字结束；提交期间新指令保留同一线程历史继续',async()=>{
+  const h=harness([response([call('done')]),response([],'旧答复'),response([],'新答复')]);let finishes=0;
+  h.port.finish=async text=>{if(++finishes===1){h.change();return false;}assert.equal(text,'新答复');return true;};
+  await runExecutionGraph(h.port);assert.equal(finishes,2);assert.deepEqual(h.performed,['done']);
+  assert.match(JSON.stringify(h.sent[2]),/旧答复/);assert.equal(JSON.parse(h.sent[2][1].content).userSeq,2);
 });
 
 test('同代 checkpoint 保留最新和父节点，超过默认步数后可中断恢复但全新 saver 不能恢复',async()=>{

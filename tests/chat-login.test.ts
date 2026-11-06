@@ -24,10 +24,11 @@ for(const split of [false,true])test(`聊天登录生产链：${split?'分次提
  let current:Step|undefined,replyIndex=0,passwordSubmissions=0,otpSubmissions=0,loggedIn=false;
  const fields:Record<string,string>={},posted=new Set<string>();let sdkModel:ClientLLM;
  const screenshot=await sharp({create:{width:1,height:1,channels:4,background:'#fff'}}).png().toBuffer();
- const page={url:async()=>origin+'/',goto:async()=>{},snapshot:async()=>({formattedTree:loggedIn?'已登录':passwordSubmissions?'密码已提交，按反馈继续':'账号和密码登录',xpathMap:{},urlMap:{}}),
+ const page={title:async()=>'登录测试页面',url:async()=>origin+'/',goto:async()=>{},snapshot:async()=>({formattedTree:loggedIn?'已登录':passwordSubmissions?'密码已提交，按反馈继续':'账号和密码登录',xpathMap:{},urlMap:{}}),
   screenshot:async()=>screenshot,evaluate:async()=>({readyState:'complete',width:1,height:1,text:[]})};
  s.respond(body=>{
   const text=JSON.stringify(body);
+  if(text.includes('压缩下面的执行历史供同一助手继续'))return '此前登录操作已返回，按当前协助回复与工具结果继续，不重放提交。';
   if(text.includes('LOGIN-SDK fixture')){
    assert.ok(current);
    for(const original of replies.slice(0,replyIndex))assert.ok(text.includes(original),'Stagehand 必须收到完整原文');

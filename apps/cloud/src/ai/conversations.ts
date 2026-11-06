@@ -590,9 +590,6 @@ export async function executeTurn(
           userMessages: context.filter(
             (message) => message.role === "user" || message.private,
           ),
-          conversation: context.filter(
-            (message) => message.role !== "user" && !message.private,
-          ),
           accounts: (
             await env.DB.prepare(
               "SELECT id,name,origin,username_hint,business_domains,credential_status,sync_status FROM accounts WHERE user_id=?",
@@ -615,6 +612,7 @@ export async function executeTurn(
       },
       t,
       messages,
+      context.filter(message=>message.role!=="user"&&!message.private).map(message=>({role:"assistant",content:message.content})),
     );
     const reply = decision.reply;
     await guard();

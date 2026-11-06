@@ -86,7 +86,8 @@ for(const protocol of ['chat','responses'] as const){
     assert.deepEqual(resolved.data,{ready:true,message:'用户要求优先查看短信登录，请结合原文继续。'});
     const body=s.requests.at(-1)!.body,payload=JSON.parse((protocol==='chat'?body.messages:body.input).at(-1).content);
     assert.ok(payload.userMessages.some((m:any)=>m.id===userMessage.id&&m.content===original));
-    assert.ok(!payload.conversation.some((m:any)=>m.id===userMessage.id));
+    assert.equal(payload.conversation,undefined);
+    assert.ok((protocol==='chat'?body.messages:body.input).slice(0,-1).every((m:any)=>!JSON.stringify(m).includes(original)));
     assert.equal(body.model,'vendor/non-gpt');
     const context=await s.request(`/api/runner/runs/${s.run.id}/context`,{epoch:s.run.leaseEpoch,after:0});
     assert.ok(context.data.messages.some((m:any)=>m.content===original&&m.private));
@@ -147,9 +148,9 @@ test('模型判断期间的新补充不会被旧答案覆盖，原回复重试�
 test('长执行记录可压缩，用户原文和敏感回复逐字保留且不重复追加',async t=>{
   const s=await setup(t),originals=['账号 owner@example.com','密码 00aB! test，优先短信登录'];
   for(const [i,content] of originals.entries())await appendMessage(s.env,s.thread.id,{id:'original_'+i,role:'user',source:'user',runId:s.run.id,content,private:true});
-  for(let i=0;i<3;i++)await appendMessage(s.env,s.thread.id,{id:'long_history_'+i,source:'executor',runId:s.run.id,content:'已观察当前页面'.repeat(1500)});
+  for(let i=0;i<3;i++)await appendMessage(s.env,s.thread.id,{id:'long_history_'+i,source:'executor',runId:s.run.id,content:'已观察当前页面'.repeat(450)});
   s.respond(body=>{
-    if(body.response_format.json_schema.schema.properties.summary)return JSON.stringify({summary:'此前已观察页面。'});
+    if(!body.response_format)return '此前已观察页面。';
     const payload=JSON.parse(body.messages.at(-1).content),messages=[...(payload.userMessages??[]),...(payload.conversation??[])];
     for(const content of originals)assert.equal(messages.filter((m:any)=>m.content===content).length,1);
     return reply('已有完整信息，执行器可继续判断。');

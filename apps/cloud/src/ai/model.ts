@@ -4,7 +4,10 @@
  */
 import { BaseChatModel, type BaseChatModelCallOptions, type BindToolsInput } from '@langchain/core/language_models/chat_models';
 import type { BaseLanguageModelInput, StructuredOutputMethodOptions } from '@langchain/core/language_models/base';
-import { type BaseMessage } from '@langchain/core/messages';
+import { AIMessage, HumanMessage, type BaseMessage } from '@langchain/core/messages';
+import {createAgent,createMiddleware} from 'langchain';
+import {CallbackChatModel,protectedSummary} from '../../../../packages/model/src/agent-context';
+import {hash} from '../../../../packages/contracts/src/security';
 import type { ChatResult } from '@langchain/core/outputs';
 import { RunnableLambda, type Runnable } from '@langchain/core/runnables';
 import { convertToOpenAITool } from '@langchain/core/utils/function_calling';
@@ -12,8 +15,8 @@ import { isSerializableSchema } from '@langchain/core/utils/standard_schema';
 import { z } from 'zod';
 import type { AppEnv } from '../env';
 import { generateStructured, getModelProfile, invoke } from '../models';
-import type { Inference, Tool } from '../../../../packages/model/src/index';
-import { fromLangChainMessages, modelResponseToAIMessage } from '../../../../packages/model/src/langchain';
+import type { Inference, Message, Tool } from '../../../../packages/model/src/index';
+import { aiMessageToModelResponse, fromLangChainMessages, modelResponseToAIMessage,toLangChainMessages } from '../../../../packages/model/src/langchain';
 import { assertPrivateAI } from './privacy';
 
 export interface RelayModelOptions extends BaseChatModelCallOptions {
@@ -45,6 +48,33 @@ export class RelayChatModel extends BaseChatModel<RelayModelOptions> {
     assertPrivateAI();
   }
   _llmType() { return 'taskrelay-us-egress'; }
+
+  /** 业务图拥有持久状态；推理与历史摘要交给官方 Agent。结构化校验和已收到响应的
+   * 格式修复仍复用统一入口，不把原文、账号及协助请求交给摘要。 */
+  async runAgent<T extends Record<string,unknown>>(schema:z.ZodType<T>,protectedInput:Message[],history:Message[],guard:()=>Promise<void>):Promise<T>{
+    const {profile}=await getModelProfile(this.env,this.modelId,this.version);
+    const protectedMessages=toLangChainMessages(protectedInput);
+    const summaryModel=new CallbackChatModel(async messages=>aiMessageToModelResponse(await this.invoke(toLangChainMessages(messages),{
+      operationId:`${this.operationId}:summary:${await hash(JSON.stringify(messages))}`,maxTokens:profile.outputTokens??4096,
+    })));
+    const model=new CallbackChatModel(async messages=>{
+      await guard();
+      const result=await this.withStructuredOutput<T>(schema,{includeRaw:true}).invoke(toLangChainMessages(messages));
+      await guard();
+      if(!(result.raw instanceof AIMessage))throw Error('MODEL_INVALID_RESPONSE');
+      return aiMessageToModelResponse(result.raw);
+    });
+    const boundary=createMiddleware({name:'CloudInferenceBoundary',beforeModel:async()=>{await guard();},wrapModelCall:async(request,handler)=>{
+      await guard();return handler({...request,messages:[...protectedMessages.filter(message=>message.type==='system'),...request.messages,...protectedMessages.filter(message=>message.type!=='system')]});
+    }});
+    const agent=createAgent({model,tools:[],version:'v2',middleware:[boundary,protectedSummary({model:summaryModel,protectedMessages:()=>protectedMessages,
+      tools:()=>[{name:'structured_response',description:'本轮结构化输出',parameters:z.toJSONSchema(schema)}],
+      budget:()=>({contextTokens:profile.contextTokens??16000,outputTokens:profile.outputTokens??4096}),guard})]});
+    const result=await agent.invoke({messages:history.length?toLangChainMessages(history):[new HumanMessage('依据完整用户原文和当前任务上下文回答。')]},{callbacks:[]});
+    await guard();const final=result.messages.at(-1);
+    if(!(final instanceof AIMessage)||typeof final.content!=='string')throw Error('MODEL_INVALID_RESPONSE');
+    return schema.parse(JSON.parse(final.content));
+  }
 
   bindTools(tools: BindToolsInput[], kwargs: Partial<RelayModelOptions> = {}) {
     const definitions = tools.map(tool => {

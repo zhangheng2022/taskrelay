@@ -40,7 +40,7 @@ test('执行推理收到本次聊天截图事实，截图交付与模型视觉�
   await s.db.prepare("INSERT INTO ai_messages(id,thread_id,seq,role,content,turn_id,at,source,parts,run_id) VALUES('shot_message','shot_thread',1,'assistant','页面','turn','now','executor',?,?)").bind(JSON.stringify([{type:'image',artifactId:'shot_current'},{type:'image',artifactId:'shot_other'}]),s.run.id).run();
   s.replies(decision);
   const r=await s.request(`/api/runner/runs/${s.run.id}/model`,{epoch:s.run.leaseEpoch,requestId:'shot_facts',messages:[{role:'system',content:'执行器指令'},{role:'user',content:JSON.stringify({goal:'提交一次并附截图',untrustedPage:{tree:'提交成功'}})}]});
-  assert.equal(r.status,200,JSON.stringify(r.data));assert.equal(r.data.response.text,decision);assert.equal(r.data.memory,null);
+  assert.equal(r.status,200,JSON.stringify(r.data));assert.equal(r.data.response.text,decision);assert.equal(r.data.memory,undefined);
   const facts=s.requests[0].body.messages.find((m:any)=>m.content.includes('运行能力与聊天附件反馈')).content;
   assert.match(facts,/截图数量=1/);assert.match(facts,/保存与展示截图不需要视觉模型/);assert.equal(s.jobs(),1);
 });

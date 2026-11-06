@@ -12,7 +12,7 @@ for(const protocol of ['chat','responses'] as const)test(`新交办/${protocol}�
   assert.equal(retry.data.id,th.id);assert.equal(s.jobs(),1);
   assert.equal(retry.data.messages.filter((m:{role:string})=>m.role==='user').length,1,'重试已启动交办不能再追加一条执行中补充');
   assert.equal(s.sql.prepare('SELECT COUNT(*) n FROM runs WHERE task_id=?').get(r.data.taskId)!.n,1);
-  assert.equal(s.sql.prepare('SELECT execution_protocol FROM runs WHERE task_id=?').get(r.data.taskId)!.execution_protocol,16);
+  assert.equal(s.sql.prepare('SELECT execution_protocol FROM runs WHERE task_id=?').get(r.data.taskId)!.execution_protocol,17);
 });
 test('意图不明只追问，不创建运行',async t=>{
   const s=await productionModelFixture(t),th=(await s.request('/api/user/threads',{modelId:'model_test'})).data;
@@ -81,50 +81,27 @@ test('最长原始交办超过模型窗口时明确拒绝，不把用户原话�
   assert.equal(s.requests.length,0);
 });
 
-test('上下文整理保留最新页面结构与真实选择器',async t=>{
+test('执行器转发不再次摘要；超限输入不调用模型也不静默截断',async t=>{
  const s=await productionModelFixture(t);
- s.respond(body=>JSON.stringify(JSON.stringify(body).includes('"summary"')?{summary:'已填写账号，尚未提交。'}:{__model:{text:'继续登录',calls:[{id:'next',name:'act',arguments:JSON.stringify({instruction:'点击下一步'})}]}}));
- const page={url:'https://example.com/login',text:'登录 下一步',elements:[{tag:'BUTTON',id:'next',label:'下一步'}]};
- const response=await s.request(`/api/runner/runs/${s.run.id}/model`,{epoch:s.run.leaseEpoch,requestId:'context_current_page',messages:[{role:'system',content:'执行浏览器任务'},{role:'user',content:JSON.stringify({goal:'登录',history:'旧观察'.repeat(5000),untrustedPage:page})}]});
- assert.equal(response.status,200,JSON.stringify(response.data));
- const last=JSON.stringify(s.requests.at(-1)?.body);assert.match(last,/untrustedPage/);assert.match(last,/#next|next/);
+ const response=await s.request(`/api/runner/runs/${s.run.id}/model`,{epoch:s.run.leaseEpoch,requestId:'too_large',messages:[{role:'user',content:'旧记录'.repeat(15000)}]});
+ assert.equal(response.data.error,'MODEL_CONTEXT_TOO_LARGE');assert.equal(s.requests.length,0);
 });
 
-test('原文和当前页面占用较多时，历史摘要仍使用独立请求窗口而非碎片回合',async t=>{
- const s=await productionModelFixture(t);
- const original='请保留原始输入：'+'原'.repeat(3900);
- const page={url:'https://example.com',tree:'页'.repeat(2000)};
- s.respond(body=>JSON.stringify(JSON.stringify(body).includes('"summary"')?{summary:'已查看旧页面。'}:{__model:{text:'根据当前页面继续。',calls:[]}}));
- const response=await s.request(`/api/runner/runs/${s.run.id}/model`,{epoch:s.run.leaseEpoch,requestId:'large_retained_context',messages:[{role:'system',content:'执行浏览器任务。'},{role:'user',content:JSON.stringify({goal:'检查当前页面',userMessages:[{role:'user',content:original}],untrustedPage:page,history:'旧'.repeat(12000)})}]});
- assert.equal(response.status,200,JSON.stringify(response.data));
- assert.ok(s.requests.length<=6,`历史摘要不应产生 ${s.requests.length} 次碎片请求`);
- const last=s.requests.at(-1)!.body.messages.at(-1).content;
- assert.equal(JSON.parse(last).userMessages[0].content,original);assert.deepEqual(JSON.parse(last).untrustedPage,page);
- for(const request of s.requests)assert.ok(new TextEncoder().encode(JSON.stringify(request.body.messages)).length/2<10404);
+test('摘要用途使用固定任务模型且没有决策工具，context 返回同版预算',async t=>{
+ const s=await productionModelFixture(t),th=(await s.request('/api/user/threads',{modelId:'model_test',taskId:s.run.taskId})).data;
+ s.sql.prepare('UPDATE runs SET thread_id=? WHERE id=?').run(th.id,s.run.id);
+ s.sql.exec("UPDATE model_profiles SET config=json_set(config,'$.contextTokens',24000,'$.outputTokens',2048) WHERE id='model_test' AND version=1");
+ const ctx=await s.request(`/api/runner/runs/${s.run.id}/context`,{epoch:s.run.leaseEpoch});
+ assert.deepEqual(ctx.data.modelContext,{contextTokens:24000,outputTokens:2048});
+ s.replies('此前已读取页面。');
+ const result=await s.request(`/api/runner/runs/${s.run.id}/model`,{epoch:s.run.leaseEpoch,requestId:'summary_one',purpose:'summary',messages:[{role:'user',content:'摘要历史'}]});
+ assert.equal(result.status,200);assert.equal(result.data.response.text,'此前已读取页面。');
+ assert.equal(s.requests[0].body.tools,undefined);assert.equal(s.requests[0].body.model,'vendor/non-gpt');assert.equal(s.requests.length,1);
 });
 
-test('运行停止后不继续发起历史摘要请求',async t=>{
+test('摘要返回时运行已停止则丢弃结果，不再发起模型或二次摘要',async t=>{
  const s=await productionModelFixture(t);
- s.respond(()=>{s.sql.prepare('UPDATE runs SET cancel_requested=1 WHERE id=?').run(s.run.id);return JSON.stringify({summary:'已查看历史。'});});
- const response=await s.request(`/api/runner/runs/${s.run.id}/model`,{epoch:s.run.leaseEpoch,requestId:'stop_during_summary',messages:[{role:'user',content:JSON.stringify({history:'旧记录'.repeat(15000)})}]});
+ s.respond(()=>{s.sql.prepare('UPDATE runs SET cancel_requested=1 WHERE id=?').run(s.run.id);return '已查看历史。';});
+ const response=await s.request(`/api/runner/runs/${s.run.id}/model`,{epoch:s.run.leaseEpoch,requestId:'stop_during_summary',purpose:'summary',messages:[{role:'user',content:'待摘要执行事实'}]});
  assert.notEqual(response.status,200);assert.equal(s.requests.length,1);
-});
-
-test('ASCII 页面历史按真实编码窗口分块，避免空耗窗口和串行摘要回合',async t=>{
- const s=await productionModelFixture(t);
- s.respond(body=>JSON.stringify(JSON.stringify(body).includes('"summary"')?{summary:'已查看历史页面。'}:{__model:{text:'继续。',calls:[]}}));
- const response=await s.request(`/api/runner/runs/${s.run.id}/model`,{epoch:s.run.leaseEpoch,requestId:'ascii_context_window',messages:[{role:'user',content:JSON.stringify({userMessages:[{role:'user',content:'继续处理当前任务'}],history:'page-node '.repeat(3000)})}]});
- assert.equal(response.status,200,JSON.stringify(response.data));
- assert.ok(s.requests.length<=3,`ASCII 历史产生了 ${s.requests.length} 次请求`);
- for(const request of s.requests)assert.ok(new TextEncoder().encode(JSON.stringify(request.body.messages)).length/2<10404);
-});
-
-test('摘要超过建议字数继续按实际窗口合并，不用字段长度拒绝模型结果',async t=>{
- const s=await productionModelFixture(t);
- const original='原'.repeat(3900),page={tree:'页'.repeat(2000)};
- s.respond(body=>JSON.stringify(JSON.stringify(body).includes('"summary"')?{summary:JSON.stringify(body).includes('合并执行事实摘要')?'已查看旧页面。':'旧结果。'.repeat(120)}:{__model:{text:'可以继续',calls:[]}}));
- const response=await s.request(`/api/runner/runs/${s.run.id}/model`,{epoch:s.run.leaseEpoch,requestId:'summary_length_advisory',messages:[{role:'user',content:JSON.stringify({userMessages:[{role:'user',content:original}],untrustedPage:page,history:'旧'.repeat(12000)})}]});
- assert.equal(response.status,200,JSON.stringify(response.data));
- assert.ok(s.requests.some(request=>JSON.stringify(request.body).includes('合并执行事实摘要')));
- assert.equal(JSON.parse(s.requests.at(-1)!.body.messages.at(-1).content).userMessages[0].content,original);
 });

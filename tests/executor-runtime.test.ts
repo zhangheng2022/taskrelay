@@ -67,8 +67,8 @@ test('模型附带的求助文字不提前回显，内部协助立即解决不�
  const s=await scenario([request]);assert.equal(s.captures,2);
  assert.equal(s.calls.some(c=>c.path.endsWith('/messages')&&c.body.content==='请提供账号'),false);
 });
-async function scenario(turns:ModelResponse[],options:{actionError?:boolean;actionRejected?:boolean;emptyObserve?:boolean;navigationError?:boolean;cancelConnect?:boolean;createError?:boolean;closeError?:boolean;original?:string;origin?:string;fill?:string;fills?:string[];account?:{account:Record<string,string>;origin:string};method?:string;helpMessage?:string;cancel?:boolean;cancelStagehand?:boolean;newInstruction?:boolean;compact?:boolean;navigationObservationFailure?:boolean;unknownActionResult?:boolean;helpWaits?:number;cancelHelp?:boolean;executionOutline?:string[];finalShotInstruction?:boolean;finalMessageInstruction?:boolean;finalRpcInstruction?:boolean;browserState?:boolean;unbound?:boolean;cardWait?:boolean;cancelCard?:boolean;originalAccountId?:string}={}){
- let attached=false,clicks=0,cancelled=false,closed=false,sessionCloses=0,navigations=0,snapshotFailures=0,planned=0,changed=false,helpRequests=0,finalReply=false,captures=0;
+async function scenario(turns:ModelResponse[],options:{actionError?:boolean;actionRejected?:boolean;emptyObserve?:boolean;navigationError?:boolean;cancelConnect?:boolean;createError?:boolean;closeError?:boolean;original?:string;origin?:string;fill?:string;fills?:string[];account?:{account:Record<string,string>;origin:string};method?:string;helpMessage?:string;cancel?:boolean;cancelStagehand?:boolean;newInstruction?:boolean;navigationObservationFailure?:boolean;unknownActionResult?:boolean;helpWaits?:number;cancelHelp?:boolean;executionOutline?:string[];finalShotInstruction?:boolean;finalMessageInstruction?:boolean;finalRpcInstruction?:boolean;browserState?:boolean;unbound?:boolean;cardWait?:boolean;cancelCard?:boolean;originalAccountId?:string}={}){
+ let attached=false,clicks=0,cancelled=false,closed=false,sessionCloses=0,navigations=0,snapshotFailures=0,changed=false,helpRequests=0,finalReply=false,captures=0;
  const metadata={actionId:'sdk_action_test',cache:{status:'DISABLED'},usage:{inputTokens:1,outputTokens:1}};
  let llm:ClientLLM,currentUrl='https://example.com/',stagehandCalls=0;const calls:Array<{path:string;body:any}>=[],checkpoints:any[]=[];
  let cardPolls=0,stateCaptures=0;
@@ -76,7 +76,7 @@ async function scenario(turns:ModelResponse[],options:{actionError?:boolean;acti
  const chat:any[]=[{seq:1,role:'user',source:'user',content:original,private:!!options.original,origin:options.origin??'https://example.com',accountId:options.originalAccountId}];
  const changeInstructions=()=>{if(!changed){changed=true;chat.push({seq:2,role:'user',source:'user',content:'请先核对新补充要求，再结束。'});}};
  const screenshot=await sharp({create:{width:1,height:1,channels:4,background:'#fff'}}).png().toBuffer();
- const page={url:async()=>currentUrl,goto:async(url:string)=>{navigations++;if(options.navigationError)throw Error('NAVIGATION_FAILED');currentUrl=url;},screenshot:async()=>{captures++;if(options.finalShotInstruction&&finalReply)changeInstructions();return screenshot;},
+ const page={title:async()=>'测试页面',url:async()=>currentUrl,goto:async(url:string)=>{navigations++;if(options.navigationError)throw Error('NAVIGATION_FAILED');currentUrl=url;},screenshot:async()=>{captures++;if(options.finalShotInstruction&&finalReply)changeInstructions();return screenshot;},
   snapshot:async()=>{if(snapshotFailures>0){snapshotFailures--;throw Error('Execution context destroyed during navigation');}return {formattedTree:'[1] button 继续登录\n[2] textbox 密码',xpathMap:{},urlMap:{}};},
   evaluate:async()=>({readyState:'complete',width:1,height:1,text:[]}),locator:()=>{throw Error('RAW_SELECTOR_PATH_MUST_NOT_BE_USED');},
  };
@@ -86,7 +86,7 @@ async function scenario(turns:ModelResponse[],options:{actionError?:boolean;acti
   if(path.endsWith('/account-card'))return {cardId:'card_test'} as T;
   if(path.endsWith('/account-card-status')){cardPolls++;if(options.cancelCard)cancelled=true;return {status:cardPolls===1?'pending':'saved',resumed:cardPolls>1,accountId:'account_test',credentialVersion:2,stateEpoch:2} as T;}
   if(path.endsWith('/context'))return {messages:chat.filter(m=>m.seq>body.after)} as T;
-  if(path.endsWith('/model')){if(options.cancel)cancelled=true;planned++;const response=turns.shift()??answer('已处理当前页面，结果如上。');finalReply=!response.calls.length;return {response,memory:options.compact&&planned===1?{summaries:['旧操作历史摘要']}:null} as T;}
+  if(path.endsWith('/model')){if(body.purpose==='summary')return {response:answer('已读取页面并尝试操作，保留最近工具反馈继续。')} as T;if(options.cancel)cancelled=true;const response=turns.shift()??answer('已处理当前页面，结果如上。');finalReply=!response.calls.length;return {response} as T;}
   if(path.endsWith('/messages')&&['当前页面。','当前页面未变化，沿用此前截图。'].includes(body.content)&&options.finalMessageInstruction)changeInstructions();
   if(path.endsWith('/finish')&&options.finalRpcInstruction&&!changed){changeInstructions();throw Error('INSTRUCTIONS_CHANGED');}
   if(path.endsWith('/stagehand')){
@@ -159,9 +159,9 @@ test('Stagehand 工具错误回到同一执行上下文，不强制结束或偷�
 });
 test('完整原始回复同时到达执行器模型和 Stagehand，摘要不能丢掉密码与补充要求',async()=>{
  const original='密码是 0012Ab!，但是请先确认页面，再填写。';
- const s=await scenario([tool('ask',{message:'请确认登录信息'}),tool('act',{instruction:'根据用户回复填写密码'})],{original,fill:'0012Ab!',compact:true});
- assert.equal(s.clicks,1);
- for(const call of s.calls.filter(c=>c.path.endsWith('/model')||c.path.endsWith('/stagehand')))assert.ok(JSON.stringify(call.body).includes(original));
+ const s=await scenario([tool('ask',{message:'请确认登录信息'}),...Array.from({length:20},()=>tool('act',{instruction:'根据用户回复填写密码'}))],{original,fill:'0012Ab!'});
+ assert.equal(s.clicks,20);assert.ok(s.calls.some(c=>c.path.endsWith('/model')&&c.body.purpose==='summary'));
+ for(const call of s.calls.filter(c=>(c.path.endsWith('/model')&&c.body.purpose!=='summary')||c.path.endsWith('/stagehand')))assert.ok(JSON.stringify(call.body).includes(original));
  assert.doesNotMatch(JSON.stringify(s.checkpoints),/0012Ab!/);
  assert.doesNotMatch(JSON.stringify(s.calls.filter(c=>c.path.endsWith('/messages'))),/0012Ab!/);
 });
@@ -207,7 +207,9 @@ test('超过四十步可如实给出受阻答复，不做独立成功审核',asy
  const s=await scenario([...Array.from({length:41},()=>tool('act',{instruction:'查看下一页'})),answer('已完成部分，其余网站暂不可用。')]);
  assert.equal(s.clicks,41);assert.equal(s.finish.result.summary,'已完成部分，其余网站暂不可用。');assert.equal(s.finish.result.outcome,'reported');
  const sent=s.calls.filter(c=>c.path.endsWith('/model')).at(-1)!.body.messages;
- assert.equal(sent.filter((m:{role:string})=>m.role==='tool').length,41);
+ assert.ok(sent.filter((m:{role:string})=>m.role==='tool').length<41);
+ assert.ok(s.calls.some(c=>c.path.endsWith('/model')&&c.body.purpose==='summary'));
+ assert.doesNotMatch(JSON.stringify(s.calls.filter(c=>c.path.endsWith('/model'))),/formattedTree|textbox 密码/);
  assert.equal(JSON.parse(sent[1].content).history,undefined);
 });
 test('模型等待期间停止，不执行返回的工具调用',async()=>{
@@ -251,8 +253,9 @@ test('观察始终不可用时新图保留 unknown，禁止重复提交',async()
 
 test('可调整粗步骤传给两层模型，摘要后仍由任务快照提供',async()=>{
  const executionOutline=['按现场需要登录','查询库存','整理查询结果'];
- const s=await scenario([tool('observe',{instruction:'查看页面'}),tool('act',{instruction:'查询库存'})],{executionOutline,compact:true});
- for(const request of s.calls.filter(c=>c.path.endsWith('/model')||c.path.endsWith('/stagehand'))){
+ const s=await scenario([...Array.from({length:20},()=>tool('observe',{instruction:'查看页面'})),tool('act',{instruction:'查询库存'})],{executionOutline});
+ assert.ok(s.calls.some(c=>c.path.endsWith('/model')&&c.body.purpose==='summary'));
+ for(const request of s.calls.filter(c=>(c.path.endsWith('/model')&&c.body.purpose!=='summary')||c.path.endsWith('/stagehand'))){
   for(const step of executionOutline)assert.ok(JSON.stringify(request.body).includes(step));
  }
  assert.equal(s.finish.status,'succeeded');

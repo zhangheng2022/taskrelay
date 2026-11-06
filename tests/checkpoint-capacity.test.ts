@@ -120,6 +120,7 @@ test('大检查点和 pending writes 原样恢复、幂等隔离、替换及删�
 
 test('真实规划图在完整历史超过 D1 单值限制时仍可进入摘要并完成', async t => {
   const s = await productionModelFixture(t); s.env.requestUserId = 'legacy_owner';
+  s.sql.exec("UPDATE model_profiles SET config=json_set(config,'$.contextTokens',650000,'$.outputTokens',4096) WHERE id='model_test' AND version=1");
   const thread = (await s.request('/api/user/threads', { modelId: 'model_test' })).data;
   const prepare = s.db.prepare.bind(s.db);
   t.mock.method(s.db, 'prepare', (query: string) => {
@@ -133,19 +134,19 @@ test('真实规划图在完整历史超过 D1 单值限制时仍可进入摘要�
     });
     return statement;
   });
-  s.respond(body => JSON.stringify(body.response_format?.json_schema?.schema?.properties?.summary
-    ? { summary: '已读取历史，仍需用户明确任务目标。' }
-    : { reply: '请明确任务目标。', start: false, title: null, goal: null, entryUrl: null, accountId: null, executionOutline: [] }));
+  s.respond(body => body.response_format?JSON.stringify({ reply: '请明确任务目标。', start: false, title: null, goal: null, entryUrl: null, accountId: null, executionOutline: [] }):'已读取历史，仍需用户明确任务目标。');
   const messages = [
     { role: 'system' as const, content: '保留用户原话，按目标处理。' },
-    { role: 'user' as const, content: JSON.stringify({ userMessages: [{ role: 'user', content: '原文保留 0012Ab! 继续' }], conversation: Array.from({ length: 100 }, () => ({ role: 'assistant', content: 'a'.repeat(12_000) })) }) },
+    { role: 'user' as const, content: JSON.stringify({ userMessages: [{ role: 'user', content: '原文保留 0012Ab! 继续' }] }) },
   ];
-  const result = await planConversation({ env: s.env, owner: 'legacy_owner', id: 'large_graph', threadId: thread.id, kind: 'chat', guard: async () => {} }, { model_id: 'model_test', model_version: 1 }, messages);
+  const history=Array.from({length:100},()=>({role:'assistant' as const,content:'a'.repeat(12000)}));
+  const result = await planConversation({ env: s.env, owner: 'legacy_owner', id: 'large_graph', threadId: thread.id, kind: 'chat', guard: async () => {} }, { model_id: 'model_test', model_version: 1 }, messages,history);
   assert.equal(result.reply, '请明确任务目标。');
   assert.ok(s.jobs() > 1, '调用摘要及规划模型');
   const finalRequest = JSON.stringify(s.requests.at(-1)!.body);
   assert.match(finalRequest, /原文保留 0012Ab! 继续/);
-  assert.ok(!finalRequest.includes('a'.repeat(12_000)));
+  assert.ok(finalRequest.length<JSON.stringify(history).length/2,'保留约三成近期历史');
   const tuple = await new D1Checkpointer(s.db, 'legacy_owner', s.env.MASTER_KEY).getTuple({ configurable: { thread_id: 'large_graph' } });
   assert.deepEqual(tuple!.checkpoint.channel_values.messages, messages);
+  assert.deepEqual(tuple!.checkpoint.channel_values.history,history);
 });

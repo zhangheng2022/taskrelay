@@ -6,7 +6,7 @@
 web
 
 ## Stack
-React、Vite、TypeScript、shadcn/ui、Tailwind CSS；Electron Forge Windows x64 执行器；Stagehand 4.3.0；Cloudflare Workers、Hono、D1 与加密 SQLite Durable Objects。npm workspaces，生产不绑定 R2。
+React、Vite、TypeScript、shadcn/ui、Tailwind CSS；Electron Forge Windows x64 执行器；Stagehand 4.4.0；Cloudflare Workers、Hono、D1 与加密 SQLite Durable Objects。npm workspaces，生产不绑定 R2。
 
 ## Users
 注册用户在网站拥有隔离的浏览器任务空间，支持手机访问。管理员维护共享模型与可信 Windows 设备池。公开注册默认关闭。
@@ -16,7 +16,8 @@ React、Vite、TypeScript、shadcn/ui、Tailwind CSS；Electron Forge Windows x6
 
 ## Capabilities and Constraints
 - 网站负责任务、聊天、图片、历史、账号与设置；桌面只负责连接、执行、暂停、停止、自启动和诊断。
-- 普通与批量目标共用 AI 工具循环，依实际反馈报告进度、部分完成或受阻。没有固定项目身份、强制核验表、文字/地址成功硬匹配或独立报告阶段。
+- 普通与批量目标共用官方 Agent 工具循环，依实际反馈报告进度、部分完成或受阻。没有固定项目身份、强制核验表、文字/地址成功硬匹配或独立报告阶段。
+- 执行历史使用官方摘要压缩，原始用户输入与账号信息完整保留；已有足够事实可直接文字结束，结束期间的新要求继续进入当前执行。摘要失败明确报错，不覆盖历史或自动重放未知操作。
 - 账号、密码与验证码按用户要求可在本人聊天显示并由当前任务 AI 使用；敏感回复独立加密，平台密钥与设备令牌不进入任务上下文。
 - 登录成功后可在原聊天确认保存账号，凭据失效时通过修改卡片继续；账号按精确业务域名分组，关联实际登录域。AI 按任务原意选择一个或多个账号，各账号串行使用独立环境。
 - 账号卡片和编辑表单只展示“账号名称、域名、账号、密码”，密码默认遮蔽；业务地址和登录来源由系统保留，不要求用户分别填写。修改域名会重置旧关联并重新验证。

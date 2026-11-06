@@ -23,13 +23,11 @@ import {
   runThread,
 } from "../chat-messages";
 import { seal, unseal } from "../crypto";
-import { compactMessages } from "../model-context";
 import { getRun, now, requireLease, type Row } from "../store";
 import { openGraph } from "./graph";
 import { RelayChatModel } from "./model";
 import type { GraphEvent } from "./dispatch";
 import { graphWriteFence } from "./fence";
-import { toLangChainMessages } from "../../../../packages/model/src/langchain";
 import { accountAllowsOrigin } from '../accounts';
 
 const answerSchema = z.object({
@@ -41,6 +39,7 @@ type Account = { id: string; name: string; origin: string; login_origins:string 
 const State = Annotation.Root({
   round: Annotation<number>({ reducer: (_, v) => v, default: () => 0 }),
   messages: Annotation<Message[]>(),
+  history: Annotation<Message[]>(),
   accounts: Annotation<Account[]>(),
   latestUserSeq: Annotation<number>(),
   answer: Annotation<z.infer<typeof answerSchema>>(),
@@ -146,25 +145,14 @@ export async function executeHelpGraph(env: AppEnv, event: GraphEvent) {
             help,
             accounts,
             userMessages,
-            conversation: executionHistory,
           }),
         },
       ];
-      return { messages, accounts, latestUserSeq };
+      return { messages, accounts, latestUserSeq,history:executionHistory.map(message=>({role:"assistant" as const,content:message.content})) };
     })
     .addNode("solve", async (state) => {
       await runtime.guard();
       const operation = `${event.graph_id}:solve:${state.round}:${state.latestUserSeq}`;
-      const messages = await compactMessages(
-        env,
-        run.task.modelId,
-        run.task.modelVersion,
-        state.messages,
-        run.id,
-        operation,
-        runtime.guard,
-        { id: event.graph_id, generation: runtime.generation },
-      );
       const model = new RelayChatModel(
         env,
         run.task.modelId,
@@ -175,9 +163,7 @@ export async function executeHelpGraph(env: AppEnv, event: GraphEvent) {
         runtime.generation,
       );
       return {
-        answer: await model
-          .withStructuredOutput<z.infer<typeof answerSchema>>(answerSchema)
-          .invoke(toLangChainMessages(messages)),
+        answer: await model.runAgent(answerSchema,state.messages,state.history,runtime.guard),
       };
     })
     .addNode("publish", async (state) => {

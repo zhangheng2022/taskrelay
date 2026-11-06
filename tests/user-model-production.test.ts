@@ -39,7 +39,7 @@ for(const unavailable of ['owner','origin','device','locked'] as const)test(`云
   }
   if(unavailable==='origin')s.sql.prepare("UPDATE account_credential_versions SET login_origins='[\"https://different.example\"]' WHERE account_id='account_help'").run();
   if(unavailable==='device'){
-    s.sql.prepare("INSERT INTO devices(id,name,token_hash,protocol_version) VALUES('device_other','other','other_token_hash',16)").run();
+    s.sql.prepare("INSERT INTO devices(id,name,token_hash,protocol_version) VALUES('device_other','other','other_token_hash',17)").run();
     s.sql.prepare("UPDATE runs SET device_id='device_other' WHERE id=?").run(s.run.id);
   }
   if(unavailable==='locked')s.sql.prepare("UPDATE account_locks SET run_id='another_run' WHERE account_key='account_help'").run();
@@ -67,7 +67,7 @@ test('选择账号期间被其他运行占用，不返回可读取凭据的引�
 
 test('优先设备变化不撤销当前租约；实际运行设备变化后仍拒绝读取',async t=>{
   const s=await setup(t);s.replies(selected);assert.equal((await s.request(s.root+'/help',s.help)).data.ready,true);
-  s.sql.prepare("INSERT INTO devices(id,name,token_hash,protocol_version) VALUES('device_other','other','other_token_hash',16)").run();
+  s.sql.prepare("INSERT INTO devices(id,name,token_hash,protocol_version) VALUES('device_other','other','other_token_hash',17)").run();
   s.sql.prepare("UPDATE accounts SET assigned_device_id='device_other' WHERE id='account_help'").run();
   assert.equal((await s.request(s.root+'/credentials',{epoch:s.run.leaseEpoch,helpId:s.help.id,url:'https://example.com/login'})).status,200);
   s.sql.prepare("UPDATE runs SET device_id='device_other' WHERE id=?").run(s.run.id);

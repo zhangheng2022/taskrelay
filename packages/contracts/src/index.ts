@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { batchVerificationSchema, batchReportSchema } from './batch';
 
-export const PROTOCOL_VERSION = 16;
-export const EXECUTION_GRAPH_VERSION = "relay-graph-2";
+export const PROTOCOL_VERSION = 17;
+export const EXECUTION_GRAPH_VERSION = "relay-graph-3";
 export const HISTORY_EPOCH = 4;
 export const limits = {
   leaseMs: 90_000,

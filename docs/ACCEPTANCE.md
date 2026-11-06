@@ -1,14 +1,18 @@
 # TaskRelay 验收记录
 
-## 2026-11-06 全仓依赖升级基线（0.14.0，实施中）
+## 2026-11-06 官方 Agent 与摘要迁移（0.15.0，验证中）
 
-直接及开发依赖已按本轮 registry 发布版本锁定：Stagehand 4.4.0、LangChain Core 1.3.5、LangGraph 1.7.1、Electron 45.2.3、Better Auth 1.7.18、TypeScript 7.0.2；新增后续重构所需的官方 Agent、模型 SDK、查询、表单及 CDP 依赖，目前尚未替换执行循环。Cloudflare 的 Miniflare 和已有 Hono CLI 分别跟随 beta、next 通道。GitHub Actions 的 checkout v7.0.1、setup-node v7.1.0 已是核对时的最新 release，继续固定其 SHA。
+源码切换 createAgent v2、p-limit(1) 与官方摘要，删除云端二次摘要和自写分块合并；11 个执行工具统一 Zod 定义。协议 17、图版本 relay-graph-3 使旧执行器不能领取新任务、旧 checkpoint 不能跨版本恢复；不改账号、Profile、快照或 MASTER_KEY，无新增数据库结构迁移。覆盖多工具串行、协助冻结、空回复一次纠正、结束期间新指令、摘要失败及租约失效保留历史、原文保护和未知结果不重放。类型检查、完整回归 360/360（含 UI 58 项）、仓库检查与 Web 构建通过；打包及安装仍在核验，当前尚未上线本批。OCR preview/rule 成功，宿主完整审阅 32 个本批变更文件（含测试、文档和仅版本变化的锁文件），覆盖率 100%，无未解决发现；未调用 OCR 外部模型。源码图更新至 4688 节点／8047 边；28 个 SQL 仍缺 tree_sitter_sql，两个测试文件未提取符号，不能算作完整解析覆盖。
+
+## 2026-11-06 全仓依赖升级基线（0.14.0，已部署安装）
+
+直接及开发依赖已按本轮 registry 发布版本锁定：Stagehand 4.4.0、LangChain Core 1.3.5、LangGraph 1.7.1、Electron 45.2.3、Better Auth 1.7.18、TypeScript 7.0.2；新增后续重构所需的官方 Agent、模型 SDK、查询、表单及 CDP 依赖，本批保留原执行循环。Cloudflare 的 Miniflare 和已有 Hono CLI 分别跟随 beta、next 通道。GitHub Actions 的 checkout v7.0.1、setup-node v7.1.0 已是核对时的最新 release，继续固定其 SHA。
 
 隔离目录重新解析依赖后，`npm ci`、类型检查、完整回归 **353/353**、Web 构建和仓库检查通过。未使用 force 或 legacy-peer-deps。新版 Node 类型下的网络测试显式区分字符串与 Buffer；未改变网络执行行为。构建资源和发布清单改为读取桌面清单中的 Stagehand 版本，重新准备时清理已核对路径的生成资源，避免新旧扩展混用。
 
-已配置 Dependabot 每周一 Asia/Shanghai 09:00 检查 npm 和 GitHub Actions，更新 PR 分组且不自动合并或部署。上游仍固定的间接旧版本不强制覆盖。桌面打包、实际安装、生产部署和真实网站复验仍在进行，不能将上述源码结果视为已交付。
+已配置 Dependabot 每周一 Asia/Shanghai 09:00 检查 npm 和 GitHub Actions，更新 PR 分组且不自动合并或部署。上游仍固定的间接旧版本不强制覆盖。本批包内及系统实际安装 smoke 已通过，生产领取已恢复；真实网站效率复验留待官方 Agent 批次。
 
-Windows 0.14.0 重新打包及本次包内 smoke 已通过（Electron 45.2.3、Chrome 157.0.8103.38、Stagehand 4.4.0）。首次升级 smoke 暴露旧 Profile 继续执行旧扩展代码，修复为按 SDK release 固定公开扩展身份并在启动时仅启用本版扩展；同一旧测试 Profile 的连接及完整 smoke 随后通过。未修改 MASTER_KEY 或删除账号 Profile。新增生产依赖锁文件，普通打包改为 `npm ci` 并清理已核对路径的暂存目录；修复后类型检查、Host 21/21 通过。尚未证明系统实际安装或真实网站。
+Windows 0.14.0 重新打包及本次包内 smoke 已通过（Electron 45.2.3、Chrome 157.0.8103.38、Stagehand 4.4.0）。首次升级 smoke 暴露旧 Profile 继续执行旧扩展代码，修复为按 SDK release 固定公开扩展身份并在启动时仅启用本版扩展；同一旧测试 Profile 的连接及完整 smoke 随后通过。未修改 MASTER_KEY 或删除账号 Profile。新增生产依赖锁文件，普通打包改为 `npm ci` 并清理已核对路径的暂存目录；修复后类型检查、Host 21/21 通过。实际系统安装路径为 `C:\Users\96227\AppData\Local\TaskRelay\app-0.14.0\TaskRelay.exe`，安装与构建 ASAR SHA-256 均为 `c5a3a16cc04493cfd4a1ae25ce891ac9983ce23bd7cc5961b04119b0d9fae293`；26 个 Profile、原配置与 Local State 保留，SQLite quick_check 通过，outbox 与未完结 journal 均为 0。通过 Explorer 启动安装器及实际版本程序，尚未单独完成桌面快捷方式点击验证。生产 Worker `32a8bb89-39a1-4ae6-b2a3-e8adcc4ef7dd` 已部署，D1 保持 0027，`maintenance=0`、`claimsEnabled=1`、设备就绪；本批未验证真实网站。
 
 OCR preview/rule 成功；23 个变更文件中 21 个完整审阅、2 个生成锁文件不逐行人工审查，覆盖率 91.3%；两个锁文件已核验 registry 来源、完整性字段及安装／构建／包内 smoke。无未解决发现，未调用 OCR 外部模型。graphify 已更新，28 个 SQL 仍缺少 tree_sitter_sql 解析器，相关行为以源码及测试证据为准。
 

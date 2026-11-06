@@ -6,11 +6,9 @@ import { Annotation, StateGraph, START, END } from "@langchain/langgraph";
 import { z } from "zod";
 import type { Message } from "../../../../packages/model/src/index";
 import type { Row } from "../store";
-import { compactMessages } from "../model-context";
 import { commitDecision } from "./commands";
 import { GRAPH_VERSION, openGraph, type GraphScope } from "./graph";
 import { RelayChatModel } from "./model";
-import { toLangChainMessages } from "../../../../packages/model/src/langchain";
 
 const decisionSchema = z.object({
   reply: z.string(),
@@ -25,6 +23,7 @@ const decisionSchema = z.object({
 type Decision = z.infer<typeof decisionSchema>;
 const State = Annotation.Root({
   messages: Annotation<Message[]>(),
+  history: Annotation<Message[]>(),
   decision: Annotation<Decision>(),
   reply: Annotation<string>(),
 });
@@ -34,26 +33,17 @@ export async function planConversation(
   scope: GraphScope,
   thread: Row,
   messages: Message[],
+  history: Message[] = [],
 ) {
   const { env, id } = scope;
   const runtime = await openGraph(scope, {
     modelId: thread.model_id,
     version: thread.model_version,
-    messages,
+    messages,history,
   });
   const graph = new StateGraph(State)
     .addNode("understand", async (state) => {
       await runtime.guard();
-      const input = await compactMessages(
-        env,
-        thread.model_id,
-        thread.model_version,
-        state.messages,
-        null,
-        id,
-        runtime.guard,
-        { id, generation: runtime.generation },
-      );
       const model = new RelayChatModel(
         env,
         thread.model_id,
@@ -63,9 +53,7 @@ export async function planConversation(
         id,
         runtime.generation,
       );
-      const decision = await model
-        .withStructuredOutput<Decision>(decisionSchema)
-        .invoke(toLangChainMessages(input));
+      const decision = await model.runAgent(decisionSchema,state.messages,state.history,runtime.guard);
       await runtime.guard();
       if (
         decision.start &&
@@ -112,6 +100,6 @@ export async function planConversation(
     .compile({ checkpointer: runtime.saver });
   const prior = await runtime.saver.getTuple(runtime.config);
   return runtime.run(() =>
-    graph.invoke(prior ? null : { messages }, runtime.config),
+    graph.invoke(prior ? null : { messages,history }, runtime.config),
   );
 }

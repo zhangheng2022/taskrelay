@@ -15,7 +15,7 @@ import {unseal} from './crypto';
 import {putEvidence,deleteEvidence} from './evidence';
 import {appendMessage,conversationContext,runThread} from './chat-messages';
 import {resolveHelp} from './execution-help';
-import {compactMessages} from './model-context';
+import {estimateTokens} from '../../../packages/model/src/agent-context';
 import {browserStateAccess,stageBrowserState,publishBrowserState} from './browser-state';
 import {advanceDispatchGroups} from './account-dispatch';
 import {pendingCardOrigins,registerAccountRunnerRoutes} from './account-cards';
@@ -50,7 +50,8 @@ runner.post('/runs/:id/context',async c=>{
   const messages=await conversationContext(c.env,thread.id,b.after,{runId:run.id});
   await requireLease(c.env.DB,run.id,c.get('deviceId'),b.epoch);
   const current=await getRun(c.env.DB,run.id);
-  return c.json({messages,accountBinding:{accountId:current.accountId??null,credentialVersion:current.credentialVersion??1,stateEpoch:current.stateEpoch??1}});
+  const profile=b.after===0?(await getModelProfile(c.env,run.task.modelId,run.task.modelVersion)).profile:null;
+  return c.json({messages,...(profile?{modelContext:{contextTokens:profile.contextTokens??16000,outputTokens:profile.outputTokens??4096}}:{}),accountBinding:{accountId:current.accountId??null,credentialVersion:current.credentialVersion??1,stateEpoch:current.stateEpoch??1}});
 });
 runner.post('/runs/:id/messages',async c=>{
   const b=lease.extend({id:idSchema,content:z.string(),parts:parts.default([]),replyTo:idSchema.optional()}).parse(await c.req.json());
@@ -60,23 +61,20 @@ runner.post('/runs/:id/messages',async c=>{
 });
 // The executor owns the prompt and tool loop; this endpoint only relays inference.
 runner.post('/runs/:id/model',async c=>{
-  const b=lease.extend({requestId:idSchema,messages:z.array(modelMessage),supportsScreenshot:z.boolean().optional()}).parse(await c.req.json());
+  const b=lease.extend({requestId:idSchema,messages:z.array(modelMessage),purpose:z.enum(['decision','summary']).default('decision'),supportsScreenshot:z.boolean().optional()}).parse(await c.req.json());
   const run=await requireLease(c.env.DB,c.req.param('id'),c.get('deviceId'),b.epoch);
   const {profile}=await getModelProfile(c.env,run.task.modelId,run.task.modelVersion);
-  const images=await c.env.DB.prepare(`SELECT COUNT(*) AS count FROM ai_messages m,json_each(m.parts) p
+  const images=b.purpose==='decision'?await c.env.DB.prepare(`SELECT COUNT(*) AS count FROM ai_messages m,json_each(m.parts) p
     JOIN artifacts a ON a.id=json_extract(p.value,'$.artifactId') AND a.run_id=m.run_id
-    WHERE m.run_id=? AND json_extract(p.value,'$.type')='image'`).bind(run.id).first<{count:number}>();
+    WHERE m.run_id=? AND json_extract(p.value,'$.type')='image'`).bind(run.id).first<{count:number}>():null;
   // Delivery facts belong to this relay; they are not business outcome checks.
-  const input=[{role:'system' as const,content:`运行能力与聊天附件反馈：本次运行已关联到聊天的截图数量=${images?.count??0}。执行器会自动在最终答复前附上当前页面截图；保存与展示截图不需要视觉模型。只报告实际结果，不把工具一次失败等同于整个任务失败。`},...b.messages];
-  const messages=await compactMessages(c.env,run.task.modelId,run.task.modelVersion,input,run.id,b.requestId,()=>requireLease(c.env.DB,run.id,c.get('deviceId'),b.epoch));
+  const messages=b.purpose==='summary'?b.messages:[{role:'system' as const,content:`运行能力与聊天附件反馈：本次运行已关联到聊天的截图数量=${images?.count??0}。执行器会自动在最终答复前附上当前页面截图；保存与展示截图不需要视觉模型。只报告实际结果，不把工具一次失败等同于整个任务失败。`},...b.messages];
+  const tools=b.purpose==='summary'?[]:executorTools.filter(tool=>tool.name!=='screenshot'||b.supportsScreenshot);
+  if(estimateTokens(messages)+estimateTokens(tools)+(profile.outputTokens??4096)+512>(profile.contextTokens??16000))throw Error('MODEL_CONTEXT_TOO_LARGE');
   const model=new RelayChatModel(c.env,run.task.modelId,run.task.modelVersion,`execute_${run.id}_${b.requestId}`,run.id);
-  const response=aiMessageToModelResponse(await model.bindTools(executorTools.filter(tool=>tool.name!=='screenshot'||b.supportsScreenshot).map(tool=>({type:'function',function:tool})),{tool_choice:'auto',maxTokens:profile.outputTokens??4096}).invoke(toLangChainMessages(messages)));
-  let memory:Record<string,unknown>|null=null;
-  if(messages!==input){
-    const summary=messages.find(message=>message.role==='user'&&message.content.includes('"summaries"'));
-    if(summary){memory=JSON.parse(summary.content);delete memory!.untrustedPage;delete memory!.userMessages;delete memory!.executionOutline;}
-  }
-  await requireLease(c.env.DB,run.id,c.get('deviceId'),b.epoch);return c.json({response,memory});
+  const bound=tools.length?model.bindTools(tools.map(tool=>({type:'function',function:tool})),{tool_choice:'auto',maxTokens:profile.outputTokens??4096}):model.withConfig({maxTokens:profile.outputTokens??4096});
+  const response=aiMessageToModelResponse(await bound.invoke(toLangChainMessages(messages)));
+  await requireLease(c.env.DB,run.id,c.get('deviceId'),b.epoch);return c.json({response});
 });
 // Never summarize Stagehand's tree/element IDs independently of its schema.
 runner.post('/runs/:id/stagehand',async c=>{

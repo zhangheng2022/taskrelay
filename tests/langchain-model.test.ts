@@ -4,7 +4,6 @@ import { AIMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
 import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
 import { RelayChatModel } from '../apps/cloud/src/ai/model';
-import { compactMessages } from '../apps/cloud/src/model-context';
 import { aiMessageToModelResponse, fromLangChainMessages, modelResponseToAIMessage } from '../packages/model/src/langchain';
 import type { Message } from '../packages/model/src/index';
 import { productionModelFixture } from './production-model-fixture';
@@ -44,15 +43,19 @@ test('失效help图不能读取旧操作缓存或发起新模型操作',async t=
   assert.equal(s.sql.prepare("SELECT COUNT(*) AS n FROM ai_calls WHERE id='lc_new'").get()!.n,0);
 });
 
-test('图摘要保留归属并遵守generation，聊天清理可定位其结果',async t=>{
+test('官方 Agent 摘要保留图归属与 generation，并完整注入用户原文',async t=>{
   const s=await productionModelFixture(t);helpGraphFixture(s);
-  s.respond(()=>'{"summary":"旧执行事实"}');
-  const messages:Message[]=[{role:'system',content:'规划'},{role:'user',content:JSON.stringify({userMessages:[{content:'原话'}],history:'旧记录'.repeat(18000)})}];
-  await compactMessages(s.env,'model_test',1,messages,s.run.id,'lc_summary',undefined,{id:'lc_graph',generation:7});
+  s.respond(body=>body.response_format?'{"answer":"已读取"}':'旧执行事实');
+  const model=new RelayChatModel(s.env,'model_test',1,'lc_agent',s.run.id,'lc_graph',7);
+  const protectedInput:Message[]=[{role:'system',content:'规划'},{role:'user',content:'完整原话 0012Ab! 不得更改'}];
+  const history:Message[]=[{role:'assistant',content:'x'.repeat(19000)},{role:'assistant',content:'近期执行事实'}];
+  assert.deepEqual(await model.runAgent(z.object({answer:z.string()}),protectedInput,history,async()=>{}),{answer:'已读取'});
   const rows=s.sql.prepare('SELECT graph_id FROM ai_calls').all();
-  assert.ok(rows.length>0);assert.ok(rows.every(row=>row.graph_id==='lc_graph'));
+  assert.equal(rows.length,2);assert.ok(rows.every(row=>row.graph_id==='lc_graph'));
+  assert.doesNotMatch(JSON.stringify(s.requests[0].body),/0012Ab/);
+  assert.match(JSON.stringify(s.requests[1].body),/完整原话 0012Ab!/);
   s.sql.exec('UPDATE ai_graph_inputs SET generation=generation+1');
-  await assert.rejects(compactMessages(s.env,'model_test',1,messages,s.run.id,'lc_summary_new',undefined,{id:'lc_graph',generation:7}),/MODEL_CALL_DISCARDED/);
+  await assert.rejects(model.runAgent(z.object({answer:z.string()}),protectedInput,history,async()=>{}),/MODEL_CALL_DISCARDED/);
 });
 
 for(const protocol of ['chat','responses'] as const)test(`LangChain ${protocol} 工具消息、用量和稳定操作编号贯穿实际出站`,async t=>{
@@ -120,19 +123,4 @@ for(const protocol of ['chat','responses'] as const)test(`LangChain ${protocol} 
   const message=(protocol==='chat'?s.requests[0].body.messages:s.requests[0].body.input)[0];
   assert.equal(message.content[0].text,'颜色？');
   assert.equal(protocol==='chat'?message.content[1].image_url.url:message.content[1].image_url,'data:image/png;base64,cGl4ZWw=');
-});
-
-test('原生工具历史压缩保留完整原话、阶段计划及尚未返回的调用',async t=>{
-  const s=await productionModelFixture(t);
-  s.respond(()=>JSON.stringify({summary:'已查看多个旧页面，最新调用尚待反馈。'}));
-  const original='查询订单，密码 0012Ab!，不要提交更改';
-  const outline=['进入订单页','读取订单','整理结果'];
-  const messages:Message[]=[{role:'system',content:'工具循环'},{role:'user',content:JSON.stringify({goal:'查询订单',userMessages:[{role:'user',content:original}],executionOutline:outline,untrustedPage:{tree:'当前订单'}})},
-    ...fromLangChainMessages([new AIMessage({content:'',tool_calls:[{id:'done',name:'extract',args:{instruction:'读取'}}]}),new ToolMessage({tool_call_id:'done',content:'旧结果'.repeat(15000)}),new AIMessage({content:'',tool_calls:[{id:'pending',name:'observe',args:{instruction:'查看'}}]})])];
-  const compacted=await compactMessages(s.env,'model_test',1,messages,s.run.id,'compact_native');
-  const context=JSON.parse(compacted[1].content);
-  assert.equal(context.userMessages[0].content,original);assert.deepEqual(context.executionOutline,outline);
-  assert.equal(compacted.at(-1)?.tool_calls?.[0].id,'pending');
-  assert.equal(compacted.some(message=>message.role==='tool'),false);
-  assert.ok(s.jobs()>0);
 });

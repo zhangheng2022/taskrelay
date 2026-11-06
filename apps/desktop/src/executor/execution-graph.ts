@@ -1,18 +1,25 @@
-import {Annotation,Command,END,START,StateGraph,interrupt} from '@langchain/langgraph';
-import {AIMessage,ToolMessage,type BaseMessage} from '@langchain/core/messages';
+/** 官方 createAgent 接管决策与工具循环；本适配器只维护串行执行、租约边界、
+ * 同代协助恢复与最终提交。协助先 interrupt，云端登记由外层驱动完成，禁止重放浏览器操作。 */
+import {Command,interrupt,isGraphInterrupt} from '@langchain/langgraph';
+import {AIMessage,HumanMessage,ToolMessage,type BaseMessage} from '@langchain/core/messages';
 import {tool} from '@langchain/core/tools';
 import {getEnvironmentVariable} from '@langchain/core/utils/env';
-import {z} from 'zod';
+import {createAgent,createMiddleware} from 'langchain';
+import pLimit from 'p-limit';
+import type {z} from 'zod';
 import type {Message,ModelResponse} from '../../../../packages/model/src/index';
-import {fromLangChainMessages,modelResponseToAIMessage} from '../../../../packages/model/src/langchain';
+import {fromLangChainMessages,toLangChainMessages,aiMessageToModelResponse} from '../../../../packages/model/src/langchain';
+import {CallbackChatModel,protectedSummary,type ContextBudget} from '../../../../packages/model/src/agent-context';
 import {executorArguments,executorTools,type ExecutionHelp,type HelpResponse} from '../../../../packages/contracts/src/execution';
 import {SessionCheckpointer} from './session-checkpointer';
 
 export type ExecutorCall=ModelResponse['calls'][number];
 export interface ExecutionGraphPort {
   guard():void;
-  observe():Promise<{messages:Message[];userSeq:number}>;
-  decide(messages:Message[]):Promise<{response:ModelResponse;compacted:boolean}>;
+  observe():Promise<{messages:Message[];userSeq:number;history?:Message[]}>;
+  decide(messages:Message[],purpose:'decision'|'summary'):Promise<{response:ModelResponse}>;
+  budget?():ContextBudget;
+  history?(messages:Message[]):void;
   changed(userSeq:number):Promise<boolean>;
   perform(call:ExecutorCall,args:Record<string,unknown>,userSeq:number):Promise<unknown>;
   registerHelp(args:Record<string,unknown>,call:ExecutorCall):Promise<{request:ExecutionHelp;answer:HelpResponse}>;
@@ -23,110 +30,116 @@ export interface ExecutionGraphPort {
   say(text:string,eventId:string):Promise<unknown>;
   finish(text:string,userSeq:number):Promise<boolean>;
 }
-const State=Annotation.Root({
-  input:Annotation<Message[]>({reducer:(_,v)=>v,default:()=>[]}),
-  transcript:Annotation<BaseMessage[]>({reducer:(_,v)=>v,default:()=>[]}),
-  calls:Annotation<ExecutorCall[]>({reducer:(_,v)=>v,default:()=>[]}),
-  index:Annotation<number>({reducer:(_,v)=>v,default:()=>0}),
-  userSeq:Annotation<number>({reducer:(_,v)=>v,default:()=>0}),
-  text:Annotation<string>({reducer:(_,v)=>v,default:()=>''}),
-  route:Annotation<'observe'|'dispatch'|'finish'|'registerHelp'|'tools'|'awaitHelp'|'consumeHelp'|'feedback'>({reducer:(_,v)=>v,default:()=> 'observe'}),
-  result:Annotation<unknown>(),
-  help:Annotation<ExecutionHelp|null>({reducer:(_,v)=>v,default:()=>null}),
-  answer:Annotation<HelpResponse|null>({reducer:(_,v)=>v,default:()=>null}),
-});
+interface HelpResume {request:ExecutionHelp;answer:HelpResponse;}
+interface HelpInterrupt {kind:'execution-help';call:ExecutorCall;args:Record<string,unknown>;}
+interface Slot {call:ExecutorCall;prior:Promise<void>;done:{promise:Promise<void>;resolve:()=>void};invalid:boolean;interrupted:boolean;}
 const resultMessage=(call:ExecutorCall,result:unknown)=>new ToolMessage({tool_call_id:call.id,name:call.name,content:JSON.stringify(result)??'null'});
 
-/** LC validates every browser tool at the same seam used by the graph. */
-async function invokeTool(call:ExecutorCall,perform:(args:Record<string,unknown>)=>Promise<unknown>){
-  if(!Object.hasOwn(executorArguments,call.name))throw Error('TOOL_NOT_AVAILABLE');
-  const schema:z.ZodObject=executorArguments[call.name as keyof typeof executorArguments];
-  const definition=executorTools.find(t=>t.name===call.name)!;
-  let result:unknown;
-  const browserTool=tool(async args=>{result=await perform(args);return JSON.stringify(result)??'null';},{name:call.name,description:definition.description,schema});
-  await browserTool.invoke(JSON.parse(call.arguments));
-  return result;
-}
-
-/** The graph owns inference, ordering, error feedback and completion. The outer
- * driver below only delivers an existing assistance reply to a pure interrupt.
- */
 export async function runExecutionGraph(port:ExecutionGraphPort){
   for(const name of ['LANGSMITH_TRACING','LANGCHAIN_TRACING_V2','LANGCHAIN_TRACING','LANGCHAIN_VERBOSE']){
     const value=getEnvironmentVariable(name);if(value&&value!=='false'&&value!=='0')throw Error('AI_EXTERNAL_TRACING_DISABLED');
   }
-  const saver=new SessionCheckpointer(),threadId=crypto.randomUUID();
+  const saver=new SessionCheckpointer(),threadId=crypto.randomUUID(),serial=pLimit(1);
   const config={configurable:{thread_id:threadId},recursionLimit:Infinity,callbacks:[],durability:'sync' as const};
-  const graph=new StateGraph(State)
-    .addNode('observe',async()=>{port.guard();const observed=await port.observe();return {input:observed.messages,userSeq:observed.userSeq};})
-    .addNode('decide',async state=>{
-      port.guard();const reply=await port.decide([...state.input,...fromLangChainMessages(state.transcript)]);port.guard();
-      if(await port.changed(state.userSeq))return {transcript:reply.compacted?[]:state.transcript,route:'observe' as const};
-      const response=reply.response;
-      if(!response.calls.length){
-        if(!response.text.trim()){port.record({id:'empty',name:'model',arguments:'{}'},{error:'MODEL_EMPTY_REPLY'});return {route:'observe' as const};}
-        return {text:response.text,route:'finish' as const};
+  let protectedMessages:BaseMessage[]=[],userSeq=0,emptyReplies=0;
+  let batch={slots:new Map<string,Slot>(),frozen:false};
+  const model=new CallbackChatModel(async messages=>(await port.decide(messages,'decision')).response);
+  const summaryModel=new CallbackChatModel(async messages=>(await port.decide(messages,'summary')).response);
+  const tools=executorTools.map(definition=>{
+    const schema:z.ZodObject=executorArguments[definition.name as keyof typeof executorArguments];
+    return tool(async(args,config)=>{
+      const slot=batch.slots.get(config.toolCall?.id??'');if(!slot)throw Error('TOOL_BATCH_MISMATCH');
+      if(['ask','requestAccountUpdate'].includes(slot.call.name)){
+        batch.frozen=true;slot.interrupted=true;
+        // 不在 interrupt 之前创建协助 ID、发送网络请求或保存截图。
+        const resumed=interrupt<HelpInterrupt,HelpResume>({kind:'execution-help',call:slot.call,args});
+        port.guard();return JSON.stringify(await port.consumeHelp(resumed.request,resumed.answer))??'null';
       }
-      // ask 的问题只由云端协助图发布，模型随工具附带的提问不再先行回显。
-      if(response.text.trim()&&!response.calls.some(call=>['ask','offerAccountSave','requestAccountUpdate'].includes(call.name)))await port.say(response.text,response.calls[0].id);
-      const message:AIMessage=modelResponseToAIMessage(response);
-      return {transcript:[...(reply.compacted?[]:state.transcript),message],calls:response.calls,index:0,help:null,route:'dispatch' as const};
-    })
-    .addNode('dispatch',async state=>{
-      port.guard();
-      if(await port.changed(state.userSeq))return {transcript:[...state.transcript,...state.calls.slice(state.index).map(call=>resultMessage(call,{error:'INSTRUCTIONS_CHANGED',executed:false}))],route:'observe' as const};
-      return {route:['ask','requestAccountUpdate'].includes(state.calls[state.index].name)?'registerHelp' as const:'tools' as const};
-    })
-    .addNode('tools',async state=>{
-      const call=state.calls[state.index];
-      try{return {result:await invokeTool(call,args=>port.perform(call,args,state.userSeq))};}
-      catch(error){port.guard();await port.error(call,error as Error);return {result:{error:(error as Error).message}};}
-    })
-    .addNode('registerHelp',async state=>{
-      const call=state.calls[state.index];
-      try{const registered=await invokeTool(call,args=>port.registerHelp(args,call)) as {request:ExecutionHelp;answer:HelpResponse};return {help:registered.request,answer:registered.answer,route:registered.answer.ready?'consumeHelp' as const:'awaitHelp' as const};}
-      catch(error){port.guard();await port.error(call,error as Error);return {result:{error:(error as Error).message},route:'feedback' as const};}
-    })
-    // No network, browser, messages, IDs or credentials before interrupt: this
-    // node is re-entered from the beginning when Command.resume is delivered.
-    .addNode('awaitHelp',state=>({answer:interrupt<{helpId:string},HelpResponse>({helpId:state.help!.id})}))
-    .addNode('consumeHelp',async state=>{
-      port.guard();const call=state.calls[state.index];
-      try{return {result:await port.consumeHelp(state.help!,state.answer!)};}
-      catch(error){port.guard();await port.error(call,error as Error);return {result:{error:(error as Error).message}};}
-    })
-    .addNode('feedback',state=>{
-      const call=state.calls[state.index];port.record(call,state.result);
-      const transcript=[...state.transcript,resultMessage(call,state.result)];
-      // Assistance may change intent. Return to observation instead of running
-      // stale calls from the same model batch, preserving native message pairs.
-      if(['ask','requestAccountUpdate'].includes(call.name))return {transcript:[...transcript,...state.calls.slice(state.index+1).map(next=>resultMessage(next,{error:'REPLAN_AFTER_HELP',executed:false}))],route:'observe' as const};
-      return {transcript,index:state.index+1,route:state.index+1<state.calls.length?'dispatch' as const:'observe' as const};
-    })
-    .addNode('finish',async state=>{
-      port.guard();if(await port.changed(state.userSeq))return {route:'observe' as const};
-      const finished=await port.finish(state.text,state.userSeq);
-      return {route:finished?'finish' as const:'observe' as const};
-    })
-    .addEdge(START,'observe').addEdge('observe','decide')
-    .addConditionalEdges('decide',s=>s.route,['observe','dispatch','finish'])
-    .addConditionalEdges('dispatch',s=>s.route,['observe','registerHelp','tools'])
-    .addEdge('tools','feedback')
-    .addConditionalEdges('registerHelp',s=>s.route,['awaitHelp','consumeHelp','feedback'])
-    .addEdge('awaitHelp','consumeHelp').addEdge('consumeHelp','feedback')
-    .addConditionalEdges('feedback',s=>s.route,['observe','dispatch'])
-    .addConditionalEdges('finish',s=>s.route==='finish'?END:'observe',[END,'observe'])
-    .compile({checkpointer:saver});
+      return JSON.stringify(await port.perform(slot.call,args,userSeq))??'null';
+    },{name:definition.name,description:definition.description,schema});
+  });
+  const boundary=createMiddleware({
+    name:'ExecutorBoundary',
+    beforeModel:async()=>{
+      port.guard();const observed=await port.observe();protectedMessages=toLangChainMessages(observed.messages);userSeq=observed.userSeq;
+      if(observed.history?.length)return {messages:toLangChainMessages(observed.history)};
+    },
+    wrapModelCall:async(request,handler)=>{
+      port.guard();port.history?.(fromLangChainMessages(request.messages));
+      return handler({...request,messages:[...protectedMessages,...request.messages]});
+    },
+    afterModel:async state=>{
+      port.guard();const response=state.messages.at(-1);if(!(response instanceof AIMessage))throw Error('MODEL_INVALID_RESPONSE');
+      const calls=aiMessageToModelResponse(response).calls;
+      batch={slots:new Map(),frozen:false};let prior=Promise.resolve();
+      const invalid=new Set(response.invalid_tool_calls?.map(call=>call.id));
+      for(const call of calls){
+        if(!call.id||batch.slots.has(call.id))throw Error('MODEL_TOOL_CALL_ID_INVALID');
+        let resolve=()=>{};const promise=new Promise<void>(accept=>{resolve=accept;});const done={promise,resolve};batch.slots.set(call.id,{call,prior,done,invalid:invalid.has(call.id),interrupted:false});prior=done.promise;
+      }
+      if(calls.length){
+        emptyReplies=0;
+        if(typeof response.content==='string'&&response.content.trim()&&!calls.some(call=>['ask','offerAccountSave','requestAccountUpdate'].includes(call.name)))await port.say(response.content,calls[0].id);
+      }
+      // 框架只调度原生 tool_calls。无效 JSON 保留原 ID 和顺序，进入校验反馈，绝不执行。
+      if(invalid.size){
+        const updated=new AIMessage({...response,id:response.id,invalid_tool_calls:[],tool_calls:calls.map(call=>({id:call.id,name:call.name,args:invalid.has(call.id)?{}:JSON.parse(call.arguments),type:'tool_call' as const}))});
+        return {messages:[updated]};
+      }
+    },
+    wrapToolCall:async(request,handler)=>{
+      const slot=batch.slots.get(request.toolCall.id??'');if(!slot)throw Error('TOOL_BATCH_MISMATCH');
+      // 框架 v2 可同时派发多个 Send。先等待原始调用序号，再进入 p-limit(1)；
+      // 不依赖回调抵达顺序或 maxConcurrency，且中断时余下调用均有无副作用反馈。
+      await slot.prior;
+      return serial(async()=>{
+        let result:ToolMessage;
+        try{
+          port.guard();
+          if(batch.frozen&&!slot.interrupted)result=resultMessage(slot.call,{error:'REPLAN_AFTER_HELP',executed:false});
+          else if(!slot.interrupted&&await port.changed(userSeq))result=resultMessage(slot.call,{error:'INSTRUCTIONS_CHANGED',executed:false});
+          else{
+            if(slot.invalid)throw Error('MODEL_TOOL_ARGUMENTS_INVALID');
+            if(!Object.hasOwn(executorArguments,slot.call.name))throw Error('TOOL_NOT_AVAILABLE');
+            const schema=executorArguments[slot.call.name as keyof typeof executorArguments];
+            if(!schema.safeParse(request.toolCall.args).success)throw Error('TOOL_ARGUMENTS_INVALID');
+            const output=await handler(request);if(!(output instanceof ToolMessage))throw Error('TOOL_RESULT_INVALID');result=output;
+          }
+        }catch(error){
+          if(isGraphInterrupt(error))throw error;
+          port.guard();await port.error(slot.call,error as Error);result=resultMessage(slot.call,{error:(error as Error).message});
+        }finally{slot.done.resolve();}
+        port.record(slot.call,typeof result.content==='string'?JSON.parse(result.content):result.content);
+        return result;
+      });
+    },
+  });
+  const summary=protectedSummary({model:summaryModel,budget:()=>port.budget?.()??{contextTokens:16000,outputTokens:4096},protectedMessages:()=>protectedMessages,tools:()=>executorTools,guard:()=>port.guard()});
+  const agent=createAgent({model,tools,version:'v2',checkpointer:saver,middleware:[boundary,summary]});
   try{
-    let input:typeof State.Update|Command<HelpResponse,typeof State.Update,never>={};
+    let input:Parameters<typeof agent.invoke>[0]={messages:[new HumanMessage('依据受保护的用户原文、当前现场和执行历史处理任务。')]};
     for(;;){
-      await graph.invoke(input,config);
-      const state=await graph.getState(config);
-      if(!state.next.length)return;
-      if(!state.tasks.some(task=>task.interrupts?.length)||!state.values.help)throw Error('GRAPH_UNEXPECTED_PAUSE');
-      const request=state.values.help as ExecutionHelp;
-      port.guard();const answer=await port.pollHelp(request);port.guard();
-      input=new Command<HelpResponse,typeof State.Update,never>({resume:answer});
+      const result=await agent.invoke(input,config);
+      const state=await agent.graph.getState(config);
+      const pauses=state.tasks.flatMap(task=>task.interrupts??[]);
+      if(pauses.length){
+        if(pauses.length!==1)throw Error('GRAPH_UNEXPECTED_PAUSE');
+        const pause=pauses[0].value as HelpInterrupt;
+        if(pause.kind!=='execution-help'||!batch.slots.has(pause.call.id))throw Error('GRAPH_UNEXPECTED_PAUSE');
+        port.guard();const registered=await port.registerHelp(pause.args,pause.call);
+        const answer=registered.answer.ready?registered.answer:await port.pollHelp(registered.request);port.guard();
+        input=new Command({resume:{request:registered.request,answer} satisfies HelpResume});continue;
+      }
+      if(state.next.length)throw Error('GRAPH_UNEXPECTED_PAUSE');
+      const last=result.messages.at(-1),text=last instanceof AIMessage&&typeof last.content==='string'?last.content:'';
+      port.guard();
+      if(!text.trim()){
+        if(++emptyReplies>1)throw Error('MODEL_EMPTY_REPLY');
+        port.record({id:'empty',name:'model',arguments:'{}'},{error:'MODEL_EMPTY_REPLY'});
+        input={messages:[new HumanMessage('上一条模型回复为空。请依据已有事实调用必要工具或给出非空最终回复。')]};continue;
+      }
+      if(!await port.changed(userSeq)&&await port.finish(text,userSeq))return;
+      input={messages:[new HumanMessage('最终提交前收到新指令，请结合最新用户原文继续。已执行操作保留，不要自动重放。')]};
     }
   }finally{await saver.deleteThread(threadId);}
 }

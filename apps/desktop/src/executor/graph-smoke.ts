@@ -19,7 +19,7 @@ export async function smokeExecutionGraph(){
         const ids=messages.filter(m=>m.role==='tool').map(m=>m.tool_call_id);
         paired=ids.length===2&&ids[0]==='smoke_action'&&ids[1]==='smoke_help';
       }
-      return {compacted:false,response:{text:decisions===1?'':'安装探针已完成',calls:decisions===1?calls:[],usage:{input:null,output:null}}};
+      return {response:{text:decisions===1?'':'安装探针已完成',calls:decisions===1?calls:[],usage:{input:null,output:null}}};
     },
     changed:async()=>false,
     perform:async(call,args)=>{if(call.name!=='act'||args.instruction!=='验证串行工具调度')throw Error('GRAPH_SMOKE_TOOL_INVALID');actions++;return {observed:true};},
