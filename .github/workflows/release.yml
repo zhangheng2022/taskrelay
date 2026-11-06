@@ -97,6 +97,7 @@ jobs:
     uses: ./.github/workflows/windows-package.yml
     with:
       source-sha: ${{ needs.preflight.outputs.sha }}
+      archive-package: true
   production:
     needs:
       - preflight

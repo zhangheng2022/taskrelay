@@ -144,7 +144,7 @@ Main 在产生浏览器副作用前记录 SQLite 检查点。云端也先记录�
 
 `.github/workflows/ci.yml` 在 PR、master 推送、手动触发及每周一北京时间 09:00 执行。检查格式、Oxlint 类型规则、TypeScript、仓库一致性、Windows/Ubuntu 测试、Ubuntu c8 覆盖率、CodeQL security-extended 实际结果、Gitleaks、High/Critical 依赖漏洞、actionlint/ShellCheck/PSScriptAnalyzer 和 Web 构建。执行器相关改动追加托管 Windows 打包及实际安装 smoke。固定名称 quality-gate 对失败、取消、缺少报告均关闭；仅明确无关的安装作业可跳过。
 
-所有 Actions 固定提交 SHA，PR 不接触生产 Environment，默认 contents:read，CodeQL 仅额外获得 security-events:write。统一命令为 `lint`、`format:check`、`format`、`test:coverage`、`check:workflows`、`quality`。Ubuntu 覆盖率下限由 `scripts/coverage-baseline.json` 固定，后续不可降低；后续 PR 修改的可执行行至少 80%，纯格式差异归一化后排除。报告保留七天，不自动发评论或调用外部审查模型。
+所有 Actions 固定提交 SHA，PR 不接触生产 Environment，默认 contents:read，CodeQL 仅额外获得 security-events:write。统一命令为 `lint`、`format:check`、`format`、`test:coverage`、`check:workflows`、`quality`。Ubuntu 覆盖率下限由 `scripts/coverage-baseline.json` 固定，后续不可降低；后续 PR 修改的可执行行至少 80%，纯格式差异归一化后排除。报告保留七天，不自动发评论或调用外部审查模型。质量检查只保存 Windows 验收报告，正式发布才保存完整安装包附件。
 
 README 负责使用入口与状态，CHANGELOG 记录客户端版本的变更，ACCEPTANCE 保留逐项证据。需要发布时从明确、干净的源码提交构建，先完成 make，再取得本次打包/实际安装 smoke 和系统入口证明，整理脱敏附件后发布预览版。不得将含本机绝对路径的原始清单、Profile 或诊断数据库上传为公开附件，也不得复用另一版本的报告。自动更新通道的实际发布状态见验收台账。
 

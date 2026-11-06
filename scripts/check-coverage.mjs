@@ -6,6 +6,8 @@ import prettier from "prettier";
 
 export function assertFloors(summary, floors, previous) {
   for (const key of ["lines", "branches", "functions"]) {
+    if (!Number.isFinite(floors[key]) || floors[key] < 0 || floors[key] > 100)
+      throw Error(`COVERAGE_FLOOR_INVALID:${key}`);
     if (!Number.isFinite(summary[key]?.pct) || !(summary[key]?.total > 0))
       throw Error(`COVERAGE_REPORT_INVALID:${key}`);
     if (previous && floors[key] < previous[key]) throw Error(`COVERAGE_FLOOR_DECREASED:${key}`);

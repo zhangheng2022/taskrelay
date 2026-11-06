@@ -72,6 +72,8 @@ test("覆盖率不能降低基线或漏报，差异行只按新增范围计数",
   assert.throws(() => assertFloors(summary, { ...floor, lines: 79 }, floor));
   assert.throws(() => assertFloors(summary, { ...floor, branches: 90 }));
   assert.throws(() => assertFloors({}, floor));
+  assert.throws(() => assertFloors(summary, {}), /FLOOR_INVALID/);
+  assert.throws(() => assertFloors(summary, { ...floor, lines: NaN }), /FLOOR_INVALID/);
   assert.deepEqual([...changedLines("@@ -2,3 +4,2 @@\n@@ -9 +8,0 @@")], [4, 5]);
   assert.equal(
     parseLcov("SF:apps/a.ts\nDA:4,0\nDA:5,2\nend_of_record").get("apps/a.ts")?.get(5),
