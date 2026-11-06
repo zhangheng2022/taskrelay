@@ -11,7 +11,7 @@ const files =
 const desktop =
   !files ||
   files.some((file) =>
-    /^(apps\/desktop\/|packages\/|resources\/|scripts\/|\.github\/|package(?:-lock)?\.json|tsconfig\.json)/.test(
+    /^(apps\/desktop\/|packages\/|resources\/|scripts\/|\.github\/|package(?:-lock)?\.json|tsconfig\.json|tests\/(?:executor-|browser-state-|local-cdp\.|stagehand-|updater\.|ui-executor-))/.test(
       file,
     ),
   );
