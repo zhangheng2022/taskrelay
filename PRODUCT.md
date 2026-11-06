@@ -6,7 +6,7 @@
 web
 
 ## Stack
-React、Vite、TypeScript、shadcn/ui、Tailwind CSS；Electron Forge Windows x64 执行器；Stagehand 4.4.0；Cloudflare Workers、Hono、D1 与加密 SQLite Durable Objects。npm workspaces，生产不绑定 R2。
+React、Vite、TypeScript、shadcn/ui、Tailwind CSS；TanStack Query、React Hook Form＋Zod、Better Auth React、Hono RPC；Electron Forge Windows x64 执行器；Stagehand 4.4.0；Cloudflare Workers、Hono、D1 与加密 SQLite Durable Objects。npm workspaces，生产不绑定 R2。
 
 ## Users
 注册用户在网站拥有隔离的浏览器任务空间，支持手机访问。管理员维护共享模型与可信 Windows 设备池。公开注册默认关闭。

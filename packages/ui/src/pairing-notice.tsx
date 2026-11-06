@@ -1,3 +1,4 @@
+import {createApi,rpcData} from './api';
 import { useEffect, useState } from "react";
 import { Monitor } from "lucide-react";
 import type { Transport } from "../../contracts/src/index";
@@ -26,9 +27,10 @@ export function PairingNotice({ transport, refresh }: {
   useEffect(() => {
     if (!code) return;
     let live = true;
-    void transport.request<Pairing>("GET", `/api/admin/pairings/${encodeURIComponent(code)}`)
+    void rpcData(createApi(transport).api.admin.pairings[':code'].$get({param:{code}}))
       .then((value) => {
         if (!live) return;
+        if('error' in value)throw Error(value.error);
         setPair(value);
         if (value.approved) clearLink(code);
       })
@@ -52,7 +54,7 @@ export function PairingNotice({ transport, refresh }: {
     setBusy(true);
     setError("");
     try {
-      await transport.request("POST", `/api/admin/pairings/${encodeURIComponent(code)}/approve`);
+      await rpcData(createApi(transport).api.admin.pairings[':code'].approve.$post({param:{code}}));
       setPair({ ...pair, approved: true });
       clearLink(code);
       await refresh();

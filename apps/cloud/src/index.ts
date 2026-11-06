@@ -8,13 +8,11 @@ import { bodyLimit } from "hono/body-limit";
 import { z,ZodError } from "zod";
 import { auth } from "./auth";
 import { pairing } from "./pairing";
-import { user } from "./user";
-import { admin } from "./admin";
+import {browserApi} from './browser-api';
 import { authHandler } from "./identity";
 import { PROTOCOL_VERSION, HISTORY_EPOCH } from "../../../packages/contracts/src/index";
 import { quotaReset } from "./tenancy";
 import { runner } from "./runner";
-import { conversations } from './ai/conversations';
 import { tick, now, type Row } from "./store";
 import {advanceDispatchGroups} from './account-dispatch';
 import {cleanupAccountCards} from './account-cards';
@@ -73,9 +71,7 @@ app.get('/api/device/events',async c=>{
  if(c.req.header('upgrade')?.toLowerCase()!=='websocket')return c.json({error:'WEBSOCKET_REQUIRED'},400);
  return c.env.NOTIFICATIONS.getByName('device:'+c.get('deviceId')).fetch(new Request('https://notification.internal/',{headers:{Upgrade:'websocket','x-subscriber':JSON.stringify({device:c.get('deviceId'),expires:Date.now()+3600000})}}));
 });
-app.route("/api/user", user);
-app.route('/api/user',conversations);
-app.route("/api/admin", admin);
+app.route('/',browserApi);
 app.get('/api/auth/config',c=>c.json({registrationOpen:c.env.REGISTRATION_OPEN==='1',siteKey:c.env.TURNSTILE_SITE_KEY||''}));
 app.all('/api/auth/*',c=>authHandler(c.req.raw,c.env));
 app.post('/api/device/upgrade',async c=>{

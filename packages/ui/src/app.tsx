@@ -62,6 +62,8 @@ import { TaskCompose } from "./task-compose";
 import { TaskSummary, scheduleLabel } from "./task-summary";
 import { ErrorText, Status, formatDate, LoadingState } from "./feedback";
 import { useTheme } from "./use-theme";
+import {QueryBoundary,useTransportQuery} from './queries';
+import {createApi,rpcData} from './api';
 export { ErrorText, Status, formatDate } from "./feedback";
 const empty: Snapshot = {
   tasks: [],
@@ -74,21 +76,19 @@ const empty: Snapshot = {
 };
 export function App({ transport }: { transport: Transport }) {
   return (
-    <TooltipProvider>
+    <QueryBoundary owner={transport}><TooltipProvider>
       <SidebarProvider className="h-dvh min-h-0">
         <Workspace transport={transport} />
       </SidebarProvider>
-    </TooltipProvider>
+    </TooltipProvider></QueryBoundary>
   );
 }
 // 工作空间只编排导航、云端快照和当前运行选择；会话读写交给共享聊天组件。
 // 通知与轮询共用加载入口，写操作完成后额外刷新，避免旧快照覆盖操作结果。
 function Workspace({ transport }: { transport: Transport }) {
-  const [snapshot, setSnapshot] = useState<Snapshot | null>(null),
-    [error, setError] = useState(""),
-    [actionError, setActionError] = useState(""),
-    [busy, setBusy] = useState(false),
-    [refreshing, setRefreshing] = useState(false);
+  const workspace=useTransportQuery<Snapshot>(transport,['workspace'],signal=>rpcData(createApi(transport).api.user.snapshot.$get({}, {init:{signal}})),transport.subscribe?60000:15000);
+  const snapshot=workspace.data??null,error=workspace.error?.message??'',refreshing=workspace.isFetching;
+  const [actionError, setActionError] = useState(""),[busy, setBusy] = useState(false);
   const [page, setPage] = useState<"tasks" | "runs" | "settings">("tasks"),
     [selected, setSelected] = useState<string | null>(
       () => location.hash.slice(1) || null,
@@ -101,58 +101,13 @@ function Workspace({ transport }: { transport: Transport }) {
   const [chatEpoch,setChatEpoch]=useState(0);
   const [theme, setTheme] = useTheme();
   const { setOpenMobile } = useSidebar();
-  const loading = useRef<Promise<void> | null>(null),
-    mounted = useRef(true);
   const focusComposer = useRef(false);
-  const load = useCallback(
-    async (fresh = false) => {
-      // A mutation must refresh after an older poll has finished, not reuse its snapshot.
-      while (loading.current) {
-        await loading.current;
-        if (!fresh) return;
-      }
-      setRefreshing(true);
-      const request = (async () => {
-        try {
-          const data = await transport.request<Snapshot>(
-            "GET",
-            "/api/user/snapshot",
-          );
-          if (mounted.current) {
-            setSnapshot(data);
-            setError("");
-          }
-        } catch (e) {
-          if (mounted.current) setError((e as Error).message || "OFFLINE");
-        }
-      })();
-      loading.current = request;
-      try {
-        await request;
-      } finally {
-        if (loading.current === request) loading.current = null;
-        if (mounted.current) setRefreshing(false);
-      }
-    },
-    [transport],
-  );
-  const refresh = useCallback(() => load(true), [load]);
-  useEffect(() => {
-    mounted.current = true;
-    void load();
-    const timer = setInterval(() => {if(!document.hidden)void load();}, transport.subscribe ? 60000 : 15000);
-    const updates=transport.subscribe?.(()=>void load());
-    return () => {
-      mounted.current = false;
-      clearInterval(timer);
-      updates?.();
-    };
-  }, [load, transport]);
-  async function act(path: string, body?: unknown) {
+  const refresh=useCallback(async()=>{await workspace.refresh().catch(()=>{});},[workspace.refresh]);
+  async function act(action:()=>Promise<unknown>) {
     setBusy(true);
     setActionError("");
     try {
-      await transport.request("POST", path, body);
+      await action();
       await refresh();
       return true;
     } catch (e) {
@@ -372,9 +327,7 @@ function Workspace({ transport }: { transport: Transport }) {
                     <DropdownMenuItem
                       disabled={offline || busy || !!activeRun}
                       onSelect={() =>
-                        void act(`/api/user/tasks/${task.id}/run`, {
-                          requestId: crypto.randomUUID(),
-                        })
+                        void act(()=>createApi(transport).api.user.tasks[':id'].run.$post({param:{id:task.id},json:{requestId:crypto.randomUUID()}}))
                       }
                     >
                       立即运行
@@ -383,9 +336,7 @@ function Workspace({ transport }: { transport: Transport }) {
                     <DropdownMenuItem
                       disabled={offline || busy}
                       onSelect={() =>
-                        void act(`/api/user/tasks/${task.id}/state`, {
-                          enabled: task.status !== "active",
-                        })
+                        void act(()=>createApi(transport).api.user.tasks[':id'].state.$post({param:{id:task.id},json:{enabled:task.status!=='active'}}))
                       }
                     >
                       {task.status === "active" ? "暂停调度" : "启用调度"}
@@ -407,7 +358,7 @@ function Workspace({ transport }: { transport: Transport }) {
             <div className="min-w-0 flex-1">
               <ErrorText error={error} />
             </div>
-            <Button variant="outline" size="sm" disabled={refreshing} onClick={() => void load()}>
+            <Button variant="outline" size="sm" disabled={refreshing} onClick={() => void refresh()}>
               {refreshing ? "正在重新连接…" : "重新连接"}
             </Button>
 

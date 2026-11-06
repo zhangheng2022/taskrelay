@@ -2,8 +2,9 @@
  * 账号保存、域名匹配与凭据版本的唯一入口。用户设置写入下一版本，执行只读取领取时固定的版本；
  * 站点允许范围用于凭据和状态归属，不限制普通浏览。密文沿用既有 MASTER_KEY 和 account AAD。
  */
+import {validator} from 'hono/validator';
 import { z } from 'zod';
-import type { Hono } from 'hono';
+import { Hono } from 'hono';
 import type { AppEnv, Variables } from './env';
 import type { TaskRun } from '../../../packages/contracts/src/index';
 import { publicUrl } from '../../../packages/contracts/src/security';
@@ -75,14 +76,18 @@ export async function createAccount(env:AppEnv,userId:string,input:AccountInput)
   ]);
   return {id};
 }
-export function registerAccountRoutes(router:Router) {
-  router.post('/accounts',async c=>c.json(await createAccount(c.env,c.get('userId'),accountInputSchema.parse(await c.req.json())),201));
-  router.get('/accounts/:id',async c=>{
+const accountRoutesBase =new Hono<{Bindings:AppEnv;Variables:Variables}>();
+
+const accountUpdateInput=accountInputSchema.partial().extend({expectedCredentialVersion:z.number().int().positive()}).strict();
+const accountStateClearInput=z.object({expectedStateEpoch:z.number().int().positive()}).strict();
+export const accountRoutes=accountRoutesBase
+.post('/accounts',validator('json',(value:z.input<typeof accountInputSchema>)=>accountInputSchema.parse(value)), async c=>c.json(await createAccount(c.env,c.get('userId'),c.req.valid('json')),201))
+.get('/accounts/:id',async c=>{
     const row=await ownAccount(c.env,c.get('userId'),c.req.param('id'));
     return c.json({account:accountSummary(row),...await unseal<AccountSecret>(row.secret,c.env.MASTER_KEY,`account:${row.id}`)});
-  });
-  router.patch('/accounts/:id',async c=>{
-    const body=accountInputSchema.partial().extend({expectedCredentialVersion:z.number().int().positive()}).strict().parse(await c.req.json());
+  })
+.patch('/accounts/:id',validator('json',(value:z.input<typeof accountUpdateInput>)=>accountUpdateInput.parse(value)), async c=>{
+    const body=c.req.valid('json');
     const row=await ownAccount(c.env,c.get('userId'),c.req.param('id'));
     if(row.credential_version!==body.expectedCredentialVersion)throw Error('ACCOUNT_VERSION_CONFLICT');
     const previous=await unseal<AccountSecret>(row.secret,c.env.MASTER_KEY,`account:${row.id}`);
@@ -106,13 +111,12 @@ export function registerAccountRoutes(router:Router) {
     ]);
     if(!writes[0].meta.changes)throw Error('ACCOUNT_VERSION_CONFLICT');
     return c.json({account:accountSummary(await ownAccount(c.env,c.get('userId'),row.id))});
-  });
-  router.post('/accounts/:id/clear-state',async c=>{
-    const {expectedStateEpoch}=z.object({expectedStateEpoch:z.number().int().positive()}).strict().parse(await c.req.json());
+  })
+.post('/accounts/:id/clear-state',validator('json',(value:z.input<typeof accountStateClearInput>)=>accountStateClearInput.parse(value)), async c=>{
+    const {expectedStateEpoch}=c.req.valid('json');
     const row=await ownAccount(c.env,c.get('userId'),c.req.param('id'));
     const saved=await c.env.DB.prepare(`UPDATE accounts SET state_epoch=state_epoch+1,state_object_key=NULL,previous_state_object_key=NULL,
       sync_status='none',sync_error=NULL,login_reset=1 WHERE id=? AND user_id=? AND state_epoch=?`).bind(row.id,c.get('userId'),expectedStateEpoch).run();
     if(!saved.meta.changes)throw Error('ACCOUNT_VERSION_CONFLICT');
     return c.json({account:accountSummary(await ownAccount(c.env,c.get('userId'),row.id))});
   });
-}

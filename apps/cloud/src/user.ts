@@ -1,4 +1,5 @@
 /** 用户工作空间接口：先核对资源归属，再读取任务/运行/图片或提交账号与控制请求；管理员配置单独挂载。 */
+import {validator} from 'hono/validator';
 import { conditionsSchema } from './ai/commands';
 import {getEvidence} from './evidence';
 import {Buffer} from 'node:buffer';
@@ -10,6 +11,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { and, desc, eq } from "drizzle-orm";
 import {
   scheduleSchema,
+  modelInputSchema,
   idSchema,
   type TaskDefinition,
 } from "../../../packages/contracts/src/index";
@@ -35,12 +37,12 @@ import {
   validateEndpoint,
 } from "./models";
 import { seal, unseal } from "./crypto";
-import { accountMatchesDomain, accountSummary, registerAccountRoutes } from './accounts';
-import { registerAccountCardRoutes } from './account-cards';
+import { accountMatchesDomain, accountSummary, accountRoutes } from './accounts';
+import { accountCardRoutes } from './account-cards';
 import { cancelDispatchGroup, enqueueTaskDispatch } from './account-dispatch';
-export const user = new Hono<{ Bindings: AppEnv; Variables: Variables }>();
-export const admin = new Hono<{ Bindings: AppEnv; Variables: Variables }>();
-user.use('*', async (c,next) => {
+const userBase = new Hono<{ Bindings: AppEnv; Variables: Variables }>();
+const adminBase = new Hono<{ Bindings: AppEnv; Variables: Variables }>();
+userBase.use('*', async (c,next) => {
  const path=c.req.path.replace('/api/user','');
  const match=/^\/(tasks|runs|challenges|artifacts)\/([^/]+)/.exec(path);
  if(match && !(match[1]==='tasks' && ['compose','draft'].includes(match[2]))) {
@@ -56,8 +58,18 @@ user.use('*', async (c,next) => {
 
  return next();
 });
-user.get('/me', async c=>c.json({id:c.get('userId'),email:c.get('member').email,role:c.get('member').role,quota:await quotaSummary(c.env.DB,c.get('userId'),c.get('member'))}));
-user.get("/snapshot", async (c) => {
+
+const taskConditionsInput=z.object({requestId:idSchema,runId:idSchema,expectedVersion:z.number().int(),conditions:conditionsSchema,
+    schedule:scheduleSchema,modelId:idSchema,accountId:idSchema.nullable()}).strict();
+const taskStateInput=z
+      .object({ enabled: z.boolean() });
+const runRequestInput=z
+    .object({ requestId: idSchema });
+const retentionInput=z
+    .object({ retentionDays: z.number().int().min(1).max(365) });
+export const user=userBase
+.get('/me', async c=>c.json({id:c.get('userId'),email:c.get('member').email,role:c.get('member').role,quota:await quotaSummary(c.env.DB,c.get('userId'),c.get('member'))}))
+.get("/snapshot", async (c) => {
   if (
     c.env.DEV_MODE === "1" &&
     ["localhost", "127.0.0.1"].includes(new URL(c.req.url).hostname)
@@ -100,11 +112,11 @@ user.get("/snapshot", async (c) => {
       protocolVersion: x.protocol_version,
     })),
     challenges: [],
-    waitingHelp: r[5],
+    waitingHelp: r[5].map(row=>({id:String(row.id),runId:String(row.runId),taskId:String(row.taskId)})),
     serverTime: now(),
   });
-});
-user.get("/tasks", async (c) =>
+})
+.get("/tasks", async (c) =>
   c.json(
     (
       await drizzle(c.env.DB)
@@ -118,31 +130,11 @@ user.get("/tasks", async (c) =>
       nextRunAt: row.nextRunAt,
     })),
   ),
-);
-admin.post("/models", async (c) =>
-  c.json(await storeModel(c.env, await c.req.json()), 201),
-);
-admin.put("/models/:id", async (c) =>
-  c.json(
-    await storeModel(
-      c.env,
-      await c.req.json(),
-      idSchema.parse(c.req.param("id")),
-    ),
-  ),
-);
-admin.post("/models/:id/test", async (c) => {
-  const { profile } = await getModel(c.env, c.req.param("id"));
-  return c.json(await probe(c.env, profile.id, profile.version));
-});
-admin.post("/models/:id/vision", async (c) =>
-  c.json(await probeVision(c.env, c.req.param("id"))),
-);
-registerAccountRoutes(user);
-registerAccountCardRoutes(user);
-user.post('/tasks/:id/conditions',async c=>{
-  const b=z.object({requestId:idSchema,runId:idSchema,expectedVersion:z.number().int(),conditions:conditionsSchema,
-    schedule:scheduleSchema,modelId:idSchema,accountId:idSchema.nullable()}).strict().parse(await c.req.json());
+)
+.route('/',accountRoutes)
+.route('/',accountCardRoutes)
+.post('/tasks/:id/conditions',validator('json',(value:z.input<typeof taskConditionsInput>)=>taskConditionsInput.parse(value)), async c=>{
+  const b=c.req.valid('json');
   const id=c.req.param('id'),key='conditions:'+id+':'+b.requestId,digest=await hash(JSON.stringify(b));
   const prior=await c.env.DB.prepare('SELECT digest FROM idempotency WHERE key=?').bind(key).first<{digest:string}>();
   if(prior){if(prior.digest!==digest)throw Error('IDEMPOTENCY_CONFLICT');return c.json({id});}
@@ -172,11 +164,9 @@ user.post('/tasks/:id/conditions',async c=>{
   ]);
   if(!writes[1].meta.changes)throw Error('TASK_VERSION_CONFLICT');
   return c.json({id,version:task.version});
-});
-user.post("/tasks/:id/state", async (c) => {
-  const { enabled } = z
-      .object({ enabled: z.boolean() })
-      .parse(await c.req.json()),
+})
+.post("/tasks/:id/state", validator('json',(value:z.input<typeof taskStateInput>)=>taskStateInput.parse(value)), async (c) => {
+  const { enabled } = c.req.valid('json'),
     id = c.req.param("id");
   const row = await c.env.DB.prepare("SELECT * FROM tasks WHERE id=?")
     .bind(id)
@@ -200,11 +190,9 @@ user.post("/tasks/:id/state", async (c) => {
     .run();
   if(!saved.meta.changes)throw Error('TASK_CONTEXT_WITHDRAWN');
   return c.json({ ok: true });
-});
-user.post("/tasks/:id/run", async (c) => {
-  const { requestId } = z
-    .object({ requestId: idSchema })
-    .parse(await c.req.json());
+})
+.post("/tasks/:id/run", validator('json',(value:z.input<typeof runRequestInput>)=>runRequestInput.parse(value)), async (c) => {
+  const { requestId } = c.req.valid('json');
   const row = await c.env.DB.prepare("SELECT * FROM tasks WHERE id=?")
     .bind(c.req.param("id"))
     .first<Row>();
@@ -221,8 +209,8 @@ user.post("/tasks/:id/run", async (c) => {
   return c.json(
     await enqueueTaskDispatch(c.env.DB, task, `manual:${task.id}:${requestId}`),
   );
-});
-user.get("/runs/:id", async (c) => {
+})
+.get("/runs/:id", async (c) => {
   const run = await getRun(c.env.DB, c.req.param("id"));
   if (run.status === 'queued') run.queueReason = (await queueReasons(c.env.DB,c.get('userId'))).get(run.id);
   const [events, usage] = await c.env.DB.batch([
@@ -253,8 +241,8 @@ user.get("/runs/:id", async (c) => {
       };
     }),
   });
-});
-user.post("/runs/:id/cancel", async (c) => {
+})
+.post("/runs/:id/cancel", async (c) => {
   const id = c.req.param("id");
   await cancelDispatchGroup(c.env.DB,id);
   await c.env.DB.prepare(
@@ -263,25 +251,68 @@ user.post("/runs/:id/cancel", async (c) => {
     .bind(now(), id)
     .run();
   return c.json({ ok: true });
+})
+.get('/artifacts/:id',validator('query',(value:{format?:string|string[]})=>z.object({format:z.literal('data').optional()}).parse(value)),async (c) => {
+  const row = await c.env.DB.prepare(
+    "SELECT * FROM artifacts WHERE id=? AND expires_at>?",
+  )
+    .bind(c.req.param("id"), now())
+    .first<Row>();
+  if (!row) return c.json({ error: "ARTIFACT_EXPIRED" }, 404);
+  const object = await getEvidence(c.env,row.object_key);
+  if (!object) return c.json({ error: "ARTIFACT_EXPIRED" }, 404);
+  if (c.req.valid("query").format === "data") {
+    const bytes = Buffer.from(object);
+    return c.json({
+      dataUrl: `data:${row.content_type};base64,${bytes.toString("base64")}`,
+    });
+  }
+  return new Response(object, {
+    headers: {
+      "Content-Type": row.content_type,
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
 });
-admin.post("/devices/:id/revoke", async (c) => {
+export const admin=adminBase
+.post("/models", validator('json',(value:z.input<typeof modelInputSchema>)=>modelInputSchema.parse(value)), async (c) =>
+  c.json(await storeModel(c.env, c.req.valid('json')), 201),
+)
+.put("/models/:id", validator('json',(value:z.input<typeof modelInputSchema>)=>modelInputSchema.parse(value)), async (c) =>
+  c.json(
+    await storeModel(
+      c.env,
+      c.req.valid('json'),
+      idSchema.parse(c.req.param("id")),
+    ),
+  ),
+)
+.post("/models/:id/test", async (c) => {
+  const { profile } = await getModel(c.env, c.req.param("id"));
+  return c.json(await probe(c.env, profile.id, profile.version));
+})
+.post("/models/:id/vision", async (c) =>
+  c.json(await probeVision(c.env, c.req.param("id"))),
+)
+.post("/devices/:id/revoke", async (c) => {
   await c.env.DB.prepare("UPDATE devices SET revoked=1 WHERE id=?")
     .bind(c.req.param("id"))
     .run();
   return c.json({ ok: true });
-});
-admin.get("/pairings/:code", async (c) => {
+})
+.get("/pairings/:code", async (c) => {
   if (c.get("actor") !== "owner")
     return c.json({ error: "OWNER_REQUIRED" }, 403);
   const r = await c.env.DB.prepare(
     "SELECT name,code,expires_at AS expiresAt,approved FROM pairings WHERE code=? AND expires_at>?",
   )
     .bind(c.req.param("code"), now())
-    .first();
+    .first<{name:string;code:string;expiresAt:string;approved:number}>();
   if (!r) throw new Error("PAIRING_EXPIRED");
-  return c.json(r);
-});
-admin.post("/pairings/:code/approve", async (c) => {
+  return c.json({...r,approved:!!r.approved});
+})
+.post("/pairings/:code/approve", async (c) => {
   if (c.get("actor") !== "owner")
     return c.json({ error: "OWNER_REQUIRED" }, 403);
   const r = await c.env.DB.prepare(
@@ -302,31 +333,8 @@ admin.post("/pairings/:code/approve", async (c) => {
     c.env.DB.prepare("UPDATE pairings SET approved=1 WHERE id=?").bind(r.id),
   ]);
   return c.json({ ok: true });
-});
-user.get("/artifacts/:id", async (c) => {
-  const row = await c.env.DB.prepare(
-    "SELECT * FROM artifacts WHERE id=? AND expires_at>?",
-  )
-    .bind(c.req.param("id"), now())
-    .first<Row>();
-  if (!row) return c.json({ error: "ARTIFACT_EXPIRED" }, 404);
-  const object = await getEvidence(c.env,row.object_key);
-  if (!object) return c.json({ error: "ARTIFACT_EXPIRED" }, 404);
-  if (c.req.query("format") === "data") {
-    const bytes = Buffer.from(object);
-    return c.json({
-      dataUrl: `data:${row.content_type};base64,${bytes.toString("base64")}`,
-    });
-  }
-  return new Response(object, {
-    headers: {
-      "Content-Type": row.content_type,
-      "Cache-Control": "no-store",
-      "X-Content-Type-Options": "nosniff",
-    },
-  });
-});
-admin.get("/settings", async (c) =>
+})
+.get("/settings", async (c) =>
   c.json({
     retentionDays: Number(
       (
@@ -336,8 +344,8 @@ admin.get("/settings", async (c) =>
       )?.value ?? 30,
     ),
   }),
-);
-admin.get("/settings/check", async (c) => {
+)
+.get("/settings/check", async (c) => {
   const checks: Record<string, string> = {};
   for (const [name, check] of Object.entries({
     database: () => c.env.DB.prepare("SELECT 1 AS ok").first(),
@@ -386,11 +394,9 @@ admin.get("/settings/check", async (c) => {
     }
   }
   return c.json(checks);
-});
-admin.put("/settings", async (c) => {
-  const { retentionDays } = z
-    .object({ retentionDays: z.number().int().min(1).max(365) })
-    .parse(await c.req.json());
+})
+.put("/settings", validator('json',(value:z.input<typeof retentionInput>)=>retentionInput.parse(value)), async (c) => {
+  const { retentionDays } = c.req.valid('json');
   await c.env.DB.prepare(
     "UPDATE settings SET value=? WHERE key='retentionDays'",
   )

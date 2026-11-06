@@ -1,3 +1,4 @@
+import {createApi,rpcData} from './api';
 import {useState,useRef} from 'react';
 import type {TaskDefinition,TaskRun,Transport} from '../../contracts/src/index';
 import {useThread} from './use-thread';
@@ -41,7 +42,7 @@ export function Conversation({transport,task,run,runs=[],offline,refresh}: {
   }
   async function stop(){
     if(!run)return;setStopping(true);setError('');
-    try{await transport.request('POST',`/api/user/runs/${run.id}/cancel`,{});await refresh();}catch(e){setError((e as Error).message);}finally{setStopping(false);}
+    try{await rpcData(createApi(transport).api.user.runs[':id'].cancel.$post({param:{id:run.id}}));await refresh();}catch(e){setError((e as Error).message);}finally{setStopping(false);}
   }
   return <div className="flex min-h-0 flex-1 flex-col">
     <Thread followRequest={thread.sending?.id}>

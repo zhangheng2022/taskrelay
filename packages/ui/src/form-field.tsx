@@ -4,10 +4,12 @@ import { Field as ShadcnField, FieldLabel, FieldDescription } from "./components
 export function Field({
   label,
   hint,
+  error,
   children,
 }: {
   label: string;
   hint?: string;
+  error?: string;
   children: ReactNode;
 }) {
   const generated = useId();
@@ -16,15 +18,17 @@ export function Field({
     : null;
   const id = child?.props.id ?? generated;
   return (
-    <ShadcnField>
+    <ShadcnField data-invalid={!!error}>
       <FieldLabel htmlFor={id}>{label}</FieldLabel>
       {child
         ? cloneElement(child, {
             id,
             ...(hint ? { "aria-describedby": id + "-hint" } : {}),
+            ...(error ? { "aria-invalid": true, "aria-describedby": id + "-error" } : {}),
           })
         : children}
       {hint && <FieldDescription id={id + "-hint"}>{hint}</FieldDescription>}
+      {error && <FieldDescription id={id + '-error'} role="alert">{error}</FieldDescription>}
     </ShadcnField>
   );
 }

@@ -1,3 +1,4 @@
+import {createApi,rpcData} from './api';
 /** 清理交互只发送范围与幂等请求 ID，目标集合和恢复进度归服务端所有。
  * 对话框失败时保留同一个请求 ID；重新打开网页仍读取后台未完成作业。
  */
@@ -17,16 +18,16 @@ export function HistoryCleanup({transport,selection,onClose,onAccepted}:{transpo
  const submitting=useRef(false),accepted=useRef<string|null>(null);
  async function sync(){
   const version=revision.current;
-  const next=await transport.request<Job[]>('GET','/api/user/history-cleanups');
+  const next=await rpcData(createApi(transport).api.user['history-cleanups'].$get());
   if(version===revision.current&&Array.isArray(next)){setJobs(next);return next;}
   return [];
  }
- useEffect(()=>{let alive=true;const version=revision.current;void transport.request<Job[]>('GET','/api/user/history-cleanups').then(next=>{if(alive&&version===revision.current&&Array.isArray(next))setJobs(next);}).catch(()=>{});return()=>{alive=false;};},[transport]);
+ useEffect(()=>{let alive=true;const version=revision.current;void rpcData(createApi(transport).api.user['history-cleanups'].$get()).then(next=>{if(alive&&version===revision.current&&Array.isArray(next))setJobs(next);}).catch(()=>{});return()=>{alive=false;};},[transport]);
  useEffect(()=>{
   if(!jobs.length)return;
   let alive=true;
   let reading=false;
-  const timer=setInterval(()=>{if(reading)return;reading=true;const version=revision.current;void transport.request<Job[]>('GET','/api/user/history-cleanups').then(next=>{
+  const timer=setInterval(()=>{if(reading)return;reading=true;const version=revision.current;void rpcData(createApi(transport).api.user['history-cleanups'].$get()).then(next=>{
    if(!alive||version!==revision.current||!Array.isArray(next))return;
    setJobs(next);if(!next.length)setNotice('聊天记录已清理完成');
   }).catch(()=>{if(alive)setNotice('暂时无法读取清理进度，恢复连接后会继续更新');}).finally(()=>{reading=false;});},3000);
@@ -36,7 +37,7 @@ export function HistoryCleanup({transport,selection,onClose,onAccepted}:{transpo
   setPreview(null);setError('');accepted.current=null;
   if(!selection)return;
   let alive=true;
-  void transport.request<{chats:number;active:number}>('GET',`/api/user/history-cleanups-preview?scope=${selection.scope}${selection.targetId?`&targetId=${selection.targetId}`:''}`)
+  void rpcData(createApi(transport).api.user['history-cleanups-preview'].$get({query:{scope:selection.scope,...(selection.targetId?{targetId:selection.targetId}:{})}}))
    .then(value=>{if(alive)setPreview(value);}).catch(e=>{if(alive)setError(e.message);});
   return()=>{alive=false;};
  },[transport,selection,previewAttempt]);
@@ -45,7 +46,7 @@ export function HistoryCleanup({transport,selection,onClose,onAccepted}:{transpo
   submitting.current=true;setBusy(true);setError('');
   try{
    if(accepted.current!==selection.requestId){
-    const job=await transport.request<Job>('POST','/api/user/history-cleanups',{scope:selection.scope,targetId:selection.targetId??null,requestId:selection.requestId});
+    const job=await rpcData(createApi(transport).api.user['history-cleanups'].$post({json:{scope:selection.scope,targetId:selection.targetId??null,requestId:selection.requestId}}));
     accepted.current=selection.requestId;
     revision.current++;
     setJobs(prev=>[...prev.filter(j=>j.id!==job.id),job]);

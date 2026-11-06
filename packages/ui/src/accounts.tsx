@@ -7,6 +7,7 @@ import { Button } from './components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './components/ui/dialog';
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription } from './components/ui/empty';
 import { ErrorText, LoadFeedback } from './feedback';
+import {createApi,rpcData} from './api';
 
 function syncErrorDescription(reason?: string | null) {
   switch (reason) {
@@ -29,7 +30,7 @@ export function Accounts({ snapshot, transport, refresh }: { snapshot: Snapshot;
     if (clearing.current) return;
     clearing.current = true; setBusy(account.id); setError(''); setNotice('');
     try {
-      await transport.request('POST', `/api/user/accounts/${account.id}/clear-state`, { expectedStateEpoch: account.stateEpoch ?? 1 });
+      await rpcData(createApi(transport).api.user.accounts[':id']['clear-state'].$post({param:{id:account.id},json:{expectedStateEpoch:account.stateEpoch??1}}));
       setNotice(`已清除“${account.name}”的登录状态，下次使用时重新登录。`);
       await refresh();
     } catch (e) { setError((e as Error).message); }
@@ -65,20 +66,23 @@ function AccountDialog({ account, transport, onClose, onSaved }: { account: Site
   useEffect(() => {
     if (!account) return;
     let alive = true; setLoading(true); setLoaded(false); setError('');
-    void transport.request<{ account: SiteAccount; username: string }>('GET', `/api/user/accounts/${account.id}`).then(result => {
+    const controller=new AbortController();
+    void rpcData(createApi(transport).api.user.accounts[':id'].$get({param:{id:account.id}},{init:{signal:controller.signal}})).then(result => {
       if (!alive) return;
       setVersion(result.account.credentialVersion ?? 1);
       setValue({ name: result.account.name, origin: result.account.origin, username: result.username, password: '', businessDomains: (result.account.businessDomains ?? [new URL(result.account.origin).hostname]).join('\n'), loginOrigins: (result.account.loginOrigins ?? [result.account.origin]).join('\n') });
       setLoaded(true);
     }).catch(e => { if (alive) setError(e.message); }).finally(() => { if (alive) setLoading(false); });
-    return () => { alive = false; };
+    return () => { alive = false;controller.abort(); };
   }, [account?.id, transport, retry]);
   async function save(event: React.FormEvent) {
     event.preventDefault(); if (flight.current || loading) return;
     flight.current = true; setBusy(true); setError('');
     try {
       const body = accountFieldsBody(value);
-      await transport.request(account ? 'PATCH' : 'POST', account ? `/api/user/accounts/${account.id}` : '/api/user/accounts', account ? { ...body, password: value.password || undefined, expectedCredentialVersion: version } : body);
+      const accounts=createApi(transport).api.user.accounts;
+      if(account)await accounts[':id'].$patch({param:{id:account.id},json:{...body,password:value.password||undefined,expectedCredentialVersion:version}});
+      else await accounts.$post({json:body});
       setValue({ ...emptyAccountFields }); await onSaved();
     } catch (e) { setError((e as Error).message); }
     finally { flight.current = false; setBusy(false); }

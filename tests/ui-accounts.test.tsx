@@ -157,7 +157,7 @@ test('卡片切换忽略旧请求，离线禁止确认；暂不保存不发送�
   assert.ok(view.getByRole('button', { name: '保存账号' }).hasAttribute('disabled')); assert.equal(writes.length, 0);
   view.rerender(<ChatAttachments transport={transport} parts={[{ type: 'account-card', cardId: 'new' }]}/>);
   fireEvent.click(await view.findByRole('button', { name: '暂不保存' }));
-  await view.findByText('本次未保存账号。'); assert.deepEqual(writes, [{ path: '/api/user/account-cards/new/dismiss', body: {} }]);
+  await view.findByText('本次未保存账号。'); assert.deepEqual(writes, [{ path: '/api/user/account-cards/new/dismiss', body: undefined }]);
 });
 
 test('账号卡片保持在原聊天可操作，独立于过程折叠；未知组可以停止剩余账号', async () => {

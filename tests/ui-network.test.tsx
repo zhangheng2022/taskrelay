@@ -61,7 +61,7 @@ test('执行器读取状态前不显示可操作的假开关；断网执行中�
   assert.ok(view.getByRole('status').textContent?.includes('正在读取'));
   assert.ok(view.getByRole('switch',{name:'暂停领取新任务'}).hasAttribute('disabled'));
   await act(async()=>finish({paired:true,cloudUrl:'https://example.com',online:false,paused:false,autoStart:false,activeRunId:'demo',version:'演示',error:null,update:{phase:'current',release:null,progress:null,error:null,checkedAt:null}}));
-  assert.ok(view.getByText('连接中断，本机仍在执行'));
+  await view.findByText('连接中断，本机仍在执行');
   assert.ok(view.getByText(/正在自动重连/));
   fireEvent.click(view.getByRole('button',{name:'停止当前执行'}));
   await waitFor(()=>assert.equal(stops,1));

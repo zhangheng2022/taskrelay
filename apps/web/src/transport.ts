@@ -94,8 +94,8 @@ export function createWebTransport(): Transport {
         document.removeEventListener("visibilitychange", visibility);
       };
     },
-    request<T>(method: string, path: string, body?: unknown): Promise<T> {
-      return requestJson<T>(path, { method, body });
+    request<T>(method: string, path: string, body?: unknown, options?:{signal?:AbortSignal}): Promise<T> {
+      return requestJson<T>(path, { method, body,signal:options?.signal });
     },
   };
 }

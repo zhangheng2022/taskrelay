@@ -1,5 +1,5 @@
-import { useEffect,useState,useCallback } from 'react';
-import type { DesktopStatus,Transport } from '../../contracts/src/index';
+import { useEffect,useState } from 'react';
+import type { Transport } from '../../contracts/src/index';
 import { Button } from './components/ui/button';
 import { Input } from './components/ui/input';
 import { Switch } from './components/ui/switch';
@@ -8,13 +8,17 @@ import { Field,FieldLabel,FieldDescription,FieldGroup,FieldContent } from './com
 import { ErrorText, LoadingState } from './feedback';
 import { BrandMark } from './brand-mark';
 import { ExecutorUpdate } from './executor-update';
+import {QueryBoundary,useTransportQuery} from './queries';
 // Windows 状态窗口仅通过命名接口管理连接、领取开关、停止与更新；任务和聊天留在网站。
 // 本机状态与云端在线状态分别展示，因此断网时仍可停止正在执行的任务。
 export function ExecutorApp({executor}:{executor:NonNullable<Transport['desktop']>}) {
- const [status,setStatus]=useState<DesktopStatus|null>(null),[url,setUrl]=useState(''),[pair,setPair]=useState<{code:string}|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[note,setNote]=useState('');
- const [loadError,setLoadError]=useState('');
- const refresh=useCallback(async()=>{const value=await executor.status();setStatus(value);setUrl(v=>v||value.cloudUrl);setLoadError('');},[executor]);
- useEffect(()=>{let live=true;const load=()=>{if(live)void refresh().catch(e=>{if(live)setLoadError(e.message);});};load();const off=executor.subscribe(load);const timer=setInterval(load,5000);return()=>{live=false;off();clearInterval(timer);};},[executor,refresh]);
+ return <QueryBoundary owner={executor}><ExecutorStatus executor={executor}/></QueryBoundary>;
+}
+function ExecutorStatus({executor}:{executor:NonNullable<Transport['desktop']>}){
+ const query=useTransportQuery(executor,['executor-status'],()=>executor.status(),5000);
+ const status=query.data??null,loadError=query.error?.message??'',refresh=query.refresh;
+ const [url,setUrl]=useState(''),[pair,setPair]=useState<{code:string}|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[note,setNote]=useState('');
+ useEffect(()=>{if(status)setUrl(v=>v||status.cloudUrl);},[status?.cloudUrl]);
  useEffect(()=>{if(!pair)return;let live=true;const timer=setInterval(()=>{void executor.pairPoll().then(done=>{if(live&&done){setPair(null);void refresh();}}).catch(e=>{if(live){setError(e.message);setPair(null);}});},3000);return()=>{live=false;clearInterval(timer);};},[pair,executor,refresh]);
  useEffect(()=>{const mq=window.matchMedia('(prefers-color-scheme: dark)');const apply=()=>document.documentElement.classList.toggle('dark',mq.matches);apply();mq.addEventListener('change',apply);return()=>mq.removeEventListener('change',apply);},[]);
  async function act(fn:()=>Promise<unknown>){setBusy(true);setError('');try{await fn();await refresh();}catch(e){setError((e as Error).message);}finally{setBusy(false);}}

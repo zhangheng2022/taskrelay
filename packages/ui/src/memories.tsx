@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import {createApi,rpcData} from './api';
+import { useState } from "react";
 import type { Transport } from "../../contracts/src/index";
 import { Button } from "./components/ui/button";
 import { Textarea } from "./components/ui/textarea";
@@ -12,38 +13,23 @@ import {
 } from "./components/ui/card";
 import { Field, FieldLabel, FieldGroup } from "./components/ui/field";
 import { ErrorText } from "./feedback";
-type Memory = { key: string; value: { text: string } };
+import {QueryBoundary,useTransportQuery} from './queries';
 export function Memories({ transport }: { transport: Transport }) {
-  const [items, setItems] = useState<Memory[]>([]),
-    [text, setText] = useState(""),
+  return <QueryBoundary owner={transport}><MemoryEditor transport={transport}/></QueryBoundary>;
+}
+function MemoryEditor({transport}:{transport:Transport}){
+  const memories=useTransportQuery(transport,['memories'],signal=>rpcData(createApi(transport).api.user.memories.$get({}, {init:{signal}})),60000);
+  const items=memories.data??[];
+  const [text, setText] = useState(""),
     [key, setKey] = useState<string | null>(null),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
-  const load = () =>
-    transport.request<Memory[]>("GET", "/api/user/memories").then(setItems);
-  useEffect(() => {
-    let live = true;
-    transport
-      .request<Memory[]>("GET", "/api/user/memories")
-      .then((r) => {
-        if (live) setItems(r);
-      })
-      .catch((e) => {
-        if (live) setError(e.message);
-      });
-    return () => {
-      live = false;
-    };
-  }, [transport]);
+  const load=memories.refresh;
   async function save() {
     if (busy || !text.trim()) return;
     setBusy(true);
     try {
-      await transport.request(
-        "PUT",
-        `/api/user/memories/${key ?? crypto.randomUUID()}`,
-        { text, confirmed: true },
-      );
+      await rpcData(createApi(transport).api.user.memories[':id'].$put({param:{id:key??crypto.randomUUID()},json:{text,confirmed:true}}));
       setText("");
       setKey(null);
       await load();
@@ -57,7 +43,7 @@ export function Memories({ transport }: { transport: Transport }) {
   async function remove(id: string) {
     setBusy(true);
     try {
-      await transport.request("DELETE", `/api/user/memories/${id}`);
+      await rpcData(createApi(transport).api.user.memories[':id'].$delete({param:{id}}));
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -89,7 +75,7 @@ export function Memories({ transport }: { transport: Transport }) {
               />
             </Field>
           </FieldGroup>
-          {error && <ErrorText error={error} />}
+          {(error||memories.error)&&<ErrorText error={error||memories.error!.message}/>}
         </CardContent>
         <CardFooter>
           <Button disabled={busy || !text.trim()} onClick={() => void save()}>
@@ -110,14 +96,14 @@ export function Memories({ transport }: { transport: Transport }) {
       </Card>
       {items.map((m) => (
         <Card key={m.key}>
-          <CardContent className="pt-4">{m.value.text}</CardContent>
+          <CardContent className="pt-4">{String(m.value.text??'')}</CardContent>
           <CardFooter className="gap-2">
             <Button
               variant="outline"
               disabled={busy}
               onClick={() => {
                 setKey(m.key);
-                setText(m.value.text);
+                setText(String(m.value.text??''));
               }}
             >
               修改

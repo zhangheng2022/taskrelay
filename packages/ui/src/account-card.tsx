@@ -7,6 +7,7 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from './componen
 import { Button } from './components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from './components/ui/dialog';
 import { ErrorText, LoadFeedback } from './feedback';
+import {createApi,rpcData} from './api';
 
 // 普通聊天 parts 只有卡片引用；本人接口返回的秘密仅在当前组件存活期间使用。
 // 通知刷新只更新卡片状态，不覆盖用户正在修改的内容；确认后立即清除本地表单。
@@ -37,7 +38,7 @@ export function AccountCard({ id, transport, offline = false, onSaved }: { id: s
       if (reading || flight.current || !online.current) return;
       reading = true;
       try {
-        const next = await transport.request<AccountCardDetail>('GET', `/api/user/account-cards/${id}`);
+        const next = await rpcData(createApi(transport).api.user['account-cards'][':id'].$get({param:{id}}));
         if (generation.current !== current || flight.current) return;
         // 迟到的 pending 读取不能覆盖本地已经确认的终态。
         if (localStatus.current && localStatus.current !== 'pending' && next.status === 'pending') return;
@@ -58,11 +59,12 @@ export function AccountCard({ id, transport, offline = false, onSaved }: { id: s
     const current = generation.current;
     flight.current = true; setBusy(true); setError('');
     try {
-      const response = await transport.request<{ accountId?: string; resumed?: boolean }>('POST', `/api/user/account-cards/${id}/${dismiss ? 'dismiss' : 'confirm'}`, dismiss ? {} : accountFieldsBody(value));
+      const card=createApi(transport).api.user['account-cards'][':id'];
+      const response=dismiss?await rpcData(card.dismiss.$post({param:{id}})):await rpcData(card.confirm.$post({param:{id},json:accountFieldsBody(value)}));
       if (generation.current !== current) return;
       const status = dismiss ? 'dismissed' : 'saved'; localStatus.current = status;
       setDetail({ ...detail, status, username: undefined, password: undefined });
-      setValue({ ...emptyAccountFields }); baseline.current = ''; setResumed(response.resumed ?? false); setEditing(false);
+      setValue({ ...emptyAccountFields }); baseline.current = ''; setResumed('resumed' in response?response.resumed:false); setEditing(false);
       if (!dismiss) await onSaved?.();
     } catch (e) { if (generation.current === current) fail((e as Error).message); }
     finally { flight.current = false; setBusy(false); if (generation.current !== current) setRetry(n => n + 1); }

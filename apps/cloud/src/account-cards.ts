@@ -2,9 +2,10 @@
  * 登录成功后的账号保存与失效后的修改卡片。草稿加密，聊天只含引用；用户确认在同一事务内
  * 比较账号版本、原聊天和执行代次。卡片不能恢复已结束的执行，也不能把旧目录归给新一轮任务。
  */
+import {validator} from 'hono/validator';
 import { z } from 'zod';
 import { Buffer } from 'node:buffer';
-import type { Hono } from 'hono';
+import { Hono } from 'hono';
 import { idSchema, type TaskRun } from '../../../packages/contracts/src/index';
 import { hash, publicUrl } from '../../../packages/contracts/src/security';
 import type { AppEnv, Variables } from './env';
@@ -234,21 +235,8 @@ async function confirmCard(env:AppEnv,userId:string,id:string,input:AccountInput
   return {accountId:final.result_account_id,status:'saved' as const,resumed:!!final.resumed};
 }
 
-export function registerAccountCardRoutes(router:Router) {
-  router.get('/account-cards/:id',async c=>{
-    const row=await cardRow(c.env,c.get('userId'),c.req.param('id'));
-    const draft=row.secret?await unseal<Draft>(row.secret,c.env.MASTER_KEY,`account-card:${row.id}`):null;
-    return c.json({id:row.id,kind:row.kind,status:row.status,supersededBy:row.superseded_by??undefined,accountId:row.result_account_id??row.account_id,credentialVersion:row.credential_version,
-      expiresAt:row.expires_at,canResume:row.status==='pending'&&await canResume(c.env,row),verified:draft?.verified??false,
-      ...(draft?{name:draft.name,origin:draft.origin,businessDomains:draft.businessDomains,loginOrigins:draft.loginOrigins,username:draft.username,password:draft.password}:{name:'',origin:'',businessDomains:[],loginOrigins:[]})});
-  });
-  router.post('/account-cards/:id/confirm',async c=>c.json(await confirmCard(c.env,c.get('userId'),c.req.param('id'),accountInputSchema.parse(await c.req.json()))));
-  router.post('/account-cards/:id/dismiss',async c=>{
-    const row=await cardRow(c.env,c.get('userId'),c.req.param('id'));
-    if(row.status==='pending')await c.env.DB.prepare("UPDATE account_cards SET status='dismissed',secret=NULL WHERE id=? AND status='pending'").bind(row.id).run();
-    return c.json({ok:true});
-  });
-}
+const accountCardRoutesBase =new Hono<{Bindings:AppEnv;Variables:Variables}>();
+
 export function registerAccountRunnerRoutes(router:Router) {
   router.post('/runs/:id/account-card',async c=>{
     const raw=z.object({epoch:z.number().int()}).passthrough().parse(await c.req.json());
@@ -296,3 +284,18 @@ export async function cleanupAccountCards(env:AppEnv) {
     AND NOT EXISTS(SELECT 1 FROM runs r WHERE r.account_id=account_credential_versions.account_id AND r.account_credential_version=account_credential_versions.version
       AND (r.status IN ('running','waiting_user','verifying','unknown') OR r.cleanup_pending=1))`).run();
 }
+
+export const accountCardRoutes=accountCardRoutesBase
+.get('/account-cards/:id',async c=>{
+    const row=await cardRow(c.env,c.get('userId'),c.req.param('id'));
+    const draft=row.secret?await unseal<Draft>(row.secret,c.env.MASTER_KEY,`account-card:${row.id}`):null;
+    return c.json({id:row.id,kind:row.kind,status:row.status,supersededBy:row.superseded_by??undefined,accountId:row.result_account_id??row.account_id,credentialVersion:row.credential_version,
+      expiresAt:row.expires_at,canResume:row.status==='pending'&&await canResume(c.env,row),verified:draft?.verified??false,
+      ...(draft?{name:draft.name,origin:draft.origin,businessDomains:draft.businessDomains,loginOrigins:draft.loginOrigins,username:draft.username,password:draft.password}:{name:'',origin:'',businessDomains:[],loginOrigins:[]})});
+  })
+.post('/account-cards/:id/confirm',validator('json',(value:z.input<typeof accountInputSchema>)=>accountInputSchema.parse(value)), async c=>c.json(await confirmCard(c.env,c.get('userId'),c.req.param('id'),c.req.valid('json'))))
+.post('/account-cards/:id/dismiss',async c=>{
+    const row=await cardRow(c.env,c.get('userId'),c.req.param('id'));
+    if(row.status==='pending')await c.env.DB.prepare("UPDATE account_cards SET status='dismissed',secret=NULL WHERE id=? AND status='pending'").bind(row.id).run();
+    return c.json({ok:true});
+  });

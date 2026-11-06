@@ -166,7 +166,7 @@ export const modelInputSchema = z
     inputPrice: z.number().nonnegative().nullable().default(null),
     outputPrice: z.number().nonnegative().nullable().default(null),
   })
-  .strict().refine(v=>(v.contextTokens??16000)-(v.outputTokens??4096)>=4096,'上下文预算须比输出预留至少多4096');
+  .strict().refine(v=>(v.contextTokens??16000)-(v.outputTokens??4096)>=4096,{message:'上下文预算须比输出预留至少多4096',path:['contextTokens']});
 export type ModelInput = z.infer<typeof modelInputSchema>;
 export interface ModelCapabilities {
   connection: boolean;
@@ -233,7 +233,7 @@ export interface DesktopStatus {
   error: string | null;
 }
 export interface Transport {
-  request<T>(method: string, path: string, body?: unknown): Promise<T>;
+  request<T>(method: string, path: string, body?: unknown, options?: {signal?:AbortSignal}): Promise<T>;
   subscribe?(fn:()=>void):()=>void;
   desktop?: {
     status(): Promise<DesktopStatus>;

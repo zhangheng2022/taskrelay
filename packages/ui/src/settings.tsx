@@ -1,30 +1,24 @@
+import {ModelDialog} from './model-dialog';
+import {QueryBoundary,useTransportQuery} from './queries';
+import {createApi,rpcData} from './api';
 import { Memories } from './memories';
 import { Accounts } from './accounts';
 import { AdminPanel } from "./admin-panel";
 import { AccountSecurity } from "./auth-gate";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   CheckCircle2,
   Loader2,
   Plus,
 } from "lucide-react";
 import type {
-  ModelInput,
   ModelProfile,
   Snapshot,
   Transport,
 } from "../../contracts/src/index";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "./components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "./components/ui/tabs";
-import { NativeSelect } from "./components/ui/native-select";
 import { FieldGroup } from "./components/ui/field";
 import { Badge } from "./components/ui/badge";
 import {
@@ -36,16 +30,12 @@ import {
 } from "./components/ui/empty";
 import { Field } from "./form-field";
 import { ErrorText, formatDate } from "./feedback";
-const presets = {
-  openai: { name: "OpenAI", baseUrl: "https://api.openai.com/v1" },
-  deepseek: { name: "DeepSeek", baseUrl: "https://api.deepseek.com/v1" },
-  bailian: {
-    name: "百炼",
-    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-  },
-  custom: { name: "", baseUrl: "" },
-};
 export function Settings({
+  transport,snapshot,refresh,
+}: {transport:Transport;snapshot:Snapshot;refresh:()=>Promise<void>}){
+ return <QueryBoundary owner={transport}><SettingsContent transport={transport} snapshot={snapshot} refresh={refresh}/></QueryBoundary>;
+}
+function SettingsContent({
   transport,
   snapshot,
   refresh,
@@ -55,6 +45,8 @@ export function Settings({
   refresh: () => Promise<void>;
 }) {
   const isAdmin=snapshot.me?.role === "admin";
+  const config=useTransportQuery(transport,['admin-settings'],signal=>rpcData(createApi(transport).api.admin.settings.$get({}, {init:{signal}})),60000,isAdmin);
+  const daysDirty=useRef(false);
   const [tab, setTab] = useState(isAdmin ? "models" : "accounts"),
     [model, setModel] = useState<ModelProfile | true | null>(null),
     [error, setError] = useState(""),
@@ -72,13 +64,7 @@ export function Settings({
       setBusy("");
     }
   };
-  useEffect(() => {
-    if(!isAdmin)return;
-    void transport
-      .request<{ retentionDays: number }>("GET", "/api/admin/settings")
-      .then((x) => setDays(x.retentionDays))
-      .catch(() => {});
-  }, [transport]);
+  useEffect(()=>{if(config.data&&!daysDirty.current)setDays(config.data.retentionDays);},[config.data]);
   return (
     <Tabs className="settings" value={tab} onValueChange={setTab}>
       <TabsList className="w-full flex-wrap group-data-[orientation=horizontal]/tabs:h-auto">
@@ -172,10 +158,7 @@ export function Settings({
                       disabled={!!busy}
                       onClick={() =>
                         void act(m.id, () =>
-                          transport.request(
-                            "POST",
-                            `/api/admin/models/${m.id}/test`,
-                          ),
+                          createApi(transport).api.admin.models[':id'].test.$post({param:{id:m.id}}),
                         )
                       }
                     >
@@ -191,10 +174,7 @@ export function Settings({
                       disabled={!!busy || !m.capabilities.connection}
                       onClick={() =>
                         void act(m.id + "vision", () =>
-                          transport.request(
-                            "POST",
-                            `/api/admin/models/${m.id}/vision`,
-                          ),
+                          createApi(transport).api.admin.models[':id'].vision.$post({param:{id:m.id}}),
                         )
                       }
                     >
@@ -240,10 +220,7 @@ export function Settings({
                     disabled={d.revoked || !!busy}
                     onClick={() =>
                       void act(d.id, () =>
-                        transport.request(
-                          "POST",
-                          `/api/admin/devices/${d.id}/revoke`,
-                        ),
+                        createApi(transport).api.admin.devices[':id'].revoke.$post({param:{id:d.id}}),
                       )
                     }
                   >
@@ -267,11 +244,9 @@ export function Settings({
               className="retention-form"
               onSubmit={(e) => {
                 e.preventDefault();
-                void act("retention", () =>
-                  transport.request("PUT", "/api/admin/settings", {
-                    retentionDays: days,
-                  }),
-                );
+                void act("retention", async () => {
+                  await createApi(transport).api.admin.settings.$put({json:{retentionDays:days}});daysDirty.current=false;await config.refresh();
+                });
               }}
             >
               <Field label="保留天数">
@@ -281,10 +256,11 @@ export function Settings({
                   max={365}
                   required
                   value={days}
-                  onChange={(e) => setDays(Number(e.target.value))}
+                  onChange={(e) => {daysDirty.current=true;setDays(Number(e.target.value));}}
                 />
               </Field>
               <Button disabled={!!busy}>保存设置</Button>
+              {config.error&&<ErrorText error={config.error.message}/>}
             </form>
             <p className="quiet">
               未核实的写操作及其账号锁不会随普通日志自动删除。
@@ -304,191 +280,5 @@ export function Settings({
         />
       )}
     </Tabs>
-  );
-}
-function ModelDialog({
-  value,
-  transport,
-  onClose,
-  onSaved,
-}: {
-  value: ModelProfile | null;
-  transport: Transport;
-  onClose: () => void;
-  onSaved: () => Promise<void>;
-}) {
-  const [input, setInput] = useState<ModelInput>({
-      name: value?.name ?? "",
-      baseUrl: value?.baseUrl ?? "",
-      protocol: value?.protocol ?? "chat",
-      model: value?.model ?? "",
-      apiKey: "",
-      contextTokens:value?.contextTokens??16000,
-      outputTokens:value?.outputTokens??4096,
-      inputPrice: value?.inputPrice ?? null,
-      outputPrice: value?.outputPrice ?? null,
-    }),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState("");
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setError("");
-    try {
-      await transport.request(
-        value ? "PUT" : "POST",
-        value ? `/api/admin/models/${value.id}` : "/api/admin/models",
-        input,
-      );
-      setInput({ ...input, apiKey: "" });
-      await onSaved();
-    } catch (e) {
-      setInput({ ...input, apiKey: "" });
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
-      <DialogContent className="max-h-[90dvh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>{value ? "编辑模型服务" : "添加模型服务"}</DialogTitle>
-          <DialogDescription>
-            保存后请运行能力测试。服务地址必须是公网 HTTPS。
-          </DialogDescription>
-        </DialogHeader>
-        <form className="flex flex-col gap-5" onSubmit={(e) => void submit(e)}>
-          <FieldGroup>
-            <Field label="服务商">
-              <NativeSelect
-                defaultValue="custom"
-                onChange={(e) =>
-                  setInput({
-                    ...input,
-                    ...presets[e.target.value as keyof typeof presets],
-                  })
-                }
-              >
-                {Object.entries(presets).map(([k, v]) => (
-                  <option key={k} value={k}>
-                    {v.name || "自定义兼容服务"}
-                  </option>
-                ))}
-              </NativeSelect>
-            </Field>
-            <FieldGroup className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-              <Field label="配置名称">
-                <Input
-                  required
-                  value={input.name}
-                  onChange={(e) => setInput({ ...input, name: e.target.value })}
-                />
-              </Field>
-              <Field label="API 协议">
-                <NativeSelect
-                  value={input.protocol}
-                  onChange={(e) =>
-                    setInput({
-                      ...input,
-                      protocol: e.target.value as "chat" | "responses",
-                    })
-                  }
-                >
-                  <option value="chat">Chat Completions</option>
-                  <option value="responses">Responses</option>
-                </NativeSelect>
-              </Field>
-            </FieldGroup>
-            <Field
-              label="Base URL"
-              hint="例如 https://api.openai.com/v1。也可粘贴与协议对应的完整接口地址。"
-            >
-              <Input
-                required
-                type="url"
-                value={input.baseUrl}
-                placeholder="https://api.example.com/v1"
-                onChange={(e) =>
-                  setInput({ ...input, baseUrl: e.target.value })
-                }
-              />
-            </Field>
-            <Field label="上下文预算（token，保守估计）"><Input type="number" min={8192} max={200000} value={input.contextTokens} onChange={e=>setInput({...input,contextTokens:Number(e.target.value)})}/></Field>
-            <Field label="输出预留（token）"><Input type="number" min={512} max={8192} value={input.outputTokens} onChange={e=>setInput({...input,outputTokens:Number(e.target.value)})}/></Field>
-            <Field label="模型名称">
-              <Input
-                required
-                value={input.model}
-                placeholder="填写服务商提供的模型标识"
-                onChange={(e) => setInput({ ...input, model: e.target.value })}
-              />
-            </Field>
-            <Field
-              label="API Key"
-              hint={
-                value
-                  ? "留空保留现有密钥。更新配置会创建新版本。"
-                  : "密钥只会提交到你的 Workers，保存后不会显示明文。"
-              }
-            >
-              <Input
-                autoComplete="new-password"
-                type="password"
-                required={!value}
-                value={input.apiKey}
-                onChange={(e) => setInput({ ...input, apiKey: e.target.value })}
-              />
-            </Field>
-            <FieldGroup className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-              <Field label="输入单价 / 百万 tokens（可选）">
-                <Input
-                  type="number"
-                  min="0"
-                  step="any"
-                  value={input.inputPrice ?? ""}
-                  onChange={(e) =>
-                    setInput({
-                      ...input,
-                      inputPrice:
-                        e.target.value === "" ? null : Number(e.target.value),
-                    })
-                  }
-                />
-              </Field>
-              <Field label="输出单价 / 百万 tokens（可选）">
-                <Input
-                  type="number"
-                  min="0"
-                  step="any"
-                  value={input.outputPrice ?? ""}
-                  onChange={(e) =>
-                    setInput({
-                      ...input,
-                      outputPrice:
-                        e.target.value === "" ? null : Number(e.target.value),
-                    })
-                  }
-                />
-              </Field>
-            </FieldGroup>
-            {error && <ErrorText error={error} />}
-          </FieldGroup>
-          <div className="form-footer">
-            <Button
-              variant="ghost"
-              type="button"
-              onClick={onClose}
-              disabled={busy}
-            >
-              取消
-            </Button>
-            <Button disabled={busy}>
-              {busy && <Loader2 className="spin" />}保存配置
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
   );
 }

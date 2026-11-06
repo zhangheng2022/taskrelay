@@ -1,5 +1,7 @@
 # 部署与恢复
 
+2026-11-06 官方 SDK 源码 a05ab00 已部署 Worker e0cf3891-6cf0-4dc1-821b-30c673e49af1，生产只读复验成功并恢复领取。前端类型／缓存批次提升桌面至 0.16.0，仅 Renderer 数据读取变化，协议仍为 17，无新增 SQL；按暂停领取、排空、云端网页、安装核验、恢复领取顺序发布。
+
 ## 账号状态版本的发布要求（0.13.0）
 
 新增 D1 迁移 `0024_browser_state.sql`、`0025_account_dispatch.sql`、`0026_account_cards.sql`，以及 `browser-state-v1` SQLite DO migration 和 `BROWSER_STATES` 绑定。保留现有账号、Profile 和 MASTER_KEY，不重新初始化凭据。执行协议为 16，图为 relay-graph-2；旧版本不领取新协议任务。

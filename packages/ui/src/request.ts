@@ -1,10 +1,12 @@
 // Shared by the website and authentication forms; never retries a mutation.
 export async function requestJson<T>(url: string, options: {
-  method?: string; body?: unknown; headers?: Record<string, string>; timeoutMs?: number;
+  method?: string; body?: unknown; headers?: Record<string, string>; timeoutMs?: number; signal?:AbortSignal;
 } = {}): Promise<T> {
   const method = options.method ?? 'GET';
   const readOnly = method === 'GET' || method === 'HEAD';
-  const signal = AbortSignal.timeout(options.timeoutMs ?? 180000);
+  if(options.signal?.aborted)throw Error('REQUEST_CANCELLED');
+  const timeout=AbortSignal.timeout(options.timeoutMs??180000);
+  const signal=options.signal?AbortSignal.any([timeout,options.signal]):timeout;
   let response: Response;
   let text: string;
   try {
@@ -15,7 +17,7 @@ export async function requestJson<T>(url: string, options: {
     });
     text = await response.text();
   } catch {
-    throw new Error(!readOnly ? 'REQUEST_UNCONFIRMED' : signal.aborted ? 'REQUEST_TIMEOUT' : 'OFFLINE');
+    throw new Error(!readOnly ? 'REQUEST_UNCONFIRMED' : options.signal?.aborted?'REQUEST_CANCELLED':timeout.aborted ? 'REQUEST_TIMEOUT' : 'OFFLINE');
   }
   if (!response.headers.get('content-type')?.includes('application/json'))
     throw new Error(readOnly ? 'SERVER_RESPONSE_INVALID' : 'REQUEST_UNCONFIRMED');

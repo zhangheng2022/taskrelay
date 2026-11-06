@@ -1,35 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { TaskInput, Transport } from "../../contracts/src/index";
+import type { Transport } from "../../contracts/src/index";
 // 管理新任务和既有任务共用的聊天生命周期：查找/创建、通知刷新、发送、历史分页与清空。
 // generation 隔离会话切换，revision 隔离读写交错；attempt 保存待确认发送的原文和幂等标识。
 // sending 仅作内存中的即时回显，不冒充服务端记录；被读写占用期间的通知合并后补读。
-export type ThreadPage = {
-  id: string;
-  version: number;
-  modelId: string;
-  taskId?:string|null;
-  queued?:{id:string;content:string;at:string}[];
-  conditions?:{run_id:string;task_version:number;instruction_version:number;content:string;confirmed_content:string|null;confirmed_at:string|null;approved_version:number|null;current_version:number}|null;
-  draft: TaskInput | null;
-  partial: { facts?: string; missing?: string[] };
-  activeTurn: string | null;
-  latestTurn?: { status: string; error?: string };
-  waiting?:{id:string;request:string}|null;
-  messages: {
-    id: string;
-    seq: number;
-    role: string;
-    content: string;
-    at: string;
-    private?:boolean;
-    source?:string;
-    run_id?:string|null;
-    parts?:import("../../contracts/src/execution").ChatPart[];
-  }[];
-  nextCursor: number | null;
-  replies?:{id:string;cursor:number;role:string;content:string;at:string;status:string}[];
-  nextReplyCursor?:number|null;
-};
+import type {ThreadPage} from '../../contracts/src/conversation';
+export type {ThreadPage} from '../../contracts/src/conversation';
+import {createApi,rpcData} from './api';
 function mergeReplies(a:ThreadPage['replies'],b:ThreadPage['replies']){
   return [...(a??[]).filter(m=>!b?.some(n=>n.id===m.id)),...(b??[])].sort((a,b)=>a.cursor-b.cursor);
 }
@@ -95,9 +71,7 @@ export function useThread(
     setLoading(!!modelId);
     if (!modelId) return;
     (async () => {
-      const list = await transport.request<
-        { id: string; kind: string; model_id: string; task_id: string | null }[]
-      >("GET", "/api/user/threads");
+      const list = await rpcData(createApi(transport).api.user.threads.$get());
       if(generation.current!==g)return;
       const found = list.find(
         (t) =>
@@ -105,14 +79,8 @@ export function useThread(
           (t.task_id ?? undefined) === taskId,
       );
       const p = found
-        ? await transport.request<ThreadPage>(
-            "GET",
-            `/api/user/threads/${found.id}`,
-          )
-        : await transport.request<ThreadPage>("POST", "/api/user/threads", {
-            modelId,
-            ...(taskId ? { taskId } : {}),
-          });
+        ? await rpcData(createApi(transport).api.user.threads[':id'].$get({param:{id:found.id},query:{}}))
+        : await rpcData(createApi(transport).api.user.threads.$post({json:{modelId,...(taskId?{taskId}:{})}}));
       if (generation.current === g) {
         accept(p);
         setError("");
@@ -135,10 +103,7 @@ export function useThread(
       ticket = ++reading.current;
     refreshing.current=g;refreshQueued.current=false;
     try {
-    const next = await transport.request<ThreadPage>(
-      "GET",
-      `/api/user/threads/${p.id}`,
-    );
+    const next = await rpcData(createApi(transport).api.user.threads[':id'].$get({param:{id:p.id},query:{}}));
     if (
       g === generation.current &&
       r === revision.current &&
@@ -188,18 +153,16 @@ export function useThread(
     writing.current = true;
     setSending({id:`pending_${attempt.current.requestId}`,content});
     try {
-      const result = await transport.request<
-        ThreadPage & { status: string; error?: string }
-      >("POST", `/api/user/threads/${p.id}/messages`, attempt.current);
+      const result = await rpcData(createApi(transport).api.user.threads[':id'].messages.$post({param:{id:p.id},json:attempt.current}));
       if (g !== generation.current) return result;
       accept(mergeLatest(current.current!, result));
       attempt.current = null;
       if (
-        result.status === "failed" ||
-        result.status === "unknown" ||
-        result.status === "cancelled"
+        ('status' in result?result.status:undefined) === "failed" ||
+        ('status' in result?result.status:undefined) === "unknown" ||
+        ('status' in result?result.status:undefined) === "cancelled"
       )
-        throw new Error(result.error ?? "本轮未完成");
+        throw new Error(('error' in result&&typeof result.error==='string'?result.error:undefined) ?? "本轮未完成");
       return result;
     } finally {
       if (g === generation.current) {
@@ -218,10 +181,7 @@ export function useThread(
     const ticket = Symbol();
     loadingOlder.current = ticket;
     try {
-    const old = await transport.request<ThreadPage>(
-      "GET",
-      `/api/user/threads/${p.id}?before=${p.nextCursor??1}&beforeReply=${p.nextReplyCursor??1}`,
-    );
+    const old = await rpcData(createApi(transport).api.user.threads[':id'].$get({param:{id:p.id},query:{before:p.nextCursor??1,beforeReply:p.nextReplyCursor??1}}));
     if (g === generation.current && current.current)
       accept({
         ...current.current,
