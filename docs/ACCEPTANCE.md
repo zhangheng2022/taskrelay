@@ -30,6 +30,8 @@ OCR preview/rule 成功，宿主及委托子代理复审本轮 **71 个变更文
 
 OCR preview/rule 成功，宿主审阅全部 13 个变更文件（补审默认排除的两个测试和五份文档），13 reviewed、0 skipped、覆盖率 100%，无未解决发现；未调用外部审查模型。graphify 更新成功，为 4604 节点／8030 边，28 个 SQL 因缺少 tree_sitter_sql 未解析，8 个不支持类型文件未分类；新迁移已直接审阅，不把图覆盖当作数据库验证。
 
+源码 `94b5c98` 已推送，[Windows／Ubuntu Node 24 CI](https://github.com/zhangheng2022/taskrelay/actions/runs/42161856795) 均通过。生产先迁移 0027，后部署 Worker `487b9e41-dc31-4e55-9bb5-7b4b31f4849a`，两域健康和权限检查通过，领取恢复。实际原聊天三张 pending 归并为一张 pending、两张 expired/superseded，UI 只显示一张高度 172 px 的卡片；未代替用户点击确认。真实首次登录已结束，系统 SQLite 显示 ownedBrowser=null、outbox=0、运行 journal=finished，未发生重复业务执行。用户确认保存后的免登录复用仍待完成。
+
 ## 2026-11-05 聊天滚动与 iPhone Loading 兼容
 
 旧代码在 24 条隔离历史消息中可复现发送确认后 scrollTop 从 1338 变成 0：MessageScroller 在等数量节点替换时，将尚未处理的第一条历史用户行选为 turn anchor。修复改为官方底部跟随和明确的本地发送滚动入口；没有手写滚动高度、定时强制定位或依赖升级。发送、推理和执行状态复用一个状态行，关闭该行的 content-visibility:auto，旋转应用于普通 HTML 元素；离线或读取失败显示真实的状态更新问题。

@@ -10,6 +10,8 @@
 
 ## 最近已记录部署
 
+2026-11-06 卡片紧凑化与重复提示修复从源码 `94b5c98cfa93d7a893dc467c1837edb4ce025875` 上线。先应用 D1 0027，再部署 Worker `487b9e41-dc31-4e55-9bb5-7b4b31f4849a`，API 确认 100% 流量；两个域名健康与权限检查通过，恢复 `maintenance=0`、`claimsEnabled=1`，本机设备协议 16、claim_ready=1。生产原聊天的三张待确认卡片已归并为一张，其余两张失效，静态入口引用 `index-DhS33mzA.js`。本轮不更换执行器安装包。
+
 卡片重复修复需先应用 `0027_account_card_identity.sql`，再部署对应云端/Web。该增量迁移只增加身份摘要、归并引用和部分唯一索引；旧待确认密文由鉴权接口按需解密归并，不在 SQL 中写入明文或删除聊天游标。保留原 MASTER_KEY，协议 16 和已安装 0.13.0 不变。发布前暂停新增领取、确认无活动运行及待关闭浏览器，记录 Time Travel bookmark；健康及权限检查通过后恢复原开关。
 
 2026-11-06 从源码 `cabdee8d9f8866ec42cd9def67e5647c359e7155` 部署账号管理与登录状态复用，Worker `96067a0d-ddc1-4398-8cc0-35b44de57881` 已承接 100% 流量，D1 0024–0026 与 `BROWSER_STATES` SQLite DO 已上线。迁移前暂停领取、确认无活动或未知运行，并记录 D1 Time Travel bookmark；云端部署后安装 Windows 0.13.0，确认协议 16、设备就绪和数据保留，再恢复 `maintenance=0`、`claimsEnabled=1`。两个域名健康与权限自检、Windows / Ubuntu CI、包内及系统实际安装 smoke 通过。保留原 MASTER_KEY，未发布 GitHub Release 或切换自动更新目录。
