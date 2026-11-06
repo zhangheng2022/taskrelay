@@ -21,6 +21,8 @@ test(
   { skip: process.platform !== "win32" || !existsSync(executable), timeout: 45_000 },
   async (t) => {
     // Runner 故障只记录固定命令名，不输出 Cookie、存储值或响应正文。
+    // 保存原方法供 mock 通过 apply(this, args) 调用，保留实际实例，不能绑定到 prototype。
+    // oxlint-disable-next-line typescript/unbound-method
     const sendCommand = LocalCdp.prototype.send;
     t.mock.method(
       LocalCdp.prototype,
