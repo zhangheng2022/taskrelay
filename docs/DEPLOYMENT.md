@@ -142,6 +142,8 @@ Main 在产生浏览器副作用前记录 SQLite 检查点。云端也先记录�
 
 ## GitHub 源码检查与发布边界
 
+Windows 浏览器程序资源必须允许 Chromium LPAC 子进程读取／执行；Main 在首次启动前为自有 `resources/browser/chrome-win64` 校验路径并补齐该 ACL。只有公开程序资源获得权限，不给 Profile、父目录或应用数据授权；链接和权限设置失败均阻止浏览器启动。打包 smoke 与独立状态迁移测试实际经过此入口，禁止用关闭沙箱替代。
+
 发布自动化的健康与下载校验使用现有 `https://taskrelay.zhangheng.workers.dev`，固定目标、禁止重定向、不携带用户会话。主站 `tr.zhangheng.eu.org` 的 Bot Fight Mode 会向部分托管 Runner 发出人机挑战；免费版不能按路径豁免（[官方限制](https://developers.cloudflare.com/bots/get-started/bot-fight-mode/)）。保留全域防护、主站及客户端更新地址；不要以关闭防护或放行全部 Actions IP 解决发布检查。站点实际访问和权限检查另在正常客户端核验。
 
 `.github/workflows/ci.yml` 在 PR、master 推送、手动触发及每周一北京时间 09:00 执行。检查格式、Oxlint 类型规则、TypeScript、仓库一致性、Windows/Ubuntu 测试、Ubuntu c8 覆盖率、CodeQL security-extended 实际结果、Gitleaks、High/Critical 依赖漏洞、actionlint/ShellCheck/PSScriptAnalyzer 和 Web 构建。执行器相关改动追加托管 Windows 打包及实际安装 smoke。固定名称 quality-gate 对失败、取消、缺少报告均关闭；仅明确无关的安装作业可跳过。

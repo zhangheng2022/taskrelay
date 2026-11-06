@@ -24,6 +24,8 @@ Actions 的无会话健康检查、部署 SHA 核验与安装包下载哈希核�
 
 Main 的浏览器关闭／下载策略和账号状态适配器统一经 LocalCdp 调用 chrome-remote-interface，删除两套请求编号、响应分发和 WebSocket 生命周期代码。LocalCdp 只校验同端口 127.0.0.1 浏览器端点、固定错误与命令超时；SDK 使用本地协议，不拉取外部协议。CRI 0.34.0 尚无公开握手选项，且发送完成回调晚于浏览器回复时会漏掉响应；scripts/cdp-policy.mjs 校验版本及完整上游源码 SHA-256 后，禁止重定向、设置 4 秒握手与 1 秒关闭截止，并将 SDK 自有回调登记移到发送之前，发送失败时移除。安装和生产依赖暂存均应用，依赖升级必须复审此补丁。请求超时关闭连接并拒绝后续发送；不自动重试浏览器操作。浏览器进程及退出确认仍归 Main。
 
+ZIP 解压与 Squirrel 安装不保证带有 Chromium LPAC 文件权限。Main 首次启动前，仅对自有 `browser/chrome-win64` 程序资源补充 `ALL RESTRICTED APPLICATION PACKAGES` 的读取／执行 ACL，拒绝重解析路径与链接，失败不启动；Profile、父目录、应用数据及密钥目录不在授权范围。浏览器沙箱继续启用，不能用 `--no-sandbox` 处理此类初始化错误。
+
 网站用户／管理员路由改为 Hono 可推导链式组合，前端 hc 只导入路由类型，网络发送仍经 Transport。Transport 支持主动取消：读取取消与超时分开；写入已发出后取消仍是结果未确认。TanStack Query 管理工作空间、账号摘要、设置和本机状态读取；缓存仅在当前用户组件树内存中，退出／切换时取消并清空，无隐式重试或离线写入队列。敏感账号详情、密码与卡片草稿不进入缓存；聊天保留 requestId、会话版本及双游标协议。Better Auth React 管认证请求与会话变化，成功后仍经本人成员接口复核。模型编辑由 React Hook Form＋Zod 管理，刷新不覆盖草稿。
 
 本文描述当前源码。部署与安装见 [DEPLOYMENT](DEPLOYMENT.md)，验证证据与未完成项见 [ACCEPTANCE](ACCEPTANCE.md)。旧版本设计从 Git 历史追溯，不与当前流程并列。

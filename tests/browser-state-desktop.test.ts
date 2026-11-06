@@ -11,6 +11,7 @@ import { once } from "node:events";
 import WebSocket from "ws";
 import { BrowserStateAdapter } from "../apps/desktop/src/main/browser-state";
 import { LocalCdp } from "../apps/desktop/src/main/local-cdp";
+import { grantBrowserReadAccess } from "../apps/desktop/src/main/browser-permissions";
 import { ProtectedStateFiles } from "../apps/desktop/src/main/protected-state";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 
@@ -20,6 +21,7 @@ test(
   "正式状态适配器在独立 Chromium 恢复分区 Cookie、HttpOnly 和页面首读 Local Storage",
   { skip: process.platform !== "win32" || !existsSync(executable), timeout: 45_000 },
   async (t) => {
+    await grantBrowserReadAccess(path.dirname(executable));
     // Runner 故障只记录固定命令名，不输出 Cookie、存储值或响应正文。
     // 保存原方法供 mock 通过 apply(this, args) 调用，保留实际实例，不能绑定到 prototype。
     // oxlint-disable-next-line typescript/unbound-method
@@ -256,6 +258,15 @@ test(
     const empty = await adapter.capture([origin, "https://fixture.test"]);
     assert.equal(empty.cookies.length, 0);
     assert.equal(empty.origins.find((entry) => entry.origin === origin)?.localStorage.length, 0);
+    assert.equal(
+      browserErrors.some(
+        (line) =>
+          line.includes("Sandbox cannot access executable") ||
+          line.includes("Network service crashed"),
+      ),
+      false,
+      "浏览器网络服务必须在受限权限下正常启动",
+    );
   },
 );
 

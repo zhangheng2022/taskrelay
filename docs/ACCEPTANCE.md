@@ -34,6 +34,8 @@ PR #4 的 42226787711 与合并提交 c66de74 的 42227631295 全绿：两平台
 
 正式发布 42228490917 两次只读预检均失败，未进入 production、未迁移或部署。Cloudflare 安全事件精确记录 13:49:00 UTC 的 `/api/health` 为 `managed_challenge`、来源 `botFight`、User-Agent `node`；本机主域健康及权限检查正常。发布健康／部署 SHA／下载核验改用已有同一 Worker 的 workers.dev 入口，主域防护和更新地址不变，错误只报告固定分类和状态码。仍需 Actions 真实发布复验。
 
+PR #5 的 42229701345 再次在目标环境清 Cookie 超时，补充有界虚构浏览器诊断后，42230529991 显示源／目标程序均被 Windows LPAC 拒绝读取，随后网络服务崩溃重启；不能把此前两次通过视为已彻底消除该问题。本机按 [Chromium 官方权限要求](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/docs/design/sandbox.md#lpac-file-system-permissions) 只给浏览器程序树补充读取／执行后，权限错误和网络服务崩溃消失。Main 与真实状态夹具接入同一权限入口，增加路径、链接、失败拒绝以及无网络服务崩溃断言；保留浏览器隔离和原超时，Runner 新包待复验。
+
 ## 2026-11-06 Web 图片改为受鉴权地址
 
 Web Transport 提供同源图片地址，聊天缩略图和大图预览不再请求 `format=data` 或保存 Base64 字符串。加载完成后开放预览；加载／预览失败显示固定提示，地址切换重置状态，旧图片事件不能改写新图片。沿用既有二进制接口、会话鉴权、本人归属、过期与删除检查，不新增公开图片链接、数据库迁移或桌面更新。
