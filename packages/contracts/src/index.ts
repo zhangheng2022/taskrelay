@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { batchVerificationSchema, batchReportSchema } from './batch';
+import { batchVerificationSchema, batchReportSchema } from "./batch";
 
 export const PROTOCOL_VERSION = 17;
 export const EXECUTION_GRAPH_VERSION = "relay-graph-3";
@@ -23,10 +23,13 @@ export const scheduleSchema = z.discriminatedUnion("kind", [
     timezone: z.string().default("Asia/Shanghai"),
   }),
 ]);
-export const verificationSchema = z.union([z.object({
-  kind: z.literal("goal"),
-  value: z.string().min(1).max(2000),
-}), batchVerificationSchema]);
+export const verificationSchema = z.union([
+  z.object({
+    kind: z.literal("goal"),
+    value: z.string().min(1).max(2000),
+  }),
+  batchVerificationSchema,
+]);
 export const taskInputSchema = z
   .object({
     title: z.string().trim().min(1).max(120),
@@ -34,9 +37,7 @@ export const taskInputSchema = z
     entryUrl: z.url().max(2000),
     accountId: idSchema.nullable().default(null),
     modelId: idSchema,
-    allowedActions: z
-      .array(z.enum(["read", "navigate", "fill", "submit", "publish"]))
-      .min(1),
+    allowedActions: z.array(z.enum(["read", "navigate", "fill", "submit", "publish"])).min(1),
     verification: verificationSchema,
     schedule: scheduleSchema,
   })
@@ -49,7 +50,13 @@ export interface TaskDefinition extends TaskInput {
   executionOutline?: string[];
   graphVersion?: string;
   confirmedCondition?: string | null;
-  runConditions?: {goal:string;scope:string;prerequisites:string[];completion:string;assistance:string[]};
+  runConditions?: {
+    goal: string;
+    scope: string;
+    prerequisites: string[];
+    completion: string;
+    assistance: string[];
+  };
   id: string;
   version: number;
   modelVersion: number;
@@ -144,7 +151,8 @@ export const challengeInputSchema = z
   })
   .strict()
   .refine((v) => !["code", "information", "scan"].includes(v.kind) || !!v.target?.trim(), {
-    message: "CHALLENGE_TARGET_REQUIRED", path: ["target"],
+    message: "CHALLENGE_TARGET_REQUIRED",
+    path: ["target"],
   });
 export interface HumanChallenge extends z.infer<typeof challengeInputSchema> {
   id: string;
@@ -166,7 +174,11 @@ export const modelInputSchema = z
     inputPrice: z.number().nonnegative().nullable().default(null),
     outputPrice: z.number().nonnegative().nullable().default(null),
   })
-  .strict().refine(v=>(v.contextTokens??16000)-(v.outputTokens??4096)>=4096,{message:'上下文预算须比输出预留至少多4096',path:['contextTokens']});
+  .strict()
+  .refine((v) => (v.contextTokens ?? 16000) - (v.outputTokens ?? 4096) >= 4096, {
+    message: "上下文预算须比输出预留至少多4096",
+    path: ["contextTokens"],
+  });
 export type ModelInput = z.infer<typeof modelInputSchema>;
 export interface ModelCapabilities {
   connection: boolean;
@@ -189,9 +201,9 @@ export interface SiteAccount {
   loginOrigins?: string[];
   credentialVersion?: number;
   stateEpoch?: number;
-  credentialStatus?: 'unverified' | 'valid' | 'invalid';
+  credentialStatus?: "unverified" | "valid" | "invalid";
   stateRevision?: number;
-  syncStatus?: 'none' | 'synced' | 'failed';
+  syncStatus?: "none" | "synced" | "failed";
   syncError?: string | null;
   lastDeviceId?: string;
   assignedDeviceId?: string | null;
@@ -210,19 +222,25 @@ export interface Device {
   protocolVersion: number;
 }
 export interface Snapshot {
-  me?: { id:string;email:string;role:"admin"|"user" };
-  quota?: {resetAt:string;paused?:boolean;pausedUntil?:string|null;limits:{runs:number;scheduled:number;queued:number;chat:number;models:number};used:{runs:number;chat:number;models:number}};
+  me?: { id: string; email: string; role: "admin" | "user" };
+  quota?: {
+    resetAt: string;
+    paused?: boolean;
+    pausedUntil?: string | null;
+    limits: { runs: number; scheduled: number; queued: number; chat: number; models: number };
+    used: { runs: number; chat: number; models: number };
+  };
   tasks: TaskDefinition[];
   runs: TaskRun[];
   models: ModelProfile[];
   accounts: SiteAccount[];
   devices: Device[];
   challenges: HumanChallenge[];
-  waitingHelp?: {id:string;runId:string;taskId:string}[];
+  waitingHelp?: { id: string; runId: string; taskId: string }[];
   serverTime: string;
 }
 export interface DesktopStatus {
-  update: import('./updates').DesktopUpdateStatus;
+  update: import("./updates").DesktopUpdateStatus;
   paired: boolean;
   cloudUrl: string;
   paused: boolean;
@@ -233,10 +251,15 @@ export interface DesktopStatus {
   error: string | null;
 }
 export interface Transport {
-  request<T>(method: string, path: string, body?: unknown, options?: {signal?:AbortSignal}): Promise<T>;
+  request<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    options?: { signal?: AbortSignal },
+  ): Promise<T>;
   /** 宿主提供受鉴权的图片地址；图片二进制不经过 JSON 请求通道。 */
   artifactUrl?(id: string): string;
-  subscribe?(fn:()=>void):()=>void;
+  subscribe?(fn: () => void): () => void;
   desktop?: {
     status(): Promise<DesktopStatus>;
     configure(url: string): Promise<{ url: string; code: string }>;

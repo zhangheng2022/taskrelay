@@ -53,18 +53,18 @@
 
 开发服务器仅监听本机。/ui-fixture.html 使用演示 Transport，不访问生产服务；/ui-review.html 用 390 与 768 宽画布展示手机和窄桌面。相关入口不会进入生产构建。
 
-| 入口参数 | 检查场景 |
-| --- | --- |
-| ?state=new | 新任务 |
-| ?state=challenge&history#demo_task | 当前协助与长聊天 |
-| ?state=failed&history#demo_task | 历史未知结果 |
-| ?state=running#demo_task | 当前运行与停止 |
-| ?network=slow | 慢加载 |
-| ?network=fail-once | 首次读取失败与重试 |
-| ?fail=1 | 消息发送失败 |
-| ?auth | 登录页 |
-| ?executor&state=offline | 执行器断连 |
-| ?executor&update=waiting | 更新等待状态 |
+| 入口参数                           | 检查场景           |
+| ---------------------------------- | ------------------ |
+| ?state=new                         | 新任务             |
+| ?state=challenge&history#demo_task | 当前协助与长聊天   |
+| ?state=failed&history#demo_task    | 历史未知结果       |
+| ?state=running#demo_task           | 当前运行与停止     |
+| ?network=slow                      | 慢加载             |
+| ?network=fail-once                 | 首次读取失败与重试 |
+| ?fail=1                            | 消息发送失败       |
+| ?auth                              | 登录页             |
+| ?executor&state=offline            | 执行器断连         |
+| ?executor&update=waiting           | 更新等待状态       |
 
 演示页回复不创建真实任务、不调用模型、不执行安装。旧创建确认、拆分挑战回复和独立报告演示已移除。
 

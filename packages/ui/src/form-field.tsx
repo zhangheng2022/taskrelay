@@ -28,7 +28,11 @@ export function Field({
           })
         : children}
       {hint && <FieldDescription id={id + "-hint"}>{hint}</FieldDescription>}
-      {error && <FieldDescription id={id + '-error'} role="alert">{error}</FieldDescription>}
+      {error && (
+        <FieldDescription id={id + "-error"} role="alert">
+          {error}
+        </FieldDescription>
+      )}
     </ShadcnField>
   );
 }

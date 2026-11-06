@@ -25,17 +25,15 @@ import { z } from "zod";
 import { Journal } from "./journal";
 import { Cloud } from "./cloud";
 import { OwnedBrowser } from "./browser";
-import { ProtectedStateFiles } from './protected-state';
+import { ProtectedStateFiles } from "./protected-state";
 import { prepareExtension } from "./extension";
 import { ExecutorHost } from "./executor-host";
-import { DesktopUpdater } from './updater';
-import { RunnerPoller } from './runner-poller';
-import { loginSettings } from './login';
-import { releaseSchema } from '../../../../packages/contracts/src/updates';
+import { DesktopUpdater } from "./updater";
+import { RunnerPoller } from "./runner-poller";
+import { loginSettings } from "./login";
+import { releaseSchema } from "../../../../packages/contracts/src/updates";
 import { cloudUrlSchema } from "../shared/ipc";
-import type {
-  DesktopStatus,
-} from "../../../../packages/contracts/src/index";
+import type { DesktopStatus } from "../../../../packages/contracts/src/index";
 import { packagedSmoke } from "./smoke";
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -64,13 +62,21 @@ let updater: DesktopUpdater;
 let updatePrompt = false;
 let login: ReturnType<typeof loginSettings>;
 function loginLaunchPath() {
-  const stub=path.resolve(process.execPath,'../../TaskRelay.exe');
-  return app.isPackaged && existsSync(path.resolve(process.execPath,'../../Update.exe')) && existsSync(stub)
-    ? stub : app.getPath('exe');
+  const stub = path.resolve(process.execPath, "../../TaskRelay.exe");
+  return app.isPackaged &&
+    existsSync(path.resolve(process.execPath, "../../Update.exe")) &&
+    existsSync(stub)
+    ? stub
+    : app.getPath("exe");
 }
 function updateBusy() {
-  return quitting || poller.unsettled || !host.idleForUpdate ||
-    journal.pending().length > 0 || journal.incomplete().length > 0;
+  return (
+    quitting ||
+    poller.unsettled ||
+    !host.idleForUpdate ||
+    journal.pending().length > 0 ||
+    journal.incomplete().length > 0
+  );
 }
 function status(): DesktopStatus {
   return {
@@ -105,9 +111,7 @@ function createWindow() {
     show: false,
     autoHideMenuBar: true,
     icon: path.join(
-      app.isPackaged
-        ? process.resourcesPath
-        : path.resolve(__dirname, "../../../../resources"),
+      app.isPackaged ? process.resourcesPath : path.resolve(__dirname, "../../../../resources"),
       "icon.png",
     ),
     webPreferences: {
@@ -125,8 +129,8 @@ function createWindow() {
       : "taskrelay://app";
     if (!url.startsWith(`${origin}/`)) event.preventDefault();
   });
-  window.webContents.session.setPermissionRequestHandler(
-    (_webContents, _permission, callback) => callback(false),
+  window.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) =>
+    callback(false),
   );
   window.on("close", (event) => {
     if (!quitting) {
@@ -138,8 +142,7 @@ function createWindow() {
     window = null;
   });
   window.once("ready-to-show", () => window?.show());
-  if (MAIN_WINDOW_VITE_DEV_SERVER_URL)
-    void window.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
+  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) void window.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
   else void window.loadURL("taskrelay://app/index.html");
 }
 function registerIpc() {
@@ -154,7 +157,8 @@ function registerIpc() {
     });
   handle("status", () => status());
   handle("configure", async (input: unknown) => {
-    if (host.active || poller.unsettled || updater.blocksClaims) throw new Error("STOP_RUN_BEFORE_PAIRING");
+    if (host.active || poller.unsettled || updater.blocksClaims)
+      throw new Error("STOP_RUN_BEFORE_PAIRING");
     const url = cloudUrlSchema.parse(input);
     journal.set("cloudUrl", url);
     journal.set("token", null);
@@ -169,8 +173,7 @@ function registerIpc() {
       { name: require("node:os").hostname(), protocolVersion: PROTOCOL_VERSION },
       true,
     );
-    if (new URL(result.url).origin !== url)
-      throw new Error("PAIRING_URL_MISMATCH");
+    if (new URL(result.url).origin !== url) throw new Error("PAIRING_URL_MISMATCH");
     pairing = { id: result.id, pollToken: result.pollToken };
     await shell.openExternal(result.url);
     notify();
@@ -202,21 +205,33 @@ function registerIpc() {
     notify();
   });
   handle("stop", () => host.stop(true));
-  handle('checkUpdate', () => updater.check());
-  handle('downloadUpdate', async (input: unknown) => {
+  handle("checkUpdate", () => updater.check());
+  handle("downloadUpdate", async (input: unknown) => {
     const version = releaseSchema.shape.version.parse(input);
     const update = updater.status;
-    if (updatePrompt || !['available','error'].includes(update.phase) || update.release?.version !== version) return;
+    if (
+      updatePrompt ||
+      !["available", "error"].includes(update.phase) ||
+      update.release?.version !== version
+    )
+      return;
     updatePrompt = true;
     try {
       const answer = await dialog.showMessageBox(window!, {
-        type:'question',title:'更新 TaskRelay 执行器',
-        message:`下载并安装 ${version}？`,
-        detail:'确认后通过 Cloudflare 下载更新。下载完成后暂停领取新任务，等待当前任务（包括人工协助）和结果回传结束，再自动安装并重启。',
-        buttons:['暂不更新','确认下载并安装'],defaultId:0,cancelId:0,noLink:true,
+        type: "question",
+        title: "更新 TaskRelay 执行器",
+        message: `下载并安装 ${version}？`,
+        detail:
+          "确认后通过 Cloudflare 下载更新。下载完成后暂停领取新任务，等待当前任务（包括人工协助）和结果回传结束，再自动安装并重启。",
+        buttons: ["暂不更新", "确认下载并安装"],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
       });
-      if(answer.response===1)void updater.download(version).catch(()=>{});
-    } finally {updatePrompt=false;}
+      if (answer.response === 1) void updater.download(version).catch(() => {});
+    } finally {
+      updatePrompt = false;
+    }
   });
   handle("diagnostics", async () => {
     const result = await dialog.showSaveDialog(window!, {
@@ -246,12 +261,12 @@ async function poll() {
 }
 async function quit() {
   if (quitting) return;
-  if (updater?.status.phase === 'installing') {
+  if (updater?.status.phase === "installing") {
     show();
     return;
   }
   quitting = true;
-    cloud?.close();
+  cloud?.close();
   try {
     await host?.stop(true);
   } catch {
@@ -282,9 +297,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
       // Resolve Windows filesystem virtualization before native child-process launches.
       // A redirected path can be readable by fs while CreateProcess rejects it.
       const root = realpathSync.native(
-        app.isPackaged
-          ? process.resourcesPath
-          : path.resolve(__dirname, "../../../../resources"),
+        app.isPackaged ? process.resourcesPath : path.resolve(__dirname, "../../../../resources"),
       );
       const smokeIndex = process.argv.indexOf("--taskrelay-smoke");
       if (smokeIndex >= 0) {
@@ -295,29 +308,22 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
         }
         try {
           app.exit(
-            (await packagedSmoke(
-              root,
-              path.join(__dirname, "executor.cjs"),
-              output,
-            ))
-              ? 0
-              : 1,
+            (await packagedSmoke(root, path.join(__dirname, "executor.cjs"), output)) ? 0 : 1,
           );
         } catch (e) {
           await writeFile(
             output,
-            JSON.stringify(
-              { passed: false, error: (e as Error).message },
-              null,
-              2,
-            ),
+            JSON.stringify({ passed: false, error: (e as Error).message }, null, 2),
           );
           app.exit(1);
         }
         return;
       }
       const userData = app.getPath("userData");
-      const extensionPath = await prepareExtension(path.join(root, "stagehand-extension"), path.join(userData, "runtime-extensions"));
+      const extensionPath = await prepareExtension(
+        path.join(root, "stagehand-extension"),
+        path.join(userData, "runtime-extensions"),
+      );
       journal = new Journal(userData);
       cloud = new Cloud(journal);
       const browser = new OwnedBrowser(
@@ -334,48 +340,62 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
         extensionPath,
         notify,
         utilityProcess.fork,
-        new ProtectedStateFiles(path.join(userData,'pending-browser-states'),safeStorage),
+        new ProtectedStateFiles(path.join(userData, "pending-browser-states"), safeStorage),
       );
       await host.recover();
-      poller = new RunnerPoller(cloud,host,journal,{
-        quitting:()=>quitting,blocksClaims:()=>updater.blocksClaims,
-        installing:()=>updater.status.phase==='installing',
-        result:(connected,error)=>{online=connected;lastError=error;},
-        settled:()=>{notify();updater.tryInstall();},
+      poller = new RunnerPoller(cloud, host, journal, {
+        quitting: () => quitting,
+        blocksClaims: () => updater.blocksClaims,
+        installing: () => updater.status.phase === "installing",
+        result: (connected, error) => {
+          online = connected;
+          lastError = error;
+        },
+        settled: () => {
+          notify();
+          updater.tryInstall();
+        },
       });
       login = loginSettings(app, loginLaunchPath());
       updater = new DesktopUpdater({
-        version:app.getVersion(),
-        supported:process.platform==='win32' && process.arch==='x64' && app.isPackaged &&
-          path.basename(path.dirname(process.execPath))===`app-${app.getVersion()}` &&
-          existsSync(path.resolve(process.execPath,'../../Update.exe')),
-        directory:path.join(userData,'updates'),native:autoUpdater,busy:updateBusy,changed:notify,
-        available:release=>{
+        version: app.getVersion(),
+        supported:
+          process.platform === "win32" &&
+          process.arch === "x64" &&
+          app.isPackaged &&
+          path.basename(path.dirname(process.execPath)) === `app-${app.getVersion()}` &&
+          existsSync(path.resolve(process.execPath, "../../Update.exe")),
+        directory: path.join(userData, "updates"),
+        native: autoUpdater,
+        busy: updateBusy,
+        changed: notify,
+        available: (release) => {
           tray?.setToolTip(`TaskRelay · 发现新版本 ${release.version}`);
-          if(Notification.isSupported()) {
-            const notification=new Notification({title:'TaskRelay 有新版本',body:`${release.version} 已可用，点击查看并确认更新。`});
-            notification.on('click',show);notification.show();
+          if (Notification.isSupported()) {
+            const notification = new Notification({
+              title: "TaskRelay 有新版本",
+              body: `${release.version} 已可用，点击查看并确认更新。`,
+            });
+            notification.on("click", show);
+            notification.show();
           }
         },
-        restart:()=>{
+        restart: () => {
           // The updater has rechecked quiescence. Do not call host.stop() here.
-          quitting=true;updater.stop();cloud.close();journal.close();tray?.destroy();
+          quitting = true;
+          updater.stop();
+          cloud.close();
+          journal.close();
+          tray?.destroy();
           autoUpdater.quitAndInstall();
         },
       });
-      const rendererRoot = path.resolve(
-        __dirname,
-        `../renderer/${MAIN_WINDOW_VITE_NAME}`,
-      );
+      const rendererRoot = path.resolve(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}`);
       protocol.handle("taskrelay", (request) => {
         const u = new URL(request.url);
         if (u.host !== "app") return new Response(null, { status: 403 });
-        const target = path.resolve(
-          rendererRoot,
-          "." + decodeURIComponent(u.pathname),
-        );
-        if (!target.startsWith(rendererRoot + path.sep))
-          return new Response(null, { status: 403 });
+        const target = path.resolve(rendererRoot, "." + decodeURIComponent(u.pathname));
+        if (!target.startsWith(rendererRoot + path.sep)) return new Response(null, { status: 403 });
         return electronNet.fetch(pathToFileURL(target).toString());
       });
       registerIpc();
@@ -393,7 +413,13 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
             },
           },
           { type: "separator" },
-          { label: "检查版本更新", click: () => {show();void updater.check();} },
+          {
+            label: "检查版本更新",
+            click: () => {
+              show();
+              void updater.check();
+            },
+          },
           { label: "退出 TaskRelay", click: () => void quit() },
         ]),
       );
@@ -403,13 +429,19 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
       });
       powerMonitor.on("resume", () => void poll());
       createWindow();
-      cloud.watch(()=>{void host.refreshControl().catch(()=>{});void poll();});
+      cloud.watch(() => {
+        void host.refreshControl().catch(() => {});
+        void poll();
+      });
       setInterval(() => void poll(), 60000);
-      setTimeout(() => void updater.check(),15000);
-      setInterval(() => void updater.check(),6*60*60*1000);
+      setTimeout(() => void updater.check(), 15000);
+      setInterval(() => void updater.check(), 6 * 60 * 60 * 1000);
       setInterval(() => {
-        if(updater.status.phase==='waiting') {void poll();updater.tryInstall();}
-      },5000);
+        if (updater.status.phase === "waiting") {
+          void poll();
+          updater.tryInstall();
+        }
+      }, 5000);
       void poll();
     })
     .catch((error) => {

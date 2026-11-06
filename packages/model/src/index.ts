@@ -4,16 +4,22 @@
  */
 import type { ModelProfile } from "../../contracts/src/index";
 import { outputSchema } from "./schema";
-import OpenAI from 'openai';
-import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/chat/completions';
-import type { ResponseCreateParamsNonStreaming } from 'openai/resources/responses/responses';
+import OpenAI from "openai";
+import type { ChatCompletionCreateParamsNonStreaming } from "openai/resources/chat/completions";
+import type { ResponseCreateParamsNonStreaming } from "openai/resources/responses/responses";
 
 export interface Message {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
-  content_blocks?: Array<{type:'text';text:string}|{type:'image_url';image_url:{url:string}}>;
+  content_blocks?: Array<
+    { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }
+  >;
   tool_call_id?: string;
-  tool_calls?: Array<{id:string;type:'function';function:{name:string;arguments:string}}>;
+  tool_calls?: Array<{
+    id: string;
+    type: "function";
+    function: { name: string; arguments: string };
+  }>;
 }
 export interface Tool {
   name: string;
@@ -48,16 +54,18 @@ export async function infer(
   const root = profile.baseUrl.replace(/\/+$/, "");
   const tools = request.tools?.map((t) => ({
     type: "function",
-    function: { ...t, parameters:outputSchema(t.parameters), strict: true },
+    function: { ...t, parameters: outputSchema(t.parameters), strict: true },
   }));
   let body: Record<string, unknown>;
   if (profile.protocol === "chat") {
     body = {
       model: profile.model,
-      messages: request.messages.map(({content_blocks,...message})=>({...message,content:content_blocks??message.content})),
-      [request.tokenParameter ??
-      profile.capabilities?.tokenParameter ??
-      "max_completion_tokens"]: request.maxTokens ?? 4096,
+      messages: request.messages.map(({ content_blocks, ...message }) => ({
+        ...message,
+        content: content_blocks ?? message.content,
+      })),
+      [request.tokenParameter ?? profile.capabilities?.tokenParameter ?? "max_completion_tokens"]:
+        request.maxTokens ?? 4096,
       stream: false,
     };
     if (request.image)
@@ -93,7 +101,7 @@ export async function infer(
           output: m.content,
         });
       else if (m.role === "assistant" && m.tool_calls?.length) {
-        if(m.content)input.push({role:'assistant',content:m.content});
+        if (m.content) input.push({ role: "assistant", content: m.content });
         for (const t of m.tool_calls as {
           id: string;
           function: { name: string; arguments: string };
@@ -104,7 +112,16 @@ export async function infer(
             name: t.function.name,
             arguments: t.function.arguments,
           });
-      } else input.push({ role: m.role, content: m.content_blocks?.map(part=>part.type==='text'?{type:m.role==='assistant'?'output_text':'input_text',text:part.text}:{type:'input_image',image_url:part.image_url.url,detail:'low'})??m.content });
+      } else
+        input.push({
+          role: m.role,
+          content:
+            m.content_blocks?.map((part) =>
+              part.type === "text"
+                ? { type: m.role === "assistant" ? "output_text" : "input_text", text: part.text }
+                : { type: "input_image", image_url: part.image_url.url, detail: "low" },
+            ) ?? m.content,
+        });
     }
     body = {
       model: profile.model,
@@ -115,15 +132,13 @@ export async function infer(
     if (request.image)
       input.push({
         role: "user",
-        content: [
-          { type: "input_image", image_url: request.image, detail: "low" },
-        ],
+        content: [{ type: "input_image", image_url: request.image, detail: "low" }],
       });
     if (request.tools?.length) {
       body.tools = request.tools.map((t) => ({
         type: "function",
         ...t,
-        parameters:outputSchema(t.parameters),
+        parameters: outputSchema(t.parameters),
         strict: true,
       }));
       body.tool_choice = request.toolChoice ?? "required";
@@ -144,72 +159,153 @@ export async function infer(
   // fetch 边界同时覆盖响应正文读取，SDK 的连接超时不能代替整个请求的时间限制。
   let transportFailure: string | undefined;
   // SDK 要求非空凭据；无密钥兼容端点使用占位值，并在网络边界删除整个 Authorization。
-  const client = new OpenAI({apiKey:key||'taskrelay-keyless-endpoint',baseURL:root,organization:null,project:null,adminAPIKey:null,
-    maxRetries:0,timeout:60_000,logLevel:'off',fetch:async(input,init)=>{
-      const signal=AbortSignal.any([...(init?.signal?[init.signal]:[]),AbortSignal.timeout(60_000)]);
-      try{
-        const headers=new Headers(init?.headers);
-        if(!key)headers.delete('authorization');
-        const response=await fetcher(String(input),{...init,headers,redirect:'manual',signal});
-        return await boundedResponse(response,signal);
-      }catch(error){
-        transportFailure=signal.aborted?'MODEL_TIMEOUT':error instanceof ModelBoundaryError?error.message:'MODEL_CALL_OUTCOME_UNKNOWN';
+  const client = new OpenAI({
+    apiKey: key || "taskrelay-keyless-endpoint",
+    baseURL: root,
+    organization: null,
+    project: null,
+    adminAPIKey: null,
+    maxRetries: 0,
+    timeout: 60_000,
+    logLevel: "off",
+    fetch: async (input, init) => {
+      const signal = AbortSignal.any([
+        ...(init?.signal ? [init.signal] : []),
+        AbortSignal.timeout(60_000),
+      ]);
+      try {
+        const headers = new Headers(init?.headers);
+        if (!key) headers.delete("authorization");
+        const response = await fetcher(String(input), {
+          ...init,
+          headers,
+          redirect: "manual",
+          signal,
+        });
+        return await boundedResponse(response, signal);
+      } catch (error) {
+        transportFailure = signal.aborted
+          ? "MODEL_TIMEOUT"
+          : error instanceof ModelBoundaryError
+            ? error.message
+            : "MODEL_CALL_OUTCOME_UNKNOWN";
         throw new Error(transportFailure);
       }
-    }});
+    },
+  });
   try {
     // DTO 由上方集中适配，兼容提供方仍允许自定义模型名和 token 参数；SDK 负责 HTTP 与标准解析。
-    if(profile.protocol==='chat'){
-      const data=await client.chat.completions.create(body as unknown as ChatCompletionCreateParamsNonStreaming);
-      const message=data?.choices?.[0]?.message;
-      if(!message)throw new ModelBoundaryError('MODEL_EMPTY_RESPONSE');
-      return {text:typeof message.content==='string'?message.content:'',calls:(message.tool_calls??[])
-        .filter(call=>call.type==='function'||(!call.type&&'function' in call))
-        .map(call=>{if(!('function' in call))throw new ModelBoundaryError('MODEL_INVALID_RESPONSE');return {id:call.id,name:call.function.name,arguments:call.function.arguments};}),
-        usage:{input:data.usage?.prompt_tokens??null,output:data.usage?.completion_tokens??null}};
+    if (profile.protocol === "chat") {
+      const data = await client.chat.completions.create(
+        body as unknown as ChatCompletionCreateParamsNonStreaming,
+      );
+      const message = data?.choices?.[0]?.message;
+      if (!message) throw new ModelBoundaryError("MODEL_EMPTY_RESPONSE");
+      return {
+        text: typeof message.content === "string" ? message.content : "",
+        calls: (message.tool_calls ?? [])
+          .filter((call) => call.type === "function" || (!call.type && "function" in call))
+          .map((call) => {
+            if (!("function" in call)) throw new ModelBoundaryError("MODEL_INVALID_RESPONSE");
+            return { id: call.id, name: call.function.name, arguments: call.function.arguments };
+          }),
+        usage: {
+          input: data.usage?.prompt_tokens ?? null,
+          output: data.usage?.completion_tokens ?? null,
+        },
+      };
     }
-    const data=await client.responses.create(body as unknown as ResponseCreateParamsNonStreaming);
-    if(!data||!Array.isArray(data.output))throw new ModelBoundaryError('MODEL_EMPTY_RESPONSE');
+    const data = await client.responses.create(body as unknown as ResponseCreateParamsNonStreaming);
+    if (!data || !Array.isArray(data.output)) throw new ModelBoundaryError("MODEL_EMPTY_RESPONSE");
     // 部分兼容服务省略 object:'response'，SDK 不生成 output_text；集中保留这一个兼容分支。
-    const text=data.output_text??data.output.filter(item=>item.type==='message').flatMap(item=>item.content).filter(part=>part.type==='output_text').map(part=>part.text).join('\n');
-    return {text,calls:data.output.filter(item=>item.type==='function_call').map(item=>({id:item.call_id,name:item.name,arguments:item.arguments})),
-      usage:{input:data.usage?.input_tokens??null,output:data.usage?.output_tokens??null}};
-  }catch(error){
+    const text =
+      data.output_text ??
+      data.output
+        .filter((item) => item.type === "message")
+        .flatMap((item) => item.content)
+        .filter((part) => part.type === "output_text")
+        .map((part) => part.text)
+        .join("\n");
+    return {
+      text,
+      calls: data.output
+        .filter((item) => item.type === "function_call")
+        .map((item) => ({ id: item.call_id, name: item.name, arguments: item.arguments })),
+      usage: { input: data.usage?.input_tokens ?? null, output: data.usage?.output_tokens ?? null },
+    };
+  } catch (error) {
     // 不把 SDK APIError（可能包含请求密钥或上游回显）交给日志、调用方或诊断包。
-    if(transportFailure)throw Error(transportFailure);
-    if(error instanceof OpenAI.APIError)throw Error(error.status?httpError(error.status,error.code):'MODEL_CALL_OUTCOME_UNKNOWN');
-    if(error instanceof ModelBoundaryError)throw error;
-    throw Error('MODEL_INVALID_RESPONSE');
+    if (transportFailure) throw Error(transportFailure);
+    if (error instanceof OpenAI.APIError)
+      throw Error(
+        error.status ? httpError(error.status, error.code) : "MODEL_CALL_OUTCOME_UNKNOWN",
+      );
+    if (error instanceof ModelBoundaryError) throw error;
+    throw Error("MODEL_INVALID_RESPONSE");
   }
 }
 
-function httpError(status:number,code:unknown){
-  const suffix=(
-      {
-        unsupported_country_region_territory: "UNSUPPORTED_REGION",
-        model_not_found: "MODEL_UNAVAILABLE",
-        invalid_api_key: "INVALID_KEY",
-        insufficient_quota: "QUOTA",
-        permission_denied: "PERMISSION",
-        organization_restricted: "ORGANIZATION_RESTRICTED",
-        access_terminated: "ACCOUNT_RESTRICTED",
-      } as Record<string, string>
-    )[String(code??'').toLowerCase()];
-  return `MODEL_HTTP_${status}${suffix?'_'+suffix:''}`;
+function httpError(status: number, code: unknown) {
+  const suffix = (
+    {
+      unsupported_country_region_territory: "UNSUPPORTED_REGION",
+      model_not_found: "MODEL_UNAVAILABLE",
+      invalid_api_key: "INVALID_KEY",
+      insufficient_quota: "QUOTA",
+      permission_denied: "PERMISSION",
+      organization_restricted: "ORGANIZATION_RESTRICTED",
+      access_terminated: "ACCOUNT_RESTRICTED",
+    } as Record<string, string>
+  )[String(code ?? "").toLowerCase()];
+  return `MODEL_HTTP_${status}${suffix ? "_" + suffix : ""}`;
 }
 
-async function boundedResponse(response:Response,signal:AbortSignal):Promise<Response>{
-  if(response.status>=300&&response.status<400){await response.body?.cancel();throw new ModelBoundaryError('MODEL_REDIRECT_BLOCKED');}
-  const reader=response.body?.getReader();if(!reader)throw new ModelBoundaryError('MODEL_EMPTY_RESPONSE');
-  const chunks:Uint8Array[]=[];let length=0;
-  const abort=()=>{void reader.cancel().catch(()=>{});};signal.addEventListener('abort',abort,{once:true});
-  try{
-    for(;;){signal.throwIfAborted();const {done,value}=await reader.read();signal.throwIfAborted();if(done)break;
-      length+=value.byteLength;if(length>(response.ok?2_000_000:64_000))throw new ModelBoundaryError(response.ok?'MODEL_RESPONSE_TOO_LARGE':`MODEL_HTTP_${response.status}`);chunks.push(value);}
-  }finally{signal.removeEventListener('abort',abort);await reader.cancel().catch(()=>{});}
-  const bytes=new Uint8Array(length);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
+async function boundedResponse(response: Response, signal: AbortSignal): Promise<Response> {
+  if (response.status >= 300 && response.status < 400) {
+    await response.body?.cancel();
+    throw new ModelBoundaryError("MODEL_REDIRECT_BLOCKED");
+  }
+  const reader = response.body?.getReader();
+  if (!reader) throw new ModelBoundaryError("MODEL_EMPTY_RESPONSE");
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  const abort = () => {
+    void reader.cancel().catch(() => {});
+  };
+  signal.addEventListener("abort", abort, { once: true });
+  try {
+    for (;;) {
+      signal.throwIfAborted();
+      const { done, value } = await reader.read();
+      signal.throwIfAborted();
+      if (done) break;
+      length += value.byteLength;
+      if (length > (response.ok ? 2_000_000 : 64_000))
+        throw new ModelBoundaryError(
+          response.ok ? "MODEL_RESPONSE_TOO_LARGE" : `MODEL_HTTP_${response.status}`,
+        );
+      chunks.push(value);
+    }
+  } finally {
+    signal.removeEventListener("abort", abort);
+    await reader.cancel().catch(() => {});
+  }
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
   // 兼容提供方可能未带 JSON Content-Type；只允许经过大小限制的 JSON 交给 SDK。
-  try{JSON.parse(new TextDecoder().decode(bytes));}catch{throw new ModelBoundaryError(response.ok?'MODEL_INVALID_RESPONSE':`MODEL_HTTP_${response.status}_GATEWAY_DENIED`);}
-  const headers=new Headers(response.headers);headers.set('content-type','application/json');headers.delete('content-length');
-  return new Response(bytes,{status:response.status,headers});
+  try {
+    JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    throw new ModelBoundaryError(
+      response.ok ? "MODEL_INVALID_RESPONSE" : `MODEL_HTTP_${response.status}_GATEWAY_DENIED`,
+    );
+  }
+  const headers = new Headers(response.headers);
+  headers.set("content-type", "application/json");
+  headers.delete("content-length");
+  return new Response(bytes, { status: response.status, headers });
 }

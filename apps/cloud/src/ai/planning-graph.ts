@@ -39,7 +39,8 @@ export async function planConversation(
   const runtime = await openGraph(scope, {
     modelId: thread.model_id,
     version: thread.model_version,
-    messages,history,
+    messages,
+    history,
   });
   const graph = new StateGraph(State)
     .addNode("understand", async (state) => {
@@ -53,13 +54,16 @@ export async function planConversation(
         id,
         runtime.generation,
       );
-      const decision = await model.runAgent(decisionSchema,state.messages,state.history,runtime.guard);
+      const decision = await model.runAgent(
+        decisionSchema,
+        state.messages,
+        state.history,
+        runtime.guard,
+      );
       await runtime.guard();
       if (
         decision.start &&
-        (!decision.goal ||
-          !decision.entryUrl ||
-          !decision.executionOutline.length)
+        (!decision.goal || !decision.entryUrl || !decision.executionOutline.length)
       )
         throw Error("HANDOFF_INCOMPLETE");
       return { decision };
@@ -80,7 +84,11 @@ export async function planConversation(
           verification: { kind: "goal", value: d.goal!.slice(0, 2000) },
           schedule: { kind: "manual" },
         },
-        { executionOutline: d.executionOutline, graphVersion: GRAPH_VERSION, accountIds:d.accountIds },
+        {
+          executionOutline: d.executionOutline,
+          graphVersion: GRAPH_VERSION,
+          accountIds: d.accountIds,
+        },
       );
       return {};
     })
@@ -90,16 +98,13 @@ export async function planConversation(
         : state.decision.reply,
     }))
     .addEdge(START, "understand")
-    .addConditionalEdges(
-      "understand",
-      (state) => (state.decision.start ? "handoff" : "respond"),
-      ["handoff", "respond"],
-    )
+    .addConditionalEdges("understand", (state) => (state.decision.start ? "handoff" : "respond"), [
+      "handoff",
+      "respond",
+    ])
     .addEdge("handoff", "respond")
     .addEdge("respond", END)
     .compile({ checkpointer: runtime.saver });
   const prior = await runtime.saver.getTuple(runtime.config);
-  return runtime.run(() =>
-    graph.invoke(prior ? null : { messages,history }, runtime.config),
-  );
+  return runtime.run(() => graph.invoke(prior ? null : { messages, history }, runtime.config));
 }

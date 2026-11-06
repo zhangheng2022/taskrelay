@@ -55,9 +55,7 @@ export async function retainHistory(env: AppEnv, cutoff: string) {
   ).all<{ id: string; object_key: string }>();
   for (const image of images.results) {
     await deleteEvidence(env, image.object_key);
-    await env.DB.prepare("DELETE FROM artifacts WHERE id=?")
-      .bind(image.id)
-      .run();
+    await env.DB.prepare("DELETE FROM artifacts WHERE id=?").bind(image.id).run();
   }
   await env.DB.prepare(
     "DELETE FROM execution_help WHERE thread_id IN (SELECT id FROM ai_threads WHERE deleted=1 AND id NOT IN(SELECT resource_id FROM history_cleanup_targets WHERE kind='thread'))",

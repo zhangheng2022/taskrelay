@@ -14,10 +14,7 @@ type Row = {
   updated_at: string;
 };
 const prefix = (a: string[], b: string[]) => b.every((s, i) => s === a[i]);
-function matches(
-  value: Record<string, unknown>,
-  filter: Record<string, unknown>,
-) {
+function matches(value: Record<string, unknown>, filter: Record<string, unknown>) {
   return Object.entries(filter).every(([k, want]) => {
     const actual = value[k];
     if (want && typeof want === "object" && !Array.isArray(want))
@@ -56,18 +53,12 @@ export class D1MemoryStore extends BaseStore {
       updatedAt: new Date(row.updated_at),
     };
   }
-  async mutation(
-    namespace: string[],
-    key: string,
-    value: Record<string, unknown> | null,
-  ) {
+  async mutation(namespace: string[], key: string, value: Record<string, unknown> | null) {
     const ns = JSON.stringify(namespace),
       at = new Date().toISOString();
     if (value === null)
       return this.db
-        .prepare(
-          "DELETE FROM ai_memories WHERE owner=? AND namespace=? AND key=?",
-        )
+        .prepare("DELETE FROM ai_memories WHERE owner=? AND namespace=? AND key=?")
         .bind(this.owner, ns, key);
     return this.db
       .prepare(
@@ -93,18 +84,14 @@ export class D1MemoryStore extends BaseStore {
           out.push(undefined);
         } else {
           const row = await this.db
-            .prepare(
-              "SELECT * FROM ai_memories WHERE owner=? AND namespace=? AND key=?",
-            )
+            .prepare("SELECT * FROM ai_memories WHERE owner=? AND namespace=? AND key=?")
             .bind(this.owner, ns, op.key)
             .first<Row>();
           out.push(row ? await this.item(row) : null);
         }
       } else {
         const rows = await this.db
-          .prepare(
-            "SELECT * FROM ai_memories WHERE owner=? ORDER BY updated_at DESC,key",
-          )
+          .prepare("SELECT * FROM ai_memories WHERE owner=? ORDER BY updated_at DESC,key")
           .bind(this.owner)
           .all<Row>();
         if ("namespacePrefix" in op) {
@@ -112,9 +99,7 @@ export class D1MemoryStore extends BaseStore {
           if (op.query) throw new Error("MEMORY_SEMANTIC_SEARCH_UNSUPPORTED");
           const items = await Promise.all(
             rows.results
-              .filter((r) =>
-                prefix(JSON.parse(r.namespace), op.namespacePrefix),
-              )
+              .filter((r) => prefix(JSON.parse(r.namespace), op.namespacePrefix))
               .map((r) => this.item(r)),
           );
           out.push(
@@ -128,9 +113,7 @@ export class D1MemoryStore extends BaseStore {
             .filter((ns) =>
               (op.matchConditions ?? []).every((c) => {
                 const parts =
-                  c.matchType === "prefix"
-                    ? ns.slice(0, c.path.length)
-                    : ns.slice(-c.path.length);
+                  c.matchType === "prefix" ? ns.slice(0, c.path.length) : ns.slice(-c.path.length);
                 return (
                   parts.length === c.path.length &&
                   c.path.every((s, i) => s === "*" || s === parts[i])
@@ -138,9 +121,7 @@ export class D1MemoryStore extends BaseStore {
               }),
             )
             .map((ns) => ns.slice(0, op.maxDepth));
-          spaces = [
-            ...new Map(spaces.map((s) => [JSON.stringify(s), s])).values(),
-          ];
+          spaces = [...new Map(spaces.map((s) => [JSON.stringify(s), s])).values()];
           out.push(spaces.slice(op.offset, op.offset + op.limit));
         }
       }

@@ -5,8 +5,8 @@
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { now, taskFrom, type Row } from "../store";
-import { advanceDispatchGroups, ensureDispatchGroup } from '../account-dispatch';
-import { accountMatchesDomain } from '../accounts';
+import { advanceDispatchGroups, ensureDispatchGroup } from "../account-dispatch";
+import { accountMatchesDomain } from "../accounts";
 import { getModelProfile } from "../models";
 import { hash, publicUrl } from "../../../../packages/contracts/src/security";
 import {
@@ -32,9 +32,7 @@ export async function commitDecision(
   plan: Pick<TaskDefinition, "executionOutline" | "graphVersion" | "accountIds"> = {},
 ) {
   if (
-    await env.DB.prepare("SELECT id FROM conversation_commands WHERE id=?")
-      .bind(turnId)
-      .first()
+    await env.DB.prepare("SELECT id FROM conversation_commands WHERE id=?").bind(turnId).first()
   ) {
     await drainCommands(env, turnId);
     return;
@@ -50,7 +48,7 @@ export async function commitDecision(
     (await env.DB.prepare(
       "SELECT id FROM runs WHERE task_id=? AND (status IN ('queued','running','waiting_user','verifying','unknown') OR cleanup_pending=1) UNION ALL SELECT id FROM account_dispatch_groups WHERE task_id=? AND state IN ('active','paused')",
     )
-      .bind(base.id,base.id)
+      .bind(base.id, base.id)
       .first())
   )
     throw Error("RUN_ALREADY_ACTIVE");
@@ -64,14 +62,18 @@ export async function commitDecision(
     profile.capabilities.structured === "none"
   )
     throw Error("MODEL_CAPABILITIES_REQUIRED");
-  const accountIds = [...new Set(plan.accountIds?.length ? plan.accountIds : parsed.accountId ? [parsed.accountId] : [])];
+  const accountIds = [
+    ...new Set(
+      plan.accountIds?.length ? plan.accountIds : parsed.accountId ? [parsed.accountId] : [],
+    ),
+  ];
   for (const accountId of accountIds) {
     const account = await env.DB.prepare(
       "SELECT origin,business_domains FROM accounts WHERE id=? AND user_id=?",
     )
       .bind(accountId, t.user_id)
-      .first<{ origin: string; business_domains:string }>();
-    if (!account || !accountMatchesDomain(account,entry.href))
+      .first<{ origin: string; business_domains: string }>();
+    if (!account || !accountMatchesDomain(account, entry.href))
       throw Error("ACCOUNT_ORIGIN_MISMATCH");
   }
   const definition: TaskDefinition = {
@@ -86,22 +88,12 @@ export async function commitDecision(
     createdAt: base?.createdAt ?? now(),
     nextRunAt: null,
   };
-  const fence =
-    "EXISTS(SELECT 1 FROM conversation_commands WHERE id=? AND state='pending')";
+  const fence = "EXISTS(SELECT 1 FROM conversation_commands WHERE id=? AND state='pending')";
   await env.DB.batch([
     env.DB.prepare(
       `INSERT OR IGNORE INTO conversation_commands(id,thread_id,task_id,run_task,created_at)
       SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM ai_threads WHERE id=? AND active_turn=? AND version=? AND closed=0)`,
-    ).bind(
-      turnId,
-      t.id,
-      definition.id,
-      JSON.stringify(definition),
-      now(),
-      t.id,
-      turnId,
-      t.version,
-    ),
+    ).bind(turnId, t.id, definition.id, JSON.stringify(definition), now(), t.id, turnId, t.version),
     env.DB.prepare(
       `INSERT INTO tasks(id,version,definition,status,next_run_at,created_at,updated_at,user_id)
       SELECT ?,?,?,?,NULL,?,?,? WHERE ${fence} ON CONFLICT(id) DO UPDATE SET version=excluded.version,definition=excluded.definition,status=excluded.status,next_run_at=NULL,confirmed_condition=NULL,context_withdrawn=0,updated_at=excluded.updated_at`,
@@ -117,23 +109,18 @@ export async function commitDecision(
     ),
     env.DB.prepare(
       `INSERT OR IGNORE INTO task_versions(task_id,version,definition) SELECT ?,?,? WHERE ${fence}`,
-    ).bind(
+    ).bind(definition.id, definition.version, JSON.stringify(definition), turnId),
+    env.DB.prepare(`UPDATE ai_threads SET task_id=? WHERE id=? AND ${fence}`).bind(
       definition.id,
-      definition.version,
-      JSON.stringify(definition),
+      t.id,
       turnId,
     ),
-    env.DB.prepare(
-      `UPDATE ai_threads SET task_id=? WHERE id=? AND ${fence}`,
-    ).bind(definition.id, t.id, turnId),
     env.DB.prepare(
       "UPDATE conversation_commands SET state='committed' WHERE id=? AND state='pending'",
     ).bind(turnId),
   ]);
   if (
-    !(await env.DB.prepare("SELECT id FROM conversation_commands WHERE id=?")
-      .bind(turnId)
-      .first())
+    !(await env.DB.prepare("SELECT id FROM conversation_commands WHERE id=?").bind(turnId).first())
   )
     throw Error("TURN_STALE");
   await drainCommands(env, turnId);
@@ -152,10 +139,10 @@ export async function drainCommands(env: AppEnv, id?: string) {
       try {
         // 读取后聊天仍可能被删除或撤回；把原命令及原聊天的有效性放到
         // INSERT 内原子检查，不能让旧命令重新挂到同任务的新聊天。
-        await ensureDispatchGroup(env.DB,row);
-        await advanceDispatchGroups(env.DB,row.id);
+        await ensureDispatchGroup(env.DB, row);
+        await advanceDispatchGroups(env.DB, row.id);
       } catch (error) {
-        if ((error as Error).message !== 'COMMAND_RETIRED') throw error;
+        if ((error as Error).message !== "COMMAND_RETIRED") throw error;
       }
     }
     await env.DB.prepare(

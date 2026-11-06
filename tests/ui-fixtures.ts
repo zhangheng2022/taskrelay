@@ -51,7 +51,9 @@ export const snapshot: Snapshot = {
   ],
 };
 export const run: TaskRun = {
-  id: "run-ui",userId:"demo",profileId:"profile_demo",
+  id: "run-ui",
+  userId: "demo",
+  profileId: "profile_demo",
   taskId: task.id,
   task,
   status: "waiting_user",
@@ -83,4 +85,14 @@ export function transportWith(
   return { request: request as Transport["request"] };
 }
 
-export const threadPage={id:'thread_ui',kind:'compose',version:0,modelId:'model-ui',draft:null,partial:{},activeTurn:null,messages:[],nextCursor:null};
+export const threadPage = {
+  id: "thread_ui",
+  kind: "compose",
+  version: 0,
+  modelId: "model-ui",
+  draft: null,
+  partial: {},
+  activeTurn: null,
+  messages: [],
+  nextCursor: null,
+};

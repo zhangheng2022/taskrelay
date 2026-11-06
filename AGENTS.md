@@ -69,25 +69,25 @@ CLI 故障按技能处理并说明替代方式，未执行成功不称为 OCR �
 
 以下 `cloud` = `apps/cloud/src`，`desktop` = `apps/desktop/src`，`ui` = `packages/ui/src`；花括号为缩写。技能先读 `SKILL.md`，只执行相关部分，明确调用优先。
 
-| 任务 | 优先入口 |
-| --- | --- |
-| 聊天、云端规划与协助 | `cloud/ai/`；`cloud/{chat-messages,execution-help}.ts` |
-| 合同、调度、租约与停止 | `packages/contracts/src/`；`cloud/{store,runner,user}.ts`；`tests/{api,reliability}.test.ts` |
-| 模型与出站 | `cloud/{models,egress,egress-state,model-egress}.ts`、`cloud/ai/model.ts`；`packages/model/src/` |
-| 桌面生命周期与权限 | `desktop/main/`；`desktop/preload/index.ts`、`desktop/shared/ipc.ts` |
-| 浏览器工具、图与截图 | `desktop/executor/{entry,runtime,execution-graph,session-checkpointer,stagehand-model,proxy,snapshots}.ts` |
-| 共享 UI 与宿主 | `ui/{app,chat-parts,task-compose,conversation,model-selector,executor-app}.tsx`、`ui/use-thread.ts`；`apps/{web,desktop}/src/`；[UI 检查](docs/UI-REVIEW.md) |
-| 认证、设备与云端绑定 | `cloud/{worker,index,auth,identity,pairing,env}.ts`；`apps/cloud/migrations/`；`apps/web/wrangler.jsonc` |
-| Windows 打包 | `apps/desktop/{forge.config,vite.executor.config}.mts`；`scripts/{stage-runtime,prepare-browser,verify-browser,smoke,release-manifest}.mjs` |
+| 任务                   | 优先入口                                                                                                                                                     |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 聊天、云端规划与协助   | `cloud/ai/`；`cloud/{chat-messages,execution-help}.ts`                                                                                                       |
+| 合同、调度、租约与停止 | `packages/contracts/src/`；`cloud/{store,runner,user}.ts`；`tests/{api,reliability}.test.ts`                                                                 |
+| 模型与出站             | `cloud/{models,egress,egress-state,model-egress}.ts`、`cloud/ai/model.ts`；`packages/model/src/`                                                             |
+| 桌面生命周期与权限     | `desktop/main/`；`desktop/preload/index.ts`、`desktop/shared/ipc.ts`                                                                                         |
+| 浏览器工具、图与截图   | `desktop/executor/{entry,runtime,execution-graph,session-checkpointer,stagehand-model,proxy,snapshots}.ts`                                                   |
+| 共享 UI 与宿主         | `ui/{app,chat-parts,task-compose,conversation,model-selector,executor-app}.tsx`、`ui/use-thread.ts`；`apps/{web,desktop}/src/`；[UI 检查](docs/UI-REVIEW.md) |
+| 认证、设备与云端绑定   | `cloud/{worker,index,auth,identity,pairing,env}.ts`；`apps/cloud/migrations/`；`apps/web/wrangler.jsonc`                                                     |
+| Windows 打包           | `apps/desktop/{forge.config,vite.executor.config}.mts`；`scripts/{stage-runtime,prepare-browser,verify-browser,smoke,release-manifest}.mjs`                  |
 
-| 场景 | 技能与边界 |
-| --- | --- |
-| 架构分析 | [improve-codebase-architecture](.agents/skills/improve-codebase-architecture/SKILL.md) ＋ [codebase-design](.agents/skills/codebase-design/SKILL.md)：先事实、deletion test、实际 adapter，再给候选；不提前设计 interface，不把平台知识扩散到调用方 |
-| React 行为/性能 | [vercel-react-best-practices](.agents/skills/vercel-react-best-practices/SKILL.md) 的相关规则 |
-| UI、表单、对话、可访问性 | [shadcn](.agents/skills/shadcn/SKILL.md) 与下方 UI 规则 |
-| Hono 路由/中间件 | [hono](.agents/skills/hono/SKILL.md)；React 不因后端为 Hono 而启用 hono-jsx / hono-void |
-| Workers、D1、DO、部署 | 从当前会话技能目录选 Cloudflare、workers-best-practices、durable-objects、wrangler，不硬编码其他机器/插件版本路径 |
-| 动画、原语迁移 | 实际涉及才用 vercel-react-view-transitions / migrate-radix-to-base |
+| 场景                     | 技能与边界                                                                                                                                                                                                                                          |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 架构分析                 | [improve-codebase-architecture](.agents/skills/improve-codebase-architecture/SKILL.md) ＋ [codebase-design](.agents/skills/codebase-design/SKILL.md)：先事实、deletion test、实际 adapter，再给候选；不提前设计 interface，不把平台知识扩散到调用方 |
+| React 行为/性能          | [vercel-react-best-practices](.agents/skills/vercel-react-best-practices/SKILL.md) 的相关规则                                                                                                                                                       |
+| UI、表单、对话、可访问性 | [shadcn](.agents/skills/shadcn/SKILL.md) 与下方 UI 规则                                                                                                                                                                                             |
+| Hono 路由/中间件         | [hono](.agents/skills/hono/SKILL.md)；React 不因后端为 Hono 而启用 hono-jsx / hono-void                                                                                                                                                             |
+| Workers、D1、DO、部署    | 从当前会话技能目录选 Cloudflare、workers-best-practices、durable-objects、wrangler，不硬编码其他机器/插件版本路径                                                                                                                                   |
+| 动画、原语迁移           | 实际涉及才用 vercel-react-view-transitions / migrate-radix-to-base                                                                                                                                                                                  |
 
 ## Stagehand 规则
 
@@ -117,14 +117,14 @@ CLI 故障按技能处理并说明替代方式，未执行成功不称为 OCR �
 
 开发机 Node.js 24+、npm workspaces，用户无需 Node.js；命令以根 `package.json` 为准。初始化见 [README](README.md#开发)，桌面用 `npm run desktop`；`setup-local` 只在缺失时写密钥，`db:migrate` 只迁移本地 D1。
 
-| 范围 | 必要验证 |
-| --- | --- |
-| 纯文档/注释 | 核对事实、链接、命令和差异；`git diff --check`。注释涉及 TS/TSX 时补类型检查，不为注释编写镜像测试 |
-| 协议、状态、策略 | `npm run typecheck`；相关 `tests/{api,reliability}.test.ts` |
-| 模型、结构化输出 | 类型检查；`tests/{model,structured-production}.test.ts`；地区/加密作业加 `tests/egress.test.ts` |
-| Web / 共享 UI | 类型检查、`npm run test:ui`、`npm run build`；实际共享组件验证 Transport；按改动检查窄屏/手机、键盘/输入法、历史滚动及加载/错误/离线/等待状态 |
-| Executor、原生依赖、Forge | 相关生产入口测试、打包后 smoke；恢复逻辑加实际 `execute` / `ExecutorHost` 故障流程 |
-| 结构、依赖、交付脚本 | `npm run check:repo`，叠加实际影响范围的检查 |
+| 范围                      | 必要验证                                                                                                                                      |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| 纯文档/注释               | 核对事实、链接、命令和差异；`git diff --check`。注释涉及 TS/TSX 时补类型检查，不为注释编写镜像测试                                            |
+| 协议、状态、策略          | `npm run typecheck`；相关 `tests/{api,reliability}.test.ts`                                                                                   |
+| 模型、结构化输出          | 类型检查；`tests/{model,structured-production}.test.ts`；地区/加密作业加 `tests/egress.test.ts`                                               |
+| Web / 共享 UI             | 类型检查、`npm run test:ui`、`npm run build`；实际共享组件验证 Transport；按改动检查窄屏/手机、键盘/输入法、历史滚动及加载/错误/离线/等待状态 |
+| Executor、原生依赖、Forge | 相关生产入口测试、打包后 smoke；恢复逻辑加实际 `execute` / `ExecutorHost` 故障流程                                                            |
+| 结构、依赖、交付脚本      | `npm run check:repo`，叠加实际影响范围的检查                                                                                                  |
 
 多范围取并集，跨运行流程执行 `npm test`；定向测试用 `node --import tsx --test <测试文件...>`。测试命中生产 interface，不只测未接入 helper；通过后仅因新改动、失败或未解风险追加验证。
 
@@ -139,12 +139,12 @@ CLI 故障按技能处理并说明替代方式，未执行成功不称为 OCR �
 
 ## 文档归属
 
-| 内容 | 唯一维护位置 |
-| --- | --- |
-| 协作、注释与 OCR 规则 | 本文，不另建第二份 agent 指南 |
-| 架构事实、流程、协议/状态、候选实施情况 | [ARCHITECTURE](docs/ARCHITECTURE.md) |
-| 开发/构建、部署/安装 | [README](README.md)、[DEPLOYMENT](docs/DEPLOYMENT.md) |
-| UI 检查、验收证据与限制 | [UI-REVIEW](docs/UI-REVIEW.md)、[ACCEPTANCE](docs/ACCEPTANCE.md) |
-| 产品目标 | [PRODUCT](PRODUCT.md) |
+| 内容                                    | 唯一维护位置                                                     |
+| --------------------------------------- | ---------------------------------------------------------------- |
+| 协作、注释与 OCR 规则                   | 本文，不另建第二份 agent 指南                                    |
+| 架构事实、流程、协议/状态、候选实施情况 | [ARCHITECTURE](docs/ARCHITECTURE.md)                             |
+| 开发/构建、部署/安装                    | [README](README.md)、[DEPLOYMENT](docs/DEPLOYMENT.md)            |
+| UI 检查、验收证据与限制                 | [UI-REVIEW](docs/UI-REVIEW.md)、[ACCEPTANCE](docs/ACCEPTANCE.md) |
+| 产品目标                                | [PRODUCT](PRODUCT.md)                                            |
 
 阶段版本、通过记录和实施进度只在对应文档维护，不在本文重复。

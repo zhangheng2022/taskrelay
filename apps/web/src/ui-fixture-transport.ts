@@ -1,4 +1,9 @@
-import type { Snapshot, TaskDefinition, Transport, DesktopStatus } from "../../../packages/contracts/src/index";
+import type {
+  Snapshot,
+  TaskDefinition,
+  Transport,
+  DesktopStatus,
+} from "../../../packages/contracts/src/index";
 import type { ThreadPage } from "../../../packages/ui/src/use-thread";
 
 // 开发预览的隔离 Transport：按当前网站请求合同维护演示任务、聊天和执行器状态。
@@ -57,10 +62,19 @@ export function createFixtureTransport(options: URLSearchParams): Transport {
       },
     ],
   };
-  if(options.has('batch'))definition.verification={kind:'batch',value:'每条普通记录标记为已处理',scope:'当前账号全部记录及其分页',eligibility:'普通记录',exclusions:['已归档记录']};
+  if (options.has("batch"))
+    definition.verification = {
+      kind: "batch",
+      value: "每条普通记录标记为已处理",
+      scope: "当前账号全部记录及其分页",
+      eligibility: "普通记录",
+      exclusions: ["已归档记录"],
+    };
   if (state !== "new")
     snapshot.runs.push({
-      id: "demo_run",userId:"demo",profileId:"profile_demo",
+      id: "demo_run",
+      userId: "demo",
+      profileId: "profile_demo",
       taskId: definition.id,
       task: definition,
       status: assistance
@@ -102,37 +116,56 @@ export function createFixtureTransport(options: URLSearchParams): Transport {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
-  if(options.has('batch')&&snapshot.runs[0]?.result){
-    const result=snapshot.runs[0].result;
-    result.summary='批量任务尚未全部核验：本次完成 1 项，原已完成 1 项，排除 1 项，待核查 1 项。';
+  if (options.has("batch") && snapshot.runs[0]?.result) {
+    const result = snapshot.runs[0].result;
+    result.summary = "批量任务尚未全部核验：本次完成 1 项，原已完成 1 项，排除 1 项，待核查 1 项。";
     delete result.data;
-    result.batch={coverage:'incomplete',expected:4,reason:'最后一页仍需复核，未将已发现项目当作全部完成。',items:[
-      {id:'one',label:'记录一：订单资料核对',status:'completed'},
-      {id:'two',label:'记录二：供应商信息更新',status:'already_done'},
-      {id:'three',label:'记录三：已归档的历史项目',status:'excluded'},
-      {id:'four',label:'记录四：需要继续核查的长名称项目，用于检查手机上的换行与完整显示',status:'unknown'},
-    ].map(item=>({...item,status:item.status as 'completed'|'already_done'|'excluded'|'unknown',reason:item.status==='excluded'?'已归档记录':'',evidence:{url:'https://example.com/',quote:item.status==='unknown'?'提交结果尚未确认':'已读取对应项目状态',capturedAt:new Date().toISOString()}}))};
+    result.batch = {
+      coverage: "incomplete",
+      expected: 4,
+      reason: "最后一页仍需复核，未将已发现项目当作全部完成。",
+      items: [
+        { id: "one", label: "记录一：订单资料核对", status: "completed" },
+        { id: "two", label: "记录二：供应商信息更新", status: "already_done" },
+        { id: "three", label: "记录三：已归档的历史项目", status: "excluded" },
+        {
+          id: "four",
+          label: "记录四：需要继续核查的长名称项目，用于检查手机上的换行与完整显示",
+          status: "unknown",
+        },
+      ].map((item) => ({
+        ...item,
+        status: item.status as "completed" | "already_done" | "excluded" | "unknown",
+        reason: item.status === "excluded" ? "已归档记录" : "",
+        evidence: {
+          url: "https://example.com/",
+          quote: item.status === "unknown" ? "提交结果尚未确认" : "已读取对应项目状态",
+          capturedAt: new Date().toISOString(),
+        },
+      })),
+    };
   }
   if (assistance && state !== "answered")
-    snapshot.waitingHelp = [{id:"demo_help",runId:"demo_run",taskId:definition.id}];
-  const messages: { id: string; role: string; content: string; at: string }[] =
-    options.has("history")
-      ? Array.from({ length: 24 }, (_, i) => ({
-          id: `history-${i}`,
-          role: i % 2 ? "assistant" : "user",
-          content:
-            i % 2
-              ? `第 ${i + 1} 条演示回复：这里是已记录的执行情况。\n详情会随真实事件回传更新。`
-              : `第 ${i + 1} 条任务询问`,
-          at: new Date().toISOString(),
-        }))
-      : [];
-  const threads=new Map<string,ThreadPage & {kind: 'chat'}>();
-  const memories=new Map<string,{key:string;value:{text:string}}>();
+    snapshot.waitingHelp = [{ id: "demo_help", runId: "demo_run", taskId: definition.id }];
+  const messages: { id: string; role: string; content: string; at: string }[] = options.has(
+    "history",
+  )
+    ? Array.from({ length: 24 }, (_, i) => ({
+        id: `history-${i}`,
+        role: i % 2 ? "assistant" : "user",
+        content:
+          i % 2
+            ? `第 ${i + 1} 条演示回复：这里是已记录的执行情况。\n详情会随真实事件回传更新。`
+            : `第 ${i + 1} 条任务询问`,
+        at: new Date().toISOString(),
+      }))
+    : [];
+  const threads = new Map<string, ThreadPage & { kind: "chat" }>();
+  const memories = new Map<string, { key: string; value: { text: string } }>();
   let failed = false;
   let threadFailures = 0;
   const desktop: DesktopStatus = {
-    update:{phase:'current',release:null,progress:null,checkedAt:null,error:null},
+    update: { phase: "current", release: null, progress: null, checkedAt: null, error: null },
     paired: true,
     cloudUrl: "https://example.com",
     paused: false,
@@ -142,74 +175,171 @@ export function createFixtureTransport(options: URLSearchParams): Transport {
     autoStart: false,
     error: null,
   };
-  const updatePhase=options.get('update');
-  if(updatePhase&&['available','downloading','waiting','installing','error'].includes(updatePhase)){
-    desktop.version='0.4.7';desktop.update={phase:updatePhase as DesktopStatus['update']['phase'],release:{version:'0.4.8',sha1:'a'.repeat(40),sha256:'a'.repeat(64),bytes:1024,notes:'改进执行器的稳定性和更新体验。',publishedAt:new Date().toISOString()},progress:42,checkedAt:null,error:updatePhase==='error'?'更新下载或完整性校验失败，请重试。':null};
+  const updatePhase = options.get("update");
+  if (
+    updatePhase &&
+    ["available", "downloading", "waiting", "installing", "error"].includes(updatePhase)
+  ) {
+    desktop.version = "0.4.7";
+    desktop.update = {
+      phase: updatePhase as DesktopStatus["update"]["phase"],
+      release: {
+        version: "0.4.8",
+        sha1: "a".repeat(40),
+        sha256: "a".repeat(64),
+        bytes: 1024,
+        notes: "改进执行器的稳定性和更新体验。",
+        publishedAt: new Date().toISOString(),
+      },
+      progress: 42,
+      checkedAt: null,
+      error: updatePhase === "error" ? "更新下载或完整性校验失败，请重试。" : null,
+    };
   }
-  const cleanupJobs=new Map<string,{id:string;status:string;total:number;completed:number;error:null;readyAt:number}>();
-  let chatCleared=false;
+  const cleanupJobs = new Map<
+    string,
+    { id: string; status: string; total: number; completed: number; error: null; readyAt: number }
+  >();
+  let chatCleared = false;
   const transport: Transport = {
     async request<T>(method: string, path: string, body?: unknown): Promise<T> {
-      await new Promise((r) => setTimeout(r, options.get('network')==='slow'?12000:200));
+      await new Promise((r) => setTimeout(r, options.get("network") === "slow" ? 12000 : 200));
       // StrictMode probes the initial effect twice; both probes must see the outage.
-      if(options.get('network')==='fail-once'&&path==='/api/user/threads'&&threadFailures++<2)throw new Error('OFFLINE');
+      if (
+        options.get("network") === "fail-once" &&
+        path === "/api/user/threads" &&
+        threadFailures++ < 2
+      )
+        throw new Error("OFFLINE");
       let result: unknown;
       if (path === "/api/user/snapshot") result = structuredClone(snapshot);
-      else if(path.startsWith('/api/user/history-cleanups-preview'))result={chats:snapshot.tasks.length,active:snapshot.runs.filter(r=>['queued','running','waiting_user','verifying'].includes(r.status)).length};
-      else if(path==='/api/user/history-cleanups'){
-        if(method==='GET')result=[...cleanupJobs.values()].filter(j=>Date.now()<j.readyAt);
-        else{
-          const input=body as {scope:string;targetId:string|null;requestId:string};
-          let job=cleanupJobs.get(input.requestId);
-          if(!job){
-            job={id:crypto.randomUUID(),status:'pending',total:3,completed:0,error:null,readyAt:Date.now()+6000};cleanupJobs.set(input.requestId,job);
-            for(const [id,page] of threads)if(input.scope==='all'||page.taskId===input.targetId)threads.delete(id);
-            snapshot.runs=snapshot.runs.filter(r=>input.scope!=='all'&&r.taskId!==input.targetId);
-            snapshot.waitingHelp=[];
-            if(input.scope==='clear'){chatCleared=true;definition.status='paused';definition.goal='请重新交办任务';definition.schedule={kind:'manual'};}
-            else snapshot.tasks=snapshot.tasks.filter(t=>input.scope!=='all'&&t.id!==input.targetId);
-          }
-          result=job;
-        }
-      }
-      else if(path==='/api/user/threads') {
-        if(method==='GET')result=[...threads.values()].map(t=>({...t,model_id:t.modelId,task_id:t.taskId??null}));
+      else if (path.startsWith("/api/user/history-cleanups-preview"))
+        result = {
+          chats: snapshot.tasks.length,
+          active: snapshot.runs.filter((r) =>
+            ["queued", "running", "waiting_user", "verifying"].includes(r.status),
+          ).length,
+        };
+      else if (path === "/api/user/history-cleanups") {
+        if (method === "GET")
+          result = [...cleanupJobs.values()].filter((j) => Date.now() < j.readyAt);
         else {
-          const input = body as {modelId:string;taskId?:string};
-          const boundTask = snapshot.tasks.find(task => task.id === input.taskId);
-          if (input.taskId && !boundTask) throw new Error('TASK_NOT_FOUND');
-          const id=crypto.randomUUID();
-          const page: ThreadPage & {kind: 'chat'} = {
-            id, kind:'chat', taskId:input.taskId??null, modelId:input.modelId,
-            version:0, draft:boundTask??null, partial:{}, activeTurn:null, nextCursor:null,
-            messages:boundTask&&!chatCleared?messages.map((m,i)=>({...m,seq:i+1})):[],
-            waiting:boundTask&&!chatCleared&&assistance&&state!=='answered'?{id:'demo_help',request:'{}'}:null,
+          const input = body as { scope: string; targetId: string | null; requestId: string };
+          let job = cleanupJobs.get(input.requestId);
+          if (!job) {
+            job = {
+              id: crypto.randomUUID(),
+              status: "pending",
+              total: 3,
+              completed: 0,
+              error: null,
+              readyAt: Date.now() + 6000,
+            };
+            cleanupJobs.set(input.requestId, job);
+            for (const [id, page] of threads)
+              if (input.scope === "all" || page.taskId === input.targetId) threads.delete(id);
+            snapshot.runs = snapshot.runs.filter(
+              (r) => input.scope !== "all" && r.taskId !== input.targetId,
+            );
+            snapshot.waitingHelp = [];
+            if (input.scope === "clear") {
+              chatCleared = true;
+              definition.status = "paused";
+              definition.goal = "请重新交办任务";
+              definition.schedule = { kind: "manual" };
+            } else
+              snapshot.tasks = snapshot.tasks.filter(
+                (t) => input.scope !== "all" && t.id !== input.targetId,
+              );
+          }
+          result = job;
+        }
+      } else if (path === "/api/user/threads") {
+        if (method === "GET")
+          result = [...threads.values()].map((t) => ({
+            ...t,
+            model_id: t.modelId,
+            task_id: t.taskId ?? null,
+          }));
+        else {
+          const input = body as { modelId: string; taskId?: string };
+          const boundTask = snapshot.tasks.find((task) => task.id === input.taskId);
+          if (input.taskId && !boundTask) throw new Error("TASK_NOT_FOUND");
+          const id = crypto.randomUUID();
+          const page: ThreadPage & { kind: "chat" } = {
+            id,
+            kind: "chat",
+            taskId: input.taskId ?? null,
+            modelId: input.modelId,
+            version: 0,
+            draft: boundTask ?? null,
+            partial: {},
+            activeTurn: null,
+            nextCursor: null,
+            messages:
+              boundTask && !chatCleared ? messages.map((m, i) => ({ ...m, seq: i + 1 })) : [],
+            waiting:
+              boundTask && !chatCleared && assistance && state !== "answered"
+                ? { id: "demo_help", request: "{}" }
+                : null,
           };
-          if(page.waiting)page.messages.push({id:'help-message',seq:page.messages.length+1,role:'assistant',content:'请在同一聊天提供登录所需信息，或说明下一步要求。',at:new Date().toISOString()});
-          if(boundTask&&snapshot.runs[0]?.result)page.messages.push({id:'final-message',seq:page.messages.length+1,role:'assistant',content:snapshot.runs[0].result.summary,at:new Date().toISOString()});
-          threads.set(id,page);result=structuredClone(page);
+          if (page.waiting)
+            page.messages.push({
+              id: "help-message",
+              seq: page.messages.length + 1,
+              role: "assistant",
+              content: "请在同一聊天提供登录所需信息，或说明下一步要求。",
+              at: new Date().toISOString(),
+            });
+          if (boundTask && snapshot.runs[0]?.result)
+            page.messages.push({
+              id: "final-message",
+              seq: page.messages.length + 1,
+              role: "assistant",
+              content: snapshot.runs[0].result.summary,
+              at: new Date().toISOString(),
+            });
+          threads.set(id, page);
+          result = structuredClone(page);
         }
-
-      } else if(path.startsWith('/api/user/threads/')) {
-        const id=path.split('/')[4],page=threads.get(id);
-        if (!page) throw new Error('THREAD_NOT_FOUND');
-        if(method==='DELETE'){threads.delete(id);result={ok:true};}
-        else if(path.endsWith('/messages')) {
-          if(options.has('fail')&&!failed){failed=true;throw new Error('MODEL_EGRESS_TIMEOUT');}
+      } else if (path.startsWith("/api/user/threads/")) {
+        const id = path.split("/")[4],
+          page = threads.get(id);
+        if (!page) throw new Error("THREAD_NOT_FOUND");
+        if (method === "DELETE") {
+          threads.delete(id);
+          result = { ok: true };
+        } else if (path.endsWith("/messages")) {
+          if (options.has("fail") && !failed) {
+            failed = true;
+            throw new Error("MODEL_EGRESS_TIMEOUT");
+          }
           page.version++;
-          const {content}=body as {content:string};
-          const at=new Date().toISOString();
-          page.messages.push({id:crypto.randomUUID(),seq:page.messages.length+1,role:'user',content,at},{id:crypto.randomUUID(),seq:page.messages.length+2,role:'assistant',content:'这是界面演示回复，不会执行真实任务。',at});
-          page.waiting=null;snapshot.waitingHelp=[];
-          result={...structuredClone(page),status:'done'};
-        }
-        else result=structuredClone(page);
-      } else if(path==='/api/user/memories')result=[...memories.values()];
-      else if(path.startsWith('/api/user/memories/')){const key=path.split('/').at(-1)!;if(method==='DELETE')memories.delete(key);else memories.set(key,{key,value:{text:(body as {text:string}).text}});result={ok:true};}
-   else if (path.endsWith("/cancel")) {
+          const { content } = body as { content: string };
+          const at = new Date().toISOString();
+          page.messages.push(
+            { id: crypto.randomUUID(), seq: page.messages.length + 1, role: "user", content, at },
+            {
+              id: crypto.randomUUID(),
+              seq: page.messages.length + 2,
+              role: "assistant",
+              content: "这是界面演示回复，不会执行真实任务。",
+              at,
+            },
+          );
+          page.waiting = null;
+          snapshot.waitingHelp = [];
+          result = { ...structuredClone(page), status: "done" };
+        } else result = structuredClone(page);
+      } else if (path === "/api/user/memories") result = [...memories.values()];
+      else if (path.startsWith("/api/user/memories/")) {
+        const key = path.split("/").at(-1)!;
+        if (method === "DELETE") memories.delete(key);
+        else memories.set(key, { key, value: { text: (body as { text: string }).text } });
+        result = { ok: true };
+      } else if (path.endsWith("/cancel")) {
         snapshot.runs[0].cancelRequested = true;
         result = { ok: true };
-
       } else if (path.startsWith("/api/user/runs/"))
         result = {
           events: [
@@ -241,7 +371,7 @@ export function createFixtureTransport(options: URLSearchParams): Transport {
       return result as T;
     },
   };
-  if (options.has("desktop") || options.has('executor') || state === "offline")
+  if (options.has("desktop") || options.has("executor") || state === "offline")
     transport.desktop = {
       status: async () => ({ ...desktop }),
       configure: async () => ({ url: "https://example.com", code: "DEMO" }),

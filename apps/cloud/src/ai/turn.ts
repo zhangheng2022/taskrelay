@@ -28,11 +28,7 @@ export class AiTurn extends DurableObject<AppEnv> {
     )
       .bind(id)
       .first<{ thread_id: string; owner: string }>();
-    if (turn)
-      await promoteInbox(
-        { ...this.env, requestUserId: turn.owner },
-        turn.thread_id,
-      );
+    if (turn) await promoteInbox({ ...this.env, requestUserId: turn.owner }, turn.thread_id);
     const next = await nextGraphWake(this.env, id);
     if (next !== null) await this.ctx.storage.setAlarm(next);
     else await this.ctx.storage.deleteAlarm();
@@ -47,8 +43,7 @@ export async function wakeTurns(env: AppEnv) {
   const waiting = await env.DB.prepare(
     "SELECT DISTINCT t.id,t.user_id FROM ai_threads t JOIN conversation_inbox i ON i.thread_id=t.id WHERE t.active_turn IS NULL AND t.closed=0 AND i.status='pending' LIMIT 10",
   ).all<{ id: string; user_id: string }>();
-  for (const t of waiting.results)
-    await promoteInbox({ ...env, requestUserId: t.user_id }, t.id);
+  for (const t of waiting.results) await promoteInbox({ ...env, requestUserId: t.user_id }, t.id);
   const events = await env.DB.prepare(
     "SELECT DISTINCT graph_id FROM ai_dispatch WHERE state='pending' OR (state='running' AND lease_until<?) LIMIT 20",
   )

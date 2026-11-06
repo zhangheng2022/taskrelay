@@ -2,12 +2,19 @@
 import type { ModelEgress } from "./model-egress";
 import type { RequestCoordinator, Scheduler } from "./request-coordinator";
 import type { AiTurn } from "./ai/turn";
-import type { Evidence } from './evidence-store';
-import type { NotificationHub } from './notification-hub';
-import type { BrowserStateStore } from './browser-state-store';
+import type { Evidence } from "./evidence-store";
+import type { NotificationHub } from "./notification-hub";
+import type { BrowserStateStore } from "./browser-state-store";
 export type AppEnv = Omit<
   Cloudflare.Env,
-  "EVIDENCE" | "DEV_MODE" | "ACCESS_AUD" | "MODEL_EGRESS" | "AUTH_BASE_URL" | "REGISTRATION_OPEN" | "MAIL_FROM" | "TURNSTILE_SITE_KEY"
+  | "EVIDENCE"
+  | "DEV_MODE"
+  | "ACCESS_AUD"
+  | "MODEL_EGRESS"
+  | "AUTH_BASE_URL"
+  | "REGISTRATION_OPEN"
+  | "MAIL_FROM"
+  | "TURNSTILE_SITE_KEY"
 > & {
   MODEL_EGRESS: DurableObjectNamespace<ModelEgress>;
   REQUESTS: DurableObjectNamespace<RequestCoordinator>;
@@ -29,4 +36,10 @@ export type AppEnv = Omit<
   REGISTRATION_OPEN: string;
   requestUserId?: string;
 };
-export type Variables = { deviceId: string; actor: "owner" | "user" | "device"; userId: string; sessionId:string; member: import('./tenancy').Member };
+export type Variables = {
+  deviceId: string;
+  actor: "owner" | "user" | "device";
+  userId: string;
+  sessionId: string;
+  member: import("./tenancy").Member;
+};

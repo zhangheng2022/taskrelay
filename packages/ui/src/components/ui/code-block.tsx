@@ -14,8 +14,7 @@ const codeBlockVariants = cva(
       variant: {
         default:
           "border border-input text-foreground has-[>[data-slot=code-block-content]:focus-visible]:border-ring dark:bg-input/30",
-        destructive:
-          "border border-destructive/30 text-destructive dark:border-destructive/40",
+        destructive: "border border-destructive/30 text-destructive dark:border-destructive/40",
       },
     },
     defaultVariants: {
@@ -68,10 +67,7 @@ function CodeBlockTitle({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
-function CodeBlockActions({
-  className,
-  ...props
-}: React.ComponentProps<"div">) {
+function CodeBlockActions({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="code-block-actions"
@@ -165,9 +161,7 @@ function CodeBlockContent({
           ? children
               .replace(/\n$/, "")
               .split("\n")
-              .map((line, index) => (
-                <CodeBlockLine key={index}>{line}</CodeBlockLine>
-              ))
+              .map((line, index) => <CodeBlockLine key={index}>{line}</CodeBlockLine>)
           : children}
       </code>
     </pre>

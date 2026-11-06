@@ -13,7 +13,11 @@ export type EgressJob =
       userId: string;
       reservationId: string;
     };
-export async function egress<T>(env: AppEnv, job: EgressJob, persist?: (result:T)=>Promise<void>): Promise<T> {
+export async function egress<T>(
+  env: AppEnv,
+  job: EgressJob,
+  persist?: (result: T) => Promise<void>,
+): Promise<T> {
   if (!env.MODEL_EGRESS) throw new Error("MODEL_EGRESS_NOT_CONFIGURED");
   const id = crypto.randomUUID();
   // This jurisdiction constrains the execution itself, unlike a placement hint.
@@ -21,10 +25,7 @@ export async function egress<T>(env: AppEnv, job: EgressJob, persist?: (result:T
   try {
     region = env.MODEL_EGRESS.jurisdiction("us");
   } catch (error) {
-    if (
-      (error as Error).message ===
-      "Jurisdiction restrictions are not implemented in workerd."
-    )
+    if ((error as Error).message === "Jurisdiction restrictions are not implemented in workerd.")
       throw new Error("MODEL_REGION_REQUIRES_DEPLOYMENT");
     throw error;
   }
@@ -34,26 +35,27 @@ export async function egress<T>(env: AppEnv, job: EgressJob, persist?: (result:T
     id,
     await seal(job, env.MASTER_KEY, `egress:${id}:request`),
   );
-  let persisted = false,discarded=false;
+  let persisted = false,
+    discarded = false;
   try {
     if (result.status !== "done" || !result.cipher)
       throw new Error(result.error ?? "MODEL_EGRESS_FAILED");
-    const value = await unseal<T>(
-      result.cipher,
-      env.MASTER_KEY,
-      `egress:${id}:response`,
-    );
-    if(persist) await persist(value);
+    const value = await unseal<T>(result.cipher, env.MASTER_KEY, `egress:${id}:response`);
+    if (persist) await persist(value);
     persisted = true;
     return value;
-  } catch(error) {
+  } catch (error) {
     // 删除/撤回使持久化 fence 拒收结果时，终态响应也应立即清掉，不能再作为恢复缓存。
-    discarded=(error as Error).message==='MODEL_CALL_DISCARDED';
+    discarded = (error as Error).message === "MODEL_CALL_DISCARDED";
     throw error;
   } finally {
     // Only acknowledge terminal results; never re-enter an executing alarm.
     // A failed acknowledgement must not discard an already received model result.
-    if ((result.status !== 'done' || persisted || discarded) && result.status !== "pending" && result.status !== "running")
+    if (
+      (result.status !== "done" || persisted || discarded) &&
+      result.status !== "pending" &&
+      result.status !== "running"
+    )
       await stub.ack().catch(() => {});
   }
 }

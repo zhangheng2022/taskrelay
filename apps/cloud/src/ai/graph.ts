@@ -64,8 +64,7 @@ export async function openGraph(scope: GraphScope, input: unknown) {
       graph_version: string;
       generation: number;
     }>();
-  if (!saved?.active || saved.graph_version !== GRAPH_VERSION)
-    throw Error("GRAPH_VERSION_RETIRED");
+  if (!saved?.active || saved.graph_version !== GRAPH_VERSION) throw Error("GRAPH_VERSION_RETIRED");
   if (saved.digest !== digest) throw Error("GRAPH_INPUT_CONFLICT");
   const generation = saved.generation;
   const guard = async () => {
@@ -82,14 +81,7 @@ export async function openGraph(scope: GraphScope, input: unknown) {
   return {
     guard,
     generation,
-    saver: new D1Checkpointer(
-      env.DB,
-      owner,
-      env.MASTER_KEY,
-      guard,
-      true,
-      generation,
-    ),
+    saver: new D1Checkpointer(env.DB, owner, env.MASTER_KEY, guard, true, generation),
     config: {
       configurable: { thread_id: id, checkpoint_ns: "" },
       callbacks: [],

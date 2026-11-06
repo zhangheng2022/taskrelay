@@ -1,21 +1,13 @@
-import {ModelDialog} from './model-dialog';
-import {QueryBoundary,useTransportQuery} from './queries';
-import {createApi,rpcData} from './api';
-import { Memories } from './memories';
-import { Accounts } from './accounts';
+import { ModelDialog } from "./model-dialog";
+import { QueryBoundary, useTransportQuery } from "./queries";
+import { createApi, rpcData } from "./api";
+import { Memories } from "./memories";
+import { Accounts } from "./accounts";
 import { AdminPanel } from "./admin-panel";
 import { AccountSecurity } from "./auth-gate";
 import { useEffect, useRef, useState } from "react";
-import {
-  CheckCircle2,
-  Loader2,
-  Plus,
-} from "lucide-react";
-import type {
-  ModelProfile,
-  Snapshot,
-  Transport,
-} from "../../contracts/src/index";
+import { CheckCircle2, Loader2, Plus } from "lucide-react";
+import type { ModelProfile, Snapshot, Transport } from "../../contracts/src/index";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "./components/ui/tabs";
@@ -31,9 +23,19 @@ import {
 import { Field } from "./form-field";
 import { ErrorText, formatDate } from "./feedback";
 export function Settings({
-  transport,snapshot,refresh,
-}: {transport:Transport;snapshot:Snapshot;refresh:()=>Promise<void>}){
- return <QueryBoundary owner={transport}><SettingsContent transport={transport} snapshot={snapshot} refresh={refresh}/></QueryBoundary>;
+  transport,
+  snapshot,
+  refresh,
+}: {
+  transport: Transport;
+  snapshot: Snapshot;
+  refresh: () => Promise<void>;
+}) {
+  return (
+    <QueryBoundary owner={transport}>
+      <SettingsContent transport={transport} snapshot={snapshot} refresh={refresh} />
+    </QueryBoundary>
+  );
 }
 function SettingsContent({
   transport,
@@ -44,9 +46,15 @@ function SettingsContent({
   snapshot: Snapshot;
   refresh: () => Promise<void>;
 }) {
-  const isAdmin=snapshot.me?.role === "admin";
-  const config=useTransportQuery(transport,['admin-settings'],signal=>rpcData(createApi(transport).api.admin.settings.$get({}, {init:{signal}})),60000,isAdmin);
-  const daysDirty=useRef(false);
+  const isAdmin = snapshot.me?.role === "admin";
+  const config = useTransportQuery(
+    transport,
+    ["admin-settings"],
+    (signal) => rpcData(createApi(transport).api.admin.settings.$get({}, { init: { signal } })),
+    60000,
+    isAdmin,
+  );
+  const daysDirty = useRef(false);
   const [tab, setTab] = useState(isAdmin ? "models" : "accounts"),
     [model, setModel] = useState<ModelProfile | true | null>(null),
     [error, setError] = useState(""),
@@ -64,7 +72,9 @@ function SettingsContent({
       setBusy("");
     }
   };
-  useEffect(()=>{if(config.data&&!daysDirty.current)setDays(config.data.retentionDays);},[config.data]);
+  useEffect(() => {
+    if (config.data && !daysDirty.current) setDays(config.data.retentionDays);
+  }, [config.data]);
   return (
     <Tabs className="settings" value={tab} onValueChange={setTab}>
       <TabsList className="w-full flex-wrap group-data-[orientation=horizontal]/tabs:h-auto">
@@ -72,7 +82,14 @@ function SettingsContent({
           ["accounts", "站点账号"],
           ["security", "登录安全"],
           ["memories", "我的记忆"],
-          ...(isAdmin?[["models", "模型服务"],["devices", "设备"],["data", "数据保留"],["admin","用户与配额"]]:[]),
+          ...(isAdmin
+            ? [
+                ["models", "模型服务"],
+                ["devices", "设备"],
+                ["data", "数据保留"],
+                ["admin", "用户与配额"],
+              ]
+            : []),
         ].map(([id, label]) => (
           <TabsTrigger key={id} value={id} className="h-auto min-h-8">
             {label}
@@ -81,7 +98,13 @@ function SettingsContent({
       </TabsList>
       {error && <ErrorText error={error} />}
       <TabsContent value={tab} className="settings-content">
-        {tab === "memories" ? <Memories transport={transport}/> : tab === "admin" ? <AdminPanel transport={transport}/> : tab === "security" ? <AccountSecurity/> : tab === "models" ? (
+        {tab === "memories" ? (
+          <Memories transport={transport} />
+        ) : tab === "admin" ? (
+          <AdminPanel transport={transport} />
+        ) : tab === "security" ? (
+          <AccountSecurity />
+        ) : tab === "models" ? (
           <>
             <div className="section-heading">
               <div>
@@ -116,8 +139,7 @@ function SettingsContent({
                       <small>v{m.version}</small>
                     </h3>
                     <p>
-                      {m.model} ·{" "}
-                      {m.protocol === "chat" ? "Chat Completions" : "Responses"}
+                      {m.model} · {m.protocol === "chat" ? "Chat Completions" : "Responses"}
                     </p>
                     <div className="capabilities mt-3">
                       <Badge variant="secondary">
@@ -141,16 +163,10 @@ function SettingsContent({
                           : "未验证"}
                       </Badge>
                     </div>
-                    {m.capabilities.error && (
-                      <ErrorText error={m.capabilities.error} />
-                    )}
+                    {m.capabilities.error && <ErrorText error={m.capabilities.error} />}
                   </div>
                   <div className="row-actions">
-                    <Button
-                      variant="outline"
-                      disabled={!!busy}
-                      onClick={() => setModel(m)}
-                    >
+                    <Button variant="outline" disabled={!!busy} onClick={() => setModel(m)}>
                       编辑
                     </Button>
                     <Button
@@ -158,15 +174,13 @@ function SettingsContent({
                       disabled={!!busy}
                       onClick={() =>
                         void act(m.id, () =>
-                          createApi(transport).api.admin.models[':id'].test.$post({param:{id:m.id}}),
+                          createApi(transport).api.admin.models[":id"].test.$post({
+                            param: { id: m.id },
+                          }),
                         )
                       }
                     >
-                      {busy === m.id ? (
-                        <Loader2 className="spin" />
-                      ) : (
-                        <CheckCircle2 />
-                      )}
+                      {busy === m.id ? <Loader2 className="spin" /> : <CheckCircle2 />}
                       测试能力
                     </Button>
                     <Button
@@ -174,7 +188,9 @@ function SettingsContent({
                       disabled={!!busy || !m.capabilities.connection}
                       onClick={() =>
                         void act(m.id + "vision", () =>
-                          createApi(transport).api.admin.models[':id'].vision.$post({param:{id:m.id}}),
+                          createApi(transport).api.admin.models[":id"].vision.$post({
+                            param: { id: m.id },
+                          }),
                         )
                       }
                     >
@@ -186,7 +202,7 @@ function SettingsContent({
             )}
           </>
         ) : tab === "accounts" ? (
-          <Accounts snapshot={snapshot} transport={transport} refresh={refresh}/>
+          <Accounts snapshot={snapshot} transport={transport} refresh={refresh} />
         ) : tab === "devices" ? (
           <>
             <div className="section-heading">
@@ -209,18 +225,16 @@ function SettingsContent({
                 <article className="settings-row" key={d.id}>
                   <div>
                     <h3>{d.name}</h3>
-                    <p>
-                      {d.revoked
-                        ? "已吊销"
-                        : `最近连接：${formatDate(d.lastSeen)}`}
-                    </p>
+                    <p>{d.revoked ? "已吊销" : `最近连接：${formatDate(d.lastSeen)}`}</p>
                   </div>
                   <Button
                     variant="outline"
                     disabled={d.revoked || !!busy}
                     onClick={() =>
                       void act(d.id, () =>
-                        createApi(transport).api.admin.devices[':id'].revoke.$post({param:{id:d.id}}),
+                        createApi(transport).api.admin.devices[":id"].revoke.$post({
+                          param: { id: d.id },
+                        }),
                       )
                     }
                   >
@@ -235,9 +249,7 @@ function SettingsContent({
             <div className="section-heading">
               <div>
                 <h2>数据保留</h2>
-                <p>
-                  普通对话和执行事件按保留时间清理；验证码在完成或过期后清除。
-                </p>
+                <p>普通对话和执行事件按保留时间清理；验证码在完成或过期后清除。</p>
               </div>
             </div>
             <form
@@ -245,7 +257,11 @@ function SettingsContent({
               onSubmit={(e) => {
                 e.preventDefault();
                 void act("retention", async () => {
-                  await createApi(transport).api.admin.settings.$put({json:{retentionDays:days}});daysDirty.current=false;await config.refresh();
+                  await createApi(transport).api.admin.settings.$put({
+                    json: { retentionDays: days },
+                  });
+                  daysDirty.current = false;
+                  await config.refresh();
                 });
               }}
             >
@@ -256,15 +272,16 @@ function SettingsContent({
                   max={365}
                   required
                   value={days}
-                  onChange={(e) => {daysDirty.current=true;setDays(Number(e.target.value));}}
+                  onChange={(e) => {
+                    daysDirty.current = true;
+                    setDays(Number(e.target.value));
+                  }}
                 />
               </Field>
               <Button disabled={!!busy}>保存设置</Button>
-              {config.error&&<ErrorText error={config.error.message}/>}
+              {config.error && <ErrorText error={config.error.message} />}
             </form>
-            <p className="quiet">
-              未核实的写操作及其账号锁不会随普通日志自动删除。
-            </p>
+            <p className="quiet">未核实的写操作及其账号锁不会随普通日志自动删除。</p>
           </>
         )}
       </TabsContent>

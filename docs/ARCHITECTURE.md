@@ -10,13 +10,13 @@ Main 的浏览器关闭／下载策略和账号状态适配器统一经 LocalCdp
 
 ## 职责与事实归属
 
-| 层 | 职责 |
-| --- | --- |
-| 网站 / packages/ui | 用户隔离的任务聊天、模型选择、账号与设置、执行过程和图片；一个输入框承接交办、补充和协助 |
-| Cloudflare | 应用鉴权、任务版本、运行快照、调度、租约、设备分配、粗步骤规划与协助图、模型出站 |
-| Windows Main | 云端连接、safeStorage 设备令牌、SQLite journal/outbox、浏览器与执行子进程生命周期 |
-| Preload / Renderer | 校验后的命名入口、连接与运行状态、暂停、停止、自启动和诊断；不提供聊天、任务编辑和模型管理 |
-| Executor utilityProcess | 独立 Stagehand 4.4.0，完整观察、规划、操作、纠错与最终回复循环 |
+| 层                      | 职责                                                                                       |
+| ----------------------- | ------------------------------------------------------------------------------------------ |
+| 网站 / packages/ui      | 用户隔离的任务聊天、模型选择、账号与设置、执行过程和图片；一个输入框承接交办、补充和协助   |
+| Cloudflare              | 应用鉴权、任务版本、运行快照、调度、租约、设备分配、粗步骤规划与协助图、模型出站           |
+| Windows Main            | 云端连接、safeStorage 设备令牌、SQLite journal/outbox、浏览器与执行子进程生命周期          |
+| Preload / Renderer      | 校验后的命名入口、连接与运行状态、暂停、停止、自启动和诊断；不提供聊天、任务编辑和模型管理 |
+| Executor utilityProcess | 独立 Stagehand 4.4.0，完整观察、规划、操作、纠错与最终回复循环                             |
 
 普通 Worker 负责静态资源、health 与路由。请求按认证凭据哈希进入 RequestCoordinator 分片后仍执行完整 Hono 鉴权；分片哈希不是用户身份。Scheduler 执行定时工作，AiTurn 通过持久化 dispatch 与 alarm 处理长对话回合，NotificationHub 用休眠 WebSocket 通知变化，客户端仍从归属校验后的接口读取事实。
 
@@ -41,15 +41,15 @@ Cloudflare 保持 Free，不设置项目级每日平台预算或全站模型上�
 
 ### 图与平台模块的边界
 
-| 模块 | 管理的知识与状态 |
-| --- | --- |
-| `ai/planning-graph.ts`、`ai/help-graph.ts` | 云端规划、协助分支与恢复点；不操作浏览器 |
-| `ai/graph.ts`、`ai/checkpointer.ts` | 图版本、输入摘要、generation、用户归属、加密 D1 checkpoint 与 pending writes；写入同时检查聊天、回合和运行租约 |
-| `ai/dispatch.ts`、`ai/turn.ts` | 持久事件认领与 alarm 唤醒；只推进图，不重复实现模型决策循环 |
-| `ai/model.ts`、`packages/model/src/langchain.ts` | 标准模型接口、云端推理 Agent 与消息适配；结构化输出仍由现有出站 adapter 校验和发送 |
-| `executor/execution-graph.ts` | 官方 createAgent v2 的执行边界，p-limit(1) 按原始调用序号串行执行工具，补齐取消调用的 ToolMessage，处理同进程协助恢复 |
-| `executor/runtime.ts` | 浏览器、页面、凭据、截图、动作登记、停止与云端通信；实现图需要的执行能力 |
-| `executor/session-checkpointer.ts` | 当前 utilityProcess 内最新与父 checkpoint，保留完整序列化类型；不是浏览器崩溃恢复日志 |
+| 模块                                             | 管理的知识与状态                                                                                                      |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| `ai/planning-graph.ts`、`ai/help-graph.ts`       | 云端规划、协助分支与恢复点；不操作浏览器                                                                              |
+| `ai/graph.ts`、`ai/checkpointer.ts`              | 图版本、输入摘要、generation、用户归属、加密 D1 checkpoint 与 pending writes；写入同时检查聊天、回合和运行租约        |
+| `ai/dispatch.ts`、`ai/turn.ts`                   | 持久事件认领与 alarm 唤醒；只推进图，不重复实现模型决策循环                                                           |
+| `ai/model.ts`、`packages/model/src/langchain.ts` | 标准模型接口、云端推理 Agent 与消息适配；结构化输出仍由现有出站 adapter 校验和发送                                    |
+| `executor/execution-graph.ts`                    | 官方 createAgent v2 的执行边界，p-limit(1) 按原始调用序号串行执行工具，补齐取消调用的 ToolMessage，处理同进程协助恢复 |
+| `executor/runtime.ts`                            | 浏览器、页面、凭据、截图、动作登记、停止与云端通信；实现图需要的执行能力                                              |
+| `executor/session-checkpointer.ts`               | 当前 utilityProcess 内最新与父 checkpoint，保留完整序列化类型；不是浏览器崩溃恢复日志                                 |
 
 执行工具由同一份 Zod Schema 生成模型定义并进行运行时校验。afterModel 登记原始工具序号，wrapToolCall 在每次工具前重新校验停止、租约和用户指令；不依赖 maxConcurrency 保证串行。协助先冻结本批剩余调用并执行无副作用 interrupt，外层再登记云端协助；恢复后剩余旧操作返回未执行。空模型回复仅允许一次明确错误反馈后的纠正，结果未知的请求不重发。最终截图或结果提交遇到新指令时沿用同一线程继续。
 

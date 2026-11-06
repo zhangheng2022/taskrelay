@@ -13,10 +13,7 @@ function decode(s: string) {
 async function key(secret: string) {
   const raw = decode(secret);
   if (raw.length !== 32) throw new Error("ENCRYPTION_KEY_NOT_CONFIGURED");
-  return crypto.subtle.importKey("raw", raw, "AES-GCM", false, [
-    "encrypt",
-    "decrypt",
-  ]);
+  return crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]);
 }
 export async function seal(value: unknown, secret: string, aad: string) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -31,11 +28,7 @@ export async function seal(value: unknown, secret: string, aad: string) {
     data: encode(new Uint8Array(data)),
   });
 }
-export async function unseal<T>(
-  value: string,
-  secret: string,
-  aad: string,
-): Promise<T> {
+export async function unseal<T>(value: string, secret: string, aad: string): Promise<T> {
   const packet = JSON.parse(value);
   if (packet.v !== 1) throw new Error("UNKNOWN_ENCRYPTION_VERSION");
   const data = await crypto.subtle.decrypt(

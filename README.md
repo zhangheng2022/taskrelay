@@ -19,15 +19,15 @@
 
 ## 可以做什么
 
-| 能力 | 行为与边界 |
-| --- | --- |
-| 自然语言交办 | 明确交办直接执行；缺少必要信息才追问；当前按手动交办执行 |
-| 执行与调度 | 云端管理版本、领取与租约；新条件卡/定时配置暂不开放，旧确认条件兼容保留 |
-| 浏览器操作 | AI 根据目标选择相关公开网站并读取、导航、填写和提交；保留公网访问与凭据保护 |
-| 人工协助 | 执行器先求助云端，必要时询问用户；协助加密保存，本人聊天可查看 |
-| 结果与报告 | 过程、图片和最终回复进入同一聊天；“已回复”不等于全部完成，未知操作不自动重放 |
-| 模型兼容 | Chat Completions / Responses，自由填写模型名；必须通过所需能力测试，不静默换模型 |
-| 用户与设备 | 用户工作空间隔离，管理员维护共享模型与可信 Windows 设备池 |
+| 能力         | 行为与边界                                                                       |
+| ------------ | -------------------------------------------------------------------------------- |
+| 自然语言交办 | 明确交办直接执行；缺少必要信息才追问；当前按手动交办执行                         |
+| 执行与调度   | 云端管理版本、领取与租约；新条件卡/定时配置暂不开放，旧确认条件兼容保留          |
+| 浏览器操作   | AI 根据目标选择相关公开网站并读取、导航、填写和提交；保留公网访问与凭据保护      |
+| 人工协助     | 执行器先求助云端，必要时询问用户；协助加密保存，本人聊天可查看                   |
+| 结果与报告   | 过程、图片和最终回复进入同一聊天；“已回复”不等于全部完成，未知操作不自动重放     |
+| 模型兼容     | Chat Completions / Responses，自由填写模型名；必须通过所需能力测试，不静默换模型 |
+| 用户与设备   | 用户工作空间隔离，管理员维护共享模型与可信 Windows 设备池                        |
 
 普通和批量任务使用同一 AI 工具循环，根据实际页面反馈报告结果，不提供文字或地址硬匹配条件。共享设备须由可信管理员维护，浏览器 Profile 隔离不对设备管理员隐藏数据。TaskRelay 不提供任意 JavaScript、Shell、主机文件操作或远程浏览器接管工具。
 
@@ -137,19 +137,18 @@ node scripts/release-manifest.mjs
 
 ## 工程结构
 
-| 路径               | 职责                                                           |
-| ------------------ | -------------------------------------------------------------- |
-| apps/web           | Vite 网站和 Cloudflare 部署配置                                |
+| 路径               | 职责                                                                |
+| ------------------ | ------------------------------------------------------------------- |
+| apps/web           | Vite 网站和 Cloudflare 部署配置                                     |
 | apps/cloud         | DO 内的 Hono API、D1 调度/租约/幂等、加密短期证据、美国区域模型网关 |
-| apps/desktop       | Electron Main、受限 Preload、独立 utilityProcess 执行器、Forge |
-| packages/contracts | Zod 协议、授权策略、时区调度                                   |
-| packages/model     | Chat Completions / Responses 适配                              |
-| packages/ui        | 自行设计的 React + shadcn/ui 共享界面                          |
+| apps/desktop       | Electron Main、受限 Preload、独立 utilityProcess 执行器、Forge      |
+| packages/contracts | Zod 协议、授权策略、时区调度                                        |
+| packages/model     | Chat Completions / Responses 适配                                   |
+| packages/ui        | 自行设计的 React + shadcn/ui 共享界面                               |
 
 架构现状与改进候选见 [ARCHITECTURE.md](docs/ARCHITECTURE.md)，开发及技能指引见 [AGENTS.md](AGENTS.md)。部署说明见 [DEPLOYMENT.md](docs/DEPLOYMENT.md)，实际验证范围见 [ACCEPTANCE.md](docs/ACCEPTANCE.md)。
 
 报告问题时请附版本、系统、脱敏错误和复现步骤，不上传设备令牌、模型密钥、密码、验证码、浏览器 Profile 或数据库。项目尚未选择开源许可证；第三方组件说明见 [NOTICE](resources/NOTICE.txt)，公开源码不代表已授予任意再分发许可。
-
 
 ### LangChain 与 Cloudflare 免费运行架构
 

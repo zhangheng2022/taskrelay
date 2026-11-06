@@ -43,20 +43,20 @@ export function attachTestEgress(env: AppEnv) {
             env.MASTER_KEY,
             async (value) => {
               const job = value as EgressJob;
-              if (job.kind !== "inference")
-                throw new Error("TEST_INFERENCE_ONLY");
+              if (job.kind !== "inference") throw new Error("TEST_INFERENCE_ONLY");
               return performInference(
                 env,
                 job.modelId,
                 job.version,
                 job.request,
-                job.runId,job.userId,job.reservationId,
+                job.runId,
+                job.userId,
+                job.reservationId,
               );
             },
           );
           return {
-            submitAndWait: (id: string, cipher: string) =>
-              state.submitAndWait(id, cipher),
+            submitAndWait: (id: string, cipher: string) => state.submitAndWait(id, cipher),
             ack: () => state.ack(),
           };
         },

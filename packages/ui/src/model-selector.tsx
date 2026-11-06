@@ -45,28 +45,17 @@ export function ModelSelector({
           <ChevronDown />
         </InputGroupButton>
       </DropdownMenuTrigger>
-      <DropdownMenuContent
-        align="start"
-        side="top"
-        className="max-w-[calc(100vw-2rem)]"
-      >
+      <DropdownMenuContent align="start" side="top" className="max-w-[calc(100vw-2rem)]">
         <DropdownMenuLabel>模型服务</DropdownMenuLabel>
         <DropdownMenuRadioGroup value={value} onValueChange={onChange}>
           {models.map((m) => (
-            <DropdownMenuRadioItem
-              key={m.id}
-              value={m.id}
-              disabled={!canUseModel(m)}
-            >
+            <DropdownMenuRadioItem key={m.id} value={m.id} disabled={!canUseModel(m)}>
               <div className="flex min-w-0 flex-col gap-1">
                 <span className="break-all">
                   {m.name} · {m.model}
                 </span>
                 <span className="text-xs text-muted-foreground">
-                  {m.protocol === "responses"
-                    ? "Responses"
-                    : "Chat Completions"}{" "}
-                  · v{m.version} ·{" "}
+                  {m.protocol === "responses" ? "Responses" : "Chat Completions"} · v{m.version} ·{" "}
                   {canUseModel(m)
                     ? m.capabilities.structured === "schema"
                       ? "工具调用 / JSON Schema"

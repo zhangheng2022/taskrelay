@@ -26,7 +26,11 @@ test("expired pairing is dismissible, preserves task navigation, and is not quer
     requests++;
     throw new Error("PAIRING_EXPIRED");
   });
-  const view = render(<StrictMode><PairingNotice transport={transport} refresh={async () => {}} /></StrictMode>);
+  const view = render(
+    <StrictMode>
+      <PairingNotice transport={transport} refresh={async () => {}} />
+    </StrictMode>,
+  );
   await view.findByText(/设备配对链接已过期/);
   assert.equal(dom.window.location.search, "?view=tasks");
   assert.equal(dom.window.location.hash, "#task-example");
@@ -45,10 +49,20 @@ test("pending pairing only approves on explicit click and removes the link after
   const writes: string[] = [];
   let refreshes = 0;
   const transport = transportWith(async (method, path) => {
-    if (method === "POST") { writes.push(path); return { ok: true }; }
+    if (method === "POST") {
+      writes.push(path);
+      return { ok: true };
+    }
     return pairing;
   });
-  const view = render(<PairingNotice transport={transport} refresh={async () => { refreshes++; }} />);
+  const view = render(
+    <PairingNotice
+      transport={transport}
+      refresh={async () => {
+        refreshes++;
+      }}
+    />,
+  );
   await view.findByText("授权连接这台设备");
   assert.ok(dom.window.location.search.includes("pair="));
   assert.deepEqual(writes, []);
@@ -87,7 +101,9 @@ test("expiry during approval removes the obsolete card and link", async () => {
 
 test("temporary lookup failure keeps the link for reload; dismissal clears it", async () => {
   link();
-  const transport = transportWith(async () => { throw new Error("OFFLINE"); });
+  const transport = transportWith(async () => {
+    throw new Error("OFFLINE");
+  });
   const view = render(<PairingNotice transport={transport} refresh={async () => {}} />);
   await waitFor(() => assert.ok(view.getByRole("alert")));
   assert.ok(dom.window.location.search.includes("pair="));

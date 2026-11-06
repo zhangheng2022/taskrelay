@@ -43,18 +43,12 @@ export async function dispatchGraphEvent(env: AppEnv, graphId: string) {
   try {
     await member(scoped.DB, event.owner);
     if (event.kind === "chat") {
-      const current = await env.DB.prepare(
-        "SELECT status FROM ai_turns WHERE id=?",
-      )
+      const current = await env.DB.prepare("SELECT status FROM ai_turns WHERE id=?")
         .bind(event.turn_id)
         .first<{ status: string }>();
       // A crash after committing the reply but before acknowledging the event is harmless.
       if (current?.status === "running") {
-        const result = await executeTurn(
-          scoped,
-          event.thread_id,
-          event.turn_id!,
-        );
+        const result = await executeTurn(scoped, event.thread_id, event.turn_id!);
         if (result.status !== "done")
           throw Error("error" in result ? result.error : "AI_TURN_FAILED");
       } else if (current?.status !== "done") throw Error("TURN_STALE");
@@ -73,22 +67,14 @@ export async function dispatchGraphEvent(env: AppEnv, graphId: string) {
       ).bind(code, event.id),
       env.DB.prepare(
         "UPDATE ai_graph_inputs SET status=?,error=? WHERE id=? AND owner=? AND active=1",
-      ).bind(
-        /UNKNOWN|TIMEOUT/.test(code) ? "unknown" : "failed",
-        code,
-        graphId,
-        event.owner,
-      ),
+      ).bind(/UNKNOWN|TIMEOUT/.test(code) ? "unknown" : "failed", code, graphId, event.owner),
     ]);
   }
   await notifyUser(env, event.owner).catch(() => {});
   return true;
 }
 
-export async function nextGraphWake(
-  env: AppEnv,
-  id: string,
-): Promise<number | null> {
+export async function nextGraphWake(env: AppEnv, id: string): Promise<number | null> {
   const row = await env.DB.prepare(
     `SELECT state,lease_until FROM ai_dispatch WHERE graph_id=? AND state IN ('pending','running')
     ORDER BY CASE state WHEN 'running' THEN 0 ELSE 1 END,created_at LIMIT 1`,

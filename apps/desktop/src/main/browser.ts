@@ -5,7 +5,7 @@ import net from "node:net";
 import path from "node:path";
 import { promisify } from "node:util";
 import { Journal } from "./journal";
-import { LocalCdp } from './local-cdp';
+import { LocalCdp } from "./local-cdp";
 const exec = promisify(execFile);
 /** 按 Profile 启动并回收应用自有 Chromium，记录进程所有权并配置代理、调试与下载边界。
  * launch/close 共享生命周期状态，避免停止期间的异步启动重新留下浏览器进程。
@@ -15,7 +15,7 @@ export class OwnedBrowser {
   private generation = 0;
   private launching: Promise<{ cdpUrl: string }> | null = null;
   private closing: Promise<void> | null = null;
-  private cdpOrigin:string|null=null;
+  private cdpOrigin: string | null = null;
   constructor(
     private directory: string,
     private profiles: string,
@@ -53,9 +53,11 @@ export class OwnedBrowser {
     };
     const pending = this.launchOwned(accountId, proxyPort, guard);
     this.launching = pending;
-    void pending.finally(() => {
-      if (this.launching === pending) this.launching = null;
-    }).catch(() => {});
+    void pending
+      .finally(() => {
+        if (this.launching === pending) this.launching = null;
+      })
+      .catch(() => {});
     return pending;
   }
   private async launchOwned(accountId: string, proxyPort: number, guard: () => void) {
@@ -66,25 +68,19 @@ export class OwnedBrowser {
       proxyPort > 65535
     )
       throw new Error("BROWSER_ARGUMENT_INVALID");
-    const manifest = JSON.parse(
-      await readFile(path.join(this.directory, "manifest.json"), "utf8"),
-    );
+    const manifest = JSON.parse(await readFile(path.join(this.directory, "manifest.json"), "utf8"));
     guard();
     const executable = path.join(this.directory, manifest.executable);
     const actual = createHash("sha256")
       .update(await readFile(executable))
       .digest("hex");
     guard();
-    if (actual !== manifest.executableSha256)
-      throw new Error("BROWSER_INTEGRITY_FAILED");
+    if (actual !== manifest.executableSha256) throw new Error("BROWSER_INTEGRITY_FAILED");
     const profile = path.join(this.profiles, accountId);
     await mkdir(profile, { recursive: true });
     guard();
     const extensionManifest = JSON.parse(
-      await readFile(
-        path.join(this.directory, "../stagehand-extension/manifest.json"),
-        "utf8",
-      ),
+      await readFile(path.join(this.directory, "../stagehand-extension/manifest.json"), "utf8"),
     );
     guard();
     if (!extensionManifest.key) throw new Error("EXTENSION_IDENTITY_REQUIRED");
@@ -123,7 +119,11 @@ export class OwnedBrowser {
     args.unshift(`--remote-allow-origins=chrome-extension://${extensionId}`);
     // 在浏览器启动时加载本轮内容寻址的扩展，避免 SDK 先发现 Profile 中的旧版。
     // 路径只来自 Main 校验过的自有资源，站点 Cookie 和 Profile 继续保留。
-    if(this.extensionPath)args.unshift(`--load-extension=${this.extensionPath}`,`--disable-extensions-except=${this.extensionPath}`);
+    if (this.extensionPath)
+      args.unshift(
+        `--load-extension=${this.extensionPath}`,
+        `--disable-extensions-except=${this.extensionPath}`,
+      );
     args[args.findIndex((a) => a.startsWith("--proxy-bypass-list="))] =
       `--proxy-bypass-list=<-loopback>;127.0.0.1:${port}`;
     const child = spawn(executable, args, {
@@ -147,7 +147,7 @@ export class OwnedBrowser {
       if (child.exitCode !== null) throw new Error("BROWSER_START_FAILED");
       try {
         const cdpUrl = `http://127.0.0.1:${port}`;
-        await this.browserCommand(cdpUrl, 'Browser.setDownloadBehavior', { behavior: 'deny' });
+        await this.browserCommand(cdpUrl, "Browser.setDownloadBehavior", { behavior: "deny" });
         guard();
         this.cdpOrigin = cdpUrl;
         return { cdpUrl };
@@ -159,12 +159,19 @@ export class OwnedBrowser {
     await this.closeChild();
     throw new Error("BROWSER_START_TIMEOUT");
   }
-  private async browserCommand(url:string,method:'Browser.close'|'Browser.setDownloadBehavior',params:Record<string,unknown>={}) {
+  private async browserCommand(
+    url: string,
+    method: "Browser.close" | "Browser.setDownloadBehavior",
+    params: Record<string, unknown> = {},
+  ) {
     const cdp = await LocalCdp.connect(url);
-    try { await cdp.send(method, params, undefined, 4000); }
-    finally { await cdp.close(); }
+    try {
+      await cdp.send(method, params, undefined, 4000);
+    } finally {
+      await cdp.close();
+    }
   }
-  close(graceful=false): Promise<void> {
+  close(graceful = false): Promise<void> {
     if (this.closing) return this.closing;
     ++this.generation;
     const pending = this.launching;
@@ -172,15 +179,26 @@ export class OwnedBrowser {
       // Invalidate before waiting: an in-flight launch can no longer spawn or succeed.
       await pending?.catch(() => {});
       await this.closeChild(graceful);
-    })().finally(() => { this.closing = null; });
+    })().finally(() => {
+      this.closing = null;
+    });
     return this.closing;
   }
-  private async closeChild(graceful=false) {
+  private async closeChild(graceful = false) {
     const child = this.child;
     if (!child) return;
-    if(graceful&&child.exitCode===null&&this.cdpOrigin){
-      await this.browserCommand(this.cdpOrigin,'Browser.close').catch(()=>{});
-      if(child.exitCode===null)await new Promise<void>(resolve=>{const timer=setTimeout(done,3000);function done(){clearTimeout(timer);child!.off('exit',done);resolve();}child.once('exit',done);});
+    if (graceful && child.exitCode === null && this.cdpOrigin) {
+      await this.browserCommand(this.cdpOrigin, "Browser.close").catch(() => {});
+      if (child.exitCode === null)
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(done, 3000);
+          function done() {
+            clearTimeout(timer);
+            child!.off("exit", done);
+            resolve();
+          }
+          child.once("exit", done);
+        });
     }
     if (child.exitCode === null && child.pid) {
       await exec("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], {
@@ -198,7 +216,7 @@ export class OwnedBrowser {
         ]);
     }
     this.child = null;
-    this.cdpOrigin=null;
+    this.cdpOrigin = null;
     this.journal.set("ownedBrowser", null);
   }
 }

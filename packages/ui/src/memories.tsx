@@ -1,4 +1,4 @@
-import {createApi,rpcData} from './api';
+import { createApi, rpcData } from "./api";
 import { useState } from "react";
 import type { Transport } from "../../contracts/src/index";
 import { Button } from "./components/ui/button";
@@ -13,23 +13,37 @@ import {
 } from "./components/ui/card";
 import { Field, FieldLabel, FieldGroup } from "./components/ui/field";
 import { ErrorText } from "./feedback";
-import {QueryBoundary,useTransportQuery} from './queries';
+import { QueryBoundary, useTransportQuery } from "./queries";
 export function Memories({ transport }: { transport: Transport }) {
-  return <QueryBoundary owner={transport}><MemoryEditor transport={transport}/></QueryBoundary>;
+  return (
+    <QueryBoundary owner={transport}>
+      <MemoryEditor transport={transport} />
+    </QueryBoundary>
+  );
 }
-function MemoryEditor({transport}:{transport:Transport}){
-  const memories=useTransportQuery(transport,['memories'],signal=>rpcData(createApi(transport).api.user.memories.$get({}, {init:{signal}})),60000);
-  const items=memories.data??[];
+function MemoryEditor({ transport }: { transport: Transport }) {
+  const memories = useTransportQuery(
+    transport,
+    ["memories"],
+    (signal) => rpcData(createApi(transport).api.user.memories.$get({}, { init: { signal } })),
+    60000,
+  );
+  const items = memories.data ?? [];
   const [text, setText] = useState(""),
     [key, setKey] = useState<string | null>(null),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
-  const load=memories.refresh;
+  const load = memories.refresh;
   async function save() {
     if (busy || !text.trim()) return;
     setBusy(true);
     try {
-      await rpcData(createApi(transport).api.user.memories[':id'].$put({param:{id:key??crypto.randomUUID()},json:{text,confirmed:true}}));
+      await rpcData(
+        createApi(transport).api.user.memories[":id"].$put({
+          param: { id: key ?? crypto.randomUUID() },
+          json: { text, confirmed: true },
+        }),
+      );
       setText("");
       setKey(null);
       await load();
@@ -43,7 +57,7 @@ function MemoryEditor({transport}:{transport:Transport}){
   async function remove(id: string) {
     setBusy(true);
     try {
-      await rpcData(createApi(transport).api.user.memories[':id'].$delete({param:{id}}));
+      await rpcData(createApi(transport).api.user.memories[":id"].$delete({ param: { id } }));
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -63,9 +77,7 @@ function MemoryEditor({transport}:{transport:Transport}){
         <CardContent>
           <FieldGroup>
             <Field>
-              <FieldLabel htmlFor="memory-text">
-                {key ? "修改偏好" : "希望记住的偏好"}
-              </FieldLabel>
+              <FieldLabel htmlFor="memory-text">{key ? "修改偏好" : "希望记住的偏好"}</FieldLabel>
               <Textarea
                 id="memory-text"
                 value={text}
@@ -75,7 +87,7 @@ function MemoryEditor({transport}:{transport:Transport}){
               />
             </Field>
           </FieldGroup>
-          {(error||memories.error)&&<ErrorText error={error||memories.error!.message}/>}
+          {(error || memories.error) && <ErrorText error={error || memories.error!.message} />}
         </CardContent>
         <CardFooter>
           <Button disabled={busy || !text.trim()} onClick={() => void save()}>
@@ -96,23 +108,19 @@ function MemoryEditor({transport}:{transport:Transport}){
       </Card>
       {items.map((m) => (
         <Card key={m.key}>
-          <CardContent className="pt-4">{String(m.value.text??'')}</CardContent>
+          <CardContent className="pt-4">{String(m.value.text ?? "")}</CardContent>
           <CardFooter className="gap-2">
             <Button
               variant="outline"
               disabled={busy}
               onClick={() => {
                 setKey(m.key);
-                setText(String(m.value.text??''));
+                setText(String(m.value.text ?? ""));
               }}
             >
               修改
             </Button>
-            <Button
-              variant="ghost"
-              disabled={busy}
-              onClick={() => void remove(m.key)}
-            >
+            <Button variant="ghost" disabled={busy} onClick={() => void remove(m.key)}>
               删除
             </Button>
           </CardFooter>

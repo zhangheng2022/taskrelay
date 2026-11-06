@@ -1,15 +1,41 @@
 <!doctype html>
 <html lang="zh-CN">
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>TaskRelay · UI 状态检查（本地演示）</title>
-<style>
-body{font:14px "Segoe UI","Microsoft YaHei",sans-serif;margin:24px;background:#eee;color:#222}
-main{display:flex;align-items:flex-start;gap:24px;flex-wrap:wrap}
-section{min-width:0}h1{font-size:20px}h2{font-size:15px}iframe{border:1px solid #ccc;background:white;max-width:100%}
-</style>
-<h1>UI 状态检查 · 本地演示</h1>
-<p>仅加载开发夹具，不连接生产账号或执行任务。各画布使用独立视口，便于检查窄屏和加载状态。</p>
-<main id="frames"></main>
-<script type="module" src="/src/ui-review.ts"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>TaskRelay · UI 状态检查（本地演示）</title>
+  <style>
+    body {
+      font:
+        14px "Segoe UI",
+        "Microsoft YaHei",
+        sans-serif;
+      margin: 24px;
+      background: #eee;
+      color: #222;
+    }
+    main {
+      display: flex;
+      align-items: flex-start;
+      gap: 24px;
+      flex-wrap: wrap;
+    }
+    section {
+      min-width: 0;
+    }
+    h1 {
+      font-size: 20px;
+    }
+    h2 {
+      font-size: 15px;
+    }
+    iframe {
+      border: 1px solid #ccc;
+      background: white;
+      max-width: 100%;
+    }
+  </style>
+  <h1>UI 状态检查 · 本地演示</h1>
+  <p>仅加载开发夹具，不连接生产账号或执行任务。各画布使用独立视口，便于检查窄屏和加载状态。</p>
+  <main id="frames"></main>
+  <script type="module" src="/src/ui-review.ts"></script>
 </html>

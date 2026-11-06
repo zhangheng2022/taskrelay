@@ -28,12 +28,8 @@ for (const name of [
     value: dom.window[name],
   });
 }
-globalThis.requestAnimationFrame = dom.window.requestAnimationFrame.bind(
-  dom.window,
-);
-globalThis.cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(
-  dom.window,
-);
+globalThis.requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.window);
+globalThis.cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window);
 class Observer {
   observe() {}
   unobserve() {}

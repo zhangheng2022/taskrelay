@@ -4,10 +4,7 @@
  */
 import { seal, unseal } from "./crypto";
 
-type Storage = Pick<
-  DurableObjectStorage,
-  "get" | "put" | "delete" | "deleteAll" | "setAlarm"
->;
+type Storage = Pick<DurableObjectStorage, "get" | "put" | "delete" | "deleteAll" | "setAlarm">;
 type Meta = {
   id: string;
   status: "pending" | "running" | "done" | "failed" | "consumed";
@@ -40,8 +37,7 @@ export class EgressState {
     // can replace the DO's current I/O context with visitor request metadata.
     while (Date.now() < deadline) {
       const result = await this.wait();
-      if (result.status !== "pending" && result.status !== "running")
-        return result;
+      if (result.status !== "pending" && result.status !== "running") return result;
     }
     throw new Error("MODEL_EGRESS_TIMEOUT");
   }
@@ -71,10 +67,7 @@ export class EgressState {
   private chunks(cipher: string) {
     const chunks: Record<string, string> = {};
     for (let offset = 0; offset < cipher.length; offset += CHUNK_SIZE)
-      chunks[`part:${offset / CHUNK_SIZE}`] = cipher.slice(
-        offset,
-        offset + CHUNK_SIZE,
-      );
+      chunks[`part:${offset / CHUNK_SIZE}`] = cipher.slice(offset, offset + CHUNK_SIZE);
     return chunks;
   }
   private keys(meta: Meta) {
@@ -85,8 +78,7 @@ export class EgressState {
     return this.keys(meta)
       .map((key) => {
         const value = values.get(key);
-        if (value === undefined)
-          throw new Error("MODEL_EGRESS_PAYLOAD_MISSING");
+        if (value === undefined) throw new Error("MODEL_EGRESS_PAYLOAD_MISSING");
         return value;
       })
       .join("");
@@ -117,8 +109,7 @@ export class EgressState {
       const timer = setTimeout(notify, 15_000);
       this.listeners.add(notify);
       void this.read().then((latest) => {
-        if (latest.status !== "pending" && latest.status !== "running")
-          notify();
+        if (latest.status !== "pending" && latest.status !== "running") notify();
       }, notify);
     });
     return this.read();
@@ -161,20 +152,11 @@ export class EgressState {
     await this.storage.put("meta", { ...meta, status: "running" });
     await this.storage.setAlarm(meta.expires);
     try {
-      const job = await unseal(
-        await this.payload(meta),
-        this.secret,
-        `egress:${meta.id}:request`,
-      );
+      const job = await unseal(await this.payload(meta), this.secret, `egress:${meta.id}:request`);
       await this.storage.delete(this.keys(meta));
       const result = await this.execute(job);
-      const cipher = await seal(
-        result,
-        this.secret,
-        `egress:${meta.id}:response`,
-      );
-      if (cipher.length > 4_000_000)
-        throw new Error("MODEL_RESPONSE_TOO_LARGE");
+      const cipher = await seal(result, this.secret, `egress:${meta.id}:response`);
+      if (cipher.length > 4_000_000) throw new Error("MODEL_RESPONSE_TOO_LARGE");
       const chunks = this.chunks(cipher);
       await this.storage.put({
         ...chunks,
@@ -191,9 +173,7 @@ export class EgressState {
         ...meta,
         status: "failed",
         parts: 0,
-        error: /^[A-Z][A-Z0-9_]+$/.test(message)
-          ? message
-          : "MODEL_EGRESS_FAILED",
+        error: /^[A-Z][A-Z0-9_]+$/.test(message) ? message : "MODEL_EGRESS_FAILED",
       });
     }
     this.wake();

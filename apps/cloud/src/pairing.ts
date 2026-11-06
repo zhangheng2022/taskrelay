@@ -18,11 +18,9 @@ pairing.post("/start", async (c) => {
   // Use Cloudflare's ingress address, never caller-supplied forwarding headers.
   // Reserve at most five attempts per source over the pairing lifetime, before
   // consuming the shared capacity; D1's atomic limiter also covers parallel calls.
-  const source=await hash(c.req.header('cf-connecting-ip')??'local');
-  await limitRequest(c.env,`pair:${source}`,5,600000);
-  const count = await c.env.DB.prepare(
-    "SELECT COUNT(*) n FROM pairings WHERE expires_at>?",
-  )
+  const source = await hash(c.req.header("cf-connecting-ip") ?? "local");
+  await limitRequest(c.env, `pair:${source}`, 5, 600000);
+  const count = await c.env.DB.prepare("SELECT COUNT(*) n FROM pairings WHERE expires_at>?")
     .bind(now())
     .first<{ n: number }>();
   if ((count?.n ?? 0) >= 20) return c.json({ error: "PAIRING_LIMIT" }, 429);
@@ -67,10 +65,6 @@ pairing.post("/poll", async (c) => {
   return c.json({
     approved: true,
     deviceId: row.device_id,
-    token: await unseal<string>(
-      row.token_secret,
-      c.env.MASTER_KEY,
-      `pair:${id}`,
-    ),
+    token: await unseal<string>(row.token_secret, c.env.MASTER_KEY, `pair:${id}`),
   });
 });
