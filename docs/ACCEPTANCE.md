@@ -2,11 +2,23 @@
 
 ## 2026-11-06 账号管理、登录状态与串行账号组（0.13.0）
 
+### 用户确认后的真实登录状态复用
+
+用户自行确认保存 Microsoft 账号，生产卡片为 saved，账号凭据状态为 valid、云端快照为 synced，初始状态版本为 1。未从已删除聊天恢复凭据，未代替用户点击保存。
+
+第一轮 `run_1b284aea97c64e738f8a3c8c4311def0` 使用已保存账号进入新的独立浏览器环境：运行前没有该账号的本地版本标记；Main 从云端快照恢复，生成与首次临时登录目录不同的物理 Profile。任务仅打开 Microsoft Rewards 页面并读取一次，真实页面显示已登录并返回显示名和积分。动作登记数为 0，未填写凭据、点击登录、领取或兑换，也未新增保存卡片。运行 succeeded 后先观察到 cleanup_pending=1／cleanup_confirmed=0、账号版本仍为 1；浏览器退出和关闭确认完成后变为 0／1，账号版本推进到 2、同步成功、账号锁为 0。本机 ownedBrowser=null、outbox=0、journal=finished，账号本地标记 revision=2、dirty=false。
+
+第二轮 `run_662d36578b93400a8d0ea2fb2dc3917d` 在同一聊天使用同一账号，Main 本地标记确认复用第一轮的同一物理 Profile。启动时真实截图已经显示登录后的仪表盘，积分与上一轮一致；这证明同设备登录状态复用。执行器随后重复导航三次，需要在原聊天补充“依据本轮已有观察结束”，之后返回已登录的最终回复并 succeeded，因此不将本轮记为完全无人干预或一次观察后自动收尾通过。三个导航登记均为 observed，write_pending=0、may_have_written=0；未进行登录或业务操作，两轮新增保存卡片数为 0。
+
+第二轮清理完成后，云端状态版本推进到 3、synced 且无同步错误；两轮均 cleanup_pending=0、cleanup_confirmed=1，账号锁为 0。本机 ownedBrowser=null、outbox=0、journal=finished，账号标记 revision=3、dirty=false；设备 claim_ready=1，领取保持开启。
+
+这两轮证明同一台实际安装 Windows 执行器可在新的独立环境中恢复真实 Microsoft 登录状态，并在后续任务复用完整本地环境；尚不能代替两台物理设备、不同 IP／设备风控、其他网站、真实失效后协助及连续观察验收，不宣称所有浏览器状态无损迁移。安全元数据证据保存在忽略目录 `.cache/release-0130/reuse-before.json`、`reuse-cloud-running.json`、`reuse-cloud-closed.json`、`reuse-local-running.json`、`reuse-local-closed.json` 和 `reuse-cloud-final.json`，不包含密码、Cookie 或 Token。最终聊天截图为 `microsoft-reuse-result.png`。本轮仅更新验收／部署文档，事实与差异检查通过；未改代码、未重新运行源码测试或部署。
+
 ### 四项账号界面补充
 
 根据后续反馈，卡片与账号编辑框统一为“账号名称、域名、账号、密码”，摘要密码固定遮蔽，业务网站、业务域名和关联登录地址不再作为用户填写项。未修改域名时保留原协议、端口及内部登录关联；新域名默认 HTTPS，修改域名则重置旧关联，服务端权限和版本校验不变。修复清空域名时编辑表单消失的问题。
 
-类型检查、UI 58/58、完整回归 353/353 与 Web 构建通过。实际 Edge 隔离 Transport 检查浅色 390×844、深色 1280×900；卡片分别为 348×162／448×162，无横向溢出，编辑框仅四项、高度 582，密码默认遮蔽，Enter 打开及 Esc 关闭通过。未操作生产保存按钮，真实免登录复用仍待用户确认账号。本次无新增 SQL 迁移、桌面协议或安装包变更。
+类型检查、UI 58/58、完整回归 353/353 与 Web 构建通过。实际 Edge 隔离 Transport 检查浅色 390×844、深色 1280×900；卡片分别为 348×162／448×162，无横向溢出，编辑框仅四项、高度 582，密码默认遮蔽，Enter 打开及 Esc 关闭通过。此阶段未操作生产保存按钮；后续用户确认及真实复用见上节。本次无新增 SQL 迁移、桌面协议或安装包变更。
 
 OCR preview/rule 成功，宿主审阅全部 9 个变更文件，补审测试与文档，9 reviewed、0 skipped、覆盖率 100%；未调用外部模型，无未解决发现。graphify 为 4605 节点／8026 边，28 个 SQL 缺少解析依赖、8 个不支持类型文件未分类，沿用直接源码审查边界。
 
@@ -28,7 +40,7 @@ OCR preview/rule 成功，宿主及委托子代理复审本轮 **71 个变更文
 
 已由 Windows Explorer 启动安装器并通过系统桌面快捷方式打开 0.13.0，进程及安装 smoke 位于 `C:/Users/96227/AppData/Local/TaskRelay/app-0.13.0/`；通过系统目录 UNC 路径独立核对 ASAR，避免将 Codex MSIX LocalCache 副本当作安装证据。升级前后 24 个 Profile、设备配置和 Local State 哈希一致，SQLite quick_check 为 ok，outbox 与未完成 journal 均为 0。云端确认该设备协议 16、claim_ready=1；已恢复领取与非维护状态。MASTER_KEY 未重新生成或覆盖。
 
-原 Microsoft 聊天已清理，本轮未从已删除历史恢复凭据。用户在新验证聊天重新提供后，真实安装的 0.13.0 完成 Microsoft 登录及只读检查；运行 succeeded、cleanup_confirmed=1，并生成候选快照。未领取、兑换或提交业务操作。此次发现三张重复保存卡片，用户尚未确认保存，后续免登录复用、干净 Windows、两台设备及连续观察仍待验收，不宣称跨设备免登录成功或完全无损迁移。
+原 Microsoft 聊天已清理，本轮未从已删除历史恢复凭据。用户在新验证聊天重新提供后，真实安装的 0.13.0 完成 Microsoft 登录及只读检查；运行 succeeded、cleanup_confirmed=1，并生成候选快照。未领取、兑换或提交业务操作。首次登录阶段曾发现三张重复保存卡片，当时用户尚未确认保存；后续去重修复及用户确认后的复用见本节补充记录。干净 Windows、两台设备及连续观察仍待验收，不宣称跨设备免登录成功或完全无损迁移。
 
 ### 2026-11-06 账号卡片紧凑化与重复提示修复
 
@@ -40,7 +52,7 @@ OCR preview/rule 成功，宿主及委托子代理复审本轮 **71 个变更文
 
 OCR preview/rule 成功，宿主审阅全部 13 个变更文件（补审默认排除的两个测试和五份文档），13 reviewed、0 skipped、覆盖率 100%，无未解决发现；未调用外部审查模型。graphify 更新成功，为 4604 节点／8030 边，28 个 SQL 因缺少 tree_sitter_sql 未解析，8 个不支持类型文件未分类；新迁移已直接审阅，不把图覆盖当作数据库验证。
 
-源码 `94b5c98` 已推送，[Windows／Ubuntu Node 24 CI](https://github.com/zhangheng2022/taskrelay/actions/runs/42161856795) 均通过。生产先迁移 0027，后部署 Worker `487b9e41-dc31-4e55-9bb5-7b4b31f4849a`，两域健康和权限检查通过，领取恢复。实际原聊天三张 pending 归并为一张 pending、两张 expired/superseded，UI 只显示一张高度 172 px 的卡片；未代替用户点击确认。真实首次登录已结束，系统 SQLite 显示 ownedBrowser=null、outbox=0、运行 journal=finished，未发生重复业务执行。用户确认保存后的免登录复用仍待完成。
+源码 `94b5c98` 已推送，[Windows／Ubuntu Node 24 CI](https://github.com/zhangheng2022/taskrelay/actions/runs/42161856795) 均通过。生产先迁移 0027，后部署 Worker `487b9e41-dc31-4e55-9bb5-7b4b31f4849a`，两域健康和权限检查通过，领取恢复。实际原聊天三张 pending 归并为一张 pending、两张 expired/superseded，UI 只显示一张高度 172 px 的卡片；未代替用户点击确认。真实首次登录已结束，系统 SQLite 显示 ownedBrowser=null、outbox=0、运行 journal=finished，未发生重复业务执行。此阶段的账号确认尚未完成，后续结果见“用户确认后的真实登录状态复用”。
 
 ## 2026-11-05 聊天滚动与 iPhone Loading 兼容
 
