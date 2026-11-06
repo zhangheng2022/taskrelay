@@ -86,6 +86,14 @@ test(
     }
     assert.ok(active);
     let cdpUrl = `http://127.0.0.1:${active.split("\n")[0].trim()}`;
+    // DevToolsActivePort 出现不等于 Main 的 launch 已完成；与 OwnedBrowser 一样
+    // 确认默认上下文接受下载禁用策略后，才把浏览器交给状态适配器。
+    const sourceReady = await LocalCdp.connect(cdpUrl);
+    try {
+      await sourceReady.send("Browser.setDownloadBehavior", { behavior: "deny" });
+    } finally {
+      await sourceReady.close();
+    }
     adapter = await BrowserStateAdapter.connect(cdpUrl);
     const cookies = [
       {
@@ -168,6 +176,12 @@ test(
     assert.ok(active);
     cdpUrl = `http://127.0.0.1:${active.split("\n")[0].trim()}`;
     await adapter.close();
+    const destinationReady = await LocalCdp.connect(cdpUrl);
+    try {
+      await destinationReady.send("Browser.setDownloadBehavior", { behavior: "deny" });
+    } finally {
+      await destinationReady.close();
+    }
     adapter = await BrowserStateAdapter.connect(cdpUrl);
     t.diagnostic("恢复独立环境");
     await adapter.restore(exported);
