@@ -27,7 +27,11 @@ test('私有快照：生产上传校验租约、文件类型、归属及过期�
  const saved=await s.request(root,body);assert.equal(saved.status,200,JSON.stringify(saved.data));
  assert.equal((await s.request(root,body)).data.id,saved.data.id);assert.equal(puts,1);
  const read=()=>app.request('http://127.0.0.1/api/user/artifacts/'+saved.data.id,{},s.env);
- assert.equal((await read()).status,200);
+ const binary=await read();assert.equal(binary.status,200);
+ assert.equal(binary.headers.get('Content-Type'),'image/png');
+ assert.equal(binary.headers.get('Cache-Control'),'no-store');
+ assert.equal(binary.headers.get('X-Content-Type-Options'),'nosniff');
+ assert.deepEqual(Buffer.from(await binary.arrayBuffer()),Buffer.from(body.image,'base64'));
  s.sql.exec("INSERT INTO members(id,role) VALUES('other_snapshot','user')");
  s.sql.prepare("UPDATE runs SET user_id='other_snapshot' WHERE id=?").run(s.run.id);
  assert.equal((await read()).status,404);

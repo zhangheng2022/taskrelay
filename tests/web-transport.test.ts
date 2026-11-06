@@ -3,6 +3,15 @@ import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { createWebTransport } from '../apps/web/src/transport';
 
+test('图片地址始终使用同源受鉴权路径，资源 ID 不能注入查询或外部地址',()=>{
+  const url=createWebTransport().artifactUrl!('https://other.example/image?format=data#fragment');
+  const parsed=new URL(url,'https://taskrelay.example');
+  assert.equal(parsed.origin,'https://taskrelay.example');
+  assert.equal(parsed.search,'');
+  assert.equal(parsed.hash,'');
+  assert.equal(parsed.pathname,'/api/user/artifacts/https%3A%2F%2Fother.example%2Fimage%3Fformat%3Ddata%23fragment');
+});
+
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
   onopen: (() => void) | null = null;

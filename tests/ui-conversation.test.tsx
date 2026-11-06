@@ -5,6 +5,7 @@ import {render,fireEvent,cleanup,waitFor,act} from '@testing-library/react';
 import {Conversation} from '../packages/ui/src/conversation';
 import {task,run,transportWith,threadPage} from './ui-fixtures';
 import type {ThreadPage} from '../packages/ui/src/use-thread';
+import {createWebTransport} from '../apps/web/src/transport';
 afterEach(cleanup);
 
 test('发送确认沿用同一动画状态行，不把历史消息重新注册为滚动锚点',async()=>{
@@ -145,11 +146,12 @@ test('截图直接显示在聊天，不渲染旧运行事件卡；停止不调�
  const writes:any[]=[];const page={...threadPage,taskId:task.id,messages:[{id:'image_message',seq:1,role:'assistant',source:'executor',content:'当前页面',parts:[{type:'image',artifactId:'image_one',alt:'执行现场'}]}]};
  const transport=transportWith(async(method,path,body)=>{
   if(method==='GET'&&path==='/api/user/threads')return [{id:page.id,model_id:task.modelId,task_id:task.id}];
-  if(path.includes('/artifacts/'))return {dataUrl:'data:image/png;base64,aGVsbG8='};
+  assert.ok(!path.includes('/artifacts/'),'图片不得经过 JSON 通道');
   if(method==='POST')writes.push({path,body});return page;
  });
+ transport.artifactUrl=createWebTransport().artifactUrl;
  const v=render(<Conversation transport={transport} task={task} run={{...run,status:'running'}} offline={false} refresh={async()=>{}}/>);
- await waitFor(()=>assert.ok(v.getByRole('img',{name:'执行现场'})));assert.equal(v.queryByText(/页面快照 #/),null);
+ await waitFor(()=>assert.ok(v.getByRole('img',{name:'执行现场'})));assert.equal(v.getByRole('img',{name:'执行现场'}).getAttribute('src'),'/api/user/artifacts/image_one');assert.equal(v.queryByText(/页面快照 #/),null);
  fireEvent.click(v.getByRole('button',{name:'停止执行'}));await waitFor(()=>assert.equal(writes.length,1));assert.ok(writes[0].path.endsWith('/cancel'));
 });
 

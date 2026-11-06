@@ -234,6 +234,8 @@ export interface DesktopStatus {
 }
 export interface Transport {
   request<T>(method: string, path: string, body?: unknown, options?: {signal?:AbortSignal}): Promise<T>;
+  /** 宿主提供受鉴权的图片地址；图片二进制不经过 JSON 请求通道。 */
+  artifactUrl?(id: string): string;
   subscribe?(fn:()=>void):()=>void;
   desktop?: {
     status(): Promise<DesktopStatus>;

@@ -74,6 +74,8 @@ export function createWebTransport(): Transport {
   };
 
   return {
+    // 同源图片请求沿用网站会话；地址不携带令牌，服务端仍检查图片归属。
+    artifactUrl: id => `/api/user/artifacts/${encodeURIComponent(id)}`,
     subscribe(listener) {
       // 同一个回调的两次订阅仍独立计数，避免其中一次退订提前释放共享资源。
       const subscription = () => listener();
