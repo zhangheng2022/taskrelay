@@ -2,6 +2,7 @@ import { mkdir, writeFile, cp, readFile, rm } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
+import { applyCdpPolicy } from './cdp-policy.mjs';
 const root = path.resolve(import.meta.dirname, ".."),
   staging = path.join(root, ".cache/runtime");
 const lock = path.join(root, "scripts/runtime-package-lock.json");
@@ -44,6 +45,7 @@ await promisify(execFile)(
   { windowsHide: true, timeout: 180000 },
 );
 if (updateLock) await cp(path.join(staging, "package-lock.json"), lock);
+await applyCdpPolicy(path.join(staging, 'node_modules'));
 const destination = path.resolve(root, "apps/desktop/node_modules");
 if (destination !== path.join(root, "apps", "desktop", "node_modules")) throw Error("RUNTIME_STAGING_PATH_INVALID");
 await rm(destination, { recursive: true, force: true });

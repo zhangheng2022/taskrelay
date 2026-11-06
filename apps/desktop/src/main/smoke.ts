@@ -1,11 +1,13 @@
 import { app, utilityProcess } from "electron";
 import http from "node:http";
-import { mkdir, realpath, writeFile } from "node:fs/promises";
+import { mkdir, realpath, writeFile, readFile } from "node:fs/promises";
+import { createRequire } from 'node:module';
 import { promises as originalFs } from "original-fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { Journal } from "./journal";
 import { OwnedBrowser } from "./browser";
+import { BrowserStateAdapter } from './browser-state';
 import { prepareExtension } from "./extension";
 export async function packagedSmoke(
   resources: string,
@@ -118,6 +120,22 @@ export async function packagedSmoke(
     await browser.recover();
     // Fixed test server only. Never accepts tasks, credentials, or a cloud token.
     const launched = await browser.launch("smoke_fixture", fixturePort);
+    const require = createRequire(__filename);
+    report.cdpVersion = require('chrome-remote-interface/package.json').version;
+    report.cdpModulePath = require.resolve('chrome-remote-interface');
+    report.cdpPolicy = (await readFile(require.resolve('chrome-remote-interface/lib/chrome.js'), 'utf8')).includes('followRedirects: false,\n                    handshakeTimeout: 4000,\n                    closeTimeout: 1000,');
+    if (!report.cdpPolicy) throw Error('SMOKE_CDP_POLICY_MISSING');
+    const stateAdapter = await BrowserStateAdapter.connect(launched.cdpUrl);
+    const fixtureOrigin = `http://127.0.0.1:${fixturePort}`;
+    try {
+      await stateAdapter.restore({version:1,cookies:[{name:'state-smoke',value:'fixture',domain:'127.0.0.1',path:'/',httpOnly:true}],origins:[{origin:fixtureOrigin,localStorage:[['state-smoke','fixture']]}]});
+      const captured = await stateAdapter.capture([fixtureOrigin]);
+      if (captured.cookies.find(c=>c.name==='state-smoke')?.value!=='fixture'||captured.origins[0]?.localStorage[0]?.[1]!=='fixture') throw Error('SMOKE_CDP_STATE_FAILED');
+      await stateAdapter.restore({version:1,cookies:[],origins:[{origin:fixtureOrigin,localStorage:[]}]});
+      const cleared = await stateAdapter.capture([fixtureOrigin]);
+      if (cleared.cookies.length || cleared.origins[0]?.localStorage.length) throw Error('SMOKE_CDP_EMPTY_FAILED');
+      report.cdpStateRoundtrip = true;
+    } finally { await stateAdapter.close(); }
     child = utilityProcess.fork(executorPath, [], {
       stdio: "pipe",
       serviceName: "TaskRelay Packaging Smoke",

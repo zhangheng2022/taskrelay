@@ -1,5 +1,8 @@
 import { execute,connectExecutionBrowser } from "./runtime";
 import {smokeExecutionGraph} from './graph-smoke';
+import { findPackageJSON } from 'node:module';
+import { readFile } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
 import type { TaskRun } from "../../../../packages/contracts/src/index";
 const parent = process.parentPort;
 if (!parent) throw new Error("UTILITY_PROCESS_REQUIRED");
@@ -143,7 +146,9 @@ parent.on("message", async ({ data }) => {
       phase = "close";
       return {
           ...graphSmoke,
-          stagehand: "4.3.0",
+          // 从与原生 import 相同目录解析安装包，报告不再硬编码 SDK 版本。
+          stagehand: JSON.parse(await readFile(findPackageJSON('@browserbasehq/stagehand', pathToFileURL(__filename))!, 'utf8')).version,
+          stagehandPackagePath: findPackageJSON('@browserbasehq/stagehand', pathToFileURL(__filename)),
           nativeEsmImport: true,
           query: true,
           monitor: true,

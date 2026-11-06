@@ -36,6 +36,10 @@ for (const name of ["packaged-smoke", "installed-smoke"]) {
     await readFile(path.join(root, `out/${name}.json`), "utf8"),
   );
   if (!reports[name].passed) throw new Error(`${name} has not passed`);
+  if (reports[name].stagehand !== desktop.dependencies['@browserbasehq/stagehand'] ||
+      reports[name].cdpVersion !== desktop.dependencies['chrome-remote-interface'] ||
+      reports[name].cdpPolicy !== true || reports[name].cdpStateRoundtrip !== true)
+    throw new Error(`${name} does not verify the installed runtime dependencies`);
   if (reports[name].version !== desktop.version || reports[name].asarSha256 !== packagedAsar.sha256)
     throw new Error(`${name} does not identify this version and ASAR`);
 }

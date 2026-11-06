@@ -5,6 +5,7 @@ import net from "node:net";
 import path from "node:path";
 import { promisify } from "node:util";
 import { Journal } from "./journal";
+import { LocalCdp } from './local-cdp';
 const exec = promisify(execFile);
 /** 按 Profile 启动并回收应用自有 Chromium，记录进程所有权并配置代理、调试与下载边界。
  * launch/close 共享生命周期状态，避免停止期间的异步启动重新留下浏览器进程。
@@ -14,7 +15,7 @@ export class OwnedBrowser {
   private generation = 0;
   private launching: Promise<{ cdpUrl: string }> | null = null;
   private closing: Promise<void> | null = null;
-  private debuggerUrl:string|null=null;
+  private cdpOrigin:string|null=null;
   constructor(
     private directory: string,
     private profiles: string,
@@ -145,16 +146,11 @@ export class OwnedBrowser {
       guard();
       if (child.exitCode !== null) throw new Error("BROWSER_START_FAILED");
       try {
-        const r = await fetch(`http://127.0.0.1:${port}/json/version`, {
-          signal: AbortSignal.timeout(1000),
-        });
-        if (r.ok) {
-          const info = (await r.json()) as { webSocketDebuggerUrl: string };
-          this.debuggerUrl=info.webSocketDebuggerUrl;
-          await this.browserCommand(info.webSocketDebuggerUrl,'Browser.setDownloadBehavior',{behavior:'deny'});
-          guard();
-          return { cdpUrl: `http://127.0.0.1:${port}` };
-        }
+        const cdpUrl = `http://127.0.0.1:${port}`;
+        await this.browserCommand(cdpUrl, 'Browser.setDownloadBehavior', { behavior: 'deny' });
+        guard();
+        this.cdpOrigin = cdpUrl;
+        return { cdpUrl };
       } catch {
         /* startup */
       }
@@ -163,44 +159,10 @@ export class OwnedBrowser {
     await this.closeChild();
     throw new Error("BROWSER_START_TIMEOUT");
   }
-  private async browserCommand(url:string,method:string,params:Record<string,unknown>={}) {
-    await new Promise<void>((resolve, reject) => {
-      const socket = new WebSocket(url);
-      const timer = setTimeout(() => {
-        socket.close();
-        reject(new Error("DOWNLOAD_POLICY_TIMEOUT"));
-      }, 4000);
-      socket.onopen = () =>
-        socket.send(
-          JSON.stringify({
-            id: 1,
-            method,
-            params,
-          }),
-        );
-      socket.onmessage = (event) => {
-        try {
-          const reply = JSON.parse(String(event.data));
-          if (reply.id === 1) {
-            clearTimeout(timer);
-            socket.close();
-            reply.error
-              ? reject(new Error("DOWNLOAD_POLICY_FAILED"))
-              : resolve();
-          }
-        } catch {
-          clearTimeout(timer);
-          socket.close();
-          reject(new Error("CDP_RESPONSE_INVALID"));
-        }
-      };
-      socket.onerror = () => {
-        clearTimeout(timer);
-        socket.close();
-        reject(new Error("CDP_CONNECTION_FAILED"));
-      };
-      if(method==='Browser.close')socket.onclose=()=>{clearTimeout(timer);resolve();};
-    });
+  private async browserCommand(url:string,method:'Browser.close'|'Browser.setDownloadBehavior',params:Record<string,unknown>={}) {
+    const cdp = await LocalCdp.connect(url);
+    try { await cdp.send(method, params, undefined, 4000); }
+    finally { await cdp.close(); }
   }
   close(graceful=false): Promise<void> {
     if (this.closing) return this.closing;
@@ -216,8 +178,8 @@ export class OwnedBrowser {
   private async closeChild(graceful=false) {
     const child = this.child;
     if (!child) return;
-    if(graceful&&child.exitCode===null&&this.debuggerUrl){
-      await this.browserCommand(this.debuggerUrl,'Browser.close').catch(()=>{});
+    if(graceful&&child.exitCode===null&&this.cdpOrigin){
+      await this.browserCommand(this.cdpOrigin,'Browser.close').catch(()=>{});
       if(child.exitCode===null)await new Promise<void>(resolve=>{const timer=setTimeout(done,3000);function done(){clearTimeout(timer);child!.off('exit',done);resolve();}child.once('exit',done);});
     }
     if (child.exitCode === null && child.pid) {
@@ -236,7 +198,7 @@ export class OwnedBrowser {
         ]);
     }
     this.child = null;
-    this.debuggerUrl=null;
+    this.cdpOrigin=null;
     this.journal.set("ownedBrowser", null);
   }
 }

@@ -1,44 +1,11 @@
-import WebSocket from 'ws';
+import { LocalCdp } from './local-cdp';
 import { browserStateSchema,type BrowserState } from '../../../../packages/contracts/src/accounts';
 
 /** Main 自有 Chromium 的状态适配器。只实现固定的 Cookie/DOMStorage 操作，
  * 不暴露脚本执行给模型。临时文档由 Fetch 截获后在目标 origin 初始化，网站脚本不会先读到未恢复的值。 */
-class Cdp {
-  private sequence=0;
-  private pending=new Map<number,{resolve:(value:Record<string,unknown>)=>void;reject:(error:Error)=>void;timer:ReturnType<typeof setTimeout>}>();
-  private listeners=new Set<(message:{method?:string;params?:Record<string,unknown>;sessionId?:string})=>void>();
-  private constructor(private socket:WebSocket){
-    socket.on('message',data=>{
-      const message=JSON.parse(data.toString());
-      if(message.id){const pending=this.pending.get(message.id);if(!pending)return;this.pending.delete(message.id);clearTimeout(pending.timer);if(message.error)pending.reject(Error('BROWSER_STATE_CDP_FAILED'));else pending.resolve(message.result??{});}
-      else for(const listener of this.listeners)listener(message);
-    });
-    socket.on('close',()=>{for(const pending of this.pending.values()){clearTimeout(pending.timer);pending.reject(Error('BROWSER_STATE_DISCONNECTED'));}this.pending.clear();});
-    socket.on('error',()=>{});
-  }
-  static async connect(cdpUrl:string){
-    const url=new URL(cdpUrl);if(url.protocol!=='http:'||url.hostname!=='127.0.0.1')throw Error('BROWSER_STATE_CDP_INVALID');
-    const response=await fetch(new URL('/json/version',url),{signal:AbortSignal.timeout(10_000)});
-    const info=await response.json() as {webSocketDebuggerUrl:string};
-    const endpoint=new URL(info.webSocketDebuggerUrl);
-    if(endpoint.protocol!=='ws:'||endpoint.hostname!=='127.0.0.1'||endpoint.port!==url.port)throw Error('BROWSER_STATE_CDP_INVALID');
-    const socket=new WebSocket(endpoint,{handshakeTimeout:10_000});
-    await new Promise<void>((resolve,reject)=>{socket.once('open',resolve);socket.once('error',()=>reject(Error('BROWSER_STATE_CONNECT_FAILED')));});
-    return new Cdp(socket);
-  }
-  send(method:string,params:Record<string,unknown>={},sessionId?:string):Promise<Record<string,unknown>>{
-    return new Promise((resolve,reject)=>{
-      const id=++this.sequence,timer=setTimeout(()=>{this.pending.delete(id);reject(Error('BROWSER_STATE_TIMEOUT'));},10_000);
-      this.pending.set(id,{resolve,reject,timer});
-      this.socket.send(JSON.stringify({id,method,params,...(sessionId?{sessionId}:{})}));
-    });
-  }
-  on(listener:(message:{method?:string;params?:Record<string,unknown>;sessionId?:string})=>void){this.listeners.add(listener);return()=>this.listeners.delete(listener);}
-  close(){this.socket.close();}
-}
 export class BrowserStateAdapter {
-  private constructor(private cdp:Cdp){}
-  static async connect(cdpUrl:string){return new BrowserStateAdapter(await Cdp.connect(cdpUrl));}
+  private constructor(private cdp:LocalCdp){}
+  static async connect(cdpUrl:string){return new BrowserStateAdapter(await LocalCdp.connect(cdpUrl));}
   async restoreMissingCookies(state:BrowserState){
     const current=browserStateSchema.shape.cookies.parse((await this.cdp.send('Storage.getCookies')).cookies);
     const identity=(cookie:BrowserState['cookies'][number])=>JSON.stringify([cookie.name,cookie.domain,cookie.path,cookie.partitionKey]);
@@ -92,5 +59,5 @@ export class BrowserStateAdapter {
       try{await this.cdp.send('Page.navigate',{url:`${origin}/`},sessionId);await loaded;await action(sessionId);}finally{clearTimeout(timer);}
     } finally {remove();await this.cdp.send('Target.closeTarget',{targetId}).catch(()=>{});}
   }
-  close(){this.cdp.close();}
+  close(){return this.cdp.close();}
 }
