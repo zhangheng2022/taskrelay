@@ -31,7 +31,7 @@ test('发送确认沿用同一动画状态行，不把历史消息重新注册�
 });
 
 test('刷新失败和离线不继续显示旧的云端处理中，恢复后以新状态收尾',async()=>{
- let notify=()=>{},failed=false;
+ let notify:(()=>void)|undefined,failed=false;
  let page:ThreadPage={...threadPage,activeTurn:'turn'};
  const transport=transportWith(async(_method,path)=>{
   if(path==='/api/user/threads')return [{id:page.id,model_id:task.modelId,task_id:task.id}];
@@ -41,12 +41,14 @@ test('刷新失败和离线不继续显示旧的云端处理中，恢复后以�
  const props={transport,task,run:null,refresh:async()=>{}};
  const v=render(<Conversation {...props} offline={false}/>);
  await waitFor(()=>assert.ok(v.getByText('云端助手正在处理…')));
- failed=true;await act(async()=>notify());
- assert.ok(v.getByText('状态更新失败，请重试'));assert.equal(v.queryByText('云端助手正在处理…'),null);
+ // 订阅在 effect 中建立，通知回调本身不返回刷新 Promise；分别等订阅和真实错误状态。
+ await waitFor(()=>assert.equal(typeof notify,'function'));
+ failed=true;await act(async()=>notify!());
+ await waitFor(()=>assert.ok(v.getByText('状态更新失败，请重试')));assert.equal(v.queryByText('云端助手正在处理…'),null);
  assert.equal(v.getByRole('status').querySelector('.chat-status-spinner'),null);
  v.rerender(<Conversation {...props} offline/>);assert.ok(v.getByText('连接已中断，等待恢复后更新状态'));
  failed=false;page={...page,activeTurn:null,messages:[{id:'answer',seq:1,role:'assistant',content:'处理完成',at:new Date().toISOString()}]};
- v.rerender(<Conversation {...props} offline={false}/>);await act(async()=>notify());
+ v.rerender(<Conversation {...props} offline={false}/>);await act(async()=>notify!());
  await waitFor(()=>assert.ok(v.getByText('处理完成')));assert.equal(v.queryByRole('status'),null);
 });
 
