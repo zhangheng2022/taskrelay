@@ -84,6 +84,9 @@ const candidate = {
   publishedAt: "2026-11-06T00:00:00Z",
 };
 const packageName = "TaskRelay-0.17.1-full.nupkg";
+const installerName = "TaskRelay Setup.exe";
+const publishedInstallerName = "TaskRelay.Setup.exe";
+const artifactNames = [packageName, installerName];
 const packageRoot = "artifacts/windows/apps/desktop/out/make/squirrel.windows/x64";
 const manifest = {
   sourceCommit: process.env.RELEASE_SHA,
@@ -98,13 +101,11 @@ const manifest = {
       { passed: true, version: candidate.version },
     ]),
   ),
-  artifacts: [
-    {
-      file: "apps/desktop/out/make/squirrel.windows/x64/" + packageName,
-      bytes: bytes.length,
-      sha256: candidate.sha256,
-    },
-  ],
+  artifacts: artifactNames.map((name) => ({
+    file: "apps/desktop/out/make/squirrel.windows/x64/" + name,
+    bytes: bytes.length,
+    sha256: candidate.sha256,
+  })),
 };
 if (mode === "wrong-manifest") manifest.sourceCommit = "b".repeat(40);
 if (mode === "bad-artifact") manifest.artifacts[0].sha256 = "b".repeat(64);
@@ -142,11 +143,13 @@ fs.readFileSync = (file, ...args) => {
   const normalized = String(file).replaceAll("\\", "/");
   if (normalized === "artifacts/windows/out/release-manifest.json") return JSON.stringify(manifest);
   if (normalized === "artifacts/windows/out/desktop-release.json") return JSON.stringify(candidate);
-  if (normalized === packageRoot + "/" + packageName) return bytes;
+  if (artifactNames.some((name) => normalized === packageRoot + "/" + name)) return bytes;
   return readOriginal(file, ...args);
 };
 fs.createReadStream = (file) => {
-  assert.equal(String(file).replaceAll("\\", "/"), packageRoot + "/" + packageName);
+  assert.ok(
+    artifactNames.some((name) => String(file).replaceAll("\\", "/") === packageRoot + "/" + name),
+  );
   return Readable.from([bytes]);
 };
 let release;
@@ -155,7 +158,11 @@ if (mode === "resume-published")
     id: 2,
     draft: false,
     target_commitish: process.env.RELEASE_SHA,
-    assets: [{ name: packageName, size: bytes.length, digest: "sha256:" + candidate.sha256 }],
+    assets: [packageName, publishedInstallerName].map((name) => ({
+      name,
+      size: bytes.length,
+      digest: "sha256:" + candidate.sha256,
+    })),
   };
 const originalExec = childProcess.execFileSync;
 childProcess.execFileSync = (file, args) => {
@@ -226,13 +233,16 @@ globalThis.fetch = async (input, options) => {
     release = { ...JSON.parse(options.body), id: 2, assets: [] };
     return Response.json(release);
   }
-  if (
-    url ===
-    "https://uploads.github.com/repos/zhangheng2022/taskrelay/releases/2/assets?name=" + packageName
-  ) {
+  const uploadPrefix =
+    "https://uploads.github.com/repos/zhangheng2022/taskrelay/releases/2/assets?name=";
+  if (url.startsWith(uploadPrefix)) {
+    const requestedName = decodeURIComponent(url.slice(uploadPrefix.length));
+    assert.ok([...artifactNames, publishedInstallerName].includes(requestedName));
     assert.deepEqual(options.body, bytes);
     assert.equal(release.draft, true);
-    const asset = { name: packageName, size: bytes.length, digest: "sha256:" + candidate.sha256 };
+    // GitHub 真实 API 会把 Squirrel 安装器名称的空格转成点；恢复必须匹配返回的资产名。
+    const name = requestedName === installerName ? publishedInstallerName : requestedName;
+    const asset = { name, size: bytes.length, digest: "sha256:" + candidate.sha256 };
     release.assets.push(asset);
     return Response.json(asset);
   }

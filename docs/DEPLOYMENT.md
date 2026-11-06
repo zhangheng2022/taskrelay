@@ -1,5 +1,9 @@
 # 部署与恢复
 
+2026-11-06 首次 [Actions 正式发布 42239257763](https://github.com/zhangheng2022/taskrelay/actions/runs/42239257763) 已完成，源提交 `41c916c133c449736afc92cd66203cff2d16cf83`。先记录 D1 恢复点并应用 0028，再部署 Worker `09848417-7a05-4d18-8dde-6be64eb360ab`（100%），随后发布 [0.17.1](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.17.1)、完整核验 Cloudflare 下载并切换 D1 更新目录。发布记录为 complete，领取恢复 1、维护恢复 0；两个域名健康均报告该 SHA，更新目录均为 0.17.1，匿名用户／管理员接口均为 401。
+
+安装包由 GitHub 托管 Windows 构建和实际安装验收。包内／安装 ASAR 为 `0b67b1d6f07fcf4b2fb272f94f98a88d5f92575e03ab194f0f3d823fc841a011`，更新包 SHA-256 为 `77959e67264fc565b3d01b43d806d0d4d0820428a7fc60de211d050eedcd9701`。用户本机仍为 0.17.0，更新通道升级与升级后 Microsoft 只读验收未完成，原因见 ACCEPTANCE；不能用托管安装报告替代本机证据。
+
 2026-11-06 Web 图片地址批次：仅发布网站图片加载与可选 Transport 能力，复用既有受鉴权二进制接口；D1 保持 0027、执行协议 17、本机执行器 0.17.0，不需要迁移或重新打包安装。后端 Base64 响应保留旧客户端兼容；现有 MASTER_KEY、图片存储和设备凭据不变。
 
 源码 `2f7ff5a` 已部署 Worker `482bdbad-3ee5-4610-928e-6bdc4300c63c`，线上资源 `index-DgSawW-l.js` 与本次构建一致。两个域名健康、匿名及设备令牌范围检查通过；发布窗口无活动执行、未清理浏览器或推理，领取已恢复、维护关闭。UI 实际检查的限制见 [验收记录](ACCEPTANCE.md#2026-11-06-web-图片改为受鉴权地址)。
@@ -79,6 +83,8 @@
 仓库 `production` Environment 仅允许 master。已配置 `CLOUDFLARE_API_TOKEN`，仅 production 作业可读：当前账号的 Workers Editor、D1 Write，以及 `zhangheng.eu.org` 的 Workers Routes Write、Zone Read。现有 MASTER_KEY、模型密钥留在 Cloudflare；工作流不读取或覆盖。Release 写权限也只在 production 作业授予。
 
 失败后保持现场，不能直接打开领取或回滚数据库。确认原运行已结束后，在同一源 SHA 以 `mode=resume`、`recovery-run=首次产物运行 ID` 继续核验；恢复使用原附件，不重新打包。迁移按已提交记录继续；部署结果未知时只核对 health 的 `sourceCommit`，未确认则报错并等待人工诊断。附件保留七天，缺失且阶段仍需要附件时拒绝恢复。若停在 `awaiting-device`，升级设备后同样通过 resume 核验。已完成发布和公开版本不能重新 publish。
+
+GitHub [上传接口会改写特殊文件名](https://docs.github.com/en/rest/releases/assets#upload-a-release-asset)。Squirrel 磁盘文件 `TaskRelay Setup.exe` 固定以 `TaskRelay.Setup.exe` 发布并核对返回名称；中断恢复也按公开名匹配，再比较大小和哈希。不能因本地名有空格而误判资产缺失，更不能删除重传已公开文件。
 
 本批新增迁移 `0028_release_claim_barrier.sql`，在领取事务内再次检查暂停/维护开关，阻止早先读到旧开关的并发领取。管理员不能在未完成发布期间覆盖领取开关。协议仍为 17；不改变账号、Profile、快照格式或加密密钥。
 
