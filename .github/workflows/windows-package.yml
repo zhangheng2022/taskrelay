@@ -31,6 +31,8 @@ jobs:
           cache: npm
       - run: npm ci --no-audit --no-fund
       - run: npm run prepare:browser
+      # 普通测试 Runner 未下载浏览器；在资源准备后补跑真实 Chromium 状态迁移入口。
+      - run: node --import tsx --test tests/browser-state-desktop.test.ts
       - run: npm run make
       - run: npm run test:smoke
       - run: ./scripts/install-smoke.ps1

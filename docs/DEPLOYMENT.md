@@ -134,7 +134,7 @@ Main 在产生浏览器副作用前记录 SQLite 检查点。云端也先记录�
 
 桌面生产依赖另由 `scripts/runtime-package-lock.json` 锁定；依赖更新后执行 `node scripts/stage-runtime.mjs --update-lock` 并审查该锁文件，普通打包只执行 `npm ci`。每个 Stagehand release 的公开扩展标识保存在 `resources/stagehand-<版本>-public-key.txt`，新增版本须一同提交；它只固定 Chromium 扩展身份，不是账号加密密钥。启动时仅启用当前版本扩展，避免旧 Profile 的扩展运行缓存与新 SDK 混用，保留站点存储。
 
-先提升 `apps/desktop/package.json` 版本并同步锁文件，再运行 `npm run make` 和本次产物的 smoke。暂存运行时包使用桌面应用版本，Squirrel 的版本目录和 nupkg 必须一致。交付不能停留在直接运行 `out/TaskRelay-win32-x64/TaskRelay.exe`。
+先提升 `apps/desktop/package.json` 版本并同步锁文件，通过 PR 合并。正式 make、浏览器状态迁移测试和本次产物 smoke 在 Actions 的 Windows 作业执行；本地 make 仅用于开发。暂存运行时包使用桌面应用版本，Squirrel 的版本目录和 nupkg 必须一致。交付不能停留在直接运行 `out/TaskRelay-win32-x64/TaskRelay.exe`。
 
 安装前保存本地数据并检查未完成运行；安装后从桌面或开始菜单的实际入口启动，核对进程路径、版本和 `resources/app.asar` 的 SHA-256，再验证安装目录 smoke。`node scripts/release-manifest.mjs` 会拒绝旧报告、错误版本或不匹配的 ASAR；安装路径取自实际自检报告，不按环境变量猜测。报告同时记录执行程序、资源目录与运行扩展路径。0.4.6 起扩展从应用自有内容寻址目录加载，文件集合和字节哈希必须与安装资源一致，不修改原始安装文件或系统访问控制。
 
@@ -157,13 +157,13 @@ README 负责使用入口与状态，CHANGELOG 记录客户端版本的变更，
 - 下载期间原任务继续运行。下载完成后自动暂停新增领取，等待正在领取的请求、执行/人工等待、浏览器与子进程清理、RPC 和结果回传结束，再安装重启。原“暂停领取”偏好不变；回传失败则继续等待，不强停任务或清空 outbox。更新不解锁 unknown 账号、不重放写入。确认不跨应用重启保存；中途关闭后须重新确认，失败支持重试，新下载会清理应用自有旧下载缓存。
 - Worker 只对目录中固定版本/哈希/文件路径提供流式下载。源限定为 `zhangheng2022/taskrelay` 的 `v<版本>` Release；仅在 CF 内跟随 GitHub 的指定资产域名，绝不向客户端返回 Location，不转发用户的 Cookie/Authorization，不启用 R2 或付费服务。
 
-发布步骤：
+更新通道的发布与验收步骤：
 
-1. 提升桌面版本并同步锁文件，完成 make、包内/实际安装 smoke 和系统入口/ASAR 核验，执行 `node scripts/release-manifest.mjs`。
-2. 将简短更新说明保存为本地文本，执行 `node scripts/prepare-update.mjs <更新说明文件>`。脚本核对当前版本、验收清单和包哈希，只生成 `out/desktop-release.json`，不上传、不启用通道；不能使用旧版清单。
-3. 将本次 `TaskRelay-<版本>-full.nupkg` 与 Setup 发布到上述仓库可公开下载的 `v<版本>` Release。私有仓库/未发布草稿不能作为此通道来源；不得把 GitHub token 配到客户端。已发布版本的包不可替换，修复必须提升版本。
-4. 将生成条目追加到 `apps/cloud/src/desktop-releases.json` 的 `releases`，更新 `latest`，保留历史条目供已确认的下载继续使用，然后构建并部署 Cloudflare Worker。`latest:null` 表示尚未发布，客户端不会误报“已是最新版”。
-5. 从 CF 地址检查 latest 和 nupkg：应直接返回 JSON/文件字节，无外部重定向；核对包 SHA-256。在测试安装上检查拒绝更新、确认下载、正在执行/人工等待/断网回传下不重启，以及空闲升级后的系统入口、版本、ASAR、配对和自启动。隔离 adapter 测试、包内 smoke 均不替代此真实升级验证。
+1. 提交桌面版本、锁文件和 `docs/RELEASE-NOTES.md`，在合并提交的 quality-gate 通过后手动启动 [生产发布](#发布)。
+2. Windows Runner 构建并安装同一份产物，核验系统入口和 ASAR 后运行 `release-manifest`、`prepare-update`，将产物与验收报告关联到固定 SHA 和 Actions run。
+3. 生产作业发布 `TaskRelay-<版本>-full.nupkg` 与 Setup 到可公开下载的 `v<版本>` Release；仅使用已验收附件，不重建或覆盖公开资产。不得把 GitHub token 配到客户端。
+4. 生产作业先登记 D1 `desktopReleaseCatalog`，从 Cloudflare 下载核对完整大小和 SHA-256，再切换 `latest`，保留历史条目供已确认的下载继续使用。不要再修改编译时 JSON 来切换公开版本；`latest:null` 表示尚未发布。
+5. 本机通过更新通道确认下载，检查空闲升级后的系统入口、版本、ASAR、配对和 Profile。运行中、人工等待及断网回传时不重启的实际故障验收另行记录；隔离 adapter 测试和 Runner smoke 均不替代真实本机升级验证。
 
 实现依据：[Electron autoUpdater](https://www.electronjs.org/docs/latest/api/auto-updater)、[Squirrel 本地更新源](https://github.com/Squirrel/Squirrel.Windows/blob/develop/src/Squirrel/UpdateManager.DownloadReleases.cs)、[Cloudflare Streams](https://developers.cloudflare.com/workers/runtime-apis/streams/)。
 

@@ -110,6 +110,9 @@ jobs:
   codeql:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    # 质量门槛核验完整结果；不能只限制在 PR 差异行而遗漏既有高危问题。
+    env:
+      CODEQL_ACTION_DIFF_INFORMED_QUERIES: "false"
     outputs: *a1
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
