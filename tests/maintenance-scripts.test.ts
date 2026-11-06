@@ -9,6 +9,48 @@ import { fileURLToPath } from "node:url";
 import { PROTOCOL_VERSION } from "../packages/contracts/src/index";
 
 const exec = promisify(execFile);
+test("CDP 策略可幂等应用和升级已有边界补丁，未知源码拒绝改写", async (t) => {
+  const prefix = path.join(os.tmpdir(), "taskrelay-cdp-policy-");
+  const directory = await mkdtemp(prefix);
+  t.after(async () => {
+    assert.ok(path.resolve(directory).startsWith(prefix));
+    await rm(directory, { recursive: true, force: true });
+  });
+  const module = path.join(directory, "chrome-remote-interface");
+  await mkdir(path.join(module, "lib"), { recursive: true });
+  await copyFile(
+    new URL("../node_modules/chrome-remote-interface/package.json", import.meta.url),
+    path.join(module, "package.json"),
+  );
+  const target = path.join(module, "lib/chrome.js");
+  const patched = await readFile(
+    new URL("../node_modules/chrome-remote-interface/lib/chrome.js", import.meta.url),
+    "utf8",
+  );
+  await writeFile(target, patched);
+  const run = () =>
+    exec(process.execPath, [
+      "--input-type=module",
+      "-e",
+      "const {applyCdpPolicy}=await import(process.argv[1]);await applyCdpPolicy(process.argv[2]);",
+      "--",
+      new URL("../scripts/cdp-policy.mjs", import.meta.url).href,
+      directory,
+    ]);
+  await run();
+  assert.equal(await readFile(target, "utf8"), patched);
+  const legacy = patched.replace(
+    "followRedirects: false,\n                    handshakeTimeout: 4000,\n                    closeTimeout: 1000,",
+    "followRedirects: true,",
+  );
+  assert.notEqual(legacy, patched);
+  await writeFile(target, legacy);
+  await run();
+  assert.equal(await readFile(target, "utf8"), patched);
+  await writeFile(target, patched + "\n// unexpected upstream change\n");
+  await assert.rejects(run(), /CDP_POLICY_REVIEW_REQUIRED/);
+  assert.equal(await readFile(target, "utf8"), patched + "\n// unexpected upstream change\n");
+});
 test("安装验收范围识别独立浏览器测试改动，纯文档可跳过", async (t) => {
   const prefix = path.join(os.tmpdir(), "taskrelay-scope-");
   const directory = await mkdtemp(prefix);
