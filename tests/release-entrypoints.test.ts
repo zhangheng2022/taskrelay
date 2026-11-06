@@ -112,8 +112,8 @@ test("真实生产发布入口核对 SQL、安装包和恢复结果，异常保�
       assert.equal(expected.error, undefined, mode);
       stdout = result.stdout;
     } catch (error) {
-      assert.ok(expected.error, mode);
       const failed = error as ExecFileException & { stderr: string; stdout: string };
+      assert.ok(expected.error, `${mode}: ${failed.stderr}`);
       assert.ok(failed.stderr.includes(expected.error), failed.stderr);
       stdout = failed.stdout;
     }

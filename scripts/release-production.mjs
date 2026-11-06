@@ -262,14 +262,17 @@ const io = {
     if (release.target_commitish !== sha) throw Error("RELEASE_TAG_SHA_MISMATCH");
     for (const item of manifest.artifacts.filter((entry) => entry.file.includes("/make/"))) {
       const name = path.basename(item.file);
-      const existing = release.assets.find((asset) => asset.name === name);
+      // GitHub 上传 API 会改写空格。固定 Squirrel 安装器的公开名称，
+      // 恢复时按同一名称核对哈希；磁盘仍读取原始验收文件，不覆盖已公开资产。
+      const assetName = name === "TaskRelay Setup.exe" ? "TaskRelay.Setup.exe" : name;
+      const existing = release.assets.find((asset) => asset.name === assetName);
       if (existing) {
         if (existing.size !== item.bytes || existing.digest !== `sha256:${item.sha256}`)
           throw Error("EXISTING_RELEASE_ASSET_MISMATCH");
       } else {
         if (!release.draft) throw Error("PUBLISHED_RELEASE_ASSET_MISSING");
         const response = await fetch(
-          `https://uploads.github.com/repos/${repository}/releases/${release.id}/assets?name=${encodeURIComponent(name)}`,
+          `https://uploads.github.com/repos/${repository}/releases/${release.id}/assets?name=${encodeURIComponent(assetName)}`,
           {
             method: "POST",
             redirect: "error",
@@ -283,7 +286,7 @@ const io = {
         );
         if (!response.ok) throw Error(`RELEASE_UPLOAD_FAILED:${response.status}`);
         const uploaded = await response.json();
-        if (uploaded.digest !== `sha256:${item.sha256}`)
+        if (uploaded.name !== assetName || uploaded.digest !== `sha256:${item.sha256}`)
           throw Error("UPLOADED_ASSET_HASH_MISMATCH");
       }
     }
