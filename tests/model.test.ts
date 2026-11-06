@@ -165,3 +165,45 @@ test("带密钥的模型请求拒绝重定向，不向其他地址重发", async
   );
   assert.equal(calls, 1);
 });
+
+test('SDK 标准 Responses 结果与兼容结果均保留文字、工具及用量',async()=>{
+ const response=await infer({...profile,protocol:'responses'},'key',{messages:[{role:'user',content:'test'}]},async(_url,init)=>{
+  assert.match(new Headers(init?.headers).get('user-agent')??'',/OpenAI/);
+  return Response.json({object:'response',output:[{type:'message',content:[{type:'output_text',text:'实际结果'}]},{type:'function_call',call_id:'a',name:'extract',arguments:'{}'}],usage:{input_tokens:3,output_tokens:4}});
+ });
+ assert.equal(response.text,'实际结果');assert.deepEqual(response.calls,[{id:'a',name:'extract',arguments:'{}'}]);assert.deepEqual(response.usage,{input:3,output:4});
+});
+
+test('SDK 对限流、服务故障和传输断流均不重试且不暴露错误正文',async()=>{
+ for(const scenario of ['rate','server','network','stream','oversize','gateway','invalid'] as const){
+  let calls=0,cancelled=false;
+  const expected={rate:'MODEL_HTTP_429',server:'MODEL_HTTP_503',network:'MODEL_CALL_OUTCOME_UNKNOWN',stream:'MODEL_CALL_OUTCOME_UNKNOWN',oversize:'MODEL_RESPONSE_TOO_LARGE',gateway:'MODEL_HTTP_403_GATEWAY_DENIED',invalid:'MODEL_INVALID_RESPONSE'}[scenario];
+  await assert.rejects(infer(profile,'private-key',{messages:[{role:'user',content:'test'}]},async()=>{
+   calls++;
+   if(scenario==='network')throw Error('private-key reset');
+   if(scenario==='stream')return new Response(new ReadableStream({start(controller){controller.error(Error('private-key body'));}}));
+   if(scenario==='oversize')return new Response(new ReadableStream({pull(controller){controller.enqueue(new Uint8Array(2_000_001));},cancel(){cancelled=true;}}));
+   if(scenario==='gateway'||scenario==='invalid')return new Response('private-key html',{status:scenario==='gateway'?403:200});
+   return Response.json({error:{message:'private-key upstream body'}},{status:scenario==='rate'?429:503});
+  }),{message:expected});
+  assert.equal(calls,1,scenario);if(scenario==='oversize')assert.equal(cancelled,true);
+ }
+});
+
+test('SDK 不继承环境组织凭据；未配置密钥的兼容端点不发送 Authorization',async t=>{
+ t.mock.property(process,'env',{...process.env,OPENAI_ORG_ID:'private-org',OPENAI_PROJECT_ID:'private-project'});
+ await infer(profile,'',{messages:[{role:'user',content:'test'}]},async(_url,init)=>{
+  const headers=new Headers(init?.headers);for(const name of ['authorization','openai-organization','openai-project'])assert.equal(headers.get(name),null);
+  return Response.json({choices:[{message:{content:'ok'}}]});
+ });
+});
+
+test('SDK 超时覆盖未结束的响应正文并取消读取，不重发',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});let ready!:()=>void,cancelled=false,calls=0;
+ const started=new Promise<void>(resolve=>{ready=resolve;});
+ const pending=infer(profile,'key',{messages:[{role:'user',content:'test'}]},async()=>{
+  calls++;return new Response(new ReadableStream({start(controller){controller.enqueue(new TextEncoder().encode('{'));ready();},cancel(){cancelled=true;}}));
+ });
+ const checked=assert.rejects(pending,{message:'MODEL_TIMEOUT'});
+ await started;t.mock.timers.tick(60_001);await checked;assert.equal(calls,1);assert.equal(cancelled,true);
+});

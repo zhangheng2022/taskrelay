@@ -100,6 +100,15 @@ test('LangChain 模型中断结果未知不自动重试，重复操作不重新�
   assert.equal(s.jobs(),1);
 });
 
+for(const protocol of ['chat','responses'] as const)test(`官方 Zod helper/${protocol} 格式投影后仍按原 Schema 修复无效网址`,async t=>{
+ const s=await productionModelFixture(t,protocol),model=new RelayChatModel(s.env,'model_test',1,'lc_zod_helper',s.run.id);
+ s.replies('{"url":"invalid","tags":[]}','{"url":"https://example.com","tags":[]}');
+ const result=await model.withStructuredOutput(z.object({url:z.url(),tags:z.array(z.string()).default([])})).invoke('读取网址');
+ assert.deepEqual(result,{url:'https://example.com',tags:[]});assert.equal(s.jobs(),2);
+ const format=protocol==='chat'?s.requests[0].body.response_format.json_schema:s.requests[0].body.text.format;
+ assert.equal(format.strict,true);assert.deepEqual(format.schema.required,['url','tags']);assert.equal(format.schema.properties.url.format,undefined);
+});
+
 test('非法工具参数保留原始编号与顺序，缺用量保持未知',()=>{
   const response={text:'',calls:[{id:'bad',name:'act',arguments:'{'},{id:'good',name:'wait',arguments:'{}'}],usage:{input:null,output:null}};
   const message=modelResponseToAIMessage(response);

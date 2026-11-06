@@ -180,7 +180,7 @@ export async function generateStructured<T>(
   invalidCode = "MODEL_INVALID_JSON",
   operationId?: string,
   graphId?: string,
-  media?: {image?:string;format?:'schema'|'json'},
+  media?: {image?:string;format?:'schema'|'json';wireSchema?:Record<string,unknown>},
   graphGeneration?: number,
 ): Promise<{ data: T; response: ModelResponse }> {
   const { profile } = await getModelProfile(env, id, version);
@@ -190,7 +190,7 @@ export async function generateStructured<T>(
   const mode=media?.format??profile.capabilities.structured;
   const format =
     mode === "schema"
-      ? { schema }
+      ? { schema:media?.wireSchema??schema }
       : { jsonMode: true };
   const instructions: Inference["messages"] =
     mode === "json"

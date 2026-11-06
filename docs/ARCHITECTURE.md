@@ -2,6 +2,8 @@
 
 本文描述当前源码。部署与安装见 [DEPLOYMENT](DEPLOYMENT.md)，验证证据与未完成项见 [ACCEPTANCE](ACCEPTANCE.md)。旧版本设计从 Git 历史追溯，不与当前流程并列。
 
+模型 HTTP 协议由官方 OpenAI SDK 接管，SDK 仅在 ModelEgress 的美国区域 alarm 内实例化，禁用自动重试与正文日志；平台 adapter 保留公网地址校验、禁止重定向、整次请求超时、响应大小上限与固定公开错误。标准 Zod 经官方结构化输出 helper 生成 wire Schema，再做提供方格式投影；原始规则仍用于最终校验，Stagehand 原始 JSON Schema 与 JSON 模式集中兼容。模型配置版本、身份、租约、用量与未知结果防重仍由云端拥有。
+
 ## 职责与事实归属
 
 | 层 | 职责 |

@@ -13,6 +13,7 @@ import { RunnableLambda, type Runnable } from '@langchain/core/runnables';
 import { convertToOpenAITool } from '@langchain/core/utils/function_calling';
 import { isSerializableSchema } from '@langchain/core/utils/standard_schema';
 import { z } from 'zod';
+import {zodResponseFormat} from 'openai/helpers/zod';
 import type { AppEnv } from '../env';
 import { generateStructured, getModelProfile, invoke } from '../models';
 import type { Inference, Message, Tool } from '../../../../packages/model/src/index';
@@ -115,9 +116,12 @@ export class RelayChatModel extends BaseChatModel<RelayModelOptions> {
   withStructuredOutput<Output extends Record<string, any> = Record<string, any>>(schema: unknown, config: StructuredOutputMethodOptions<boolean> = {}): Runnable<BaseLanguageModelInput, Output | { raw: BaseMessage; parsed: Output }, RelayModelOptions> {
     if (config.method && !['jsonMode', 'jsonSchema'].includes(config.method)) throw Error('MODEL_STRUCTURED_METHOD_UNSUPPORTED');
     let json: Record<string, unknown>;
+    let wireSchema: Record<string, unknown> | undefined;
     let validate: (value: unknown) => Output | Promise<Output>;
     if (schema instanceof z.ZodType) {
       json = z.toJSONSchema(schema);
+      // 官方 helper 生成严格输出格式；原始 Schema 仍负责提示、格式修复和最终解析。
+      wireSchema = zodResponseFormat(schema, 'result').json_schema.schema;
       validate = value => schema.parse(value) as Output;
     } else if (isSerializableSchema<Output>(schema)) {
       json = schema['~standard'].jsonSchema.input({ target: 'draft-2020-12' });
@@ -144,7 +148,7 @@ export class RelayChatModel extends BaseChatModel<RelayModelOptions> {
       const result = await generateStructured(this.env, this.modelId, this.version, json, validate,
         wireMessages, this.runId, options?.invalidCode ?? 'MODEL_INVALID_JSON',
         options?.operationId ?? this.operationId, this.graphId,
-        { ...(options?.image ? { image: options.image } : {}), ...(config.method ? { format: config.method === 'jsonMode' ? 'json' : 'schema' } : {}) }, this.graphGeneration);
+        { ...(options?.image ? { image: options.image } : {}), ...(wireSchema?{wireSchema}:{}), ...(config.method ? { format: config.method === 'jsonMode' ? 'json' : 'schema' } : {}) }, this.graphGeneration);
       options?.signal?.throwIfAborted();
       return config.includeRaw ? { raw: modelResponseToAIMessage(result.response), parsed: result.data } : result.data;
     });

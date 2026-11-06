@@ -1,9 +1,12 @@
 /**
- * 模型协议适配：把统一消息转换为 Chat Completions 或 Responses 请求，并归一化结果。
- * 此模块不决定路由或重试；生产由区域出站入口调用，公开错误仅返回固定分类。
+ * 模型协议适配：官方 OpenAI SDK 承接 Chat Completions／Responses，集中处理兼容服务差异。
+ * 仅由区域出站入口调用，SDK 不重试、不记录正文；边界负责禁止重定向、超时、大小限制与固定错误。
  */
 import type { ModelProfile } from "../../contracts/src/index";
 import { outputSchema } from "./schema";
+import OpenAI from 'openai';
+import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/chat/completions';
+import type { ResponseCreateParamsNonStreaming } from 'openai/resources/responses/responses';
 
 export interface Message {
   role: "system" | "user" | "assistant" | "tool";
@@ -34,6 +37,7 @@ export interface ModelResponse {
   structured?: unknown;
 }
 type Fetcher = (input: string | URL, init?: RequestInit) => Promise<Response>;
+class ModelBoundaryError extends Error {}
 export async function infer(
   profile: Pick<ModelProfile, "baseUrl" | "protocol" | "model"> &
     Partial<Pick<ModelProfile, "capabilities">>,
@@ -136,61 +140,51 @@ export async function infer(
       };
     else if (request.jsonMode) body.text = { format: { type: "json_object" } };
   }
-  const response = await fetcher(
-    `${root}/${profile.protocol === "chat" ? "chat/completions" : "responses"}`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(key ? { Authorization: `Bearer ${key}` } : {}),
-      },
-      body: JSON.stringify(body),
-      redirect: "manual",
-      signal: AbortSignal.timeout(60_000),
-    },
-  );
-  if (response.status >= 300 && response.status < 400)
-    throw new Error("MODEL_REDIRECT_BLOCKED");
-  const reader = response.body?.getReader();
-  if (!reader) throw new Error("MODEL_EMPTY_RESPONSE");
-  let length = 0;
-  const chunks: Uint8Array[] = [];
+  // SDK 只在 ModelEgress 的 alarm 内创建；禁用环境默认账号与日志，避免额外凭据和正文外流。
+  // fetch 边界同时覆盖响应正文读取，SDK 的连接超时不能代替整个请求的时间限制。
+  let transportFailure: string | undefined;
+  // SDK 要求非空凭据；无密钥兼容端点使用占位值，并在网络边界删除整个 Authorization。
+  const client = new OpenAI({apiKey:key||'taskrelay-keyless-endpoint',baseURL:root,organization:null,project:null,adminAPIKey:null,
+    maxRetries:0,timeout:60_000,logLevel:'off',fetch:async(input,init)=>{
+      const signal=AbortSignal.any([...(init?.signal?[init.signal]:[]),AbortSignal.timeout(60_000)]);
+      try{
+        const headers=new Headers(init?.headers);
+        if(!key)headers.delete('authorization');
+        const response=await fetcher(String(input),{...init,headers,redirect:'manual',signal});
+        return await boundedResponse(response,signal);
+      }catch(error){
+        transportFailure=signal.aborted?'MODEL_TIMEOUT':error instanceof ModelBoundaryError?error.message:'MODEL_CALL_OUTCOME_UNKNOWN';
+        throw new Error(transportFailure);
+      }
+    }});
   try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      length += value.byteLength;
-      if (length > (response.ok ? 2_000_000 : 64_000))
-        throw new Error(
-          response.ok
-            ? "MODEL_RESPONSE_TOO_LARGE"
-            : `MODEL_HTTP_${response.status}`,
-        );
-      chunks.push(value);
+    // DTO 由上方集中适配，兼容提供方仍允许自定义模型名和 token 参数；SDK 负责 HTTP 与标准解析。
+    if(profile.protocol==='chat'){
+      const data=await client.chat.completions.create(body as unknown as ChatCompletionCreateParamsNonStreaming);
+      const message=data?.choices?.[0]?.message;
+      if(!message)throw new ModelBoundaryError('MODEL_EMPTY_RESPONSE');
+      return {text:typeof message.content==='string'?message.content:'',calls:(message.tool_calls??[])
+        .filter(call=>call.type==='function'||(!call.type&&'function' in call))
+        .map(call=>{if(!('function' in call))throw new ModelBoundaryError('MODEL_INVALID_RESPONSE');return {id:call.id,name:call.function.name,arguments:call.function.arguments};}),
+        usage:{input:data.usage?.prompt_tokens??null,output:data.usage?.completion_tokens??null}};
     }
-  } finally {
-    await reader.cancel();
+    const data=await client.responses.create(body as unknown as ResponseCreateParamsNonStreaming);
+    if(!data||!Array.isArray(data.output))throw new ModelBoundaryError('MODEL_EMPTY_RESPONSE');
+    // 部分兼容服务省略 object:'response'，SDK 不生成 output_text；集中保留这一个兼容分支。
+    const text=data.output_text??data.output.filter(item=>item.type==='message').flatMap(item=>item.content).filter(part=>part.type==='output_text').map(part=>part.text).join('\n');
+    return {text,calls:data.output.filter(item=>item.type==='function_call').map(item=>({id:item.call_id,name:item.name,arguments:item.arguments})),
+      usage:{input:data.usage?.input_tokens??null,output:data.usage?.output_tokens??null}};
+  }catch(error){
+    // 不把 SDK APIError（可能包含请求密钥或上游回显）交给日志、调用方或诊断包。
+    if(transportFailure)throw Error(transportFailure);
+    if(error instanceof OpenAI.APIError)throw Error(error.status?httpError(error.status,error.code):'MODEL_CALL_OUTCOME_UNKNOWN');
+    if(error instanceof ModelBoundaryError)throw error;
+    throw Error('MODEL_INVALID_RESPONSE');
   }
-  const bytes = new Uint8Array(length);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.length;
-  }
-  let data: any;
-  try {
-    data = JSON.parse(new TextDecoder().decode(bytes));
-  } catch {
-    throw new Error(
-      response.ok
-        ? "MODEL_INVALID_RESPONSE"
-        : `MODEL_HTTP_${response.status}_GATEWAY_DENIED`,
-    );
-  }
-  if (!response.ok) {
-    // Only a fixed classification is exposed. Provider messages can echo credentials.
-    const reason = String(data?.error?.code ?? "").toLowerCase();
-    const suffix = (
+}
+
+function httpError(status:number,code:unknown){
+  const suffix=(
       {
         unsupported_country_region_territory: "UNSUPPORTED_REGION",
         model_not_found: "MODEL_UNAVAILABLE",
@@ -200,44 +194,22 @@ export async function infer(
         organization_restricted: "ORGANIZATION_RESTRICTED",
         access_terminated: "ACCOUNT_RESTRICTED",
       } as Record<string, string>
-    )[reason];
-    throw new Error(
-      `MODEL_HTTP_${response.status}${suffix ? "_" + suffix : ""}`,
-    );
-  }
-  if (profile.protocol === "chat") {
-    const m = data.choices?.[0]?.message;
-    if (!m) throw new Error("MODEL_EMPTY_RESPONSE");
-    return {
-      text: typeof m.content === "string" ? m.content : "",
-      calls: (m.tool_calls ?? []).map((c: any) => ({
-        id: c.id,
-        name: c.function?.name,
-        arguments: c.function?.arguments,
-      })),
-      usage: {
-        input: data.usage?.prompt_tokens ?? null,
-        output: data.usage?.completion_tokens ?? null,
-      },
-    };
-  }
-  return {
-    text: (data.output ?? [])
-      .filter((x: any) => x.type === "message")
-      .flatMap((x: any) => x.content ?? [])
-      .filter((x: any) => x.type === "output_text")
-      .map((x: any) => x.text)
-      .join("\n"),
-    calls: (data.output ?? [])
-      .filter((x: any) => x.type === "function_call")
-      .map((x: any) => ({
-        id: x.call_id,
-        name: x.name,
-        arguments: x.arguments,
-      })),
-    usage: {
-      input: data.usage?.input_tokens ?? null,
-      output: data.usage?.output_tokens ?? null,
-    },
-  };
+    )[String(code??'').toLowerCase()];
+  return `MODEL_HTTP_${status}${suffix?'_'+suffix:''}`;
+}
+
+async function boundedResponse(response:Response,signal:AbortSignal):Promise<Response>{
+  if(response.status>=300&&response.status<400){await response.body?.cancel();throw new ModelBoundaryError('MODEL_REDIRECT_BLOCKED');}
+  const reader=response.body?.getReader();if(!reader)throw new ModelBoundaryError('MODEL_EMPTY_RESPONSE');
+  const chunks:Uint8Array[]=[];let length=0;
+  const abort=()=>{void reader.cancel().catch(()=>{});};signal.addEventListener('abort',abort,{once:true});
+  try{
+    for(;;){signal.throwIfAborted();const {done,value}=await reader.read();signal.throwIfAborted();if(done)break;
+      length+=value.byteLength;if(length>(response.ok?2_000_000:64_000))throw new ModelBoundaryError(response.ok?'MODEL_RESPONSE_TOO_LARGE':`MODEL_HTTP_${response.status}`);chunks.push(value);}
+  }finally{signal.removeEventListener('abort',abort);await reader.cancel().catch(()=>{});}
+  const bytes=new Uint8Array(length);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
+  // 兼容提供方可能未带 JSON Content-Type；只允许经过大小限制的 JSON 交给 SDK。
+  try{JSON.parse(new TextDecoder().decode(bytes));}catch{throw new ModelBoundaryError(response.ok?'MODEL_INVALID_RESPONSE':`MODEL_HTTP_${response.status}_GATEWAY_DENIED`);}
+  const headers=new Headers(response.headers);headers.set('content-type','application/json');headers.delete('content-length');
+  return new Response(bytes,{status:response.status,headers});
 }
