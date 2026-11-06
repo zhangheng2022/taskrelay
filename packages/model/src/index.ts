@@ -51,7 +51,10 @@ export async function infer(
   request: Inference,
   fetcher: Fetcher = fetch,
 ): Promise<ModelResponse> {
-  const root = profile.baseUrl.replace(/\/+$/, "");
+  // 从尾部单次扫描，避免未匹配的长斜杠序列触发正则反复回溯。
+  let end = profile.baseUrl.length;
+  while (end > 0 && profile.baseUrl[end - 1] === "/") end--;
+  const root = profile.baseUrl.slice(0, end);
   const tools = request.tools?.map((t) => ({
     type: "function",
     function: { ...t, parameters: outputSchema(t.parameters), strict: true },

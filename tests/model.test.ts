@@ -23,6 +23,20 @@ const profile: ModelProfile = {
     testedAt: null,
   },
 };
+test("模型地址只去除尾部斜杠，长内部斜杠不会引起正则回溯", async () => {
+  for (const baseUrl of [
+    profile.baseUrl + "///",
+    profile.baseUrl + "/".repeat(100_000) + "tail///",
+  ]) {
+    const expected = baseUrl.endsWith("tail///")
+      ? profile.baseUrl + "/".repeat(100_000) + "tail/chat/completions"
+      : profile.baseUrl + "/chat/completions";
+    await infer({ ...profile, baseUrl }, "key", { messages: [] }, async (url) => {
+      assert.equal(requestUrl(url), expected);
+      return Response.json({ choices: [{ message: { content: "完成" } }] });
+    });
+  }
+});
 for (const protocol of ["chat", "responses"] as const)
   test(`${protocol} 正式执行工具经过提供方格式投影，本机仍保留完整 Zod 校验`, async () => {
     const original = structuredClone(executorTools);

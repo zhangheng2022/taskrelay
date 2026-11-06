@@ -150,8 +150,9 @@ test(
     const pending = new Map<number, (value: any) => void>();
     socket.on("message", (data) => {
       const message = JSON.parse(socketText(data));
-      if (message.id) {
-        pending.get(message.id)?.(message);
+      if (Number.isSafeInteger(message.id)) {
+        const reply = pending.get(message.id);
+        if (typeof reply === "function") reply(message);
         pending.delete(message.id);
       }
     });
