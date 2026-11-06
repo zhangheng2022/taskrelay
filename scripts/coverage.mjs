@@ -16,7 +16,7 @@ const sources = execFileSync(
   .filter(
     (file) =>
       /\.(?:[cm]?ts|tsx|[cm]?js)$/.test(file) &&
-      !file.endsWith(".d.ts") &&
+      !/\.d\.[cm]?ts$/.test(file) &&
       !/(node_modules|\/out\/|\/dist\/|\/\.vite\/)/.test(file),
   );
 const pureTypes = sources.filter(
@@ -31,7 +31,7 @@ const config = {
   all: true,
   extension: [".ts", ".tsx", ".mts", ".js", ".mjs"],
   include: ["apps/*/src/**", "packages/*/src/**", "scripts/**"],
-  exclude: ["**/node_modules/**", "**/*.d.ts", ...pureTypes],
+  exclude: ["**/node_modules/**", "**/*.d.ts", "**/*.d.mts", "**/*.d.cts", ...pureTypes],
   reporter: ["text", "html", "lcov", "json-summary"],
   reportsDirectory: "coverage",
 };

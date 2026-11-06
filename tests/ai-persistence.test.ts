@@ -10,6 +10,7 @@ import { invoke } from "../apps/cloud/src/models";
 import { retainHistory } from "../apps/cloud/src/ai/lifecycle";
 import { testDb } from "./helpers";
 import { productionModelFixture } from "./production-model-fixture";
+import { requestUrl } from "./http-fixture";
 const secret = Buffer.alloc(32, 3).toString("base64");
 
 test("D1 saver 保留消息类型、父检查点、命名空间和 pending writes；按 owner 隔离", async (t) => {
@@ -212,18 +213,50 @@ test("并发同一消息只执行一次，另一消息不能抢占 active turn",
   ).data;
   s.replies('{"reply":"唯一回复"}');
   const body = { requestId: "same", content: "你好" };
-  const results = await Promise.all([
-    s.request(`/api/user/threads/${th.id}/messages`, body),
-    s.request(`/api/user/threads/${th.id}/messages`, body),
-    s.request(`/api/user/threads/${th.id}/messages`, {
-      ...body,
-      requestId: "different",
-    }),
-  ]);
+  let enter!: () => void, release!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const provider = globalThis.fetch;
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (requestUrl(input).startsWith("https://provider.example/")) {
+      enter();
+      await blocked;
+    }
+    return provider(input, init);
+  });
+  // 并行发起并不保证取得 active turn 的顺序；先固定首个回合进入真实模型入口，
+  // 再并发验证重复与另一消息，避免把加密调度顺序当成产品保证。
+  const first = s.request(`/api/user/threads/${th.id}/messages`, body);
+  try {
+    await Promise.race([
+      entered,
+      first.then(() => {
+        throw Error("MODEL_NOT_ENTERED");
+      }),
+    ]);
+    const active = s.sql
+      .prepare("SELECT active_turn FROM ai_threads WHERE id=?")
+      .get(th.id)!.active_turn;
+    const results = await Promise.all([
+      s.request(`/api/user/threads/${th.id}/messages`, body),
+      s.request(`/api/user/threads/${th.id}/messages`, { ...body, requestId: "different" }),
+    ]);
+    assert.equal(results[1].data.status, "queued");
+    assert.equal(
+      s.sql.prepare("SELECT active_turn FROM ai_threads WHERE id=?").get(th.id)!.active_turn,
+      active,
+    );
+  } finally {
+    release();
+    await first;
+  }
   assert.equal(s.jobs(), 1);
   assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM ai_messages").get()!.n, 2);
-  assert.ok(results.some((r) => r.data.status === "done"));
-  assert.equal(results[2].data.status, "queued");
+  assert.equal((await first).data.status, "done");
   assert.equal(
     s.sql.prepare("SELECT COUNT(*) n FROM conversation_inbox WHERE status='pending'").get()!.n,
     1,

@@ -1,8 +1,37 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { verifyQuality, cloudflare, query } from "../scripts/release-api.mjs";
+import { verifyQuality, cloudflare, query, productionHealth } from "../scripts/release-api.mjs";
 import { requestUrl } from "./http-fixture";
 const sha = "a".repeat(40);
+test("发布健康检查使用固定机器入口，无凭据和重试，拒绝错误服务或版本元数据", async (t) => {
+  let status = 200;
+  let body: unknown = { service: "TaskRelay", protocolVersion: 17, sourceCommit: sha };
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls++;
+    assert.equal(requestUrl(input), "https://taskrelay.zhangheng.workers.dev/api/health");
+    assert.equal(init?.redirect, "error");
+    assert.equal(init?.cache, "no-store");
+    assert.equal(init?.headers, undefined);
+    return Response.json(body, { status });
+  });
+  assert.equal((await productionHealth()).sourceCommit, sha);
+  body = { service: "TaskRelay", protocolVersion: 17 };
+  assert.equal((await productionHealth()).sourceCommit, undefined);
+  for (const invalid of [
+    null,
+    { service: "Other", protocolVersion: 17 },
+    { service: "TaskRelay", protocolVersion: 0 },
+    { service: "TaskRelay", protocolVersion: 17, sourceCommit: "invalid" },
+  ]) {
+    body = invalid;
+    await assert.rejects(productionHealth(), /PRODUCTION_HEALTH_INVALID/);
+  }
+  status = 403;
+  body = "private upstream content";
+  await assert.rejects(productionHealth(), { message: "PRODUCTION_HEALTH_UNAVAILABLE:403" });
+  assert.equal(calls, 7);
+});
 test("发布预检只接受目标 SHA 的 master push 最新报告和唯一成功总门槛", async (t) => {
   let report = {
     id: 7,

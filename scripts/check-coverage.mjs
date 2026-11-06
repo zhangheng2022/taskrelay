@@ -65,7 +65,7 @@ async function main() {
     for (const file of changed) {
       if (
         !/^(apps\/[^/]+\/src|packages\/[^/]+\/src|scripts)\/.*\.(?:tsx?|mts|mjs|js)$/.test(file) ||
-        file.endsWith(".d.ts")
+        /\.d\.[cm]?ts$/.test(file)
       )
         continue;
       const current = readFileSync(file, "utf8");

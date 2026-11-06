@@ -4,7 +4,16 @@ import { readFileSync, readdirSync, createReadStream, appendFileSync } from "nod
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { runRelease, phases } from "./release-core.mjs";
-import { query, cloudflare, dbPath, github, repository, verifyQuality } from "./release-api.mjs";
+import {
+  query,
+  cloudflare,
+  dbPath,
+  github,
+  repository,
+  verifyQuality,
+  productionOrigin,
+  productionHealth,
+} from "./release-api.mjs";
 
 const sha = process.env.RELEASE_SHA;
 await verifyQuality(sha);
@@ -235,12 +244,7 @@ const io = {
     ]);
   },
   deployed: async () => {
-    const response = await fetch("https://tr.zhangheng.eu.org/api/health", {
-      redirect: "error",
-      signal: AbortSignal.timeout(15_000),
-      cache: "no-store",
-    });
-    return response.ok && (await response.json()).sourceCommit === sha;
+    return (await productionHealth()).sourceCommit === sha;
   },
   publish: async () => {
     await assertOwnership();
@@ -288,11 +292,12 @@ const io = {
   register: async () => updateCatalog(false),
   verifyDownload: async () => {
     const { packagePath } = await import("../packages/contracts/src/updates.ts");
-    const response = await fetch("https://tr.zhangheng.eu.org" + packagePath(candidate), {
+    const response = await fetch(productionOrigin + packagePath(candidate), {
       redirect: "error",
       signal: AbortSignal.timeout(600_000),
     });
-    if (!response.ok || !response.body) throw Error("CLOUDFLARE_DOWNLOAD_FAILED");
+    if (!response.ok || !response.body)
+      throw Error(`CLOUDFLARE_DOWNLOAD_FAILED:${response.status}`);
     const hash = createHash("sha256");
     let size = 0;
     for await (const chunk of response.body) {

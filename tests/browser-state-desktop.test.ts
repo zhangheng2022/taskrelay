@@ -11,6 +11,7 @@ import { once } from "node:events";
 import WebSocket from "ws";
 import { BrowserStateAdapter } from "../apps/desktop/src/main/browser-state";
 import { LocalCdp } from "../apps/desktop/src/main/local-cdp";
+import { grantBrowserReadAccess } from "../apps/desktop/src/main/browser-permissions";
 import { ProtectedStateFiles } from "../apps/desktop/src/main/protected-state";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 
@@ -20,6 +21,7 @@ test(
   "正式状态适配器在独立 Chromium 恢复分区 Cookie、HttpOnly 和页面首读 Local Storage",
   { skip: process.platform !== "win32" || !existsSync(executable), timeout: 45_000 },
   async (t) => {
+    await grantBrowserReadAccess(path.dirname(executable));
     // Runner 故障只记录固定命令名，不输出 Cookie、存储值或响应正文。
     // 保存原方法供 mock 通过 apply(this, args) 调用，保留实际实例，不能绑定到 prototype。
     // oxlint-disable-next-line typescript/unbound-method
@@ -44,6 +46,16 @@ test(
     await once(server, "listening");
     const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
     const source = path.join(directory, "source");
+    const browserErrors: string[] = [];
+    const observeProcess = <T extends ReturnType<typeof spawn>>(owned: T, label: string): T => {
+      owned.stderr?.on("data", (data: Buffer) => {
+        // 本测试只加载虚构站点和账号；保留有界浏览器错误，定位 Runner 特有初始化失败。
+        browserErrors.push(`${label}: ${data.toString().slice(-2000)}`);
+        if (browserErrors.length > 8) browserErrors.shift();
+      });
+      owned.once("exit", (code, signal) => t.diagnostic(`${label} exit ${code}/${signal}`));
+      return owned;
+    };
     const child = spawn(
       executable,
       [
@@ -54,11 +66,13 @@ test(
         "--disable-background-networking",
         "about:blank",
       ],
-      { windowsHide: true, stdio: "ignore" },
+      { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] },
     );
+    observeProcess(child, "source");
     const children = [child];
     let socket: WebSocket | undefined, adapter: BrowserStateAdapter | undefined;
     t.after(async () => {
+      for (const diagnostic of browserErrors) t.diagnostic(diagnostic);
       await adapter?.close();
       socket?.close();
       for (const owned of children)
@@ -143,7 +157,26 @@ test(
       const exited = once(child, "exit", { signal: AbortSignal.timeout(5000) });
       void exited.catch(() => {});
       await sourceControl.send("Browser.close");
-      await exited;
+      try {
+        await exited;
+      } catch (error) {
+        // 覆盖率/完整回归并行运行时，Chromium 优雅退出可能未及时完成。
+        // 与 Main 的关闭契约一致：只回收本夹具自有进程树，确认退出后才迁移。
+        if (child.exitCode === null && child.pid) {
+          const forcedExit = once(child, "exit", { signal: AbortSignal.timeout(5000) });
+          void forcedExit.catch(() => {});
+          await new Promise<void>((resolve) =>
+            execFile(
+              "taskkill.exe",
+              ["/PID", String(child.pid), "/T", "/F"],
+              { windowsHide: true },
+              // taskkill 可能仅因某个子进程已退出而返回非零；退出事件才是最终证据。
+              () => resolve(),
+            ),
+          );
+          await forcedExit;
+        } else if (child.exitCode === null) throw error;
+      }
       assert.notEqual(child.exitCode, null);
     } finally {
       await sourceControl.close();
@@ -151,17 +184,20 @@ test(
     // 在另一份全新 Profile 中恢复源浏览器导出值，再检查网站首次脚本读取。
     const destination = path.join(directory, "destination");
     children.push(
-      spawn(
-        executable,
-        [
-          `--user-data-dir=${destination}`,
-          "--remote-debugging-port=0",
-          "--headless=new",
-          "--no-first-run",
-          "--disable-background-networking",
-          "about:blank",
-        ],
-        { windowsHide: true, stdio: "ignore" },
+      observeProcess(
+        spawn(
+          executable,
+          [
+            `--user-data-dir=${destination}`,
+            "--remote-debugging-port=0",
+            "--headless=new",
+            "--no-first-run",
+            "--disable-background-networking",
+            "about:blank",
+          ],
+          { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] },
+        ),
+        "destination",
       ),
     );
     active = "";
@@ -241,6 +277,15 @@ test(
     const empty = await adapter.capture([origin, "https://fixture.test"]);
     assert.equal(empty.cookies.length, 0);
     assert.equal(empty.origins.find((entry) => entry.origin === origin)?.localStorage.length, 0);
+    assert.equal(
+      browserErrors.some(
+        (line) =>
+          line.includes("Sandbox cannot access executable") ||
+          line.includes("Network service crashed"),
+      ),
+      false,
+      "浏览器网络服务必须在受限权限下正常启动",
+    );
   },
 );
 

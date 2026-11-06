@@ -6,6 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { Journal } from "./journal";
 import { LocalCdp } from "./local-cdp";
+import { grantBrowserReadAccess } from "./browser-permissions";
 const exec = promisify(execFile);
 /** 按 Profile 启动并回收应用自有 Chromium，记录进程所有权并配置代理、调试与下载边界。
  * launch/close 共享生命周期状态，避免停止期间的异步启动重新留下浏览器进程。
@@ -16,6 +17,7 @@ export class OwnedBrowser {
   private launching: Promise<{ cdpUrl: string }> | null = null;
   private closing: Promise<void> | null = null;
   private cdpOrigin: string | null = null;
+  private permissionsReady = false;
   constructor(
     private directory: string,
     private profiles: string,
@@ -76,6 +78,11 @@ export class OwnedBrowser {
       .digest("hex");
     guard();
     if (actual !== manifest.executableSha256) throw new Error("BROWSER_INTEGRITY_FAILED");
+    if (process.platform === "win32" && !this.permissionsReady) {
+      await grantBrowserReadAccess(path.join(this.directory, "chrome-win64"));
+      guard();
+      this.permissionsReady = true;
+    }
     const profile = path.join(this.profiles, accountId);
     await mkdir(profile, { recursive: true });
     guard();
