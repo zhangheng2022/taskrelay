@@ -27,11 +27,55 @@ async function cardDigest(env:AppEnv,value:unknown) {
   return Buffer.from(await crypto.subtle.sign('HMAC',key,new TextEncoder().encode(`account-card\0${JSON.stringify(value)}`))).toString('hex');
 }
 
+// 名称、说明和域名排列不是账号身份。摘要仍使用 HMAC，不能用公开哈希暴露可枚举的密码。
+async function identityDigest(env:AppEnv,draft:Draft,version:number|null|undefined,epoch:number|null|undefined) {
+  return cardDigest(env,{origin:draft.origin,username:draft.username,password:draft.password,
+    businessDomains:[...draft.businessDomains].sort(),loginOrigins:[...draft.loginOrigins].sort(),
+    waitForUpdate:draft.waitForUpdate,credentialVersion:version??1,stateEpoch:epoch??1});
+}
+
+function retireDuplicate(env:AppEnv,row:Row,canonical:string) {
+  return [env.DB.prepare("UPDATE account_cards SET status='expired',secret=NULL,superseded_by=? WHERE id=? AND status='pending' AND identity_digest IS NULL").bind(canonical,row.id),
+    env.DB.prepare("UPDATE ai_messages SET content='',parts='[]' WHERE id=? AND thread_id=? AND EXISTS(SELECT 1 FROM account_cards WHERE id=? AND superseded_by=?)")
+      .bind(`account-card_${row.id}`,row.thread_id,row.id,canonical)];
+}
+
+/** 升级前的草稿没有身份摘要；按稳定顺序保留一张，退休重复引用但保留消息游标，避免历史合并复活卡片。 */
+async function reconcileLegacyCards(env:AppEnv,runId:string,epoch:number) {
+  const rows=await env.DB.prepare("SELECT * FROM account_cards WHERE run_id=? AND lease_epoch=? AND status='pending' AND identity_digest IS NULL AND secret IS NOT NULL AND expires_at>? ORDER BY created_at,id")
+    .bind(runId,epoch,now()).all<Row>();
+  const groups=new Map<string,Row[]>();
+  for(const row of rows.results){
+    const digest=await identityDigest(env,await unseal<Draft>(row.secret,env.MASTER_KEY,`account-card:${row.id}`),row.credential_version,row.state_epoch);
+    const group=groups.get(digest)??[];group.push(row);groups.set(digest,group);
+  }
+  for(const [digest,group] of groups){
+    const existing=await env.DB.prepare("SELECT id FROM account_cards WHERE run_id=? AND lease_epoch=? AND identity_digest=? AND status IN ('pending','saved')").bind(runId,epoch,digest).first<{id:string}>();
+    const canonical=existing?.id??group[0].id;
+    await env.DB.batch([
+      ...group.filter(row=>row.id!==canonical).flatMap(row=>retireDuplicate(env,row,canonical)),
+      env.DB.prepare("UPDATE OR IGNORE account_cards SET identity_digest=? WHERE id=? AND identity_digest IS NULL AND status IN ('pending','saved')").bind(digest,canonical),
+    ]);
+    // 新版本生成可能抢先取得唯一身份；旧入口也必须退休，不能把一次 OR IGNORE 当作归并成功。
+    const winner=await env.DB.prepare("SELECT id FROM account_cards WHERE run_id=? AND lease_epoch=? AND identity_digest=? AND status IN ('pending','saved')").bind(runId,epoch,digest).first<{id:string}>();
+    if(winner&&winner.id!==canonical){
+      const loser=group.find(row=>row.id===canonical);
+      if(loser)await env.DB.batch(retireDuplicate(env,loser,winner.id));
+    }
+  }
+}
+
 async function cardRow(env:AppEnv,userId:string,id:string) {
-  const row=await env.DB.prepare(`SELECT c.* FROM account_cards c JOIN ai_threads t ON t.id=c.thread_id AND t.user_id=c.user_id
+  const read=()=>env.DB.prepare(`SELECT c.* FROM account_cards c JOIN ai_threads t ON t.id=c.thread_id AND t.user_id=c.user_id
     JOIN runs r ON r.id=c.run_id AND r.user_id=c.user_id
     WHERE c.id=? AND c.user_id=? AND t.closed=0 AND r.context_withdrawn=0 AND r.history_deleted=0`).bind(id,userId).first<Row>();
+  let row=await read();
   if(!row)throw Error('ACCOUNT_CARD_NOT_FOUND');
+  if(row.status==='pending'&&!row.identity_digest){
+    await reconcileLegacyCards(env,row.run_id,row.lease_epoch);
+    row=await read();
+    if(!row)throw Error('ACCOUNT_CARD_NOT_FOUND');
+  }
   if(row.status==='pending'&&row.expires_at<=now()){
     await env.DB.prepare("UPDATE account_cards SET status='expired',secret=NULL WHERE id=? AND status='pending' AND expires_at<=?").bind(id,now()).run();
     row.status='expired';row.secret=null;
@@ -86,23 +130,31 @@ export async function offerAccountCard(env:AppEnv,run:TaskRun,input:unknown) {
   }
   const kind=account?'update':'save';
   const digest=await cardDigest(env,{...draft,accountId:account?.id??null,credentialVersion:account?.credential_version??null});
-  const duplicate=await env.DB.prepare("SELECT id FROM account_cards WHERE run_id=? AND lease_epoch=? AND input_digest=? AND status IN ('pending','saved') AND expires_at>?")
-    .bind(run.id,run.leaseEpoch,digest,now()).first<{id:string}>();
+  const identity=await identityDigest(env,draft,account?.credential_version,account?.state_epoch);
+  await reconcileLegacyCards(env,run.id,run.leaseEpoch);
+  // 到期草稿不能占住唯一身份；已保存入口仍可幂等复用，不能再次创建同一账号。
+  await env.DB.prepare("UPDATE account_cards SET status='expired',secret=NULL WHERE run_id=? AND lease_epoch=? AND status='pending' AND expires_at<=?").bind(run.id,run.leaseEpoch,now()).run();
+  const duplicate=await env.DB.prepare("SELECT id FROM account_cards WHERE run_id=? AND lease_epoch=? AND identity_digest=? AND status IN ('pending','saved')")
+    .bind(run.id,run.leaseEpoch,identity).first<{id:string}>();
   if(duplicate)return {cardId:duplicate.id};
   const id=`card_${await hash(`${run.id}:${run.leaseEpoch}:${body.requestId}`)}`,at=now();
   const prior=await env.DB.prepare('SELECT input_digest FROM account_cards WHERE id=?').bind(id).first<{input_digest:string}>();
   if(prior){if(prior.input_digest!==digest)throw Error('ACCOUNT_CARD_INPUT_CONFLICT');return {cardId:id};}
   const fence={sql:`EXISTS(SELECT 1 FROM runs WHERE id=? AND lease_epoch=? AND lease_expires_at>? AND cancel_requested=0 AND context_withdrawn=0 AND history_deleted=0 AND status IN ('running','waiting_user','verifying'))`,values:[run.id,run.leaseEpoch,at]};
-  const message=await messageStatement(env,thread.id,{id:`account-card_${id}`,source:'executor',content:kind==='save'?'登录成功，可保存这个账号供后续任务使用。':'请确认或修改账号信息。',parts:[{type:'account-card',cardId:id}],runId:run.id},fence);
+  const message=await messageStatement(env,thread.id,{id:`account-card_${id}`,source:'executor',content:kind==='save'?'登录成功，可保存这个账号供后续任务使用。':'请确认或修改账号信息。',parts:[{type:'account-card',cardId:id}],runId:run.id},{sql:`${fence.sql} AND EXISTS(SELECT 1 FROM account_cards WHERE id=? AND status='pending')`,values:[...fence.values,id]});
   const results=await env.DB.batch([
-    env.DB.prepare(`INSERT OR IGNORE INTO account_cards(id,user_id,thread_id,run_id,lease_epoch,kind,account_id,credential_version,state_epoch,secret,input_digest,created_at,expires_at,wait_for_update,user_seq)
-      SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,(SELECT COALESCE(MAX(seq),0) FROM ai_messages WHERE thread_id=? AND role='user') WHERE ${fence.sql} AND EXISTS(SELECT 1 FROM ai_threads WHERE id=? AND closed=0)`)
+    env.DB.prepare(`INSERT OR IGNORE INTO account_cards(id,user_id,thread_id,run_id,lease_epoch,kind,account_id,credential_version,state_epoch,secret,input_digest,identity_digest,created_at,expires_at,wait_for_update,user_seq)
+      SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,(SELECT COALESCE(MAX(seq),0) FROM ai_messages WHERE thread_id=? AND role='user') WHERE ${fence.sql} AND EXISTS(SELECT 1 FROM ai_threads WHERE id=? AND closed=0)`)
       .bind(id,run.userId,thread.id,run.id,run.leaseEpoch,kind,account?.id??null,account?.credential_version??null,account?.state_epoch??null,
-        await seal(draft,env.MASTER_KEY,`account-card:${id}`),digest,at,new Date(Date.now()+86400000).toISOString(),Number(draft.waitForUpdate),thread.id,...fence.values,thread.id),message,
+        await seal(draft,env.MASTER_KEY,`account-card:${id}`),digest,identity,at,new Date(Date.now()+86400000).toISOString(),Number(draft.waitForUpdate),thread.id,...fence.values,thread.id),message,
     ...(draft.waitForUpdate?[env.DB.prepare(`UPDATE runs SET status='waiting_user',updated_at=? WHERE id=? AND lease_epoch=? AND EXISTS(SELECT 1 FROM account_cards WHERE id=? AND status='pending')`).bind(at,run.id,run.leaseEpoch,id),
       env.DB.prepare("UPDATE accounts SET credential_status='invalid' WHERE id=? AND credential_version=? AND EXISTS(SELECT 1 FROM account_cards WHERE id=? AND status='pending')").bind(account!.id,account!.credential_version,id)]:[]),
   ]);
-  if(!results[0].meta.changes)throw Error('ACCOUNT_CARD_STALE');
+  if(!results[0].meta.changes){
+    const winner=await env.DB.prepare("SELECT id FROM account_cards WHERE run_id=? AND lease_epoch=? AND identity_digest=? AND status IN ('pending','saved')").bind(run.id,run.leaseEpoch,identity).first<{id:string}>();
+    if(winner)return {cardId:winner.id};
+    throw Error('ACCOUNT_CARD_STALE');
+  }
   return {cardId:id};
 }
 
@@ -120,6 +172,7 @@ async function confirmCard(env:AppEnv,userId:string,id:string,input:AccountInput
   const previous=row.account_id?await ownAccount(env,userId,row.account_id):null;
   if(previous&&(previous.credential_version!==row.credential_version||previous.state_epoch!==row.state_epoch))throw Error('ACCOUNT_VERSION_CONFLICT');
   const nextVersion=previous?previous.credential_version+1:1,nextEpoch=previous?previous.state_epoch+1:1,at=now();
+  const savedIdentity=await identityDigest(env,{...draft,...body},nextVersion,nextEpoch);
   const active=await canResume(env,row);
   const adopt=active&&unchanged&&draft.verified;
   const resumed=active&&draft.waitForUpdate;
@@ -149,8 +202,8 @@ async function confirmCard(env:AppEnv,userId:string,id:string,input:AccountInput
     accountWrite,
     env.DB.prepare(`INSERT OR IGNORE INTO account_credential_versions(account_id,version,secret,login_origins,created_at)
       SELECT id,credential_version,secret,login_origins,? FROM accounts WHERE id=? AND credential_version=? AND secret=?`).bind(at,accountId,nextVersion,secret),
-    env.DB.prepare(`UPDATE account_cards SET status='saved',secret=NULL,confirm_digest=?,result_account_id=?,resumed=0 WHERE id=? AND status='pending'
-      AND EXISTS(SELECT 1 FROM accounts WHERE id=? AND credential_version=? AND secret=?)`).bind(digest,accountId,id,accountId,nextVersion,secret),
+    env.DB.prepare(`UPDATE account_cards SET status='saved',secret=NULL,confirm_digest=?,identity_digest=?,result_account_id=?,resumed=0 WHERE id=? AND status='pending'
+      AND EXISTS(SELECT 1 FROM accounts WHERE id=? AND credential_version=? AND secret=?)`).bind(digest,savedIdentity,accountId,id,accountId,nextVersion,secret),
     ...((adopt||resumed)?[env.DB.prepare(`UPDATE runs SET account_id=?,account_key=?,account_credential_version=?,account_state_epoch=?,status=CASE WHEN ? THEN 'running' ELSE status END
       WHERE ${liveFence} AND EXISTS(SELECT 1 FROM account_cards WHERE id=? AND status='saved' AND result_account_id=?)
       AND EXISTS(SELECT 1 FROM account_locks WHERE run_id=runs.id AND account_key=?)`)
@@ -185,7 +238,7 @@ export function registerAccountCardRoutes(router:Router) {
   router.get('/account-cards/:id',async c=>{
     const row=await cardRow(c.env,c.get('userId'),c.req.param('id'));
     const draft=row.secret?await unseal<Draft>(row.secret,c.env.MASTER_KEY,`account-card:${row.id}`):null;
-    return c.json({id:row.id,kind:row.kind,status:row.status,accountId:row.result_account_id??row.account_id,credentialVersion:row.credential_version,
+    return c.json({id:row.id,kind:row.kind,status:row.status,supersededBy:row.superseded_by??undefined,accountId:row.result_account_id??row.account_id,credentialVersion:row.credential_version,
       expiresAt:row.expires_at,canResume:row.status==='pending'&&await canResume(c.env,row),verified:draft?.verified??false,
       ...(draft?{name:draft.name,origin:draft.origin,businessDomains:draft.businessDomains,loginOrigins:draft.loginOrigins,username:draft.username,password:draft.password}:{name:'',origin:'',businessDomains:[],loginOrigins:[]})});
   });

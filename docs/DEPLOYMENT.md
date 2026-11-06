@@ -10,6 +10,8 @@
 
 ## 最近已记录部署
 
+卡片重复修复需先应用 `0027_account_card_identity.sql`，再部署对应云端/Web。该增量迁移只增加身份摘要、归并引用和部分唯一索引；旧待确认密文由鉴权接口按需解密归并，不在 SQL 中写入明文或删除聊天游标。保留原 MASTER_KEY，协议 16 和已安装 0.13.0 不变。发布前暂停新增领取、确认无活动运行及待关闭浏览器，记录 Time Travel bookmark；健康及权限检查通过后恢复原开关。
+
 2026-11-06 从源码 `cabdee8d9f8866ec42cd9def67e5647c359e7155` 部署账号管理与登录状态复用，Worker `96067a0d-ddc1-4398-8cc0-35b44de57881` 已承接 100% 流量，D1 0024–0026 与 `BROWSER_STATES` SQLite DO 已上线。迁移前暂停领取、确认无活动或未知运行，并记录 D1 Time Travel bookmark；云端部署后安装 Windows 0.13.0，确认协议 16、设备就绪和数据保留，再恢复 `maintenance=0`、`claimsEnabled=1`。两个域名健康与权限自检、Windows / Ubuntu CI、包内及系统实际安装 smoke 通过。保留原 MASTER_KEY，未发布 GitHub Release 或切换自动更新目录。
 
 2026-11-05 聊天滚动与 iPhone Loading 兼容修复已从 `1777a1daca056d55a68f61733157c1141e9d81f2` 上线，活动 Worker 版本 `24ce3fa3-484b-4eb3-a06a-cf8312860257`（Cloudflare API 确认 100%）。主域健康、权限、JS/CSS 构建哈希及跨平台 CI 通过。CLI 上传成功后 Cron 核对遇网络错误；API 确认原定时配置正常，无需重复迁移或重建。备用 workers.dev 复检因本机网络连接重置未完成。桌面仍为 0.12.5；iPhone 真机验收未完成，详见 [ACCEPTANCE](ACCEPTANCE.md)。

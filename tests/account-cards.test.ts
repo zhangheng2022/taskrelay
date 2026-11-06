@@ -8,6 +8,7 @@ import {hash} from '../packages/contracts/src/security';
 import {testDb,insertTask,task} from './helpers';
 import {cleanupAccountCards,pendingCardOrigins} from '../apps/cloud/src/account-cards';
 import {readRunCredentials} from '../apps/cloud/src/accounts';
+import {seal,unseal} from '../apps/cloud/src/crypto';
 
 const input={name:'测试账号',origin:'https://shop.example.com',businessDomains:['shop.example.com'],loginOrigins:['https://login.example.com'],username:'person@example.com',password:'fixture-secret-123'};
 async function fixture(t:TestContext,bound=false){
@@ -142,6 +143,50 @@ test('同一卡片并发确认只创建一个账号，两个响应返回同一�
   assert.equal(responses[0].status,200);assert.equal(responses[1].status,200);
   assert.equal(responses[0].data.accountId,responses[1].data.accountId);
   assert.equal(Number(s.sql.prepare('SELECT COUNT(*) n FROM accounts').get()!.n),before+1);
+});
+
+test('同轮同凭据的名称、说明和域名顺序变化只产生一张卡片，并发生成也只发布一个引用',async t=>{
+  const s=await fixture(t);
+  const offer=(requestId:string,reverse=false)=>s.request(`/api/runner/runs/${s.run.id}/account-card`,{epoch:s.run.leaseEpoch,requestId,kind:'save',...input,
+    name:reverse?'另一个展示名':input.name,loginOrigins:reverse?['https://login.example.com',input.origin]:[input.origin,'https://login.example.com'],
+    verified:true,evidence:reverse?'登录后第二次只读检查':'首次确认已登录',observedOrigin:input.origin});
+  const responses=await Promise.all([offer('parallel_a'),offer('parallel_b',true)]);
+  assert.deepEqual(responses.map(r=>r.status),[200,200]);assert.equal(responses[0].data.cardId,responses[1].data.cardId);
+  assert.equal(s.sql.prepare('SELECT COUNT(*) n FROM account_cards').get()!.n,1);
+  assert.equal(s.sql.prepare('SELECT COUNT(*) n FROM ai_messages').get()!.n,1);
+  const detail=await s.request(`/api/user/account-cards/${responses[0].data.cardId}`);
+  const body={...input,name:detail.data.name,loginOrigins:detail.data.loginOrigins};
+  assert.equal((await s.request(`/api/user/account-cards/${responses[0].data.cardId}/confirm`,body)).status,200);
+  assert.equal((await offer('after_saved',true)).data.cardId,responses[0].data.cardId);
+  assert.equal(s.sql.prepare('SELECT COUNT(*) n FROM accounts').get()!.n,1);
+});
+
+test('升级前的重复草稿通过本人读取归并，旧确认入口不能再创建第二个账号',async t=>{
+  const s=await fixture(t),offered=await s.offer(),first=offered.data.cardId;
+  const row=s.sql.prepare('SELECT * FROM account_cards WHERE id=?').get(first)!;
+  const draft=await unseal<Record<string,unknown>>(String(row.secret),s.env.MASTER_KEY,`account-card:${first}`);
+  s.sql.prepare('UPDATE account_cards SET identity_digest=NULL WHERE id=?').run(first);
+  const duplicate='card_legacy_duplicate',later=new Date(Date.now()+1000).toISOString();
+  s.sql.prepare(`INSERT INTO account_cards(id,user_id,thread_id,run_id,lease_epoch,kind,secret,input_digest,created_at,expires_at)
+    VALUES(?,?,?,?,?,'save',?,?,?,?)`).run(duplicate,row.user_id,row.thread_id,row.run_id,row.lease_epoch,
+      await seal({...draft,name:'重复展示名',evidence:'另一条说明'},s.env.MASTER_KEY,`account-card:${duplicate}`),'legacy_digest',later,row.expires_at);
+  s.sql.prepare(`INSERT INTO ai_messages(id,thread_id,seq,role,content,turn_id,at,source,parts,run_id)
+    VALUES(?,?,2,'assistant','可以保存账号',?,?,'executor',?,?)`).run(`account-card_${duplicate}`,row.thread_id,'legacy_turn',later,JSON.stringify([{type:'account-card',cardId:duplicate}]),row.run_id);
+  const replies=await Promise.all([s.request(`/api/user/account-cards/${first}`),s.request(`/api/user/account-cards/${duplicate}`)]);
+  assert.equal(replies[0].data.status,'pending');assert.equal(replies[1].data.status,'expired');assert.equal(replies[1].data.supersededBy,first);assert.equal(replies[1].data.password,undefined);
+  assert.equal(s.sql.prepare('SELECT secret FROM account_cards WHERE id=?').get(duplicate)!.secret,null);
+  assert.equal(s.sql.prepare('SELECT content FROM ai_messages WHERE id=?').get(`account-card_${duplicate}`)!.content,'');
+  const confirmed=await Promise.all([s.request(`/api/user/account-cards/${first}/confirm`,input),s.request(`/api/user/account-cards/${duplicate}/confirm`,input)]);
+  assert.deepEqual(confirmed.map(r=>r.status),[200,409]);assert.equal(s.sql.prepare('SELECT COUNT(*) n FROM accounts').get()!.n,1);
+});
+
+test('不同用户名、密码或登录域范围不被错误合并',async t=>{
+  const s=await fixture(t),offered=await s.offer();
+  for(const [index,changed] of [{username:'another@example.com'},{password:'different-secret'},{loginOrigins:[input.origin,'https://login.example.com']}].entries()){
+    const response=await s.request(`/api/runner/runs/${s.run.id}/account-card`,{epoch:s.run.leaseEpoch,requestId:`distinct_${index}`,kind:'save',...input,...changed,verified:true,evidence:'已验证新的输入',observedOrigin:'https://login.example.com'});
+    assert.equal(response.status,200);assert.notEqual(response.data.cardId,offered.data.cardId);
+  }
+  assert.equal(s.sql.prepare('SELECT COUNT(*) n FROM account_cards').get()!.n,4);
 });
 
 test('候选快照关联故障不把已经提交的账号确认报告为保存失败',async t=>{

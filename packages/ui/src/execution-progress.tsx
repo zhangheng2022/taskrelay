@@ -11,6 +11,7 @@ type Row={id:string;message:Message;events?:Message[]};
 export function conversationRows(messages:Message[]):Row[]{
   const rows:Row[]=[],groups=new Map<string,Row>(),seen=new Set<string>();
   for(const message of messages){
+    if(!message.content.trim()&&!message.parts?.length)continue;
     if(seen.has(message.id))continue;seen.add(message.id);
     const progress=message.source==='executor'&&!message.id.startsWith('final_')&&!message.parts?.some(part=>part.type==='account-card')&&
       (message.id.startsWith('progress_')||message.parts?.some(part=>part.type==='tool'));

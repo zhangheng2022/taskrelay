@@ -25,5 +25,5 @@ export interface AccountCardDetail {
   id:string;kind:'save'|'update';status:'pending'|'saved'|'dismissed'|'expired';
   accountId:string|null;credentialVersion:number|null;verified:boolean;canResume:boolean;
   name:string;origin:string;businessDomains:string[];loginOrigins:string[];
-  username?:string;password?:string;expiresAt:string;
+  username?:string;password?:string;expiresAt:string;supersededBy?:string;
 }

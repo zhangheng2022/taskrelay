@@ -75,6 +75,9 @@ test('账号卡片通过本人接口加载，密码默认遮蔽；修改后不�
   });
   const view = render(<ChatAttachments transport={transport} parts={[{ type: 'account-card', cardId: card.id }]}/>);
   await view.findByText('本次凭据已验证');
+  assert.equal(view.queryByLabelText('密码'),null,'紧凑卡片不把密码输入框挂入聊天');
+  assert.ok(view.getByText('登录地址：https://login.example.com'));
+  fireEvent.click(view.getByRole('button',{name:'修改信息'}));
   const password = view.getByLabelText('密码') as HTMLInputElement;
   assert.equal(password.type, 'password'); assert.equal(password.value, 'fixture-password');
   assert.equal(view.queryByText('fixture-password'), null);
@@ -93,6 +96,7 @@ test('卡片通知不会覆盖正在编辑的密码，改名称不会取消原�
   transport.subscribe = fn => { notify = fn; return () => {}; };
   const view = render(<ChatAttachments transport={transport} parts={[{ type: 'account-card', cardId: card.id }]}/>);
   await view.findByText('本次凭据已验证');
+  fireEvent.click(view.getByRole('button',{name:'修改信息'}));
   fireEvent.change(view.getByLabelText('账号名称'), { target: { value: '更好识别的名称' } });
   assert.ok(view.getByText('本次凭据已验证'));
   fireEvent.change(view.getByLabelText('密码'), { target: { value: 'edited-on-device' } });
@@ -123,6 +127,7 @@ test('已打开卡片收到失效通知立即清除敏感表单，不继续提�
   const transport = transportWith(async () => { if (stale) throw Error('ACCOUNT_CARD_NOT_FOUND'); return card; });
   transport.subscribe = fn => { notify = fn; return () => {}; };
   const view = render(<ChatAttachments transport={transport} parts={[{ type: 'account-card', cardId: card.id }]}/>);
+  fireEvent.click(await view.findByRole('button',{name:'修改信息'}));
   await view.findByLabelText('密码'); stale = true;
   await act(async () => notify());
   await view.findByText('这张卡片已失效，请在聊天中重新提供需要保存的信息。');
@@ -138,9 +143,11 @@ test('卡片切换忽略旧请求，离线禁止确认；暂不保存不发送�
   });
   const view = render(<ChatAttachments transport={transport} parts={[{ type: 'account-card', cardId: 'old' }]}/>);
   view.rerender(<ChatAttachments transport={transport} parts={[{ type: 'account-card', cardId: 'new' }]}/>);
+  fireEvent.click(await view.findByRole('button',{name:'修改信息'}));
   await waitFor(() => assert.equal((view.getByLabelText('用户名') as HTMLInputElement).value, 'new-user'));
   await act(async () => resolveOld({ ...card, username: 'old-user' }));
   assert.equal((view.getByLabelText('用户名') as HTMLInputElement).value, 'new-user');
+  fireEvent.click(view.getByRole('button',{name:'收起'}));
   view.rerender(<ChatAttachments transport={transport} offline parts={[{ type: 'account-card', cardId: 'new' }]}/>);
   assert.ok(view.getByRole('button', { name: '保存账号' }).hasAttribute('disabled')); assert.equal(writes.length, 0);
   view.rerender(<ChatAttachments transport={transport} parts={[{ type: 'account-card', cardId: 'new' }]}/>);
@@ -162,4 +169,24 @@ test('账号卡片保持在原聊天可操作，独立于过程折叠；未知�
   assert.ok(view.getByText('工作账号 · 2/3')); assert.ok(view.getByText('本次操作结果待核查，后续账号已暂停'));
   assert.equal(view.getByText('本次操作结果待核查，后续账号已暂停').closest('[role="status"]')?.querySelector('.chat-status-spinner'), null);
   fireEvent.click(view.getByRole('button', { name: '停止执行' })); await waitFor(() => assert.deepEqual(writes, [`/api/user/runs/${run.id}/cancel`]));
+});
+
+test('紧凑卡片可直接保存，编辑收起后密码控件移除',async()=>{
+  let savedBody:unknown;
+  const transport=transportWith(async(method,_path,body)=>method==='GET'?card:(savedBody=body,{accountId:account.id,status:'saved'}));
+  const view=render(<ChatAttachments transport={transport} parts={[{type:'account-card',cardId:card.id}]}/>);
+  fireEvent.click(await view.findByRole('button',{name:'修改信息'}));
+  fireEvent.change(view.getByLabelText('账号名称'),{target:{value:'简短名称'}});
+  fireEvent.click(view.getByRole('button',{name:'收起'}));
+  assert.equal(view.queryByLabelText('密码'),null);
+  fireEvent.click(view.getByRole('button',{name:'保存账号'}));
+  await view.findByText('账号已保存，后续任务可使用。');
+  assert.equal((savedBody as {name:string;password:string}).name,'简短名称');assert.equal((savedBody as {password:string}).password,card.password);
+});
+
+test('已归并卡片和空引用消息不再展示',async()=>{
+  const duplicate=render(<ChatAttachments transport={transportWith(async()=>({...card,status:'expired',supersededBy:'canonical',password:undefined}))} parts={[{type:'account-card',cardId:card.id}]}/>);
+  await waitFor(()=>assert.ok(!duplicate.queryByText('正在加载账号卡片…')));
+  assert.equal(duplicate.container.textContent,'');
+  assert.deepEqual(conversationRows([{id:'retired_card',seq:1,role:'assistant',content:'',at:new Date().toISOString(),parts:[]}]),[]);
 });

@@ -31,6 +31,7 @@ export function testDb() {
     "0024_browser_state.sql",
     "0025_account_dispatch.sql",
     "0026_account_cards.sql",
+    "0027_account_card_identity.sql",
   ])
     sql.exec(
       readFileSync(
