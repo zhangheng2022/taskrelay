@@ -10,6 +10,7 @@ import { createServer } from "node:http";
 import { once } from "node:events";
 import WebSocket from "ws";
 import { BrowserStateAdapter } from "../apps/desktop/src/main/browser-state";
+import { LocalCdp } from "../apps/desktop/src/main/local-cdp";
 import { ProtectedStateFiles } from "../apps/desktop/src/main/protected-state";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 
@@ -19,6 +20,19 @@ test(
   "正式状态适配器在独立 Chromium 恢复分区 Cookie、HttpOnly 和页面首读 Local Storage",
   { skip: process.platform !== "win32" || !existsSync(executable), timeout: 45_000 },
   async (t) => {
+    // Runner 故障只记录固定命令名，不输出 Cookie、存储值或响应正文。
+    const sendCommand = LocalCdp.prototype.send;
+    t.mock.method(
+      LocalCdp.prototype,
+      "send",
+      async function (this: LocalCdp, ...args: Parameters<LocalCdp["send"]>) {
+        try {
+          return await sendCommand.apply(this, args);
+        } catch (error) {
+          throw new Error(`状态迁移命令失败：${args[0]}`, { cause: error });
+        }
+      },
+    );
     const directory = await mkdtemp(path.join(tmpdir(), "relay-state-cdp-"));
     const server = createServer((_req, res) => {
       res.setHeader("Content-Type", "text/html");
@@ -90,11 +104,13 @@ test(
         partitionKey: { topLevelSite, hasCrossSiteAncestor: true },
       })),
     ];
+    t.diagnostic("恢复源环境");
     await adapter.restore({
       version: 1,
       cookies,
       origins: [{ origin, localStorage: [["token", "restored-before-first-script"]] }],
     });
+    t.diagnostic("读取源环境");
     const exported = await adapter.capture([origin, "https://fixture.test"]);
     assert.equal(exported.cookies.filter((cookie) => cookie.name === "partition").length, 2);
     assert.deepEqual(
@@ -138,6 +154,7 @@ test(
     cdpUrl = `http://127.0.0.1:${active.split("\n")[0].trim()}`;
     await adapter.close();
     adapter = await BrowserStateAdapter.connect(cdpUrl);
+    t.diagnostic("恢复独立环境");
     await adapter.restore(exported);
     const migrated = await adapter.capture([origin, "https://fixture.test"]);
     assert.deepEqual(migrated, exported);
