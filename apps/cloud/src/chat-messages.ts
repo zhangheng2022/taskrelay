@@ -20,7 +20,7 @@ interface ContextRow {
   private_content: string | null;
   context_withdrawn: number;
   origin: string | null;
-  accountId:string|null;
+  accountId: string | null;
 }
 
 export async function runThread(env: AppEnv, runId: string) {
@@ -52,11 +52,7 @@ export async function messageStatement(
   fence?: { sql: string; values: (string | number | null)[] },
 ) {
   const secret = message.private
-    ? await seal(
-        message.content,
-        env.MASTER_KEY,
-        `message:${threadId}:${message.id}`,
-      )
+    ? await seal(message.content, env.MASTER_KEY, `message:${threadId}:${message.id}`)
     : null;
   return env.DB.prepare(
     `INSERT OR IGNORE INTO ai_messages(id,thread_id,seq,role,content,turn_id,at,source,parts,run_id,reply_to,private_content,context_withdrawn)
@@ -75,16 +71,12 @@ export async function messageStatement(
     message.runId ?? null,
     message.replyTo ?? null,
     secret,
-    message.role === 'user' ? null : message.runId ?? null,
+    message.role === "user" ? null : (message.runId ?? null),
     threadId,
     ...(fence?.values ?? []),
   );
 }
-export async function appendMessage(
-  env: AppEnv,
-  threadId: string,
-  message: ChatMessageWrite,
-) {
+export async function appendMessage(env: AppEnv, threadId: string, message: ChatMessageWrite) {
   const insert = await messageStatement(env, threadId, message);
   await env.DB.batch([
     insert,
@@ -134,14 +126,10 @@ export async function conversationContext(
       content: context_withdrawn
         ? "[用户已将这条内容设为仅本人可见]"
         : private_content
-        ? options
-          ? await unseal<string>(
-              private_content,
-              env.MASTER_KEY,
-              `message:${threadId}:${r.id}`,
-            )
-          : "[私密回复已提供，请通过协助通道使用]"
-        : r.content,
+          ? options
+            ? await unseal<string>(private_content, env.MASTER_KEY, `message:${threadId}:${r.id}`)
+            : "[私密回复已提供，请通过协助通道使用]"
+          : r.content,
       parts: context_withdrawn ? [] : JSON.parse(r.parts),
     })),
   );

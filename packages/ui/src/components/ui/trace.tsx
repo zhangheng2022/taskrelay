@@ -1,11 +1,7 @@
 import * as React from "react";
 import { cn } from "cn";
 
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "./collapsible";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./collapsible";
 import { ChevronRightIcon } from "lucide-react";
 
 function Trace({ className, ...props }: React.ComponentProps<"div">) {
@@ -65,17 +61,11 @@ function TraceTitle({ className, ...props }: React.ComponentProps<"span">) {
   );
 }
 
-function TraceDescription({
-  className,
-  ...props
-}: React.ComponentProps<"span">) {
+function TraceDescription({ className, ...props }: React.ComponentProps<"span">) {
   return (
     <span
       data-slot="trace-description"
-      className={cn(
-        "shrink-0 text-muted-foreground/70 tabular-nums",
-        className,
-      )}
+      className={cn("shrink-0 text-muted-foreground/70 tabular-nums", className)}
       {...props}
     />
   );
@@ -89,9 +79,7 @@ function TraceCollapsible({
     | { open?: undefined }
     | {
         open: boolean;
-        onOpenChange: NonNullable<
-          React.ComponentProps<typeof Collapsible>["onOpenChange"]
-        >;
+        onOpenChange: NonNullable<React.ComponentProps<typeof Collapsible>["onOpenChange"]>;
       }
   )) {
   return (

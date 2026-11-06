@@ -1,1 +1,5 @@
-{"name":"@taskrelay/cloud","private":true,"type":"module"}
+{
+  "name": "@taskrelay/cloud",
+  "private": true,
+  "type": "module"
+}

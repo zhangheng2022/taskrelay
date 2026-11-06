@@ -1,4 +1,4 @@
-import {createApi,rpcData} from './api';
+import { createApi, rpcData } from "./api";
 import { useEffect, useState } from "react";
 import { Monitor } from "lucide-react";
 import type { Transport } from "../../contracts/src/index";
@@ -8,7 +8,10 @@ import { ErrorText } from "./feedback";
 
 type Pairing = { name: string; code: string; approved: boolean };
 
-export function PairingNotice({ transport, refresh }: {
+export function PairingNotice({
+  transport,
+  refresh,
+}: {
   transport: Transport;
   refresh: () => Promise<void>;
 }) {
@@ -27,10 +30,10 @@ export function PairingNotice({ transport, refresh }: {
   useEffect(() => {
     if (!code) return;
     let live = true;
-    void rpcData(createApi(transport).api.admin.pairings[':code'].$get({param:{code}}))
+    void rpcData(createApi(transport).api.admin.pairings[":code"].$get({ param: { code } }))
       .then((value) => {
         if (!live) return;
-        if('error' in value)throw Error(value.error);
+        if ("error" in value) throw Error(value.error);
         setPair(value);
         if (value.approved) clearLink(code);
       })
@@ -39,7 +42,9 @@ export function PairingNotice({ transport, refresh }: {
         setError(e.message);
         if (e.message === "PAIRING_EXPIRED") clearLink(code);
       });
-    return () => { live = false; };
+    return () => {
+      live = false;
+    };
   }, [code, transport]);
 
   function dismiss() {
@@ -54,7 +59,9 @@ export function PairingNotice({ transport, refresh }: {
     setBusy(true);
     setError("");
     try {
-      await rpcData(createApi(transport).api.admin.pairings[':code'].approve.$post({param:{code}}));
+      await rpcData(
+        createApi(transport).api.admin.pairings[":code"].approve.$post({ param: { code } }),
+      );
       setPair({ ...pair, approved: true });
       clearLink(code);
       await refresh();
@@ -79,7 +86,9 @@ export function PairingNotice({ transport, refresh }: {
           <Monitor />
           <AlertTitle>{pair.approved ? "设备已授权" : "授权连接这台设备"}</AlertTitle>
           <AlertDescription>
-            <p>{pair.name} · 校验码 {pair.code}。请与客户端核对一致。</p>
+            <p>
+              {pair.name} · 校验码 {pair.code}。请与客户端核对一致。
+            </p>
             {!pair.approved && (
               <Button size="sm" disabled={busy} onClick={() => void approve()}>
                 {busy ? "正在授权…" : "授权设备"}
@@ -88,7 +97,11 @@ export function PairingNotice({ transport, refresh }: {
           </AlertDescription>
         </Alert>
       )}
-      <div><Button variant="outline" size="sm" disabled={busy} onClick={dismiss}>关闭配对提示</Button></div>
+      <div>
+        <Button variant="outline" size="sm" disabled={busy} onClick={dismiss}>
+          关闭配对提示
+        </Button>
+      </div>
     </section>
   );
 }

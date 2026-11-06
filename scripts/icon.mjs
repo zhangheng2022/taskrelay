@@ -38,4 +38,6 @@ for (const [i, size] of sizes.entries()) {
   offset += images[i].length;
 }
 await writeFile(path.join(root, "icon.ico"), Buffer.concat([header, ...images]));
-console.log("Generated icon.svg, icon.png, apple-touch-icon.png and 7-size icon.ico from brand-mark.svg.");
+console.log(
+  "Generated icon.svg, icon.png, apple-touch-icon.png and 7-size icon.ico from brand-mark.svg.",
+);

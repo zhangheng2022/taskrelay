@@ -2,12 +2,7 @@ import ipaddr from "ipaddr.js";
 
 export function publicUrl(value: string): URL {
   const url = new URL(value);
-  if (
-    url.protocol !== "https:" ||
-    url.username ||
-    url.password ||
-    (url.port && url.port !== "443")
-  )
+  if (url.protocol !== "https:" || url.username || url.password || (url.port && url.port !== "443"))
     throw new Error("PUBLIC_HTTPS_REQUIRED");
   const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
   if (
@@ -16,8 +11,7 @@ export function publicUrl(value: string): URL {
     /\.(local|localhost|internal|lan|home|test|invalid)$/.test(host)
   )
     throw new Error("PRIVATE_ADDRESS_BLOCKED");
-  if (ipaddr.isValid(host) && !isPublicIp(host))
-    throw new Error("PRIVATE_ADDRESS_BLOCKED");
+  if (ipaddr.isValid(host) && !isPublicIp(host)) throw new Error("PRIVATE_ADDRESS_BLOCKED");
   return url;
 }
 export function isPublicIp(value: string): boolean {
@@ -40,15 +34,11 @@ export async function publicEndpoint(
   return url;
 }
 export function redact(value: string) {
-  return value
-    .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
-    .replace(/\bsk-[\w-]+/g, "[redacted]");
+  return value.replace(/Bearer\s+\S+/gi, "Bearer [redacted]").replace(/\bsk-[\w-]+/g, "[redacted]");
 }
 export async function hash(value: string) {
   return Array.from(
-    new Uint8Array(
-      await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)),
-    ),
+    new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))),
   )
     .map((v) => v.toString(16).padStart(2, "0"))
     .join("");

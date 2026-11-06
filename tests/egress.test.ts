@@ -11,9 +11,7 @@ test("本地模拟器不支持地区时明确失败，不能回退直连", async
   const env = {
     MODEL_EGRESS: {
       jurisdiction() {
-        throw new Error(
-          "Jurisdiction restrictions are not implemented in workerd.",
-        );
+        throw new Error("Jurisdiction restrictions are not implemented in workerd.");
       },
     },
   } as unknown as AppEnv;
@@ -33,10 +31,7 @@ test("模型出站仅由 alarm 执行，跨块加密和确认清理，重复 ala
   const id = crypto.randomUUID();
   await state.submit(id, await seal(input, key, `egress:${id}:request`));
   assert.equal(calls, 0);
-  assert.equal(
-    JSON.stringify([...values.values()]).includes("sensitive-"),
-    false,
-  );
+  assert.equal(JSON.stringify([...values.values()]).includes("sensitive-"), false);
   assert.ok(getAlarm());
   await state.alarm();
   await state.alarm();
@@ -74,7 +69,11 @@ for (const failure of [false, true]) {
     let calls = 0;
     const state = new EgressState(
       fakeStorage(() => {
-        void state.alarm();
+        void state.alarm().catch((error) => {
+          queueMicrotask(() => {
+            throw error;
+          });
+        });
       }).storage,
       key,
       async (job) => {
@@ -101,10 +100,7 @@ for (const failure of [false, true]) {
                 },
                 async ack() {
                   rpc.push("ack");
-                  assert.equal(
-                    (await state.read()).status,
-                    failure ? "failed" : "done",
-                  );
+                  assert.equal((await state.read()).status, failure ? "failed" : "done");
                   await state.ack();
                   // A cleanup transport failure cannot lose the received result.
                   throw new Error("ACK_CONNECTION_LOST");

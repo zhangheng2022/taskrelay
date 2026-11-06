@@ -22,22 +22,21 @@ export class ModelEgress extends DurableObject<AppEnv> {
         if (response.ok) {
           const trace = await response.text();
           for (const field of ["loc", "colo"] as const) {
-            const entry = new RegExp(`^${field}=([A-Z0-9-]{2,10})$`, "m").exec(
-              trace,
-            )?.[1];
+            const entry = new RegExp(`^${field}=([A-Z0-9-]{2,10})$`, "m").exec(trace)?.[1];
             if (entry) result[field] = entry;
           }
         }
         return result;
       }
-      if (job.kind !== "inference")
-        throw new Error("MODEL_EGRESS_INPUT_INVALID");
+      if (job.kind !== "inference") throw new Error("MODEL_EGRESS_INPUT_INVALID");
       return performInference(
         env,
         job.modelId,
         job.version,
         job.request,
-        job.runId,job.userId,job.reservationId,
+        job.runId,
+        job.userId,
+        job.reservationId,
       );
     });
   }

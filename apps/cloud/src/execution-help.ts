@@ -1,8 +1,5 @@
 import type { AppEnv } from "./env";
-import type {
-  ExecutionHelp,
-  HelpResponse,
-} from "../../../packages/contracts/src/execution";
+import type { ExecutionHelp, HelpResponse } from "../../../packages/contracts/src/execution";
 import type { TaskRun } from "../../../packages/contracts/src/index";
 import { hash } from "../../../packages/contracts/src/security";
 import { runThread } from "./chat-messages";
@@ -16,11 +13,7 @@ type StoredResponse = Omit<HelpResponse, "message"> & {
 };
 
 /** Persist a reference to the encrypted original, never copy reply text into dispatch. */
-export async function queueHelpReply(
-  env: AppEnv,
-  helpId: string,
-  messageId: string,
-) {
+export async function queueHelpReply(env: AppEnv, helpId: string, messageId: string) {
   const help = await env.DB.prepare(
     `SELECT h.*,r.user_id FROM execution_help h JOIN runs r ON r.id=h.run_id
     JOIN ai_threads t ON t.id=h.thread_id AND t.closed=0 WHERE h.id=? AND h.awaiting_user=1 AND h.graph_id IS NOT NULL
@@ -66,11 +59,7 @@ export async function resolveHelp(
   const request = {
     id: help.id,
     origin: help.origin,
-    encryptedMessage: await seal(
-      help.message,
-      env.MASTER_KEY,
-      `help-request:${run.id}:${help.id}`,
-    ),
+    encryptedMessage: await seal(help.message, env.MASTER_KEY, `help-request:${run.id}:${help.id}`),
   };
   await requireLease(env.DB, run.id, run.deviceId!, run.leaseEpoch);
   await env.DB.batch([
@@ -130,11 +119,9 @@ export async function resolveHelp(
     "SELECT response,awaiting_user,question_round FROM execution_help WHERE id=? AND run_id=? AND epoch=?",
   )
     .bind(help.id, run.id, run.leaseEpoch)
-    .first<{ response: string | null; awaiting_user:number; question_round:number }>();
+    .first<{ response: string | null; awaiting_user: number; question_round: number }>();
   if (saved?.response) {
-    const { encrypted, ...references } = JSON.parse(
-      saved.response,
-    ) as StoredResponse;
+    const { encrypted, ...references } = JSON.parse(saved.response) as StoredResponse;
     return encrypted
       ? {
           ...references,
@@ -152,5 +139,5 @@ export async function resolveHelp(
     .bind(graphId)
     .first<{ error: string }>();
   if (failed) throw Error(failed.error);
-  return { ready: false, ...(saved?.awaiting_user ? {questionRound:saved.question_round} : {}) };
+  return { ready: false, ...(saved?.awaiting_user ? { questionRound: saved.question_round } : {}) };
 }

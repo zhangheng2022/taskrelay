@@ -1,0 +1,25 @@
+title = "TaskRelay 密钥扫描"
+[extend]
+useDefault = true
+
+# Access AUD 是已公开的应用标识，并非认证凭据；只放行该精确值及其声明位置。
+[[allowlists]]
+description = "Cloudflare Access 公开应用标识"
+condition = "AND"
+paths = ['''^apps/(web/wrangler\.jsonc|cloud/src/worker-configuration\.d\.ts)$''']
+regexTarget = "secret"
+regexes = ['''^14ace9836bc55fd84ab8f089c1a35a7361d46ffb0b729c4d47ade7b432a8b194$''']
+
+[[allowlists]]
+description = "仅本机隔离性能夹具的固定假密钥"
+condition = "AND"
+paths = ['''^scripts/(profile-ai\.ts|perf/worker\.ts)$''']
+regexTarget = "secret"
+regexes = ['''^isolated-profiling-secret-at-least-32-characters$''']
+
+[[allowlists]]
+description = "账号卡片单元测试的固定假密码"
+condition = "AND"
+paths = ['''^tests/account-cards\.test\.ts$''']
+regexTarget = "secret"
+regexes = ['''^fixture-secret-123$''']

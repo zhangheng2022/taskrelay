@@ -23,10 +23,18 @@ import { Marker, MarkerIcon, MarkerContent } from "./components/ui/marker";
 // 不将历史用户行设为 turn anchor，避免同数量节点替换重新定位到旧问题。
 function FollowSend({ request }: { request?: string }) {
   const { scrollToEnd } = useMessageScroller();
-  useLayoutEffect(() => { if (request) scrollToEnd({ behavior: "auto" }); }, [request, scrollToEnd]);
+  useLayoutEffect(() => {
+    if (request) scrollToEnd({ behavior: "auto" });
+  }, [request, scrollToEnd]);
   return null;
 }
-export function Thread({ children, followRequest }: { children: ReactNode; followRequest?: string }) {
+export function Thread({
+  children,
+  followRequest,
+}: {
+  children: ReactNode;
+  followRequest?: string;
+}) {
   return (
     <MessageScrollerProvider autoScroll>
       <MessageScroller>
@@ -37,17 +45,11 @@ export function Thread({ children, followRequest }: { children: ReactNode; follo
         </MessageScrollerViewport>
         <MessageScrollerButton aria-label="回到最新消息" />
       </MessageScroller>
-      <FollowSend request={followRequest}/>
+      <FollowSend request={followRequest} />
     </MessageScrollerProvider>
   );
 }
-export function ChatMessage({
-  role,
-  children,
-}: {
-  role: string;
-  children: ReactNode;
-}) {
+export function ChatMessage({ speaker: role, children }: { speaker: string; children: ReactNode }) {
   return (
     <Message align={role === "user" ? "end" : "start"}>
       <MessageContent>
@@ -58,39 +60,65 @@ export function ChatMessage({
             </BubbleContent>
           </Bubble>
         ) : (
-          <div className="whitespace-pre-wrap break-words text-sm leading-7">
-            {children}
-          </div>
+          <div className="whitespace-pre-wrap break-words text-sm leading-7">{children}</div>
         )}
       </MessageContent>
     </Message>
   );
 }
-export function PendingMessage({ children, paused = false }: { children: ReactNode; paused?: boolean }) {
+export function PendingMessage({
+  children,
+  paused = false,
+}: {
+  children: ReactNode;
+  paused?: boolean;
+}) {
   return (
     <Marker role="status">
       <MarkerIcon>
-        {paused ? <CirclePause/> : <span className="chat-status-spinner block size-full animate-spin"><Loader2/></span>}
+        {paused ? (
+          <CirclePause />
+        ) : (
+          <span className="chat-status-spinner block size-full animate-spin">
+            <Loader2 />
+          </span>
+        )}
       </MarkerIcon>
       <MarkerContent>{children}</MarkerContent>
     </Marker>
   );
 }
 // 状态复用同一个 DOM 行，发送→推理时不重启动画；持续渲染避开 WebKit 离屏动画恢复缺陷。
-export function ThreadActivity({ children, offline, error, paused = false }: { children: ReactNode; offline: boolean; error: string; paused?: boolean }) {
+export function ThreadActivity({
+  children,
+  offline,
+  error,
+  paused = false,
+}: {
+  children: ReactNode;
+  offline: boolean;
+  error: string;
+  paused?: boolean;
+}) {
   if (!children) return null;
   const interrupted = offline || !!error || paused;
   let content = children;
-  if (offline) content = '连接已中断，等待恢复后更新状态';
-  else if (error) content = '状态更新失败，请重试';
-  return <MessageScrollerItem messageId="activity" deferRendering={false}>
-    <PendingMessage paused={interrupted}>{content}</PendingMessage>
-  </MessageScrollerItem>;
+  if (offline) content = "连接已中断，等待恢复后更新状态";
+  else if (error) content = "状态更新失败，请重试";
+  return (
+    <MessageScrollerItem messageId="activity" deferRendering={false}>
+      <PendingMessage paused={interrupted}>{content}</PendingMessage>
+    </MessageScrollerItem>
+  );
 }
 // 新交办和既有聊天共用发送回显。确认后由服务端消息替换，失败后原文回到输入框重试。
-export function SendingMessage({message}:{message:{id:string;content:string}|null}){
-  if(!message)return null;
-  return <MessageScrollerItem messageId={message.id}><ChatMessage role="user">{message.content}</ChatMessage></MessageScrollerItem>;
+export function SendingMessage({ message }: { message: { id: string; content: string } | null }) {
+  if (!message) return null;
+  return (
+    <MessageScrollerItem messageId={message.id}>
+      <ChatMessage speaker="user">{message.content}</ChatMessage>
+    </MessageScrollerItem>
+  );
 }
 export function Composer({
   text,

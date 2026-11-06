@@ -14,8 +14,7 @@ const codeBlockVariants = cva(
       variant: {
         default:
           "border border-input text-foreground has-[>[data-slot=code-block-content]:focus-visible]:border-ring dark:bg-input/30",
-        destructive:
-          "border border-destructive/30 text-destructive dark:border-destructive/40",
+        destructive: "border border-destructive/30 text-destructive dark:border-destructive/40",
       },
     },
     defaultVariants: {
@@ -68,10 +67,7 @@ function CodeBlockTitle({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
-function CodeBlockActions({
-  className,
-  ...props
-}: React.ComponentProps<"div">) {
+function CodeBlockActions({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="code-block-actions"
@@ -149,6 +145,7 @@ function CodeBlockContent({
       data-wrap={wrap || undefined}
       data-numbered={lineNumbers || undefined}
       dir="ltr"
+      // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- 横向溢出的代码块需要键盘焦点滚动。
       tabIndex={0}
       style={{ counterReset: `line ${startLine - 1}`, ...style }}
       className={cn(
@@ -165,9 +162,7 @@ function CodeBlockContent({
           ? children
               .replace(/\n$/, "")
               .split("\n")
-              .map((line, index) => (
-                <CodeBlockLine key={index}>{line}</CodeBlockLine>
-              ))
+              .map((line, index) => <CodeBlockLine key={index}>{line}</CodeBlockLine>)
           : children}
       </code>
     </pre>

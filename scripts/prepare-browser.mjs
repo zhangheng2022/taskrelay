@@ -1,19 +1,6 @@
-import {
-  install,
-  resolveBuildId,
-  Browser,
-  BrowserPlatform,
-} from "@puppeteer/browsers";
-import {
-  mkdir,
-  cp,
-  readFile,
-  writeFile,
-  readdir,
-  stat,
-  rm,
-} from "node:fs/promises";
-import { createHash, generateKeyPairSync } from "node:crypto";
+// 浏览器版本与官方压缩包校验值纳入源码审查，正式构建不跟随 stable 自动漂移。
+import { mkdir, cp, readFile, writeFile, readdir, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -21,21 +8,25 @@ const root = path.resolve(import.meta.dirname, ".."),
   target = path.join(root, "resources/browser");
 const desktop = JSON.parse(await readFile(path.join(root, "apps/desktop/package.json"), "utf8"));
 const stagehandVersion = desktop.dependencies["@browserbasehq/stagehand"];
-const installedStagehand = JSON.parse(await readFile(path.join(root, "node_modules/@browserbasehq/stagehand/package.json"), "utf8"));
-if (installedStagehand.version !== stagehandVersion) throw Error("STAGEHAND_RESOURCE_VERSION_MISMATCH");
-await mkdir(target, { recursive: true });
-const buildId = await resolveBuildId(
-  Browser.CHROME,
-  BrowserPlatform.WIN64,
-  "stable",
+const installedStagehand = JSON.parse(
+  await readFile(path.join(root, "node_modules/@browserbasehq/stagehand/package.json"), "utf8"),
 );
+if (installedStagehand.version !== stagehandVersion)
+  throw Error("STAGEHAND_RESOURCE_VERSION_MISMATCH");
+await mkdir(target, { recursive: true });
+await mkdir(path.join(root, ".cache"), { recursive: true });
+const { buildId, sha256 } = JSON.parse(
+  await readFile(path.join(root, "resources/browser-release.json"), "utf8"),
+);
+if (!/^\d+\.\d+\.\d+\.\d+$/.test(buildId) || !/^[a-f0-9]{64}$/.test(sha256))
+  throw Error("BROWSER_RELEASE_INVALID");
 console.log(`Downloading Chrome for Testing ${buildId} (Windows x64)…`);
 let source;
-if (process.platform === "win32") {
+{
   const archive = path.join(root, ".cache", `chrome-${buildId}.zip`),
     unpack = path.join(root, ".cache", `chrome-${buildId}`);
   await promisify(execFile)(
-    "curl.exe",
+    process.platform === "win32" ? "curl.exe" : "curl",
     [
       "--fail",
       "--location",
@@ -51,32 +42,37 @@ if (process.platform === "win32") {
     ],
     { windowsHide: true, timeout: 330000, maxBuffer: 1024 * 1024 },
   );
+  if (
+    createHash("sha256")
+      .update(await readFile(archive))
+      .digest("hex") !== sha256
+  )
+    throw Error("BROWSER_ARCHIVE_HASH_MISMATCH");
   const quote = (value) => "'" + value.replaceAll("'", "''") + "'";
-  if (!path.resolve(unpack).startsWith(path.join(root, ".cache") + path.sep)) throw Error("ARCHIVE_PATH_INVALID");
+  if (!path.resolve(unpack).startsWith(path.join(root, ".cache") + path.sep))
+    throw Error("ARCHIVE_PATH_INVALID");
   await rm(unpack, { recursive: true, force: true });
-  await promisify(execFile)(
-    "powershell.exe",
-    [
-      "-NoProfile",
-      "-NonInteractive",
-      "-Command",
-      `Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory(${quote(archive)}, ${quote(unpack)})`,
-    ],
-    { windowsHide: true, timeout: 180000 },
-  );
+  if (process.platform === "win32")
+    await promisify(execFile)(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory(${quote(archive)}, ${quote(unpack)})`,
+      ],
+      { windowsHide: true, timeout: 180000 },
+    );
+  else await promisify(execFile)("unzip", ["-q", archive, "-d", unpack], { timeout: 180000 });
   source = path.join(unpack, "chrome-win64");
-} else {
-  const installed = await install({
-    browser: Browser.CHROME,
-    buildId,
-    platform: BrowserPlatform.WIN64,
-    cacheDir: path.join(root, ".cache/browsers"),
-  });
-  source = path.dirname(installed.executablePath);
 }
 // 资源属于构建产物；先核对绝对路径再清理，避免新版本混入旧 DLL 或扩展文件。
-for (const directory of [path.join(target, "chrome-win64"), path.join(root, "resources/stagehand-extension")]) {
-  if (!path.resolve(directory).startsWith(path.join(root, "resources") + path.sep)) throw Error("RESOURCE_PATH_INVALID");
+for (const directory of [
+  path.join(target, "chrome-win64"),
+  path.join(root, "resources/stagehand-extension"),
+]) {
+  if (!path.resolve(directory).startsWith(path.join(root, "resources") + path.sep))
+    throw Error("RESOURCE_PATH_INVALID");
   await rm(directory, { recursive: true, force: true });
 }
 await cp(source, path.join(target, "chrome-win64"), { recursive: true });
@@ -88,27 +84,12 @@ await cp(
 // 每个 SDK release 固定公开扩展身份：旧 Profile 的 Service Worker 缓存不能
 // 复用到新运行时。它只标识扩展，不参与账号加密，也不是 MASTER_KEY。
 const identityPath = path.join(root, `resources/stagehand-${stagehandVersion}-public-key.txt`);
-let publicKey;
-try {
-  publicKey = (await readFile(identityPath, "utf8")).trim();
-} catch {
-  publicKey = generateKeyPairSync("rsa", { modulusLength: 2048 })
-    .publicKey.export({ type: "spki", format: "der" })
-    .toString("base64");
-  await writeFile(identityPath, publicKey + "\n");
-}
-const extensionManifestPath = path.join(
-  root,
-  "resources/stagehand-extension/manifest.json",
-);
-const extensionManifest = JSON.parse(
-  await readFile(extensionManifestPath, "utf8"),
-);
+const publicKey = (await readFile(identityPath, "utf8")).trim();
+if (!publicKey) throw Error("STAGEHAND_EXTENSION_IDENTITY_MISSING");
+const extensionManifestPath = path.join(root, "resources/stagehand-extension/manifest.json");
+const extensionManifest = JSON.parse(await readFile(extensionManifestPath, "utf8"));
 extensionManifest.key = publicKey;
-await writeFile(
-  extensionManifestPath,
-  JSON.stringify(extensionManifest, null, 2),
-);
+await writeFile(extensionManifestPath, JSON.stringify(extensionManifest, null, 2));
 const files = {};
 async function walk(dir, prefix = "") {
   for (const item of await readdir(dir, { withFileTypes: true })) {
@@ -131,14 +112,9 @@ const manifest = {
   executableSha256: files["chrome-win64/chrome.exe"],
   files,
 };
-await writeFile(
-  path.join(target, "manifest.json"),
-  JSON.stringify(manifest, null, 2),
-);
+await writeFile(path.join(target, "manifest.json"), JSON.stringify(manifest, null, 2));
 await writeFile(
   path.join(root, "resources/NOTICE.txt"),
   `TaskRelay\n\nElectron: MIT, https://www.electronjs.org/\nStagehand ${stagehandVersion}: MIT, https://github.com/browserbase/stagehand\nChromium / Chrome for Testing: bundled browser and its third-party notices remain subject to their respective licenses. See chrome://credits and the browser LICENSE files.\nNo RewardPilot source, assets, or UI are included.\n`,
 );
-console.log(
-  `Prepared browser ${buildId}; ${Object.keys(files).length} files hashed.`,
-);
+console.log(`Prepared browser ${buildId}; ${Object.keys(files).length} files hashed.`);

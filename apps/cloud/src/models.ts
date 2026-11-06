@@ -2,25 +2,18 @@
  * 模型服务入口：管理配置版本、能力探测、调用去重、结构化校验与实际用量。
  * 普通调用只提交加密出站作业；仅美国区域 ModelEgress 的 alarm 可调用提供方适配器。
  */
-import { reserve } from './tenancy';
+import { reserve } from "./tenancy";
 import { z } from "zod";
-import {
-  infer,
-  type Inference,
-  type ModelResponse,
-} from "../../../packages/model/src/index";
+import { infer, type Inference, type ModelResponse } from "../../../packages/model/src/index";
 import { publicEndpoint } from "../../../packages/contracts/src/security";
-import type {
-  ModelCapabilities,
-  ModelProfile,
-} from "../../../packages/contracts/src/index";
+import type { ModelCapabilities, ModelProfile } from "../../../packages/contracts/src/index";
 import type { AppEnv } from "./env";
 import { seal, unseal } from "./crypto";
 import { now, uid, type Row } from "./store";
 import { visionFixture } from "./vision-fixture";
 import { egress } from "./egress";
-import { hash } from '../../../packages/contracts/src/security';
-import { graphWriteFence } from './ai/fence';
+import { hash } from "../../../packages/contracts/src/security";
+import { graphWriteFence } from "./ai/fence";
 
 export async function validateEndpoint(baseUrl: string) {
   return publicEndpoint(baseUrl, async (host) => {
@@ -40,9 +33,7 @@ export async function validateEndpoint(baseUrl: string) {
           Answer?: { type: number; data: string }[];
         };
         if (data.Status !== 0) throw new Error("DNS_LOOKUP_FAILED");
-        return (data.Answer ?? [])
-          .filter((x) => x.type === 1 || x.type === 28)
-          .map((x) => x.data);
+        return (data.Answer ?? []).filter((x) => x.type === 1 || x.type === 28).map((x) => x.data);
       }),
     );
     return results.flat();
@@ -66,20 +57,18 @@ export async function getModel(env: AppEnv, id: string, version?: number) {
   if (!row) throw new Error("MODEL_NOT_FOUND");
   return {
     profile: modelFrom(row),
-    key: await unseal<string>(
-      row.secret,
-      env.MASTER_KEY,
-      `model:${id}:${row.version}`,
-    ),
+    key: await unseal<string>(row.secret, env.MASTER_KEY, `model:${id}:${row.version}`),
   };
 }
 /** Configuration checks do not need to read or decrypt provider credentials. */
 export async function getModelProfile(env: AppEnv, id: string, version?: number) {
   const row = await env.DB.prepare(
     `SELECT id,version,config,capabilities FROM model_profiles WHERE id=? ${version ? "AND version=?" : ""} ORDER BY version DESC LIMIT 1`,
-  ).bind(...(version ? [id,version] : [id])).first<Row>();
-  if(!row)throw new Error("MODEL_NOT_FOUND");
-  return {profile:modelFrom(row)};
+  )
+    .bind(...(version ? [id, version] : [id]))
+    .first<Row>();
+  if (!row) throw new Error("MODEL_NOT_FOUND");
+  return { profile: modelFrom(row) };
 }
 export async function recordUsage(
   env: AppEnv,
@@ -98,7 +87,8 @@ export async function recordUsage(
       profile.version,
       response.usage.input,
       response.usage.output,
-      now(),userId,
+      now(),
+      userId,
     )
     .run();
 }
@@ -112,42 +102,96 @@ export async function invoke(
   graphId?: string,
   graphGeneration?: number,
 ) {
-  const userId=runId ? (await env.DB.prepare('SELECT user_id FROM runs WHERE id=?').bind(runId).first<{user_id:string}>())?.user_id : env.requestUserId;
-  if(!userId) throw new Error('MODEL_ACTOR_REQUIRED');
-  const callId=operationId ?? crypto.randomUUID();
-  const digest=await hash(JSON.stringify({userId,id,version,request,runId}));
-  const graphFence=graphId?graphWriteFence(userId,graphId,graphGeneration):undefined;
+  const userId = runId
+    ? (
+        await env.DB.prepare("SELECT user_id FROM runs WHERE id=?")
+          .bind(runId)
+          .first<{ user_id: string }>()
+      )?.user_id
+    : env.requestUserId;
+  if (!userId) throw new Error("MODEL_ACTOR_REQUIRED");
+  const callId = operationId ?? crypto.randomUUID();
+  const digest = await hash(JSON.stringify({ userId, id, version, request, runId }));
+  const graphFence = graphId ? graphWriteFence(userId, graphId, graphGeneration) : undefined;
   // 桌面原生工具循环没有云端 graphId，仍须按运行关联缓存并原子拒绝清理后的迟到结果。
-  const fence=graphFence??(runId?{sql:'EXISTS(SELECT 1 FROM runs WHERE id=? AND user_id=? AND history_deleted=0)',values:[runId,userId]}:undefined);
-  const inserted=await env.DB.prepare(`INSERT OR IGNORE INTO ai_calls(id,user_id,graph_id,run_id,digest,status,created_at,updated_at) SELECT ?,?,?,?,?,'reserved',?,? ${fence?`WHERE ${fence.sql}`:''}`).bind(callId,userId,graphId??null,runId,digest,now(),now(),...(fence?.values??[])).run();
-  if(!inserted.meta.changes) {
+  const fence =
+    graphFence ??
+    (runId
+      ? {
+          sql: "EXISTS(SELECT 1 FROM runs WHERE id=? AND user_id=? AND history_deleted=0)",
+          values: [runId, userId],
+        }
+      : undefined);
+  const inserted = await env.DB.prepare(
+    `INSERT OR IGNORE INTO ai_calls(id,user_id,graph_id,run_id,digest,status,created_at,updated_at) SELECT ?,?,?,?,?,'reserved',?,? ${fence ? `WHERE ${fence.sql}` : ""}`,
+  )
+    .bind(callId, userId, graphId ?? null, runId, digest, now(), now(), ...(fence?.values ?? []))
+    .run();
+  if (!inserted.meta.changes) {
     // A deduplicated result still belongs to its original live graph. Replaying
     // an operation must not bypass deletion, cancellation, or generation fences.
-    const prior=await env.DB.prepare(`SELECT * FROM ai_calls WHERE id=? ${fence?`AND ${fence.sql}`:''}`).bind(callId,...(fence?.values??[])).first<Row>();
-    if(!prior&&fence)throw Error('MODEL_CALL_DISCARDED');
-    if(!prior || prior.user_id!==userId || prior.digest!==digest) throw new Error('MODEL_CALL_CONFLICT');
-    if(prior.status==='done' && prior.result) return unseal<ModelResponse>(prior.result,env.MASTER_KEY,`ai-call:${callId}`);
-    throw new Error(prior.status==='failed' ? prior.error : 'MODEL_CALL_OUTCOME_UNKNOWN');
+    const prior = await env.DB.prepare(
+      `SELECT * FROM ai_calls WHERE id=? ${fence ? `AND ${fence.sql}` : ""}`,
+    )
+      .bind(callId, ...(fence?.values ?? []))
+      .first<Row>();
+    if (!prior && fence) throw Error("MODEL_CALL_DISCARDED");
+    if (!prior || prior.user_id !== userId || prior.digest !== digest)
+      throw new Error("MODEL_CALL_CONFLICT");
+    if (prior.status === "done" && prior.result)
+      return unseal<ModelResponse>(prior.result, env.MASTER_KEY, `ai-call:${callId}`);
+    throw new Error(prior.status === "failed" ? prior.error : "MODEL_CALL_OUTCOME_UNKNOWN");
   }
   try {
-  const reservationId=await reserve(env,userId,'model',callId);
-  await env.DB.prepare("UPDATE ai_calls SET status='running',updated_at=? WHERE id=?").bind(now(),callId).run();
-  return await egress<ModelResponse>(env, {
-    kind: "inference",userId,reservationId,
-    modelId: id,
-    version,
-    request,
-    runId,
-  }, async result=>{
-    const saved=await env.DB.prepare(`UPDATE ai_calls SET status='done',result=?,updated_at=? WHERE id=? AND status='running' ${fence?`AND ${fence.sql}`:''}`).bind(await seal(result,env.MASTER_KEY,`ai-call:${callId}`),now(),callId,...(fence?.values??[])).run();
-    if(!saved.meta.changes)throw new Error('MODEL_CALL_DISCARDED');
-  });
-  } catch(error) {
-    const code=/^[A-Z][A-Z0-9_]+$/.test((error as Error).message)?(error as Error).message:'MODEL_CALL_OUTCOME_UNKNOWN';
-    await env.DB.prepare("UPDATE ai_calls SET status=?,error=?,updated_at=? WHERE id=? AND status<>'done'").bind(code.includes('QUOTA')||code==='MODEL_REGION_REQUIRES_DEPLOYMENT'?'failed':'unknown',code,now(),callId).run();
+    const reservationId = await reserve(env, userId, "model", callId);
+    await env.DB.prepare("UPDATE ai_calls SET status='running',updated_at=? WHERE id=?")
+      .bind(now(), callId)
+      .run();
+    return await egress<ModelResponse>(
+      env,
+      {
+        kind: "inference",
+        userId,
+        reservationId,
+        modelId: id,
+        version,
+        request,
+        runId,
+      },
+      async (result) => {
+        const saved = await env.DB.prepare(
+          `UPDATE ai_calls SET status='done',result=?,updated_at=? WHERE id=? AND status='running' ${fence ? `AND ${fence.sql}` : ""}`,
+        )
+          .bind(
+            await seal(result, env.MASTER_KEY, `ai-call:${callId}`),
+            now(),
+            callId,
+            ...(fence?.values ?? []),
+          )
+          .run();
+        if (!saved.meta.changes) throw new Error("MODEL_CALL_DISCARDED");
+      },
+    );
+  } catch (error) {
+    const code = /^[A-Z][A-Z0-9_]+$/.test((error as Error).message)
+      ? (error as Error).message
+      : "MODEL_CALL_OUTCOME_UNKNOWN";
+    await env.DB.prepare(
+      "UPDATE ai_calls SET status=?,error=?,updated_at=? WHERE id=? AND status<>'done'",
+    )
+      .bind(
+        code.includes("QUOTA") || code === "MODEL_REGION_REQUIRES_DEPLOYMENT"
+          ? "failed"
+          : "unknown",
+        code,
+        now(),
+        callId,
+      )
+      .run();
     throw error;
   } finally {
-    if(!operationId)await env.DB.prepare('UPDATE ai_calls SET result=NULL WHERE id=?').bind(callId).run();
+    if (!operationId)
+      await env.DB.prepare("UPDATE ai_calls SET result=NULL WHERE id=?").bind(callId).run();
   }
 }
 // Called exclusively by the region-bound Durable Object's alarm.
@@ -160,11 +204,18 @@ export async function performInference(
   userId: string,
   reservationId: string,
 ) {
-  if(!await env.DB.prepare("SELECT id FROM quota_reservations WHERE id=? AND user_id=? AND kind='model'").bind(reservationId,userId).first()) throw new Error('MODEL_RESERVATION_REQUIRED');
+  if (
+    !(await env.DB.prepare(
+      "SELECT id FROM quota_reservations WHERE id=? AND user_id=? AND kind='model'",
+    )
+      .bind(reservationId, userId)
+      .first())
+  )
+    throw new Error("MODEL_RESERVATION_REQUIRED");
   const { profile, key } = await getModel(env, id, version);
   await validateEndpoint(profile.baseUrl);
   const result = await infer(profile, key, request);
-  await recordUsage(env, profile, result, runId,userId);
+  await recordUsage(env, profile, result, runId, userId);
   return result;
 }
 // Only received, invalid output can spend the repair budget. Transport failures
@@ -180,26 +231,22 @@ export async function generateStructured<T>(
   invalidCode = "MODEL_INVALID_JSON",
   operationId?: string,
   graphId?: string,
-  media?: {image?:string;format?:'schema'|'json';wireSchema?:Record<string,unknown>},
+  media?: { image?: string; format?: "schema" | "json"; wireSchema?: Record<string, unknown> },
   graphGeneration?: number,
 ): Promise<{ data: T; response: ModelResponse }> {
   const { profile } = await getModelProfile(env, id, version);
-  if (profile.capabilities.structured === "none")
-    throw new Error("STRUCTURED_OUTPUT_REQUIRED");
-  if(media?.format==='schema'&&profile.capabilities.structured!=='schema')throw Error('STRUCTURED_SCHEMA_REQUIRED');
-  const mode=media?.format??profile.capabilities.structured;
-  const format =
-    mode === "schema"
-      ? { schema:media?.wireSchema??schema }
-      : { jsonMode: true };
+  if (profile.capabilities.structured === "none") throw new Error("STRUCTURED_OUTPUT_REQUIRED");
+  if (media?.format === "schema" && profile.capabilities.structured !== "schema")
+    throw Error("STRUCTURED_SCHEMA_REQUIRED");
+  const mode = media?.format ?? profile.capabilities.structured;
+  const format = mode === "schema" ? { schema: media?.wireSchema ?? schema } : { jsonMode: true };
   const instructions: Inference["messages"] =
     mode === "json"
       ? [
           {
             role: "system",
             content:
-              "只返回符合以下 JSON Schema 的 JSON，不要输出 Markdown：" +
-              JSON.stringify(schema),
+              "只返回符合以下 JSON Schema 的 JSON，不要输出 Markdown：" + JSON.stringify(schema),
           },
           ...messages,
         ]
@@ -222,7 +269,7 @@ export async function generateStructured<T>(
             ]
           : instructions,
         ...format,
-        ...(media?.image?{image:media.image}:{}),
+        ...(media?.image ? { image: media.image } : {}),
         maxTokens: profile.outputTokens ?? 4096,
       },
       runId,
@@ -246,24 +293,42 @@ export async function generate<T>(
   messages: Inference["messages"],
   runId: string | null = null,
   operationId?: string,
-  graph?: {id:string;generation:number},
+  graph?: { id: string; generation: number },
 ) {
-  const { RelayChatModel } = await import('./ai/model');
-  const {toLangChainMessages}=await import('../../../packages/model/src/langchain');
-  return await new RelayChatModel(env,id,version,operationId,runId,graph?.id,graph?.generation).withStructuredOutput(schema).invoke(toLangChainMessages(messages)) as T;
+  const { RelayChatModel } = await import("./ai/model");
+  const { toLangChainMessages } = await import("../../../packages/model/src/langchain");
+  return (await new RelayChatModel(
+    env,
+    id,
+    version,
+    operationId,
+    runId,
+    graph?.id,
+    graph?.generation,
+  )
+    .withStructuredOutput(schema)
+    .invoke(toLangChainMessages(messages))) as T;
 }
 /** Probes share the production LangChain interface while testing explicit formats. */
-async function probeInference(env:AppEnv,id:string,version:number,request:Inference):Promise<ModelResponse>{
-  const {RelayChatModel}=await import('./ai/model');
-  const {toLangChainMessages,aiMessageToModelResponse}=await import('../../../packages/model/src/langchain');
-  const {messages,toolChoice,...options}=request;
-  return aiMessageToModelResponse(await new RelayChatModel(env,id,version).invoke(toLangChainMessages(messages),{...options,capabilityProbe:true,tool_choice:toolChoice??(request.tools?.length?'required':undefined)}));
-}
-export async function probe(
+async function probeInference(
   env: AppEnv,
   id: string,
   version: number,
-): Promise<ModelCapabilities> {
+  request: Inference,
+): Promise<ModelResponse> {
+  const { RelayChatModel } = await import("./ai/model");
+  const { toLangChainMessages, aiMessageToModelResponse } =
+    await import("../../../packages/model/src/langchain");
+  const { messages, toolChoice, ...options } = request;
+  return aiMessageToModelResponse(
+    await new RelayChatModel(env, id, version).invoke(toLangChainMessages(messages), {
+      ...options,
+      capabilityProbe: true,
+      tool_choice: toolChoice ?? (request.tools?.length ? "required" : undefined),
+    }),
+  );
+}
+export async function probe(env: AppEnv, id: string, version: number): Promise<ModelCapabilities> {
   const caps: ModelCapabilities = {
     connection: false,
     tools: false,
@@ -273,8 +338,7 @@ export async function probe(
   };
   const errors: string[] = [];
   const { profile } = await getModelProfile(env, id, version);
-  caps.tokenParameter =
-    profile.capabilities.tokenParameter ?? "max_completion_tokens";
+  caps.tokenParameter = profile.capabilities.tokenParameter ?? "max_completion_tokens";
   try {
     try {
       await probeInference(env, id, version, {
@@ -282,11 +346,7 @@ export async function probe(
         maxTokens: 512,
       });
     } catch (error) {
-      if (
-        profile.protocol !== "chat" ||
-        (error as Error).message !== "MODEL_HTTP_400"
-      )
-        throw error;
+      if (profile.protocol !== "chat" || (error as Error).message !== "MODEL_HTTP_400") throw error;
       caps.tokenParameter = "max_tokens";
       await probeInference(env, id, version, {
         messages: [{ role: "user", content: "Reply OK." }],
@@ -295,9 +355,7 @@ export async function probe(
       });
     }
     caps.connection = true;
-    await env.DB.prepare(
-      "UPDATE model_profiles SET capabilities=? WHERE id=? AND version=?",
-    )
+    await env.DB.prepare("UPDATE model_profiles SET capabilities=? WHERE id=? AND version=?")
       .bind(JSON.stringify(caps), id, version)
       .run();
   } catch (e) {
@@ -354,20 +412,13 @@ export async function probe(
       }
   }
   if (errors.length) caps.error = errors.join(",");
-  await env.DB.prepare(
-    "UPDATE model_profiles SET capabilities=? WHERE id=? AND version=?",
-  )
+  await env.DB.prepare("UPDATE model_profiles SET capabilities=? WHERE id=? AND version=?")
     .bind(JSON.stringify(caps), id, version)
     .run();
   return caps;
 }
-export async function storeModel(
-  env: AppEnv,
-  input: Record<string, unknown>,
-  id = uid("model"),
-) {
-  const { modelInputSchema } =
-    await import("../../../packages/contracts/src/index");
+export async function storeModel(env: AppEnv, input: Record<string, unknown>, id = uid("model")) {
+  const { modelInputSchema } = await import("../../../packages/contracts/src/index");
   const parsed = modelInputSchema.parse(input);
   // Accept a pasted endpoint, but store a base URL and never append it twice.
   const endpoint = new URL(parsed.baseUrl);
@@ -377,8 +428,7 @@ export async function storeModel(
       throw new Error("MODEL_PROTOCOL_MISMATCH");
     endpoint.pathname = endpoint.pathname.slice(0, -suffix[0].length) || "/";
   }
-  if (endpoint.search || endpoint.hash)
-    throw new Error("MODEL_BASE_URL_INVALID");
+  if (endpoint.search || endpoint.hash) throw new Error("MODEL_BASE_URL_INVALID");
   parsed.baseUrl = endpoint.toString().replace(/\/$/, "");
   try {
     await validateEndpoint(parsed.baseUrl);
@@ -441,9 +491,7 @@ export async function probeVision(env: AppEnv, id: string) {
     vision,
     visionTestedAt: now(),
   };
-  await env.DB.prepare(
-    "UPDATE model_profiles SET capabilities=? WHERE id=? AND version=?",
-  )
+  await env.DB.prepare("UPDATE model_profiles SET capabilities=? WHERE id=? AND version=?")
     .bind(JSON.stringify(capabilities), id, profile.version)
     .run();
   return capabilities;

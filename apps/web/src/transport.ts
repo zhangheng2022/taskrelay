@@ -26,16 +26,21 @@ export function createWebTransport(): Transport {
   const canConnect = () => subscribers.size > 0 && !document.hidden && navigator.onLine !== false;
   const reconnect = () => {
     if (!canConnect() || timer !== undefined) return;
-    timer = setTimeout(() => {
-      timer = undefined;
-      connect();
-    }, Math.min(60000, 3000 * 2 ** Math.min(failures++, 5)));
+    timer = setTimeout(
+      () => {
+        timer = undefined;
+        connect();
+      },
+      Math.min(60000, 3000 * 2 ** Math.min(failures++, 5)),
+    );
   };
   const connect = () => {
     if (!canConnect() || socket) return;
     let connection: WebSocket;
     try {
-      connection = new WebSocket(`${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/api/user/events`);
+      connection = new WebSocket(
+        `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/api/user/events`,
+      );
     } catch {
       reconnect();
       return;
@@ -75,7 +80,7 @@ export function createWebTransport(): Transport {
 
   return {
     // 同源图片请求沿用网站会话；地址不携带令牌，服务端仍检查图片归属。
-    artifactUrl: id => `/api/user/artifacts/${encodeURIComponent(id)}`,
+    artifactUrl: (id) => `/api/user/artifacts/${encodeURIComponent(id)}`,
     subscribe(listener) {
       // 同一个回调的两次订阅仍独立计数，避免其中一次退订提前释放共享资源。
       const subscription = () => listener();
@@ -96,8 +101,13 @@ export function createWebTransport(): Transport {
         document.removeEventListener("visibilitychange", visibility);
       };
     },
-    request<T>(method: string, path: string, body?: unknown, options?:{signal?:AbortSignal}): Promise<T> {
-      return requestJson<T>(path, { method, body,signal:options?.signal });
+    request<T>(
+      method: string,
+      path: string,
+      body?: unknown,
+      options?: { signal?: AbortSignal },
+    ): Promise<T> {
+      return requestJson<T>(path, { method, body, signal: options?.signal });
     },
   };
 }

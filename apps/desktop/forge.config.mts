@@ -19,12 +19,9 @@ const config: ForgeConfig = {
     // sharp loads its platform addon and companion DLLs from the same directory.
     asar: { unpack: "**/node_modules/@img/**/*" },
     prune: false,
-    extraResource: [
-      "browser",
-      "stagehand-extension",
-      "icon.png",
-      "NOTICE.txt",
-    ].map((p) => path.join(root, "resources", p)),
+    extraResource: ["browser", "stagehand-extension", "icon.png", "NOTICE.txt"].map((p) =>
+      path.join(root, "resources", p),
+    ),
     ignore: (file) =>
       file.startsWith("/node_modules/.vite") ||
       (!!file &&
@@ -34,16 +31,16 @@ const config: ForgeConfig = {
   },
   hooks: {
     prePackage: async () => {
-      await promisify(execFile)(
-        process.execPath,
-        [path.join(root, "scripts/stage-runtime.mjs")],
-        { cwd: root, windowsHide: true, timeout: 180000 },
-      );
-      await promisify(execFile)(
-        process.execPath,
-        [path.join(root, "scripts/verify-browser.mjs")],
-        { cwd: root, windowsHide: true, timeout: 180000 },
-      );
+      await promisify(execFile)(process.execPath, [path.join(root, "scripts/stage-runtime.mjs")], {
+        cwd: root,
+        windowsHide: true,
+        timeout: 180000,
+      });
+      await promisify(execFile)(process.execPath, [path.join(root, "scripts/verify-browser.mjs")], {
+        cwd: root,
+        windowsHide: true,
+        timeout: 180000,
+      });
     },
   },
   makers: [

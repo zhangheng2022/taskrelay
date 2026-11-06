@@ -1,1 +1,6 @@
-{"name":"@taskrelay/contracts","private":true,"type":"module","exports":"./src/index.ts"}
+{
+  "name": "@taskrelay/contracts",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts"
+}

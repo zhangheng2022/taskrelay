@@ -4,9 +4,7 @@ import { ExecutorApp } from "../../../../packages/ui/src/executor-app";
 import type { Transport } from "../../../../packages/contracts/src/index";
 declare global {
   interface Window {
-    taskrelay: NonNullable<Transport['desktop']>;
+    taskrelay: NonNullable<Transport["desktop"]>;
   }
 }
-createRoot(document.getElementById("root")!).render(
-  <ExecutorApp executor={window.taskrelay} />,
-);
+createRoot(document.getElementById("root")!).render(<ExecutorApp executor={window.taskrelay} />);

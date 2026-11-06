@@ -4,9 +4,7 @@ import { execFileSync } from "node:child_process";
 import { readFile, writeFile, stat } from "node:fs/promises";
 import path from "node:path";
 const root = path.resolve(import.meta.dirname, "..");
-const desktop = JSON.parse(
-  await readFile(path.join(root, "apps/desktop/package.json"), "utf8"),
-);
+const desktop = JSON.parse(await readFile(path.join(root, "apps/desktop/package.json"), "utf8"));
 const files = [
   "apps/desktop/out/make/squirrel.windows/x64/TaskRelay Setup.exe",
   `apps/desktop/out/make/squirrel.windows/x64/TaskRelay-${desktop.version}-full.nupkg`,
@@ -32,30 +30,44 @@ const packagedAt = (await stat(path.join(root, packagedAsar.file))).mtimeMs;
 for (const name of ["packaged-smoke", "installed-smoke"]) {
   if ((await stat(path.join(root, `out/${name}.json`))).mtimeMs < packagedAt)
     throw new Error(`${name} belongs to an older build`);
-  reports[name] = JSON.parse(
-    await readFile(path.join(root, `out/${name}.json`), "utf8"),
-  );
+  reports[name] = JSON.parse(await readFile(path.join(root, `out/${name}.json`), "utf8"));
   if (!reports[name].passed) throw new Error(`${name} has not passed`);
-  if (reports[name].stagehand !== desktop.dependencies['@browserbasehq/stagehand'] ||
-      reports[name].cdpVersion !== desktop.dependencies['chrome-remote-interface'] ||
-      reports[name].cdpPolicy !== true || reports[name].cdpStateRoundtrip !== true)
+  if (
+    reports[name].stagehand !== desktop.dependencies["@browserbasehq/stagehand"] ||
+    reports[name].cdpVersion !== desktop.dependencies["chrome-remote-interface"] ||
+    reports[name].cdpPolicy !== true ||
+    reports[name].cdpStateRoundtrip !== true
+  )
     throw new Error(`${name} does not verify the installed runtime dependencies`);
   if (reports[name].version !== desktop.version || reports[name].asarSha256 !== packagedAsar.sha256)
     throw new Error(`${name} does not identify this version and ASAR`);
 }
 const installedReport = reports["installed-smoke"];
-if (typeof installedReport.resourcesPath !== "string" || !path.isAbsolute(installedReport.resourcesPath) ||
-    typeof installedReport.executablePath !== "string" || !path.isAbsolute(installedReport.executablePath))
+const systemEntry = JSON.parse(await readFile(path.join(root, "out/system-entry.json"), "utf8"));
+if (
+  systemEntry.runner !== "github-hosted" ||
+  systemEntry.version !== desktop.version ||
+  systemEntry.asarSha256 !== packagedAsar.sha256 ||
+  systemEntry.executablePath?.toLowerCase() !== installedReport.executablePath?.toLowerCase() ||
+  new Date(systemEntry.checkedAt).getTime() < packagedAt ||
+  !systemEntry.shortcut?.endsWith(".lnk")
+)
+  throw Error("SYSTEM_ENTRY_ACCEPTANCE_REQUIRED");
+if (
+  typeof installedReport.resourcesPath !== "string" ||
+  !path.isAbsolute(installedReport.resourcesPath) ||
+  typeof installedReport.executablePath !== "string" ||
+  !path.isAbsolute(installedReport.executablePath)
+)
   throw new Error("Installed smoke must identify its actual executable and resources");
-const installedAsar = path.join(
-  installedReport.resourcesPath,
-  "app.asar",
-);
-if (realpathSync.native(path.join(path.dirname(installedReport.executablePath), "resources")) !== realpathSync.native(installedReport.resourcesPath))
+const installedAsar = path.join(installedReport.resourcesPath, "app.asar");
+if (
+  realpathSync.native(path.join(path.dirname(installedReport.executablePath), "resources")) !==
+  realpathSync.native(installedReport.resourcesPath)
+)
   throw new Error("Installed executable and resources do not belong together");
 const installedHash = createHash("sha256");
-for await (const chunk of createReadStream(installedAsar))
-  installedHash.update(chunk);
+for await (const chunk of createReadStream(installedAsar)) installedHash.update(chunk);
 if (installedHash.digest("hex") !== packagedAsar.sha256)
   throw new Error("Installed UI does not match this build");
 const manifest = {
@@ -65,7 +77,11 @@ const manifest = {
     windowsHide: true,
     encoding: "utf8",
   }).trim(),
-  sourceDirty: !!execFileSync("git", ["status", "--porcelain"], { cwd: root, windowsHide: true, encoding: "utf8" }).trim(),
+  sourceDirty: !!execFileSync("git", ["status", "--porcelain"], {
+    cwd: root,
+    windowsHide: true,
+    encoding: "utf8",
+  }).trim(),
   generatedAt: new Date().toISOString(),
   platform: "Windows x64",
   signed: false,
@@ -74,7 +90,10 @@ const manifest = {
   reports,
   installedAsarPath: realpathSync.native(installedAsar),
   installedAsarMatches: true,
+  systemEntry,
+  actionsRunId: process.env.GITHUB_RUN_ID ?? null,
 };
+if (manifest.sourceDirty) throw Error("RELEASE_SOURCE_DIRTY");
 await writeFile(
   path.join(root, "out/release-manifest.json"),
   JSON.stringify(manifest, null, 2) + "\n",

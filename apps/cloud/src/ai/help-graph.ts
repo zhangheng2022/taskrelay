@@ -2,40 +2,26 @@
  * 执行器求助图：读取当前任务上下文、生成协助答复，必要时暂停等待用户原文回复。
  * 发布前校验租约与最新用户消息序号，暂停节点不产生副作用，回复按提问轮次恢复。
  */
-import {
-  Annotation,
-  Command,
-  END,
-  interrupt,
-  START,
-  StateGraph,
-} from "@langchain/langgraph";
+import { Annotation, Command, END, interrupt, START, StateGraph } from "@langchain/langgraph";
 import { z } from "zod";
-import type {
-  ExecutionHelp,
-  HelpResponse,
-} from "../../../../packages/contracts/src/execution";
+import type { ExecutionHelp, HelpResponse } from "../../../../packages/contracts/src/execution";
 import type { Message } from "../../../../packages/model/src/index";
 import type { AppEnv } from "../env";
-import {
-  messageStatement,
-  conversationContext,
-  runThread,
-} from "../chat-messages";
+import { messageStatement, conversationContext, runThread } from "../chat-messages";
 import { seal, unseal } from "../crypto";
 import { getRun, now, requireLease, type Row } from "../store";
 import { openGraph } from "./graph";
 import { RelayChatModel } from "./model";
 import type { GraphEvent } from "./dispatch";
 import { graphWriteFence } from "./fence";
-import { accountAllowsOrigin } from '../accounts';
+import { accountAllowsOrigin } from "../accounts";
 
 const answerSchema = z.object({
   message: z.string(),
   askUser: z.boolean(),
   accountId: z.string().nullable(),
 });
-type Account = { id: string; name: string; origin: string; login_origins:string };
+type Account = { id: string; name: string; origin: string; login_origins: string };
 const State = Annotation.Root({
   round: Annotation<number>({ reducer: (_, v) => v, default: () => 0 }),
   messages: Annotation<Message[]>(),
@@ -60,9 +46,7 @@ export async function executeHelpGraph(env: AppEnv, event: GraphEvent) {
   const guard = async () => {
     await requireLease(env.DB, run.id, run.deviceId!, run.leaseEpoch);
     await runThread(env, run.id);
-    await env.DB.prepare(
-      "UPDATE ai_dispatch SET lease_until=? WHERE id=? AND state='running'",
-    )
+    await env.DB.prepare("UPDATE ai_dispatch SET lease_until=? WHERE id=? AND state='running'")
       .bind(new Date(Date.now() + 180_000).toISOString(), event.id)
       .run();
   };
@@ -111,12 +95,8 @@ export async function executeHelpGraph(env: AppEnv, event: GraphEvent) {
       const conversation = await conversationContext(env, stored.thread_id, 0, {
         runId: run.id,
       });
-      const userMessages = conversation.filter(
-        (m) => m.role === "user" || m.private,
-      );
-      const executionHistory = conversation.filter(
-        (m) => m.role !== "user" && !m.private,
-      );
+      const userMessages = conversation.filter((m) => m.role === "user" || m.private);
+      const executionHistory = conversation.filter((m) => m.role !== "user" && !m.private);
       const available = await env.DB.prepare(
         `SELECT a.id,a.name,a.origin,v.login_origins FROM accounts a
         JOIN runs r ON r.account_id=a.id AND r.user_id=a.user_id
@@ -126,11 +106,8 @@ export async function executeHelpGraph(env: AppEnv, event: GraphEvent) {
       )
         .bind(run.userId, run.deviceId, run.id)
         .all<Account>();
-      const accounts = available.results.filter(
-        (a) => accountAllowsOrigin(a,help.origin),
-      );
-      const latestUserSeq =
-        conversation.filter((m) => m.role === "user").at(-1)?.seq ?? 0;
+      const accounts = available.results.filter((a) => accountAllowsOrigin(a, help.origin));
+      const latestUserSeq = conversation.filter((m) => m.role === "user").at(-1)?.seq ?? 0;
       const messages: Message[] = [
         {
           role: "system",
@@ -148,7 +125,15 @@ export async function executeHelpGraph(env: AppEnv, event: GraphEvent) {
           }),
         },
       ];
-      return { messages, accounts, latestUserSeq,history:executionHistory.map(message=>({role:"assistant" as const,content:message.content})) };
+      return {
+        messages,
+        accounts,
+        latestUserSeq,
+        history: executionHistory.map((message) => ({
+          role: "assistant" as const,
+          content: message.content,
+        })),
+      };
     })
     .addNode("solve", async (state) => {
       await runtime.guard();
@@ -163,7 +148,7 @@ export async function executeHelpGraph(env: AppEnv, event: GraphEvent) {
         runtime.generation,
       );
       return {
-        answer: await model.runAgent(answerSchema,state.messages,state.history,runtime.guard),
+        answer: await model.runAgent(answerSchema, state.messages, state.history, runtime.guard),
       };
     })
     .addNode("publish", async (state) => {
@@ -172,13 +157,19 @@ export async function executeHelpGraph(env: AppEnv, event: GraphEvent) {
         account = result.accountId
           ? state.accounts.find((a) => a.id === result.accountId)
           : undefined;
-      if (!result.askUser && result.accountId && !account)
-        throw Error("CREDENTIAL_NOT_AUTHORIZED");
+      if (!result.askUser && result.accountId && !account) throw Error("CREDENTIAL_NOT_AUTHORIZED");
       // 一个浏览器环境只属于一个账号；协助不能绕过调度把其他账号密码填入当前 Profile。
-      if (!result.askUser && account && !(await env.DB.prepare(
-        `SELECT r.id FROM runs r JOIN account_locks l ON l.run_id=r.id AND l.account_key=r.account_id
+      if (
+        !result.askUser &&
+        account &&
+        !(await env.DB.prepare(
+          `SELECT r.id FROM runs r JOIN account_locks l ON l.run_id=r.id AND l.account_key=r.account_id
          WHERE r.id=? AND r.account_id=? AND r.device_id=? AND r.lease_epoch=? AND r.lease_expires_at>? AND r.cancel_requested=0`,
-      ).bind(run.id,account.id,run.deviceId,run.leaseEpoch,now()).first()))throw Error('ACCOUNT_CONTEXT_MISMATCH');
+        )
+          .bind(run.id, account.id, run.deviceId, run.leaseEpoch, now())
+          .first())
+      )
+        throw Error("ACCOUNT_CONTEXT_MISMATCH");
       const response: HelpResponse = {
         ready: !result.askUser,
         message: result.message,
@@ -187,34 +178,28 @@ export async function executeHelpGraph(env: AppEnv, event: GraphEvent) {
       const { message, ...references } = response;
       const encoded = JSON.stringify({
         ...references,
-        encrypted: await seal(
-          { message },
-          env.MASTER_KEY,
-          `help:${run.id}:${help.id}`,
-        ),
+        encrypted: await seal({ message }, env.MASTER_KEY, `help:${run.id}:${help.id}`),
       });
-      const graphFence = graphWriteFence(
-        run.userId,
-        event.graph_id,
-        runtime.generation,
-      );
+      const graphFence = graphWriteFence(run.userId, event.graph_id, runtime.generation);
       const publicationFence = {
         sql: `${graphFence.sql} AND (SELECT COALESCE(MAX(seq),0) FROM ai_messages WHERE thread_id=? AND role='user')=?`,
         values: [...graphFence.values, stored.thread_id, state.latestUserSeq],
       };
-      const publication = result.askUser ? await messageStatement(
-        env,
-        stored.thread_id,
-        {
-          id: `${event.graph_id}:${state.round}:question`,
-          source: "cloud",
-          content: result.message,
-          private: true,
-          runId: run.id,
-          replyTo: help.id + "_request",
-        },
-        publicationFence,
-      ) : null;
+      const publication = result.askUser
+        ? await messageStatement(
+            env,
+            stored.thread_id,
+            {
+              id: `${event.graph_id}:${state.round}:question`,
+              source: "cloud",
+              content: result.message,
+              private: true,
+              runId: run.id,
+              replyTo: help.id + "_request",
+            },
+            publicationFence,
+          )
+        : null;
       const [saved] = await env.DB.batch([
         env.DB.prepare(
           `UPDATE execution_help SET response=?,awaiting_user=?,reply_message_id=NULL,question_round=?,interrupt_id=NULL
@@ -263,10 +248,7 @@ export async function executeHelpGraph(env: AppEnv, event: GraphEvent) {
     .addEdge(START, "context")
     .addEdge("context", "solve")
     .addEdge("solve", "publish")
-    .addConditionalEdges("publish", (state) => (state.ready ? END : "wait"), [
-      END,
-      "wait",
-    ])
+    .addConditionalEdges("publish", (state) => (state.ready ? END : "wait"), [END, "wait"])
     .addEdge("wait", "context")
     .compile({ checkpointer: runtime.saver });
   const prior = await runtime.saver.getTuple(runtime.config);
@@ -298,14 +280,10 @@ export async function executeHelpGraph(env: AppEnv, event: GraphEvent) {
   await runtime.run(() => graph.invoke(input, runtime.config));
   const snapshot = await runtime.run(() => graph.getState(runtime.config)),
     pending = snapshot.tasks.flatMap((task) => task.interrupts ?? [])[0];
-  await env.DB.prepare(
-    "UPDATE execution_help SET interrupt_id=? WHERE id=? AND graph_id=?",
-  )
+  await env.DB.prepare("UPDATE execution_help SET interrupt_id=? WHERE id=? AND graph_id=?")
     .bind(pending?.id ?? null, help.id, event.graph_id)
     .run();
-  await env.DB.prepare(
-    "UPDATE ai_graph_inputs SET status=? WHERE owner=? AND id=? AND active=1",
-  )
+  await env.DB.prepare("UPDATE ai_graph_inputs SET status=? WHERE owner=? AND id=? AND active=1")
     .bind(pending ? "waiting" : "done", run.userId, event.graph_id)
     .run();
 }

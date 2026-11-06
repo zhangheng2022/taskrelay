@@ -1,5 +1,23 @@
 # TaskRelay 当前架构
 
+交付由 GitHub Actions 拥有：Quality 在 PR 与 master 汇总固定 `quality-gate`，手动 Production release 只接受同一 SHA 的主分支成功报告。发布状态机以 D1 settings 的 `productionRelease` 做条件更新，保存原开关、恢复点及不可变产物引用；失败不自动恢复领取或回滚数据库。0028 触发器在领取事务中检查暂停状态，管理员设置入口拒绝与进行中的发布竞争。更新目录由 RequestCoordinator 从 D1 `desktopReleaseCatalog` 读取；Worker 只路由，旧编译目录仅作首次初始化。
+
+```mermaid
+flowchart TD
+    PR[PR 检查] --> G[quality-gate]
+    G --> M[合并 master 并重新检查]
+    M --> R[手动发布固定 SHA]
+    R --> W[托管 Windows 构建与实际安装验收]
+    R --> B[托管 Linux 构建网站]
+    W --> P[暂停领取并确认清理]
+    B --> P
+    P --> D[D1 恢复点与迁移]
+    D --> C[云端和网页部署]
+    C --> A[不可变 Release 与下载哈希校验]
+    A --> U[D1 更新目录切换]
+    U --> E[核验兼容设备并恢复原开关]
+```
+
 Main 的浏览器关闭／下载策略和账号状态适配器统一经 LocalCdp 调用 chrome-remote-interface，删除两套请求编号、响应分发和 WebSocket 生命周期代码。LocalCdp 只校验同端口 127.0.0.1 浏览器端点、固定错误与命令超时；SDK 使用本地协议，不拉取外部协议。CRI 0.34.0 尚无公开握手选项，scripts/cdp-policy.mjs 以版本及完整上游源码 SHA-256 校验后，仅禁止重定向、设置 4 秒握手与 1 秒关闭截止；安装和生产依赖暂存均应用，依赖升级必须复审此补丁。请求超时关闭连接并拒绝后续发送；不自动重试浏览器操作。浏览器进程及退出确认仍归 Main。
 
 网站用户／管理员路由改为 Hono 可推导链式组合，前端 hc 只导入路由类型，网络发送仍经 Transport。Transport 支持主动取消：读取取消与超时分开；写入已发出后取消仍是结果未确认。TanStack Query 管理工作空间、账号摘要、设置和本机状态读取；缓存仅在当前用户组件树内存中，退出／切换时取消并清空，无隐式重试或离线写入队列。敏感账号详情、密码与卡片草稿不进入缓存；聊天保留 requestId、会话版本及双游标协议。Better Auth React 管认证请求与会话变化，成功后仍经本人成员接口复核。模型编辑由 React Hook Form＋Zod 管理，刷新不覆盖草稿。
@@ -10,13 +28,13 @@ Main 的浏览器关闭／下载策略和账号状态适配器统一经 LocalCdp
 
 ## 职责与事实归属
 
-| 层 | 职责 |
-| --- | --- |
-| 网站 / packages/ui | 用户隔离的任务聊天、模型选择、账号与设置、执行过程和图片；一个输入框承接交办、补充和协助 |
-| Cloudflare | 应用鉴权、任务版本、运行快照、调度、租约、设备分配、粗步骤规划与协助图、模型出站 |
-| Windows Main | 云端连接、safeStorage 设备令牌、SQLite journal/outbox、浏览器与执行子进程生命周期 |
-| Preload / Renderer | 校验后的命名入口、连接与运行状态、暂停、停止、自启动和诊断；不提供聊天、任务编辑和模型管理 |
-| Executor utilityProcess | 独立 Stagehand 4.4.0，完整观察、规划、操作、纠错与最终回复循环 |
+| 层                      | 职责                                                                                       |
+| ----------------------- | ------------------------------------------------------------------------------------------ |
+| 网站 / packages/ui      | 用户隔离的任务聊天、模型选择、账号与设置、执行过程和图片；一个输入框承接交办、补充和协助   |
+| Cloudflare              | 应用鉴权、任务版本、运行快照、调度、租约、设备分配、粗步骤规划与协助图、模型出站           |
+| Windows Main            | 云端连接、safeStorage 设备令牌、SQLite journal/outbox、浏览器与执行子进程生命周期          |
+| Preload / Renderer      | 校验后的命名入口、连接与运行状态、暂停、停止、自启动和诊断；不提供聊天、任务编辑和模型管理 |
+| Executor utilityProcess | 独立 Stagehand 4.4.0，完整观察、规划、操作、纠错与最终回复循环                             |
 
 普通 Worker 负责静态资源、health 与路由。请求按认证凭据哈希进入 RequestCoordinator 分片后仍执行完整 Hono 鉴权；分片哈希不是用户身份。Scheduler 执行定时工作，AiTurn 通过持久化 dispatch 与 alarm 处理长对话回合，NotificationHub 用休眠 WebSocket 通知变化，客户端仍从归属校验后的接口读取事实。
 
@@ -41,15 +59,15 @@ Cloudflare 保持 Free，不设置项目级每日平台预算或全站模型上�
 
 ### 图与平台模块的边界
 
-| 模块 | 管理的知识与状态 |
-| --- | --- |
-| `ai/planning-graph.ts`、`ai/help-graph.ts` | 云端规划、协助分支与恢复点；不操作浏览器 |
-| `ai/graph.ts`、`ai/checkpointer.ts` | 图版本、输入摘要、generation、用户归属、加密 D1 checkpoint 与 pending writes；写入同时检查聊天、回合和运行租约 |
-| `ai/dispatch.ts`、`ai/turn.ts` | 持久事件认领与 alarm 唤醒；只推进图，不重复实现模型决策循环 |
-| `ai/model.ts`、`packages/model/src/langchain.ts` | 标准模型接口、云端推理 Agent 与消息适配；结构化输出仍由现有出站 adapter 校验和发送 |
-| `executor/execution-graph.ts` | 官方 createAgent v2 的执行边界，p-limit(1) 按原始调用序号串行执行工具，补齐取消调用的 ToolMessage，处理同进程协助恢复 |
-| `executor/runtime.ts` | 浏览器、页面、凭据、截图、动作登记、停止与云端通信；实现图需要的执行能力 |
-| `executor/session-checkpointer.ts` | 当前 utilityProcess 内最新与父 checkpoint，保留完整序列化类型；不是浏览器崩溃恢复日志 |
+| 模块                                             | 管理的知识与状态                                                                                                      |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| `ai/planning-graph.ts`、`ai/help-graph.ts`       | 云端规划、协助分支与恢复点；不操作浏览器                                                                              |
+| `ai/graph.ts`、`ai/checkpointer.ts`              | 图版本、输入摘要、generation、用户归属、加密 D1 checkpoint 与 pending writes；写入同时检查聊天、回合和运行租约        |
+| `ai/dispatch.ts`、`ai/turn.ts`                   | 持久事件认领与 alarm 唤醒；只推进图，不重复实现模型决策循环                                                           |
+| `ai/model.ts`、`packages/model/src/langchain.ts` | 标准模型接口、云端推理 Agent 与消息适配；结构化输出仍由现有出站 adapter 校验和发送                                    |
+| `executor/execution-graph.ts`                    | 官方 createAgent v2 的执行边界，p-limit(1) 按原始调用序号串行执行工具，补齐取消调用的 ToolMessage，处理同进程协助恢复 |
+| `executor/runtime.ts`                            | 浏览器、页面、凭据、截图、动作登记、停止与云端通信；实现图需要的执行能力                                              |
+| `executor/session-checkpointer.ts`               | 当前 utilityProcess 内最新与父 checkpoint，保留完整序列化类型；不是浏览器崩溃恢复日志                                 |
 
 执行工具由同一份 Zod Schema 生成模型定义并进行运行时校验。afterModel 登记原始工具序号，wrapToolCall 在每次工具前重新校验停止、租约和用户指令；不依赖 maxConcurrency 保证串行。协助先冻结本批剩余调用并执行无副作用 interrupt，外层再登记云端协助；恢复后剩余旧操作返回未执行。空模型回复仅允许一次明确错误反馈后的纠正，结果未知的请求不重发。最终截图或结果提交遇到新指令时沿用同一线程继续。
 

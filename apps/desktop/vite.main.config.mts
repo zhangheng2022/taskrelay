@@ -6,6 +6,8 @@ export default defineConfig({
       formats: ["cjs"],
       fileName: () => "main.cjs",
     },
-    rollupOptions: { external: ["electron-squirrel-startup", "original-fs", "chrome-remote-interface"] },
+    rollupOptions: {
+      external: ["electron-squirrel-startup", "original-fs", "chrome-remote-interface"],
+    },
   },
 });

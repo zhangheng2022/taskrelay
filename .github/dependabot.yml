@@ -5,29 +5,76 @@ updates:
     schedule:
       interval: weekly
       day: monday
-      time: '09:00'
+      time: "09:00"
       timezone: Asia/Shanghai
     open-pull-requests-limit: 10
     versioning-strategy: increase
     commit-message:
-      prefix: '升级依赖'
+      prefix: "升级依赖"
     groups:
       ai-runtime:
-        patterns: ['langchain', '@langchain/*', 'langsmith', '@browserbasehq/*', 'zod', 'openai', 'p-limit']
+        patterns:
+          ["langchain", "@langchain/*", "langsmith", "@browserbasehq/*", "zod", "openai", "p-limit"]
       desktop:
-        patterns: ['electron', 'electron-*', '@electron/*', '@electron-forge/*', '@puppeteer/*', 'sharp', 'ws', '@types/ws', 'chrome-remote-interface', '@types/chrome-remote-interface']
+        patterns:
+          [
+            "electron",
+            "electron-*",
+            "@electron/*",
+            "@electron-forge/*",
+            "@puppeteer/*",
+            "sharp",
+            "ws",
+            "@types/ws",
+            "chrome-remote-interface",
+            "@types/chrome-remote-interface",
+          ]
       cloudflare:
-        patterns: ['@cloudflare/*', 'wrangler', 'miniflare', 'workerd']
+        patterns: ["@cloudflare/*", "wrangler", "miniflare", "workerd"]
       web:
-        patterns: ['react', 'react-dom', '@types/react*', '@shadcn/*', '@tanstack/*', 'react-hook-form', '@hookform/*', 'radix-ui', 'lucide-react', 'tailwind*', '@tailwindcss/*', 'tw-animate-css', 'class-variance-authority', 'clsx', 'cn']
+        patterns:
+          [
+            "react",
+            "react-dom",
+            "@types/react*",
+            "@shadcn/*",
+            "@tanstack/*",
+            "react-hook-form",
+            "@hookform/*",
+            "radix-ui",
+            "lucide-react",
+            "tailwind*",
+            "@tailwindcss/*",
+            "tw-animate-css",
+            "class-variance-authority",
+            "clsx",
+            "cn",
+          ]
       development:
-        patterns: ['typescript', 'tsx', 'vite', '@vitejs/*', 'esbuild', 'jsdom', '@types/jsdom', '@testing-library/*', '@types/node', '@hono/cli']
+        patterns:
+          [
+            "typescript",
+            "tsx",
+            "vite",
+            "@vitejs/*",
+            "esbuild",
+            "jsdom",
+            "@types/jsdom",
+            "@testing-library/*",
+            "@types/node",
+            "@hono/cli",
+            "oxlint",
+            "oxlint-tsgolint",
+            "prettier",
+            "c8",
+            "yaml",
+          ]
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
       day: monday
-      time: '09:00'
+      time: "09:00"
       timezone: Asia/Shanghai
     commit-message:
-      prefix: '升级工作流依赖'
+      prefix: "升级工作流依赖"

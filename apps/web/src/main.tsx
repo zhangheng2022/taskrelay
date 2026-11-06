@@ -7,6 +7,8 @@ import { createWebTransport } from "./transport";
 const transport = createWebTransport();
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <AuthGate transport={transport}><App transport={transport} /></AuthGate>
+    <AuthGate transport={transport}>
+      <App transport={transport} />
+    </AuthGate>
   </React.StrictMode>,
 );
