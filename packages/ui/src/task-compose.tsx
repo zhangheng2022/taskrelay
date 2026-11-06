@@ -75,7 +75,7 @@ export function TaskCompose({
         )}
         {!thread.page?.messages.length && !thread.loading && !thread.sending && (
           <MessageScrollerItem messageId="welcome">
-            <ChatMessage role="assistant">
+            <ChatMessage speaker="assistant">
               描述目标和网站，我会开始执行。有需要你决定的问题，会在这里继续沟通。
             </ChatMessage>
             {!available.length && <Button onClick={onSettings}>查看模型设置</Button>}
@@ -90,7 +90,7 @@ export function TaskCompose({
         )}
         {thread.page?.messages.map((m) => (
           <MessageScrollerItem key={m.id} messageId={m.id}>
-            <ChatMessage role={m.role}>
+            <ChatMessage speaker={m.role}>
               {m.content}
               <ChatAttachments
                 parts={m.parts ?? []}
@@ -103,7 +103,7 @@ export function TaskCompose({
         ))}
         {thread.page?.queued?.map((m) => (
           <MessageScrollerItem key={m.id} messageId={m.id}>
-            <ChatMessage role="user">{m.content}</ChatMessage>
+            <ChatMessage speaker="user">{m.content}</ChatMessage>
           </MessageScrollerItem>
         ))}
         <SendingMessage message={thread.sending} />

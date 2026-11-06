@@ -15,27 +15,32 @@ import type { Transport } from "../../contracts/src/index";
 
 export function QueryBoundary({ owner, children }: { owner: unknown; children: ReactNode }) {
   const inherited = useContext(QueryClientContext);
-  const client = useMemo(
-    () =>
-      inherited ??
-      new QueryClient({
-        defaultOptions: {
-          queries: {
-            retry: false,
-            refetchOnWindowFocus: false,
-            refetchOnReconnect: false,
-            networkMode: "always",
-            gcTime: Infinity,
+  const { client } = useMemo(
+    () => ({
+      owner,
+      client:
+        inherited ??
+        new QueryClient({
+          defaultOptions: {
+            queries: {
+              retry: false,
+              refetchOnWindowFocus: false,
+              refetchOnReconnect: false,
+              networkMode: "always",
+              gcTime: Infinity,
+            },
+            mutations: { retry: false, networkMode: "always", gcTime: 0 },
           },
-          mutations: { retry: false, networkMode: "always", gcTime: 0 },
-        },
-      }),
+        }),
+    }),
     [inherited, owner],
   );
   useEffect(
     () => () => {
       if (!inherited) {
-        void client.cancelQueries();
+        void client.cancelQueries().catch(() => {
+          /* 卸载时缓存仍在下方清空，不恢复旧用户读取。 */
+        });
         client.clear();
       }
     },
@@ -67,12 +72,16 @@ export function useTransportQuery<T>(
     return transport.subscribe?.(() => {
       void client
         .cancelQueries({ queryKey, exact: true })
-        .then(() => client.invalidateQueries({ queryKey, exact: true }));
+        .then(() => client.invalidateQueries({ queryKey, exact: true }))
+        .catch(() => {
+          /* 读取错误由 Query 的 error 状态呈现，后续通知或轮询可刷新。 */
+        });
     });
   }, [transport, client, encoded, enabled]);
+  const { refetch } = query;
   const refresh = useCallback(async () => {
     await client.cancelQueries({ queryKey: JSON.parse(encoded), exact: true });
-    await query.refetch({ throwOnError: true });
-  }, [client, encoded, query.refetch]);
+    await refetch({ throwOnError: true });
+  }, [client, encoded, refetch]);
   return { ...query, refresh };
 }

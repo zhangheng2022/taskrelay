@@ -39,7 +39,7 @@ const descriptions = {
 } satisfies Record<keyof typeof schemas, string>;
 export const executorArguments = schemas;
 export const executorTools = Object.entries(schemas).map(([name, schema]) => {
-  const { $schema, ...parameters } = z.toJSONSchema(schema);
+  const { $schema: _schema, ...parameters } = z.toJSONSchema(schema);
   return { name, description: descriptions[name as keyof typeof schemas], parameters };
 });
 export type ChatPart =

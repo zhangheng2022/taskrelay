@@ -9,7 +9,7 @@ export const authClient = createAuthClient({
     timeout: 30000,
     redirect: "error",
     customFetchImpl: async (input, init) => {
-      const data = await requestJson(String(input), {
+      const data = await requestJson(input instanceof Request ? input.url : input.toString(), {
         method: init?.method,
         body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
         headers: Object.fromEntries(new Headers(init?.headers)),

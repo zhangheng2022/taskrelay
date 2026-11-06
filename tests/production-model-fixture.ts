@@ -1,3 +1,4 @@
+import { requestUrl, jsonBody } from "./http-fixture";
 import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { app } from "../apps/cloud/src/index";
@@ -66,7 +67,7 @@ export async function productionModelFixture(
   const requests: { url: string; body: any }[] = [];
   let replies: (string | Error | Response)[] = [];
   t.mock.method(globalThis, "fetch", async (input: string | URL, init?: RequestInit) => {
-    const url = String(input);
+    const url = requestUrl(input);
     if (url.startsWith("https://cloudflare-dns.com/dns-query"))
       return Response.json({
         Status: 0,
@@ -74,7 +75,7 @@ export async function productionModelFixture(
       });
     assert.ok(url.startsWith("https://provider.example/v1/"));
     assert.equal(init?.redirect, "manual");
-    requests.push({ url, body: JSON.parse(String(init?.body)) });
+    requests.push({ url, body: jsonBody(init?.body) });
     let reply = responder ? responder(requests.at(-1)!.body) : replies.shift();
     // This fixture supplies a model answer, including the current conversation decision contract.
     if (typeof reply === "string")

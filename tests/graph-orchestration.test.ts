@@ -1,3 +1,4 @@
+import { requestUrl } from "./http-fixture";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { productionModelFixture } from "./production-model-fixture";
@@ -83,7 +84,7 @@ test("首次协助推理期间普通补充自动持久唤醒，不要求用户�
   let injected = false;
   t.mock.method(globalThis, "fetch", async (input: string | URL | Request, init?: RequestInit) => {
     const response = await provider(input, init);
-    if (!injected && String(input).startsWith("https://provider.example/")) {
+    if (!injected && requestUrl(input).startsWith("https://provider.example/")) {
       injected = true;
       const posted = await s.request(`/api/user/threads/${s.thread.id}/messages`, {
         requestId: "during_first_solve",

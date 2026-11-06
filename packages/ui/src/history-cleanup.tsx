@@ -54,11 +54,16 @@ export function HistoryCleanup({
   useEffect(() => {
     let alive = true;
     const version = revision.current;
-    void rpcData(createApi(transport).api.user["history-cleanups"].$get())
-      .then((next) => {
+    void (async () => {
+      try {
+        const next = await rpcData(createApi(transport).api.user["history-cleanups"].$get());
         if (alive && version === revision.current && Array.isArray(next)) setJobs(next);
-      })
-      .catch(() => {});
+      } catch {
+        // 首次读取失败不提交清理，后续打开对话框可重新读取。
+      }
+    })().catch(() => {
+      /* 请求异常在内部处理，卸载期间不再更新清理状态。 */
+    });
     return () => {
       alive = false;
     };
@@ -71,18 +76,20 @@ export function HistoryCleanup({
       if (reading) return;
       reading = true;
       const version = revision.current;
-      void rpcData(createApi(transport).api.user["history-cleanups"].$get())
-        .then((next) => {
+      void (async () => {
+        try {
+          const next = await rpcData(createApi(transport).api.user["history-cleanups"].$get());
           if (!alive || version !== revision.current || !Array.isArray(next)) return;
           setJobs(next);
           if (!next.length) setNotice("聊天记录已清理完成");
-        })
-        .catch(() => {
+        } catch {
           if (alive) setNotice("暂时无法读取清理进度，恢复连接后会继续更新");
-        })
-        .finally(() => {
+        } finally {
           reading = false;
-        });
+        }
+      })().catch(() => {
+        /* finally 已解除读取标记，下个轮询仍可重试。 */
+      });
     }, 3000);
     return () => {
       alive = false;

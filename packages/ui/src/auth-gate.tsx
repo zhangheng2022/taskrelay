@@ -19,6 +19,12 @@ import { requestJson } from "./request";
 import { BrandMark } from "./brand-mark";
 import { authClient, authResult, botHeaders } from "./auth-client";
 import { QueryBoundary } from "./queries";
+function formText(form: FormData, name: string) {
+  const value = form.get(name);
+  if (value === null) return "";
+  if (typeof value !== "string") throw Error("AUTH_FORM_INVALID");
+  return value;
+}
 type Turnstile = {
   render: (el: HTMLElement, options: Record<string, unknown>) => string;
   remove: (id: string) => void;
@@ -100,21 +106,28 @@ export function AuthGate({ transport, children }: { transport: Transport; childr
         timeoutMs: 15000,
         signal: controller.signal,
       }),
-    ]).then(([me, cfg]) => {
-      if (!live) return;
-      if (me.status === "fulfilled") {
-        setMemberId(me.value.id);
-        setReady(true);
-      } else {
-        setReady(false);
-        setMemberId("");
-        if (!["AUTH_REQUIRED", "ACCESS_REQUIRED"].includes(me.reason.message))
-          setLoadError(me.reason.message);
-      }
-      if (cfg.status === "fulfilled") setConfig(cfg.value);
-      else if (me.status !== "fulfilled") setLoadError(cfg.reason.message);
-      setLoading(false);
-    });
+    ])
+      .then(([me, cfg]) => {
+        if (!live) return;
+        if (me.status === "fulfilled") {
+          setMemberId(me.value.id);
+          setReady(true);
+        } else {
+          setReady(false);
+          setMemberId("");
+          if (!["AUTH_REQUIRED", "ACCESS_REQUIRED"].includes(me.reason.message))
+            setLoadError(me.reason.message);
+        }
+        if (cfg.status === "fulfilled") setConfig(cfg.value);
+        else if (me.status !== "fulfilled") setLoadError(cfg.reason.message);
+        setLoading(false);
+      })
+      .catch(() => {
+        if (live) {
+          setLoadError("WORKSPACE_LOAD_FAILED");
+          setLoading(false);
+        }
+      });
     return () => {
       live = false;
       controller.abort();
@@ -178,69 +191,71 @@ export function AuthGate({ transport, children }: { transport: Transport; childr
           <form
             key={mode}
             id="auth-form"
-            onSubmit={async (e) => {
-              e.preventDefault();
-              const element = e.currentTarget,
-                f = new FormData(element);
-              setBusy(true);
-              setError("");
-              setNote("");
-              try {
-                const email = String(f.get("email") ?? "");
-                const password = String(f.get("password") ?? "");
-                if (mode === "login") {
-                  await authResult(authClient.signIn.email({ email, password }));
-                  setRetry((value) => value + 1);
-                } else if (mode === "register") {
-                  await authResult(
-                    authClient.signUp.email(
-                      {
-                        email,
-                        password,
-                        name: String(f.get("name")),
-                        callbackURL: location.origin + "/",
-                      },
-                      botHeaders(token),
-                    ),
-                  );
-                  setNote("请检查邮箱，点击验证链接后登录。");
-                } else if (mode === "forgot") {
-                  await authResult(
-                    authClient.requestPasswordReset(
-                      { email, redirectTo: location.origin + "/" },
-                      botHeaders(token),
-                    ),
-                  );
-                  setNote("如果邮箱已注册，将收到重置密码邮件。");
-                } else if (mode === "verify") {
-                  await authResult(
-                    authClient.sendVerificationEmail(
-                      { email, callbackURL: location.origin + "/" },
-                      botHeaders(token),
-                    ),
-                  );
-                  setNote("请检查验证邮件。");
-                } else {
-                  await authResult(
-                    authClient.resetPassword({ newPassword: password, token: resetToken ?? "" }),
-                  );
-                  history.replaceState(null, "", location.pathname);
-                  setMode("login");
-                  setReady(false);
-                  setNote("密码已更新，请重新登录。");
+            onSubmit={(e) => {
+              void (async () => {
+                e.preventDefault();
+                const element = e.currentTarget,
+                  f = new FormData(element);
+                setBusy(true);
+                setError("");
+                setNote("");
+                try {
+                  const email = formText(f, "email");
+                  const password = formText(f, "password");
+                  if (mode === "login") {
+                    await authResult(authClient.signIn.email({ email, password }));
+                    setRetry((value) => value + 1);
+                  } else if (mode === "register") {
+                    await authResult(
+                      authClient.signUp.email(
+                        {
+                          email,
+                          password,
+                          name: formText(f, "name"),
+                          callbackURL: location.origin + "/",
+                        },
+                        botHeaders(token),
+                      ),
+                    );
+                    setNote("请检查邮箱，点击验证链接后登录。");
+                  } else if (mode === "forgot") {
+                    await authResult(
+                      authClient.requestPasswordReset(
+                        { email, redirectTo: location.origin + "/" },
+                        botHeaders(token),
+                      ),
+                    );
+                    setNote("如果邮箱已注册，将收到重置密码邮件。");
+                  } else if (mode === "verify") {
+                    await authResult(
+                      authClient.sendVerificationEmail(
+                        { email, callbackURL: location.origin + "/" },
+                        botHeaders(token),
+                      ),
+                    );
+                    setNote("请检查验证邮件。");
+                  } else {
+                    await authResult(
+                      authClient.resetPassword({ newPassword: password, token: resetToken ?? "" }),
+                    );
+                    history.replaceState(null, "", location.pathname);
+                    setMode("login");
+                    setReady(false);
+                    setNote("密码已更新，请重新登录。");
+                  }
+                } catch (e) {
+                  setError((e as Error).message);
+                } finally {
+                  element
+                    .querySelectorAll<HTMLInputElement>("input[type=password]")
+                    .forEach((input) => {
+                      input.value = "";
+                    });
+                  setBusy(false);
+                  setToken("");
+                  setEpoch((x) => x + 1);
                 }
-              } catch (e) {
-                setError((e as Error).message);
-              } finally {
-                element
-                  .querySelectorAll<HTMLInputElement>("input[type=password]")
-                  .forEach((input) => {
-                    input.value = "";
-                  });
-                setBusy(false);
-                setToken("");
-                setEpoch((x) => x + 1);
-              }
+              })().catch((error: Error) => setError(error.message));
             }}
           >
             <FieldGroup>
@@ -315,7 +330,9 @@ export function AuthGate({ transport, children }: { transport: Transport; childr
 export function AccountSecurity() {
   const queryClient = useContext(QueryClientContext);
   const resetSession = () => {
-    void queryClient?.cancelQueries();
+    void queryClient?.cancelQueries().catch(() => {
+      /* 退出仍清空缓存并重载，不保留旧会话。 */
+    });
     queryClient?.clear();
     location.reload();
   };
@@ -323,27 +340,29 @@ export function AccountSecurity() {
     [error, setError] = useState("");
   return (
     <form
-      onSubmit={async (e) => {
-        e.preventDefault();
-        const element = e.currentTarget,
-          f = new FormData(element);
-        setBusy(true);
-        setError("");
-        try {
-          await authResult(
-            authClient.changePassword({
-              currentPassword: String(f.get("current")),
-              newPassword: String(f.get("next")),
-              revokeOtherSessions: true,
-            }),
-          );
-          resetSession();
-        } catch (e) {
-          setError((e as Error).message);
-        } finally {
-          element.reset();
-          setBusy(false);
-        }
+      onSubmit={(e) => {
+        void (async () => {
+          e.preventDefault();
+          const element = e.currentTarget,
+            f = new FormData(element);
+          setBusy(true);
+          setError("");
+          try {
+            await authResult(
+              authClient.changePassword({
+                currentPassword: formText(f, "current"),
+                newPassword: formText(f, "next"),
+                revokeOtherSessions: true,
+              }),
+            );
+            resetSession();
+          } catch (e) {
+            setError((e as Error).message);
+          } finally {
+            element.reset();
+            setBusy(false);
+          }
+        })().catch((error: Error) => setError(error.message));
       }}
     >
       <FieldGroup>

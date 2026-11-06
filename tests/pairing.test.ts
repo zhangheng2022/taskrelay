@@ -13,7 +13,7 @@ test("匿名来源不能占满配对容量；限流原子生效且不阻止其�
     MASTER_KEY: Buffer.alloc(32, 9).toString("base64"),
     DEV_MODE: "0",
   } as AppEnv;
-  const start = (ip: string) =>
+  const start = async (ip: string) =>
     app.request(
       "https://example.com/api/pair/start",
       {

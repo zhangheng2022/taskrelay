@@ -1,3 +1,4 @@
+import { socketText } from "./http-fixture";
 import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
@@ -49,7 +50,7 @@ test("CDP SDK 按调用编号配对乱序响应并隔离 session 事件", async 
   const f = await fixture(t);
   f.sockets.on("connection", (socket) =>
     socket.on("message", (raw) => {
-      const message = JSON.parse(raw.toString());
+      const message = JSON.parse(socketText(raw));
       setTimeout(
         () => {
           socket.send(
@@ -83,7 +84,7 @@ test("断连拒绝等待命令，超时关闭连接且不能发送下一命令",
   const f = await fixture(t);
   f.sockets.on("connection", (socket) =>
     socket.on("message", (raw) => {
-      if (JSON.parse(raw.toString()).params.disconnect) socket.terminate();
+      if (JSON.parse(socketText(raw)).params.disconnect) socket.terminate();
     }),
   );
   const disconnected = await LocalCdp.connect(f.origin);

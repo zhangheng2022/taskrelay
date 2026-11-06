@@ -176,7 +176,7 @@ export async function infer(
       try {
         const headers = new Headers(init?.headers);
         if (!key) headers.delete("authorization");
-        const response = await fetcher(String(input), {
+        const response = await fetcher(input instanceof Request ? input.url : input.toString(), {
           ...init,
           headers,
           redirect: "manual",
@@ -256,7 +256,7 @@ function httpError(status: number, code: unknown) {
       organization_restricted: "ORGANIZATION_RESTRICTED",
       access_terminated: "ACCOUNT_RESTRICTED",
     } as Record<string, string>
-  )[String(code ?? "").toLowerCase()];
+  )[typeof code === "string" ? code.toLowerCase() : ""];
   return `MODEL_HTTP_${status}${suffix ? "_" + suffix : ""}`;
 }
 

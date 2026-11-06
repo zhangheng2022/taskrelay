@@ -154,6 +154,7 @@ try {
     const timer = setTimeout(() => reject(Error("Notification timeout")), 5000);
     ws.once("message", (m) => {
       clearTimeout(timer);
+      if (!Buffer.isBuffer(m)) throw Error("PROFILE_MESSAGE_NOT_BUFFER");
       resolve(m.toString());
     });
   });

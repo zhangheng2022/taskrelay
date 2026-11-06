@@ -598,7 +598,7 @@ export function registerAccountRunnerRoutes(router: Router) {
       .passthrough()
       .parse(await c.req.json());
     const run = await requireLease(c.env.DB, c.req.param("id"), c.get("deviceId"), raw.epoch);
-    const { epoch, ...input } = raw;
+    const { epoch: _epoch, ...input } = raw;
     return c.json(await offerAccountCard(c.env, run, input));
   });
   router.post("/runs/:id/account-card-status", async (c) => {

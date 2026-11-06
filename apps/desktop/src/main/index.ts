@@ -142,8 +142,17 @@ function createWindow() {
     window = null;
   });
   window.once("ready-to-show", () => window?.show());
-  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) void window.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
-  else void window.loadURL("taskrelay://app/index.html");
+  if (MAIN_WINDOW_VITE_DEV_SERVER_URL)
+    void window.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL).catch(windowLoadFailed);
+  else void window.loadURL("taskrelay://app/index.html").catch(windowLoadFailed);
+}
+function windowLoadFailed() {
+  lastError = "WINDOW_LOAD_FAILED";
+  dialog.showErrorBox("TaskRelay 界面加载失败", "请重新打开执行器或检查安装完整性。");
+}
+function backgroundFailed() {
+  lastError = "EXECUTOR_BACKGROUND_FAILED";
+  notify();
 }
 function registerIpc() {
   const handle = (name: string, fn: (...args: any[]) => unknown) =>
@@ -287,7 +296,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
   app.on("before-quit", (event) => {
     if (!quitting) {
       event.preventDefault();
-      void quit();
+      void quit().catch(backgroundFailed);
     }
   });
   app.on("window-all-closed", () => {});
@@ -339,7 +348,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
         path.join(__dirname, "executor.cjs"),
         extensionPath,
         notify,
-        utilityProcess.fork,
+        (...args) => utilityProcess.fork(...args),
         new ProtectedStateFiles(path.join(userData, "pending-browser-states"), safeStorage),
       );
       await host.recover();
@@ -417,32 +426,32 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
             label: "检查版本更新",
             click: () => {
               show();
-              void updater.check();
+              void updater.check().catch(backgroundFailed);
             },
           },
-          { label: "退出 TaskRelay", click: () => void quit() },
+          { label: "退出 TaskRelay", click: () => void quit().catch(backgroundFailed) },
         ]),
       );
       tray.on("double-click", show);
       powerMonitor.on("suspend", () => {
         void host.stop(true).catch(() => {});
       });
-      powerMonitor.on("resume", () => void poll());
+      powerMonitor.on("resume", () => void poll().catch(backgroundFailed));
       createWindow();
       cloud.watch(() => {
         void host.refreshControl().catch(() => {});
-        void poll();
+        void poll().catch(backgroundFailed);
       });
-      setInterval(() => void poll(), 60000);
-      setTimeout(() => void updater.check(), 15000);
-      setInterval(() => void updater.check(), 6 * 60 * 60 * 1000);
+      setInterval(() => void poll().catch(backgroundFailed), 60000);
+      setTimeout(() => void updater.check().catch(backgroundFailed), 15000);
+      setInterval(() => void updater.check().catch(backgroundFailed), 6 * 60 * 60 * 1000);
       setInterval(() => {
         if (updater.status.phase === "waiting") {
-          void poll();
+          void poll().catch(backgroundFailed);
           updater.tryInstall();
         }
       }, 5000);
-      void poll();
+      void poll().catch(backgroundFailed);
     })
     .catch((error) => {
       dialog.showErrorBox(

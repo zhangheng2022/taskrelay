@@ -427,7 +427,8 @@ test("截图直接显示在聊天，不渲染旧运行事件卡；停止不调�
     if (method === "POST") writes.push({ path, body });
     return page;
   });
-  transport.artifactUrl = createWebTransport().artifactUrl;
+  const webTransport = createWebTransport();
+  transport.artifactUrl = webTransport.artifactUrl!.bind(webTransport);
   const v = render(
     <Conversation
       transport={transport}

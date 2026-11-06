@@ -11,7 +11,6 @@ import type { ModelProfile, Snapshot, Transport } from "../../contracts/src/inde
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "./components/ui/tabs";
-import { FieldGroup } from "./components/ui/field";
 import { Badge } from "./components/ui/badge";
 import {
   Empty,
@@ -262,7 +261,7 @@ function SettingsContent({
                   });
                   daysDirty.current = false;
                   await config.refresh();
-                });
+                }).catch((error: Error) => setError(error.message));
               }}
             >
               <Field label="保留天数">

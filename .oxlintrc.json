@@ -1,8 +1,12 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["typescript", "react", "jsx-a11y", "promise", "node"],
-  "categories": { "correctness": "error" },
-  "options": { "typeAware": true },
+  "categories": {
+    "correctness": "error"
+  },
+  "options": {
+    "typeAware": true
+  },
   "ignorePatterns": [
     "**/node_modules/**",
     "**/dist/**",

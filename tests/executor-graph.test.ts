@@ -167,7 +167,7 @@ test("工具异常和非法参数均回到模型，不重试副作用且保持�
 
 test("官方摘要保留近期工具配对，用户原文不进入摘要", async () => {
   const h = harness([response([call("first")]), response([call("second")]), response([], "完成")]);
-  const decide = h.port.decide;
+  const decide = h.port.decide.bind(h.port);
   const summaries: Message[][] = [];
   h.port.budget = () => ({ contextTokens: 11000, outputTokens: 1024 });
   h.port.perform = async (tool) => {

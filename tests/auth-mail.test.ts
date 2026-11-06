@@ -1,3 +1,4 @@
+import { requestUrl, jsonBody } from "./http-fixture";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { sendAuthMail } from "../apps/cloud/src/mail";
@@ -18,10 +19,10 @@ test("真实认证入口通过 Brevo 发送验证与重置邮件；重置令牌�
   const original = globalThis.fetch;
   const sent: Array<any> = [];
   globalThis.fetch = async (input, init) => {
-    assert.equal(String(input), "https://api.brevo.com/v3/smtp/email");
+    assert.equal(requestUrl(input), "https://api.brevo.com/v3/smtp/email");
     assert.equal(new Headers(init?.headers).get("api-key"), "test-only-key");
     assert.equal(init?.redirect, "manual");
-    sent.push(JSON.parse(String(init?.body)));
+    sent.push(jsonBody(init?.body));
     return Response.json({ messageId: "test-only-message" }, { status: 201 });
   };
   try {

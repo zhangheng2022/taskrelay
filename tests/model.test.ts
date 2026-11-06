@@ -1,3 +1,4 @@
+import { requestUrl, jsonBody } from "./http-fixture";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { infer } from "../packages/model/src/index";
@@ -30,7 +31,7 @@ for (const protocol of ["chat", "responses"] as const)
       "key",
       { messages: [{ role: "user", content: "只读测试" }], tools: executorTools },
       async (_url, init) => {
-        const body = JSON.parse(String(init?.body));
+        const body = jsonBody(init?.body);
         const tools =
           protocol === "chat"
             ? body.tools.map((item: { function: unknown }) => item.function)
@@ -78,9 +79,9 @@ test("Chat Completions 保留任意模型名、工具调用及未知用量", asy
       tools: [{ name: "check", description: "test", parameters: { type: "object" } }],
     },
     async (url, init) => {
-      assert.equal(String(url), "https://provider.example/v1/chat/completions");
+      assert.equal(requestUrl(url), "https://provider.example/v1/chat/completions");
       assert.equal(init?.redirect, "manual");
-      const b = JSON.parse(String(init?.body));
+      const b = jsonBody(init?.body);
       assert.equal(b.model, "vendor/non-gpt-model");
       assert.equal(b.tools[0].function.name, "check");
       return Response.json({
@@ -112,8 +113,8 @@ test("Responses 正确映射请求、调用结果与实际用量", async () => {
       schema: { type: "object" },
     },
     async (url, init) => {
-      assert.ok(String(url).endsWith("/responses"));
-      const b = JSON.parse(String(init?.body));
+      assert.ok(requestUrl(url).endsWith("/responses"));
+      const b = jsonBody(init?.body);
       assert.equal(b.input[0].type, "function_call_output");
       assert.equal(b.store, false);
       assert.equal(b.text.format.type, "json_schema");

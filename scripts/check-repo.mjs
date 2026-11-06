@@ -9,8 +9,8 @@ const runtimeLock = JSON.parse(
 );
 const runtimeDependencies = runtimeLock.packages[""].dependencies;
 if (
-  JSON.stringify(Object.entries(runtimeDependencies).sort()) !==
-  JSON.stringify(Object.entries(desktop.dependencies).sort())
+  JSON.stringify(Object.entries(runtimeDependencies).sort(([a], [b]) => a.localeCompare(b))) !==
+  JSON.stringify(Object.entries(desktop.dependencies).sort(([a], [b]) => a.localeCompare(b)))
 )
   failures.push(
     "Desktop runtime lock must be refreshed with node scripts/stage-runtime.mjs --update-lock",

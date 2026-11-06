@@ -22,7 +22,7 @@ const reply = {
 };
 // No network is allowed, including accidental requests to a real provider.
 globalThis.fetch = async (input) => {
-  const url = String(input);
+  const url = input instanceof Request ? input.url : input.toString();
   if (url.startsWith("https://cloudflare-dns.com/dns-query"))
     return Response.json({ Status: 0, Answer: [{ type: 1, data: "8.8.8.8" }] });
   if (url === "https://provider.example/v1/chat/completions")

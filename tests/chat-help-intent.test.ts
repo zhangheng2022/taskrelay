@@ -1,3 +1,4 @@
+import { requestUrl } from "./http-fixture";
 import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { productionModelFixture } from "./production-model-fixture";
@@ -60,7 +61,7 @@ test("协助模型尚未发布等待状态时，提前回复也加密并绑定�
   let inject = true;
   t.mock.method(globalThis, "fetch", async (input: string | URL | Request, init?: RequestInit) => {
     const response = await providerFetch(input, init);
-    if (inject && String(input).startsWith("https://provider.example/")) {
+    if (inject && requestUrl(input).startsWith("https://provider.example/")) {
       inject = false;
       assert.equal(
         s.sql.prepare("SELECT awaiting_user FROM execution_help WHERE id=?").get(s.help.id)!
@@ -284,7 +285,7 @@ test("模型判断期间的新补充不会被旧答案覆盖，原回复重试�
   let inject = true;
   t.mock.method(globalThis, "fetch", async (input: string | URL | Request, init?: RequestInit) => {
     const response = await providerFetch(input, init);
-    if (inject && String(input).startsWith("https://provider.example/")) {
+    if (inject && requestUrl(input).startsWith("https://provider.example/")) {
       inject = false;
       await s.request(`/api/user/threads/${s.thread.id}/messages`, {
         requestId: "inflight_change",

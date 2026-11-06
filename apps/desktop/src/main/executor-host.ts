@@ -154,7 +154,10 @@ export class ExecutorHost {
         return;
       }
       if (message.type === "done" || message.type === "fatal") {
-        void this.stop(false, message.type === "done");
+        void this.stop(false, message.type === "done").catch(() => {
+          // 关闭失败继续持有账号与浏览器所有权，界面保留停止入口供重试。
+          this.notify();
+        });
         return;
       }
       if (message.type !== "rpc") return;
@@ -202,7 +205,7 @@ export class ExecutorHost {
           this.stopping = true;
           try {
             await this.browser.close();
-            this.stateAdapter?.close();
+            await this.stateAdapter?.close();
             this.stateAdapter = null;
             this.retire(run, gen, false);
             this.closed(run);
@@ -297,7 +300,7 @@ export class ExecutorHost {
       } catch {
         current();
         // 导入部分失败后隔离整份环境，不能把半恢复状态当成登录成功。
-        this.stateAdapter?.close();
+        await this.stateAdapter?.close();
         this.stateAdapter = null;
         await this.browser.close();
         current();
@@ -485,7 +488,7 @@ export class ExecutorHost {
       child?.postMessage({ type: "cancel", generation: gen });
       // Offline stopping must not wait for a network request. Stop effects before reporting.
       await this.browser.close(graceful);
-      this.stateAdapter?.close();
+      await this.stateAdapter?.close();
       this.stateAdapter = null;
       if (child && !this.exited.has(child)) {
         let timer: ReturnType<typeof setTimeout> | undefined;

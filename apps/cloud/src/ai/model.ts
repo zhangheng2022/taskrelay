@@ -166,7 +166,10 @@ export class RelayChatModel extends BaseChatModel<RelayModelOptions> {
     assertPrivateAI();
     options.signal?.throwIfAborted();
     const choice = options.tool_choice;
-    if (choice && !["auto", "any", "required", "none"].includes(String(choice)))
+    if (
+      choice &&
+      (typeof choice !== "string" || !["auto", "any", "required", "none"].includes(choice))
+    )
       throw Error("MODEL_TOOL_CHOICE_UNSUPPORTED");
     const wireMessages = fromLangChainMessages(messages);
     if (!options.capabilityProbe) {

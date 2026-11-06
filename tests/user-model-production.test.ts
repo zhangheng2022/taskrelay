@@ -1,3 +1,4 @@
+import { requestUrl } from "./http-fixture";
 import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { productionModelFixture } from "./production-model-fixture";
@@ -155,7 +156,7 @@ test("选择账号期间被其他运行占用，不返回可读取凭据的引�
   let inject = true;
   t.mock.method(globalThis, "fetch", async (input: string | URL | Request, init?: RequestInit) => {
     const result = await providerFetch(input, init);
-    if (inject && String(input).startsWith("https://provider.example/")) {
+    if (inject && requestUrl(input).startsWith("https://provider.example/")) {
       inject = false;
       s.sql
         .prepare("UPDATE account_locks SET run_id='other_run' WHERE account_key='account_help'")

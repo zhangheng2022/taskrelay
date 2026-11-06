@@ -1,3 +1,4 @@
+import { requestUrl } from "./http-fixture";
 import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
@@ -54,8 +55,8 @@ async function fixture(t: TestContext) {
     available: () => reminders++,
     restart: () => restarted++,
     fetcher: async (url, options) => {
-      calls.push({ url: String(url), options });
-      return String(url).endsWith("latest.json") ? Response.json({ release }) : response();
+      calls.push({ url: requestUrl(url), options });
+      return requestUrl(url).endsWith("latest.json") ? Response.json({ release }) : response();
     },
   });
   t.after(async () => {
@@ -180,7 +181,7 @@ test("CF 更新路由只代理固定文件，内部消化 GitHub 重定向，不
   const catalog = { latest: release.version, releases: [release] };
   const calls: { url: string; init?: RequestInit }[] = [];
   const fetcher: typeof fetch = async (url, init) => {
-    calls.push({ url: String(url), init });
+    calls.push({ url: requestUrl(url), init });
     return calls.length === 1
       ? new Response(null, {
           status: 302,

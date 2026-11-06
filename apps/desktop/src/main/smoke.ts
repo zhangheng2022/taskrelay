@@ -45,7 +45,7 @@ export async function packagedSmoke(resources: string, executorPath: string, out
     wrongCodes = 0;
   const loginForm =
     '<form action="/login" method="post"><label>用户名<input name="username" id="username"></label><label>验证码<input name="code" id="code"></label><button id="submit">登录</button></form>';
-  const server = http.createServer(async (req, res) => {
+  const handleFixture = async (req: http.IncomingMessage, res: http.ServerResponse) => {
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     const route = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
     if (route === "/selectors") {
@@ -116,6 +116,12 @@ export async function packagedSmoke(resources: string, executorPath: string, out
         loginForm +
         "</html>",
     );
+  };
+  const server = http.createServer((req, res) => {
+    void handleFixture(req, res).catch(() => {
+      res.statusCode = 500;
+      res.end("SMOKE_FIXTURE_FAILED");
+    });
   });
   let child: ReturnType<typeof utilityProcess.fork> | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -175,7 +181,8 @@ export async function packagedSmoke(resources: string, executorPath: string, out
       executor.on("message", (data) => {
         if (data.type === "smoke-result") {
           clearTimeout(timer);
-          data.error ? reject(new Error(data.error)) : resolve(data.result);
+          if (data.error) reject(new Error(data.error));
+          else resolve(data.result);
         }
       });
       executor.once("exit", (code) => {

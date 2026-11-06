@@ -1,3 +1,4 @@
+import { requestUrl } from "./http-fixture";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { resolvePublicHost, startProxy } from "../apps/desktop/src/executor/proxy";
@@ -68,7 +69,7 @@ async function tunnelFixture(t: import("node:test").TestContext) {
     Response.json({
       Status: 0,
       Answer:
-        new URL(String(input)).searchParams.get("type") === "A"
+        new URL(requestUrl(input)).searchParams.get("type") === "A"
           ? [{ type: 1, data: "1.1.1.1" }]
           : [],
     }),
@@ -178,7 +179,7 @@ test("执行器使用固定 HTTPS DNS 并拒绝所有非公网答案，不信任
   let addresses = ["104.20.23.154"];
   const calls: string[] = [];
   t.mock.method(globalThis, "fetch", async (input: any, init: any) => {
-    const url = new URL(String(input));
+    const url = new URL(requestUrl(input));
     calls.push(url.href);
     assert.equal(url.origin, "https://cloudflare-dns.com");
     assert.equal(url.searchParams.get("name"), "example.com");
@@ -246,7 +247,7 @@ test("DNS 仅重试一次传输重置；成功答案仍全量校验，拒绝项�
   const counts = new Map<string, number>();
   let mode = "reset";
   t.mock.method(globalThis, "fetch", async (input: unknown) => {
-    const type = new URL(String(input)).searchParams.get("type")!;
+    const type = new URL(requestUrl(input)).searchParams.get("type")!;
     const n = (counts.get(type) ?? 0) + 1;
     counts.set(type, n);
     if (type === "A" && (mode === "always" || (mode === "reset" && n === 1)))

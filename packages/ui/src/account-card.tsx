@@ -125,13 +125,16 @@ export function AccountCard({
       }
     };
     if (!online.current) setLoading(false);
-    else void read();
-    const unsubscribe = transport.subscribe?.(() => void read());
+    else void read().catch((error: Error) => fail(error.message));
+    const unsubscribe = transport.subscribe?.(
+      () => void read().catch((error: Error) => fail(error.message)),
+    );
     const timer = setInterval(() => {
-      if (localStatus.current === "pending") void read();
+      if (localStatus.current === "pending")
+        void read().catch((error: Error) => fail(error.message));
     }, 15000);
     return () => {
-      generation.current++;
+      generation.current = current + 1;
       clearInterval(timer);
       unsubscribe?.();
     };
@@ -223,11 +226,12 @@ export function AccountCard({
                     核对账号信息。修改域名、账号或密码后需要重新验证。
                   </DialogDescription>
                 </DialogHeader>
+                {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- 表单捕获输入法 Enter 冒泡，避免中文组合输入误提交。 */}
                 <form
                   className="flex flex-col gap-5"
                   onSubmit={(event) => {
                     event.preventDefault();
-                    void submit(false);
+                    void submit(false).catch((error: Error) => fail(error.message));
                   }}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" && event.nativeEvent.isComposing)

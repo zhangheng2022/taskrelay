@@ -104,9 +104,9 @@ export function useThread(
         if (generation.current === g) setLoading(false);
       });
     return () => {
-      generation.current++;
+      generation.current = g + 1;
     };
-  }, [transport, scope, accept, retryIndex]);
+  }, [transport, scope, modelId, taskId, accept, retryIndex]);
   const refresh = useCallback(async (): Promise<void> => {
     const p = current.current;
     if (!p) return;

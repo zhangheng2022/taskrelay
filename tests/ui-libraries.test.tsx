@@ -1,3 +1,4 @@
+import { requestUrl, jsonBody } from "./http-fixture";
 import "./ui-dom";
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -192,13 +193,13 @@ test("官方认证方法保留 Turnstile，失败不重试；认证成功仍需�
   t.mock.property(globalThis, "FormData", window.FormData);
   const writes: { url: string; body: unknown; token: string | null }[] = [];
   t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input);
+    const url = requestUrl(input);
     if (url.endsWith("/config")) return Response.json({ registrationOpen: true, siteKey: "test" });
     if (url.includes("/get-session")) return Response.json(null);
     if (init?.method === "POST")
       writes.push({
         url,
-        body: JSON.parse(String(init.body)),
+        body: jsonBody(init.body),
         token: new Headers(init.headers).get("x-turnstile-token"),
       });
     if (url.includes("/sign-up"))
@@ -241,14 +242,14 @@ test("官方认证方法保留 Turnstile，失败不重试；认证成功仍需�
 });
 
 // 类型回归：客户端不能传错参数，服务端实现仅以 type 导入，不进入浏览器依赖图。
-function invalidRpcTypes(transport: Transport) {
+async function invalidRpcTypes(transport: Transport) {
   const client = createApi(transport);
-  void client.api.user.threads[":id"].messages.$post({
+  await client.api.user.threads[":id"].messages.$post({
     param: { id: "t" },
     // @ts-expect-error 运行参数必须携带 requestId
     json: { content: "x" },
   });
   // @ts-expect-error 模型 ID 是路径参数
-  void client.api.admin.models[":id"].$put({ json: {} });
+  await client.api.admin.models[":id"].$put({ json: {} });
 }
 void invalidRpcTypes;

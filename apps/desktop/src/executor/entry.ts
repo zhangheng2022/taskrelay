@@ -28,7 +28,7 @@ function rpc<T>(path: string, body?: unknown, binary?: Uint8Array): Promise<T> {
     parent!.postMessage({ generation, id, type: "rpc", path, body, binary });
   });
 }
-parent.on("message", async ({ data }) => {
+async function onMessage({ data }: { data: any }) {
   if (data.type === "smoke" && !started) {
     started = true;
     process.env.STAGEHAND_EXTENSION_DIRECTORY_PATH = data.extensionPath;
@@ -226,8 +226,15 @@ parent.on("message", async ({ data }) => {
     if (!item) return;
     clearTimeout(item.timer);
     pending.delete(data.id);
-    data.error ? item.reject(new Error(data.error)) : item.resolve(data.data);
+    if (data.error) item.reject(new Error(data.error));
+    else item.resolve(data.data);
   }
+}
+parent.on("message", (event) => {
+  void onMessage(event).catch(() => {
+    parent.postMessage({ generation, type: "fatal", error: "EXECUTOR_CRASH" });
+    process.exit(1);
+  });
 });
 process.on("uncaughtException", () => {
   parent.postMessage({ generation, type: "fatal", error: "EXECUTOR_CRASH" });

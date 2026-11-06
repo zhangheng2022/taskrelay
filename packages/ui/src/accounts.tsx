@@ -204,8 +204,9 @@ function AccountDialog({
     [busy, setBusy] = useState(false),
     [retry, setRetry] = useState(0);
   const flight = useRef(false);
+  const accountId = account?.id;
   useEffect(() => {
-    if (!account) return;
+    if (!accountId) return;
     let alive = true;
     setLoading(true);
     setLoaded(false);
@@ -213,7 +214,7 @@ function AccountDialog({
     const controller = new AbortController();
     void rpcData(
       createApi(transport).api.user.accounts[":id"].$get(
-        { param: { id: account.id } },
+        { param: { id: accountId } },
         { init: { signal: controller.signal } },
       ),
     )
@@ -242,7 +243,7 @@ function AccountDialog({
       alive = false;
       controller.abort();
     };
-  }, [account?.id, transport, retry]);
+  }, [accountId, transport, retry]);
   async function save(event: React.FormEvent) {
     event.preventDefault();
     if (flight.current || loading) return;
@@ -295,6 +296,7 @@ function AccountDialog({
             onRetry={() => setRetry((v) => v + 1)}
           />
         ) : (
+          /* oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- 表单捕获输入法 Enter 冒泡，避免中文组合输入误提交。 */
           <form
             className="flex flex-col gap-5"
             onSubmit={(event) => void save(event)}

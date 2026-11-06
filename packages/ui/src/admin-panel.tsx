@@ -117,17 +117,22 @@ function OperationsPanel({ transport }: { transport: Transport }) {
                     e.preventDefault();
                     const f = new FormData(e.currentTarget);
                     if (f.get("stopped") !== "on") return;
+                    const device = f.get("device");
+                    if (typeof device !== "string") {
+                      setError("DEVICE_REQUIRED");
+                      return;
+                    }
                     void action(() =>
                       rpcData(
                         createApi(transport).api.admin.accounts[":id"].migrate.$post({
                           param: { id: a.id },
                           json: {
-                            deviceId: String(f.get("device") ?? ""),
+                            deviceId: device,
                             oldExecutionStopped: true,
                           },
                         }),
                       ),
-                    );
+                    ).catch((error: Error) => setError(error.message));
                   }}
                 >
                   <FieldGroup>
@@ -214,7 +219,16 @@ function PoolSettings({
   const form = useForm({ values: { claims }, resetOptions: { keepDirtyValues: true } });
   void form.formState.dirtyFields;
   return (
-    <form onSubmit={form.handleSubmit((values) => save(values.claims === "1"))}>
+    <form
+      onSubmit={(event) => {
+        void form
+          .handleSubmit((values) => save(values.claims === "1"))(event)
+          .catch((error: Error) => form.setError("root", { message: error.message }));
+      }}
+    >
+      {form.formState.errors.root?.message && (
+        <ErrorText error={form.formState.errors.root.message} />
+      )}
       <FieldGroup>
         <Field>
           <FieldLabel htmlFor="pool-claims">领取任务</FieldLabel>
@@ -251,10 +265,15 @@ function MemberSettings({
   void form.formState.dirtyFields;
   return (
     <form
-      onSubmit={form.handleSubmit((values) =>
-        save({ ...values, disabled: values.disabled === "1" }),
-      )}
+      onSubmit={(event) => {
+        void form
+          .handleSubmit((values) => save({ ...values, disabled: values.disabled === "1" }))(event)
+          .catch((error: Error) => form.setError("root", { message: error.message }));
+      }}
     >
+      {form.formState.errors.root?.message && (
+        <ErrorText error={form.formState.errors.root.message} />
+      )}
       <FieldGroup>
         {fields.map(([key, label]) => (
           <Field key={key}>

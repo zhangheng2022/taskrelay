@@ -145,6 +145,7 @@ function CodeBlockContent({
       data-wrap={wrap || undefined}
       data-numbered={lineNumbers || undefined}
       dir="ltr"
+      // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- 横向溢出的代码块需要键盘焦点滚动。
       tabIndex={0}
       style={{ counterReset: `line ${startLine - 1}`, ...style }}
       className={cn(

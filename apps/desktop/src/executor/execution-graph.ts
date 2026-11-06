@@ -177,7 +177,7 @@ export async function runExecutionGraph(port: ExecutionGraphPort) {
       // 框架只调度原生 tool_calls。无效 JSON 保留原 ID 和顺序，进入校验反馈，绝不执行。
       if (invalid.size) {
         const updated = new AIMessage({
-          ...response,
+          ...response.toDict().data,
           id: response.id,
           invalid_tool_calls: [],
           tool_calls: calls.map((call) => ({

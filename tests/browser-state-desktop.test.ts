@@ -1,3 +1,4 @@
+import { socketText } from "./http-fixture";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -42,7 +43,7 @@ test(
     const children = [child];
     let socket: WebSocket | undefined, adapter: BrowserStateAdapter | undefined;
     t.after(async () => {
-      adapter?.close();
+      await adapter?.close();
       socket?.close();
       for (const owned of children)
         if (owned.exitCode === null && owned.pid)
@@ -135,7 +136,7 @@ test(
     }
     assert.ok(active);
     cdpUrl = `http://127.0.0.1:${active.split("\n")[0].trim()}`;
-    adapter.close();
+    await adapter.close();
     adapter = await BrowserStateAdapter.connect(cdpUrl);
     await adapter.restore(exported);
     const migrated = await adapter.capture([origin, "https://fixture.test"]);
@@ -148,7 +149,7 @@ test(
     let seq = 0;
     const pending = new Map<number, (value: any) => void>();
     socket.on("message", (data) => {
-      const message = JSON.parse(data.toString());
+      const message = JSON.parse(socketText(data));
       if (message.id) {
         pending.get(message.id)?.(message);
         pending.delete(message.id);

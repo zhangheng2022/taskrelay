@@ -258,7 +258,6 @@ export async function executeTurn(env: AppEnv, threadId: string, turnId: string)
     .bind(turnId, threadId)
     .first<{ created_at: string; status: string; run_id: string | null }>();
   if (!turn || turn.status !== "running") throw new Error("TURN_STALE");
-  const at = turn.created_at;
   const t = await ownedThread(env, threadId);
   if (t.active_turn !== turnId) throw new Error("THREAD_VERSION_CONFLICT");
   const guard = async () => {

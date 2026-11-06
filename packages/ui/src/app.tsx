@@ -1,5 +1,5 @@
 import { HistoryCleanup, type CleanupSelection } from "./history-cleanup";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   Activity,
   Check,
@@ -102,9 +102,10 @@ function Workspace({ transport }: { transport: Transport }) {
   const [theme, setTheme] = useTheme();
   const { setOpenMobile } = useSidebar();
   const focusComposer = useRef(false);
+  const refreshWorkspace = workspace.refresh;
   const refresh = useCallback(async () => {
-    await workspace.refresh().catch(() => {});
-  }, [workspace.refresh]);
+    await refreshWorkspace().catch(() => {});
+  }, [refreshWorkspace]);
   async function act(action: () => Promise<unknown>) {
     setBusy(true);
     setActionError("");

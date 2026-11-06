@@ -12,7 +12,9 @@ export class LocalCdp {
       this.closed = true;
     });
     client.on("error", () => {
-      void this.close();
+      void this.close().catch(() => {
+        /* close 已固定吞掉底层连接错误，防止事件回调悬空。 */
+      });
     });
   }
   static async connect(cdpUrl: string) {
@@ -86,7 +88,9 @@ export class LocalCdp {
           }),
         new Promise<never>((_, reject) => {
           timer = setTimeout(() => {
-            void this.close();
+            void this.close().catch(() => {
+              /* close 已固定吞掉底层连接错误，防止事件回调悬空。 */
+            });
             reject(Error("CDP_TIMEOUT"));
           }, timeout);
         }),

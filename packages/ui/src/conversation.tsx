@@ -116,7 +116,7 @@ export function Conversation({
                 accountLabel={m.run_id ? runLabels.get(m.run_id) : undefined}
               />
             ) : (
-              <ChatMessage role={m.role}>
+              <ChatMessage speaker={m.role}>
                 {"source" in m && m.role !== "user" && (
                   <div className="text-xs text-muted-foreground">
                     {m.source === "executor" ? "执行器" : "云端助手"}
@@ -142,7 +142,7 @@ export function Conversation({
         ))}
         {thread.page?.queued?.map((m) => (
           <MessageScrollerItem key={m.id} messageId={m.id}>
-            <ChatMessage role="user">{m.content}</ChatMessage>
+            <ChatMessage speaker="user">{m.content}</ChatMessage>
           </MessageScrollerItem>
         ))}
         <SendingMessage message={thread.sending} />

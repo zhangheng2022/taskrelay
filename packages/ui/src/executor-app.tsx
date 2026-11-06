@@ -41,9 +41,10 @@ function ExecutorStatus({ executor }: { executor: NonNullable<Transport["desktop
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [note, setNote] = useState("");
+  const cloudUrl = status?.cloudUrl;
   useEffect(() => {
-    if (status) setUrl((v) => v || status.cloudUrl);
-  }, [status?.cloudUrl]);
+    if (cloudUrl) setUrl((v) => v || cloudUrl);
+  }, [cloudUrl]);
   useEffect(() => {
     if (!pair) return;
     let live = true;
@@ -53,7 +54,9 @@ function ExecutorStatus({ executor }: { executor: NonNullable<Transport["desktop
         .then((done) => {
           if (live && done) {
             setPair(null);
-            void refresh();
+            void refresh().catch((error: Error) => {
+              if (live) setError(error.message);
+            });
           }
         })
         .catch((e) => {

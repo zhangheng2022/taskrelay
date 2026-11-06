@@ -91,6 +91,7 @@ async function fixture(t: TestContext) {
   const turnId = "dispatch_turn";
   sql.prepare("UPDATE ai_threads SET active_turn=? WHERE id=?").run(turnId, created.data.id);
   const thread = sql.prepare("SELECT * FROM ai_threads WHERE id=?").get(created.data.id)!;
+  assert.equal(typeof thread.id, "string");
   const input = {
     title: "读取账号状态",
     goal: "依次读取这些账号的状态",
@@ -112,7 +113,18 @@ async function fixture(t: TestContext) {
     assert.equal(result.status, 200, JSON.stringify(result.data));
     return result.data.run as TaskRun | null;
   }
-  return { db, sql, env, accounts, thread, turnId, input, request, start, take };
+  return {
+    db,
+    sql,
+    env,
+    accounts,
+    thread: { ...thread, id: thread.id as string },
+    turnId,
+    input,
+    request,
+    start,
+    take,
+  };
 }
 
 test("多账号交办固定成员，重试只投递首项，未开始成员没有过期窗口", async (t) => {
@@ -317,9 +329,14 @@ test("账号执行组完成后立即运行复用整组，重复请求不新增�
   const taskId = s.sql
     .prepare("SELECT task_id FROM ai_threads WHERE id=?")
     .get(s.thread.id)!.task_id;
-  const first = await s.request(`/api/user/tasks/${taskId}/run`, { requestId: "rerun-both" });
+  assert.equal(typeof taskId, "string");
+  const first = await s.request(`/api/user/tasks/${taskId as string}/run`, {
+    requestId: "rerun-both",
+  });
   assert.equal(first.status, 200, JSON.stringify(first.data));
-  const repeat = await s.request(`/api/user/tasks/${taskId}/run`, { requestId: "rerun-both" });
+  const repeat = await s.request(`/api/user/tasks/${taskId as string}/run`, {
+    requestId: "rerun-both",
+  });
   assert.equal(repeat.status, 200);
   assert.equal(first.data.id, repeat.data.id);
   assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM account_dispatch_groups").get()!.n, 2);

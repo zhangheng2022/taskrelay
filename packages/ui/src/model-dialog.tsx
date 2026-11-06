@@ -94,9 +94,12 @@ export function ModelDialog({
           <DialogTitle>{value ? "编辑模型服务" : "添加模型服务"}</DialogTitle>
           <DialogDescription>保存后请运行能力测试。服务地址必须是公网 HTTPS。</DialogDescription>
         </DialogHeader>
+        {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- 表单捕获输入法 Enter 冒泡，避免中文组合输入误提交。 */}
         <form
           className="flex flex-col gap-5"
-          onSubmit={submit}
+          onSubmit={(event) => {
+            void submit(event).catch((error: Error) => setError(error.message));
+          }}
           onKeyDown={(event) => {
             if (event.key === "Enter" && event.nativeEvent.isComposing) event.preventDefault();
           }}

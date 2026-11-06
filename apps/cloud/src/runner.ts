@@ -19,7 +19,6 @@ import {
   aiMessageToModelResponse,
   toLangChainMessages,
 } from "../../../packages/model/src/langchain";
-import { unseal } from "./crypto";
 import { putEvidence, deleteEvidence } from "./evidence";
 import { appendMessage, conversationContext, runThread } from "./chat-messages";
 import { resolveHelp } from "./execution-help";

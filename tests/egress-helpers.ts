@@ -38,7 +38,11 @@ export function attachTestEgress(env: AppEnv) {
         getByName() {
           const state = new EgressState(
             fakeStorage(() => {
-              void state.alarm();
+              void state.alarm().catch((error) => {
+                queueMicrotask(() => {
+                  throw error;
+                });
+              });
             }).storage,
             env.MASTER_KEY,
             async (value) => {

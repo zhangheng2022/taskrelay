@@ -23,7 +23,6 @@ export const accountInputSchema = z
   .strict();
 export type AccountInput = z.infer<typeof accountInputSchema>;
 export type AccountSecret = { username: string; password: string };
-type Router = Hono<{ Bindings: AppEnv; Variables: Variables }>;
 
 export function accountDomains(row: Row) {
   const business = JSON.parse(row.business_domains || "[]") as string[],

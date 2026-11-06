@@ -6,7 +6,6 @@ import { z } from "zod";
 import { RelayChatModel } from "../apps/cloud/src/ai/model";
 import {
   aiMessageToModelResponse,
-  fromLangChainMessages,
   modelResponseToAIMessage,
 } from "../packages/model/src/langchain";
 import type { Message } from "../packages/model/src/index";

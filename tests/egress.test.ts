@@ -69,7 +69,11 @@ for (const failure of [false, true]) {
     let calls = 0;
     const state = new EgressState(
       fakeStorage(() => {
-        void state.alarm();
+        void state.alarm().catch((error) => {
+          queueMicrotask(() => {
+            throw error;
+          });
+        });
       }).storage,
       key,
       async (job) => {

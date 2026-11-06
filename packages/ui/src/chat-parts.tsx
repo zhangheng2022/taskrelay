@@ -49,7 +49,7 @@ export function Thread({
     </MessageScrollerProvider>
   );
 }
-export function ChatMessage({ role, children }: { role: string; children: ReactNode }) {
+export function ChatMessage({ speaker: role, children }: { speaker: string; children: ReactNode }) {
   return (
     <Message align={role === "user" ? "end" : "start"}>
       <MessageContent>
@@ -116,7 +116,7 @@ export function SendingMessage({ message }: { message: { id: string; content: st
   if (!message) return null;
   return (
     <MessageScrollerItem messageId={message.id}>
-      <ChatMessage role="user">{message.content}</ChatMessage>
+      <ChatMessage speaker="user">{message.content}</ChatMessage>
     </MessageScrollerItem>
   );
 }

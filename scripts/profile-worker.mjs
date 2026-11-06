@@ -86,7 +86,8 @@ try {
       p = pending.get(m.id);
     if (p) {
       pending.delete(m.id);
-      m.error ? p.reject(Error(JSON.stringify(m.error))) : p.resolve(m.result);
+      if (m.error) p.reject(Error(JSON.stringify(m.error)));
+      else p.resolve(m.result);
     }
   };
   const command = (method, params = {}) =>
