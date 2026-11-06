@@ -1,7 +1,7 @@
 /** 发布固定 master 提交且重新核验该 SHA 的主分支质量报告；范围遗漏和同版本桌面改动在构建前阻止。 */
 import { execFileSync } from "node:child_process";
 import { appendFileSync, readFileSync } from "node:fs";
-import { github, verifyQuality } from "./release-api.mjs";
+import { github, verifyQuality, productionHealth } from "./release-api.mjs";
 import { releaseScope, assertNewDesktopVersion } from "./release-core.mjs";
 const sha = process.env.RELEASE_SHA || process.env.GITHUB_SHA;
 if (process.env.GITHUB_REF !== "refs/heads/master") throw Error("RELEASE_REQUIRES_MASTER");
@@ -10,12 +10,7 @@ execFileSync("git", ["merge-base", "--is-ancestor", sha, "origin/master"]);
 const mode = process.env.RELEASE_MODE ?? "publish";
 if (!["publish", "resume"].includes(mode)) throw Error("RELEASE_MODE_INVALID");
 let base;
-const health = await fetch("https://tr.zhangheng.eu.org/api/health", {
-  redirect: "error",
-  signal: AbortSignal.timeout(15_000),
-});
-if (!health.ok) throw Error("PRODUCTION_HEALTH_UNAVAILABLE");
-const data = await health.json();
+const data = await productionHealth();
 if (/^[a-f0-9]{40}$/.test(data.sourceCommit ?? "")) base = data.sourceCommit;
 // 首次迁移到 Actions 时旧服务没有 SHA 元数据，保守发布云端和执行器。
 const files = base

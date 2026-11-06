@@ -16,7 +16,11 @@ flowchart TD
     C --> A[不可变 Release 与下载哈希校验]
     A --> U[D1 更新目录切换]
     U --> E[核验兼容设备并恢复原开关]
+    R --> H[已有 workers.dev 入口健康检查]
+    A --> H
 ```
+
+Actions 的无会话健康检查、部署 SHA 核验与安装包下载哈希核验固定访问同一 Worker 已保留的 `taskrelay.zhangheng.workers.dev`。主域的 Bot Fight Mode 可能挑战托管 Runner；不因此关闭全域防护、添加广泛 IP 放行或携带用户会话。主站与客户端更新地址不变，应用鉴权在两个域名仍由同一 Worker 执行。
 
 Main 的浏览器关闭／下载策略和账号状态适配器统一经 LocalCdp 调用 chrome-remote-interface，删除两套请求编号、响应分发和 WebSocket 生命周期代码。LocalCdp 只校验同端口 127.0.0.1 浏览器端点、固定错误与命令超时；SDK 使用本地协议，不拉取外部协议。CRI 0.34.0 尚无公开握手选项，且发送完成回调晚于浏览器回复时会漏掉响应；scripts/cdp-policy.mjs 校验版本及完整上游源码 SHA-256 后，禁止重定向、设置 4 秒握手与 1 秒关闭截止，并将 SDK 自有回调登记移到发送之前，发送失败时移除。安装和生产依赖暂存均应用，依赖升级必须复审此补丁。请求超时关闭连接并拒绝后续发送；不自动重试浏览器操作。浏览器进程及退出确认仍归 Main。
 

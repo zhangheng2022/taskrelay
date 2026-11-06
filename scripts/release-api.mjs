@@ -3,6 +3,26 @@ export const repository = "zhangheng2022/taskrelay";
 export const account = "b3a410496c5e49e582b4af19d2f2eec6";
 export const database = "9d387f48-6e34-4af4-a2a0-10f958d65a16";
 export const dbPath = `/accounts/${account}/d1/database/${database}`;
+// 托管 Runner 是 API 客户端；固定使用同一 Worker 已有的机器入口，避免主站 Bot Fight 人机挑战。
+// 不携带用户 Cookie/部署令牌，不自动换域或降低主站防护；客户端更新地址仍为主站。
+export const productionOrigin = "https://taskrelay.zhangheng.workers.dev";
+export async function productionHealth() {
+  const response = await fetch(`${productionOrigin}/api/health`, {
+    redirect: "error",
+    signal: AbortSignal.timeout(15_000),
+    cache: "no-store",
+  });
+  if (!response.ok) throw Error(`PRODUCTION_HEALTH_UNAVAILABLE:${response.status}`);
+  const data = await response.json();
+  if (
+    data?.service !== "TaskRelay" ||
+    !Number.isSafeInteger(data.protocolVersion) ||
+    data.protocolVersion < 1 ||
+    (data.sourceCommit != null && !/^[a-f0-9]{40}$/.test(data.sourceCommit))
+  )
+    throw Error("PRODUCTION_HEALTH_INVALID");
+  return data;
+}
 export async function github(route, method = "GET", body) {
   const response = await fetch(`https://api.github.com/repos/${repository}${route}`, {
     method,
