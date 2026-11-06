@@ -63,6 +63,11 @@ updates:
             "@testing-library/*",
             "@types/node",
             "@hono/cli",
+            "oxlint",
+            "oxlint-tsgolint",
+            "prettier",
+            "c8",
+            "yaml",
           ]
   - package-ecosystem: github-actions
     directory: /

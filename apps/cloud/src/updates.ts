@@ -7,6 +7,13 @@ import {
 } from "../../../packages/contracts/src/updates";
 
 const catalog = releaseCatalogSchema.parse(catalogData);
+// 旧静态目录仅供首次初始化；有效 D1 配置为空或损坏时不能悄悄回退旧版本。
+export async function loadReleaseCatalog(db: D1Database) {
+  const row = await db
+    .prepare("SELECT value FROM settings WHERE key='desktopReleaseCatalog'")
+    .first<{ value: string }>();
+  return row ? releaseCatalogSchema.parse(JSON.parse(row.value)) : catalog;
+}
 // Only reviewed, pinned releases from this repository. Never an arbitrary URL proxy.
 const repository = "zhangheng2022/taskrelay";
 const fail = (status: number) =>

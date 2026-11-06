@@ -16,6 +16,29 @@ async function executorFixture() {
       .run();
   return state;
 }
+test("发布暂停发生在早期读取后，D1 事务仍拒绝领取并回滚账号锁", async (context) => {
+  const { db, sql } = await executorFixture();
+  context.after(() => sql.close());
+  const definition = await insertTask(db);
+  const queued = await enqueue(db, definition, "release-race");
+  const prepare = db.prepare.bind(db);
+  db.prepare = (query) => {
+    const statement = prepare(query);
+    if (query === "SELECT value FROM settings WHERE key='claimsEnabled'") {
+      statement.first = async <T>(column?: string) => {
+        const value = await (column === undefined
+          ? prepare(query).first<T>()
+          : prepare(query).first<T>(column));
+        sql.prepare("UPDATE settings SET value='0' WHERE key='claimsEnabled'").run();
+        return value;
+      };
+    }
+    return statement;
+  };
+  assert.equal(await claim(db, "device_a", "late-claim"), null);
+  assert.equal((await getRun(db, queued.id)).status, "queued");
+  assert.equal(sql.prepare("SELECT COUNT(*) n FROM account_locks").get()!.n, 0);
+});
 test("同账号的并发领取仅一个成功，重复领取幂等", async () => {
   const { db } = await executorFixture();
   const t = await insertTask(db);

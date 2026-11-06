@@ -2,7 +2,7 @@
 
 **交代任务，在同一聊天跟进结果。**
 
-当前源码 **0.12.4**、协议 **15**：云端 LangGraph 理解意图并生成可调整的大步骤，桌面 LangGraph 负责具体执行；LangChain 统一模型与工具消息，用户原话和补充直接交给执行器 AI 与 Stagehand，同一聊天展示过程、截图、协助及最终回复。不要求输入字段分类、自定义动作计划或独立成功审核。新交办目前按手动任务执行，运行条件卡与定时暂不扩展。部署、安装和真实验收范围见验收记录。
+云端 LangGraph 理解意图并生成可调整的大步骤，桌面官方 createAgent 负责具体执行；LangChain 统一模型与工具消息，用户原话和补充直接交给执行器 AI 与 Stagehand，同一聊天展示过程、截图、协助及最终回复。不要求输入字段分类、自定义动作计划或独立成功审核。新交办目前按手动任务执行，运行条件卡与定时暂不扩展。源码版本、部署、安装和真实验收范围见验收记录。
 
 [![CI](https://github.com/zhangheng2022/taskrelay/actions/workflows/ci.yml/badge.svg)](https://github.com/zhangheng2022/taskrelay/actions/workflows/ci.yml)
 [更新记录](CHANGELOG.md) · [验收范围](docs/ACCEPTANCE.md) · [部署说明](docs/DEPLOYMENT.md) · [问题反馈](https://github.com/zhangheng2022/taskrelay/issues)
@@ -95,13 +95,15 @@ npm run check:repo
 
 ### GitHub 自动检查
 
-[CI 工作流](.github/workflows/ci.yml) 在 PR、`master` 推送及手动触发时，分别在 Ubuntu 和 Windows 上使用 Node.js 24，执行 `npm ci`、类型检查、完整测试、Web 构建与仓库检查。Actions 固定到提交 SHA，仓库令牌只有读取权限，不携带生产密钥，不部署或发布 Release。
+[Quality 工作流](.github/workflows/ci.yml) 在 PR、master 推送、手动触发及每周一执行格式、代码规则、类型、双平台测试、覆盖率、安全、工作流和构建检查；执行器相关变更追加托管 Windows 安装验收。固定 `quality-gate` 全部通过才可合并。生产通过 [Production release](.github/workflows/release.yml) 手动发布确定的提交，合并不自动部署。
+
+本地用 `npm run quality` 执行同一配置；也可运行 `lint`、`format:check`、`test:coverage`、`check:workflows`。需要整理格式时运行 `npm run format`，CI 不自动修复。纯格式提交已登记到 `.git-blame-ignore-revs`，可配置 `git config blame.ignoreRevsFile .git-blame-ignore-revs`。
 
 `npm test` 已包含 UI 测试；只检查界面时可运行 `npm run test:ui`。`npm run build` 仅构建 Web。CI 的隔离测试不等于真实模型、Windows 安装或完整调度恢复验收。
 
 ## Windows 构建
 
-需要 Windows x64 构建环境。
+正式构建与安装验收使用 GitHub 托管 Windows Runner；以下命令仅供 Windows x64 开发调试。生产包必须来自手动发布流程的已验收附件，本机只负责开发、实际升级和真实网站验收。
 
 品牌图形的矢量源文件为 `resources/brand-mark.svg`，共享 UI 使用同一图形并随主题着色。修改后运行 `npm run icons`，生成网站 favicon、Apple Touch Icon 和 Windows PNG/多尺寸 ICO；生成资源随源码保存，普通构建不需要重新生成。桌面窗口、托盘、EXE 和安装器沿用 `resources/icon.png` / `resources/icon.ico` 路径。
 
@@ -111,7 +113,7 @@ npm run make
 npm run test:smoke
 ```
 
-`prepare:browser` 从官方 Chrome for Testing 下载 Windows x64 浏览器，固定到生成的版本/哈希清单。资源在 ASAR 外；构建验证浏览器文件哈希。Stagehand 使用经过验证并锁定的正式版本，执行器保留原生 `import()` 并单独暂存生产依赖。
+`prepare:browser` 按 `resources/browser-release.json` 固定的版本与压缩包 SHA-256 下载官方 Chrome for Testing。资源在 ASAR 外；构建验证浏览器文件哈希。Stagehand 使用经过验证并锁定的正式版本，执行器保留原生 `import()` 并单独暂存生产依赖。
 
 截图脱敏使用固定版本 sharp；打包将 `@img` 平台模块及伴随 DLL 放在 `app.asar.unpacked`，执行器构建保持 sharp 为运行时依赖。包内 smoke 必须验证实际截图路径，不能仅用 Vite 构建成功证明原生模块可加载。
 
@@ -127,11 +129,10 @@ npm run test:smoke
 从 Windows 系统入口安装，并从实际桌面或开始菜单快捷方式启动，核对版本、进程路径和 ASAR 哈希，再对实际安装的版本运行：
 
 ```powershell
-node scripts/smoke.mjs "$env:LOCALAPPDATA\TaskRelay\app-0.12.4\TaskRelay.exe" out/installed-smoke.json
-node scripts/release-manifest.mjs
+node scripts/smoke.mjs "$env:LOCALAPPDATA\TaskRelay\app-<实际版本>\TaskRelay.exe" out/installed-smoke.json
 ```
 
-版本目录须与本次安装一致。Codex MSIX 可能将 AppData 重定向到独立 `LocalCache`；宿主内测试只证明报告中的副本，不能代替系统快捷方式验证，详见 [Windows 更新交付](docs/DEPLOYMENT.md#windows-更新交付)。本地清单含绝对路径，不应直接作为公开附件。
+版本目录须与本次安装一致。正式 `release-manifest` 还要求托管 Runner 新生成的系统入口证据。Codex MSIX 可能将 AppData 重定向到独立 `LocalCache`；宿主内测试只证明报告中的副本，不能代替系统快捷方式验证，详见 [Windows 更新交付](docs/DEPLOYMENT.md#windows-更新交付)。本地清单含绝对路径，不应直接作为公开附件。
 
 `test:smoke` 在打包后的 Electron utilityProcess 中加载实际 Stagehand/Chromium，使用独立自建站与确定性模型回调检查 AI observe/act、读取、提取、监测、错误验证码、前导零、登录签到和表单提交。它走独立 smoke 流程，不调用 `runtime.execute()` 或 `ExecutorHost`；不能替代完整任务恢复、真实模型或真实网站验收。
 

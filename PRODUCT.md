@@ -16,6 +16,8 @@ React、Vite、TypeScript、shadcn/ui、Tailwind CSS；TanStack Query、React Ho
 
 ## Product Purpose
 
+交付采用 PR 质量门槛及手动生产发布。构建、部署、Windows 打包与安装自检使用 GitHub 托管 Runner；用户设备负责实际升级与真实网站验收。执行器仍为未签名预览版，只有验收过的不可变安装包才进入更新通道，更新保持用户确认和空闲安装。
+
 用户在同一聊天交办、补充、提供协助并查看执行结果。明确任务由云端理解意图、生成可调整的大步骤后交给执行器；阶段计划在聊天中显示，信息含糊才询问。执行器根据现场页面细化操作、纠错和最终回复，用户补充优先于阶段计划。云端不逐步控制浏览器或另起报告。
 
 ## Capabilities and Constraints

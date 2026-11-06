@@ -1,50 +1,173 @@
-name: CI
-
+name: Quality
 on:
   push:
-    branches: [master]
-  pull_request:
-  workflow_dispatch:
-
+    branches:
+      - master
+  pull_request: null
+  workflow_dispatch: null
+  schedule:
+    - cron: 0 1 * * 1
 permissions:
   contents: read
-
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: quality-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
-
 jobs:
-  check:
-    name: 检查 (${{ matrix.os }}, Node 24)
+  scope:
+    runs-on: ubuntu-24.04
+    outputs:
+      desktop: ${{ steps.scope.outputs.desktop }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: node scripts/change-scope.mjs
+  static:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs: &a1
+      verified: ${{ steps.verified.outputs.verified }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - &a2
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.18.0
+          cache: npm
+      - &a3
+        run: npm ci --no-audit --no-fund
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run check:repo
+      - run: npm run check:workflows
+      - run: node scripts/quality-probes.mjs
+      - run: git diff --exit-code
+      - &a4
+        id: verified
+        shell: bash
+        run: echo 'verified=true' >> "$GITHUB_OUTPUT"
+  test:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+    outputs: *a1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - *a2
+      - *a3
+      - if: runner.os == 'Linux'
+        run: npm run test:coverage
+        env:
+          COVERAGE_BASE: ${{ github.event.pull_request.base.sha }}
+      - if: runner.os == 'Windows'
+        run: npm test
+      - if: runner.os == 'Linux' && always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: coverage
+          path: coverage
+          if-no-files-found: error
+          retention-days: 7
+      - *a4
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-    env:
-      CI: "true"
-      # Source checks do not launch Electron; packaged Windows smoke is a separate gate.
-      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        os:
+          - ubuntu-24.04
+          - windows-2025
+  security:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs: *a1
     steps:
-      - name: 检出源码
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: 安装 Node.js
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+          fetch-depth: 0
+      - *a2
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: node scripts/check-secrets.mjs
+      - run: npm audit --audit-level=high
+      - run: node scripts/audit-runtime.mjs
+      - if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294
         with:
-          node-version: "24"
-          cache: npm
-      - name: 安装锁定依赖
-        run: npm ci --no-audit --no-fund
-      - name: 类型检查
-        run: npm run typecheck
-      - name: 完整测试（隔离模型与数据库）
-        run: npm test
-      - name: Web 构建
-        run: npm run build
-      - name: 仓库检查
-        run: npm run check:repo
-      - name: 差异格式检查
-        run: git diff --check
+          fail-on-severity: high
+          warn-only: false
+          comment-summary-in-pr: never
+      - *a4
+  codeql:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs: *a1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066
+        with:
+          languages: javascript-typescript
+          queries: security-extended
+          build-mode: none
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066
+        with:
+          output: out/codeql
+          upload: always
+      - run: node scripts/quality-gate.mjs sarif out/codeql/javascript.sarif
+      - *a4
+    permissions:
+      contents: read
+      security-events: write
+  web:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs: *a1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - *a2
+      - *a3
+      - run: npm run build
+      - *a4
+  desktop:
+    needs: scope
+    if: needs.scope.outputs.desktop == 'true'
+    uses: ./.github/workflows/windows-package.yml
+    with:
+      source-sha: ${{ github.sha }}
+  quality-gate:
+    name: quality-gate
+    if: always()
+    needs:
+      - scope
+      - static
+      - test
+      - security
+      - codeql
+      - web
+      - desktop
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - env:
+          SCOPE_RESULT: ${{ needs.scope.result }}
+          DESKTOP_REQUIRED: ${{ needs.scope.outputs.desktop }}
+          QUALITY_NEEDS: ${{ toJSON(needs) }}
+        run: |-
+          test "$SCOPE_RESULT" = success
+          test "$DESKTOP_REQUIRED" = true || test "$DESKTOP_REQUIRED" = false
+          node scripts/quality-gate.mjs

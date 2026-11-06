@@ -87,6 +87,33 @@ async function fixture() {
   return { db, sql, env, request, cookies, ownedTask };
 }
 
+test("发布恢复记录拥有领取开关，管理员不能覆盖进行中的暂停", async (context) => {
+  const s = await fixture();
+  context.after(() => s.sql.close());
+  s.sql
+    .prepare("INSERT INTO settings(key,value) VALUES('productionRelease',?)")
+    .run(JSON.stringify({ phase: "paused" }));
+  const blocked = await s.request(
+    "/api/admin/pool",
+    s.cookies.owner,
+    { claimsEnabled: true },
+    "PUT",
+  );
+  assert.equal(blocked.status, 409);
+  assert.deepEqual(await blocked.json(), { error: "RELEASE_IN_PROGRESS" });
+  s.sql
+    .prepare("UPDATE settings SET value=? WHERE key='productionRelease'")
+    .run(JSON.stringify({ phase: "complete" }));
+  assert.equal(
+    (await s.request("/api/admin/pool", s.cookies.owner, { claimsEnabled: true }, "PUT")).status,
+    200,
+  );
+  assert.equal(
+    s.sql.prepare("SELECT value FROM settings WHERE key='claimsEnabled'").get()!.value,
+    "1",
+  );
+});
+
 test("个人日限额支持到期或手动恢复，不绕过用户隔离、禁用、并发", async () => {
   const s = await fixture();
   try {
@@ -278,28 +305,26 @@ test("两用户使用同一幂等编号仍各自创建任务；账号、协助�
   s.env.EVIDENCE_STORE = {
     getByName: () => ({ get: async () => new Uint8Array([1, 2, 3]).buffer }),
   } as any;
-  s.sql
-    .prepare("INSERT INTO model_profiles VALUES(?,1,?,?,?,?)")
-    .run(
-      "model_test",
-      JSON.stringify({
-        name: "shared",
-        baseUrl: "https://provider.example/v1",
-        model: "test",
-        protocol: "chat",
-        inputPrice: 1,
-        outputPrice: 1,
-      }),
-      await seal("key", s.env.MASTER_KEY, "model:model_test:1"),
-      JSON.stringify({
-        connection: true,
-        tools: true,
-        structured: "schema",
-        vision: false,
-        testedAt: null,
-      }),
-      new Date().toISOString(),
-    );
+  s.sql.prepare("INSERT INTO model_profiles VALUES(?,1,?,?,?,?)").run(
+    "model_test",
+    JSON.stringify({
+      name: "shared",
+      baseUrl: "https://provider.example/v1",
+      model: "test",
+      protocol: "chat",
+      inputPrice: 1,
+      outputPrice: 1,
+    }),
+    await seal("key", s.env.MASTER_KEY, "model:model_test:1"),
+    JSON.stringify({
+      connection: true,
+      tools: true,
+      structured: "schema",
+      vision: false,
+      testedAt: null,
+    }),
+    new Date().toISOString(),
+  );
   async function create(who: string, input: any, requestId: string) {
     const thread = (await (
       await s.request("/api/user/threads", s.cookies[who], { modelId: "model_test" })
@@ -307,7 +332,7 @@ test("两用户使用同一幂等编号仍各自创建任务；账号、协助�
     const turnId = thread.id + "_" + requestId;
     s.sql.prepare("UPDATE ai_threads SET active_turn=? WHERE id=?").run(turnId, thread.id);
     const t = s.sql.prepare("SELECT * FROM ai_threads WHERE id=?").get(thread.id)!;
-    const { modelId, ...task } = input;
+    const { modelId: _modelId, ...task } = input;
     await commitDecision({ ...s.env, requestUserId: who }, t, turnId, task);
     await commitDecision({ ...s.env, requestUserId: who }, t, turnId, task);
     return String(

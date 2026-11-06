@@ -3,6 +3,7 @@ import { app, maintenance } from "./index";
 import type { AppEnv } from "./env";
 import { wakeTurns } from "./ai/turn";
 import { notifyDevices } from "./notifications";
+import { loadReleaseCatalog } from "./updates";
 
 /** Bounded session shards route application work. A routing hash is NEVER identity;
  * the application authenticates the original request on every invocation. */
@@ -13,6 +14,9 @@ export class RequestCoordinator extends DurableObject<AppEnv> {
   }
   async fetch(request: Request) {
     return app.fetch(request, this.env);
+  }
+  async releaseCatalog() {
+    return loadReleaseCatalog(this.env.DB);
   }
 }
 

@@ -32,6 +32,7 @@ export function testDb() {
     "0025_account_dispatch.sql",
     "0026_account_cards.sql",
     "0027_account_card_identity.sql",
+    "0028_release_claim_barrier.sql",
   ])
     sql.exec(readFileSync(new URL(`../apps/cloud/migrations/${f}`, import.meta.url), "utf8"));
   class Statement {

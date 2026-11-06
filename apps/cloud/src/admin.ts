@@ -117,11 +117,13 @@ export const admin = adminBase
     validator("json", (value: z.input<typeof poolInput>) => poolInput.parse(value)),
     async (c) => {
       const b = c.req.valid("json");
-      await c.env.DB.batch<Row>([
-        c.env.DB.prepare("UPDATE settings SET value=? WHERE key='claimsEnabled'").bind(
-          b.claimsEnabled ? "1" : "0",
-        ),
+      const [saved] = await c.env.DB.batch<Row>([
+        // 发布期间领取开关由恢复记录持有，避免并发设置被发布收尾覆盖。
+        c.env.DB.prepare(
+          "UPDATE settings SET value=? WHERE key='claimsEnabled' AND NOT EXISTS(SELECT 1 FROM settings WHERE key='productionRelease' AND json_extract(value,'$.phase')<>'complete')",
+        ).bind(b.claimsEnabled ? "1" : "0"),
       ]);
+      if (saved.meta.changes !== 1) return c.json({ error: "RELEASE_IN_PROGRESS" }, 409);
       return c.json({ ok: true });
     },
   )

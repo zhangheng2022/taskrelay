@@ -43,6 +43,16 @@ for (const name of ["packaged-smoke", "installed-smoke"]) {
     throw new Error(`${name} does not identify this version and ASAR`);
 }
 const installedReport = reports["installed-smoke"];
+const systemEntry = JSON.parse(await readFile(path.join(root, "out/system-entry.json"), "utf8"));
+if (
+  systemEntry.runner !== "github-hosted" ||
+  systemEntry.version !== desktop.version ||
+  systemEntry.asarSha256 !== packagedAsar.sha256 ||
+  systemEntry.executablePath?.toLowerCase() !== installedReport.executablePath?.toLowerCase() ||
+  new Date(systemEntry.checkedAt).getTime() < packagedAt ||
+  !systemEntry.shortcut?.endsWith(".lnk")
+)
+  throw Error("SYSTEM_ENTRY_ACCEPTANCE_REQUIRED");
 if (
   typeof installedReport.resourcesPath !== "string" ||
   !path.isAbsolute(installedReport.resourcesPath) ||
@@ -80,7 +90,10 @@ const manifest = {
   reports,
   installedAsarPath: realpathSync.native(installedAsar),
   installedAsarMatches: true,
+  systemEntry,
+  actionsRunId: process.env.GITHUB_RUN_ID ?? null,
 };
+if (manifest.sourceDirty) throw Error("RELEASE_SOURCE_DIRTY");
 await writeFile(
   path.join(root, "out/release-manifest.json"),
   JSON.stringify(manifest, null, 2) + "\n",

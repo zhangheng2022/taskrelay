@@ -1,5 +1,23 @@
 # TaskRelay 当前架构
 
+交付由 GitHub Actions 拥有：Quality 在 PR 与 master 汇总固定 `quality-gate`，手动 Production release 只接受同一 SHA 的主分支成功报告。发布状态机以 D1 settings 的 `productionRelease` 做条件更新，保存原开关、恢复点及不可变产物引用；失败不自动恢复领取或回滚数据库。0028 触发器在领取事务中检查暂停状态，管理员设置入口拒绝与进行中的发布竞争。更新目录由 RequestCoordinator 从 D1 `desktopReleaseCatalog` 读取；Worker 只路由，旧编译目录仅作首次初始化。
+
+```mermaid
+flowchart TD
+    PR[PR 检查] --> G[quality-gate]
+    G --> M[合并 master 并重新检查]
+    M --> R[手动发布固定 SHA]
+    R --> W[托管 Windows 构建与实际安装验收]
+    R --> B[托管 Linux 构建网站]
+    W --> P[暂停领取并确认清理]
+    B --> P
+    P --> D[D1 恢复点与迁移]
+    D --> C[云端和网页部署]
+    C --> A[不可变 Release 与下载哈希校验]
+    A --> U[D1 更新目录切换]
+    U --> E[核验兼容设备并恢复原开关]
+```
+
 Main 的浏览器关闭／下载策略和账号状态适配器统一经 LocalCdp 调用 chrome-remote-interface，删除两套请求编号、响应分发和 WebSocket 生命周期代码。LocalCdp 只校验同端口 127.0.0.1 浏览器端点、固定错误与命令超时；SDK 使用本地协议，不拉取外部协议。CRI 0.34.0 尚无公开握手选项，scripts/cdp-policy.mjs 以版本及完整上游源码 SHA-256 校验后，仅禁止重定向、设置 4 秒握手与 1 秒关闭截止；安装和生产依赖暂存均应用，依赖升级必须复审此补丁。请求超时关闭连接并拒绝后续发送；不自动重试浏览器操作。浏览器进程及退出确认仍归 Main。
 
 网站用户／管理员路由改为 Hono 可推导链式组合，前端 hc 只导入路由类型，网络发送仍经 Transport。Transport 支持主动取消：读取取消与超时分开；写入已发出后取消仍是结果未确认。TanStack Query 管理工作空间、账号摘要、设置和本机状态读取；缓存仅在当前用户组件树内存中，退出／切换时取消并清空，无隐式重试或离线写入队列。敏感账号详情、密码与卡片草稿不进入缓存；聊天保留 requestId、会话版本及双游标协议。Better Auth React 管认证请求与会话变化，成功后仍经本人成员接口复核。模型编辑由 React Hook Form＋Zod 管理，刷新不覆盖草稿。

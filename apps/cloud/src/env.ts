@@ -25,6 +25,7 @@ export type AppEnv = Omit<
   NOTIFICATIONS: DurableObjectNamespace<NotificationHub>;
   EVIDENCE?: R2Bucket;
   MASTER_KEY: string;
+  RELEASE_SHA?: string;
   DEV_MODE: string;
   ACCESS_AUD: string;
   AUTH_SECRET?: string;

@@ -68,11 +68,19 @@
 
 ## 发布
 
-```powershell
-cd apps/web
-npx wrangler d1 migrations apply taskrelay --remote
-npm run deploy
-```
+生产使用 GitHub 的 **Production release** 手动工作流；合并不自动发布。本机构建只用于开发，生产迁移、云端部署及正式 Windows 包由 GitHub 托管 Runner 完成。
+
+1. PR 通过固定名称 `quality-gate` 后合并 master，等待合并提交自己的 Quality 检查通过。
+2. 在 master 运行 Production release，通常选择 `scope=auto`、`mode=publish`；可指定完整 `source-sha`。预检重新核验该 SHA 的 master 推送检查，不接受 PR 报告或旧的绿色报告；遗漏必要范围、桌面修改未提升版本、已公开版本均拒绝发布。
+3. Linux 构建网站；Windows 固定 Chrome for Testing 版本与压缩包哈希，完成 make、包内 smoke、实际安装、系统快捷方式启动和安装 ASAR 校验。验收后的同一份产物进入 production 作业，不再次构建替换。
+4. D1 `productionRelease` 保存提交、Actions run、产物哈希、原开关及发布阶段。先暂停领取，最多等待十分钟正常清理；未知结果、未关闭浏览器、推理未结束或不兼容待执行任务阻止发布。保存 Time Travel bookmark 后应用迁移，再部署云端和网页。
+5. GitHub Release 资产按哈希校验且不可覆盖；登记 D1 更新目录后，经 Cloudflare 下载并校验完整大小和哈希，才切换 latest。最后核验兼容设备并恢复原开关；无就绪设备时恢复网页，领取继续暂停。
+
+仓库 `production` Environment 仅允许 master。已配置 `CLOUDFLARE_API_TOKEN`，仅 production 作业可读：当前账号的 Workers Editor、D1 Write，以及 `zhangheng.eu.org` 的 Workers Routes Write、Zone Read。现有 MASTER_KEY、模型密钥留在 Cloudflare；工作流不读取或覆盖。Release 写权限也只在 production 作业授予。
+
+失败后保持现场，不能直接打开领取或回滚数据库。确认原运行已结束后，在同一源 SHA 以 `mode=resume`、`recovery-run=首次产物运行 ID` 继续核验；恢复使用原附件，不重新打包。迁移按已提交记录继续；部署结果未知时只核对 health 的 `sourceCommit`，未确认则报错并等待人工诊断。附件保留七天，缺失且阶段仍需要附件时拒绝恢复。若停在 `awaiting-device`，升级设备后同样通过 resume 核验。已完成发布和公开版本不能重新 publish。
+
+本批新增迁移 `0028_release_claim_barrier.sql`，在领取事务内再次检查暂停/维护开关，阻止早先读到旧开关的并发领取。管理员不能在未完成发布期间覆盖领取开关。协议仍为 17；不改变账号、Profile、快照格式或加密密钥。
 
 `MASTER_KEY` 已配置为 Workers Secret。**不要再次执行初次密钥生成脚本，不要覆盖现有主密钥。** 现有模型密钥、账号密码和短期回复都依赖它解密。迁移/恢复时必须同时保留该密钥和 D1 数据。仓库及诊断包不保存主密钥；需要持有者从自己的秘密管理设施维护备份和轮换策略。
 
@@ -134,13 +142,15 @@ Main 在产生浏览器副作用前记录 SQLite 检查点。云端也先记录�
 
 ## GitHub 源码检查与发布边界
 
-`.github/workflows/ci.yml` 在 PR、master 推送与手动触发时运行 Ubuntu / Windows、Node.js 24 的矩阵检查。使用 npm ci、完整测试、类型检查、Web 构建与仓库检查；Actions 固定提交 SHA，GITHUB_TOKEN 仅 contents:read，检出后不保留凭据。CI 不生成本地开发密钥、不迁移生产、不请求真实模型、不自动安装客户端或发布 Release。跨平台源码检查不是干净 Windows 安装验收。
+`.github/workflows/ci.yml` 在 PR、master 推送、手动触发及每周一北京时间 09:00 执行。检查格式、Oxlint 类型规则、TypeScript、仓库一致性、Windows/Ubuntu 测试、Ubuntu c8 覆盖率、CodeQL security-extended 实际结果、Gitleaks、High/Critical 依赖漏洞、actionlint/ShellCheck/PSScriptAnalyzer 和 Web 构建。执行器相关改动追加托管 Windows 打包及实际安装 smoke。固定名称 quality-gate 对失败、取消、缺少报告均关闭；仅明确无关的安装作业可跳过。
+
+所有 Actions 固定提交 SHA，PR 不接触生产 Environment，默认 contents:read，CodeQL 仅额外获得 security-events:write。统一命令为 `lint`、`format:check`、`format`、`test:coverage`、`check:workflows`、`quality`。Ubuntu 覆盖率下限由 `scripts/coverage-baseline.json` 固定，后续不可降低；后续 PR 修改的可执行行至少 80%，纯格式差异归一化后排除。报告保留七天，不自动发评论或调用外部审查模型。
 
 README 负责使用入口与状态，CHANGELOG 记录客户端版本的变更，ACCEPTANCE 保留逐项证据。需要发布时从明确、干净的源码提交构建，先完成 make，再取得本次打包/实际安装 smoke 和系统入口证明，整理脱敏附件后发布预览版。不得将含本机绝对路径的原始清单、Profile 或诊断数据库上传为公开附件，也不得复用另一版本的报告。自动更新通道的实际发布状态见验收台账。
 
 ### 自动更新通道（0.4.7 起）
 
-公开更新版本以 apps/cloud/src/desktop-releases.json 与生产更新目录为准，不能用源码版本或本机安装版本推断。历史公开预览和升级检查不代表当前版本已发布，也不代表干净 Windows 和长期运行验收完成。
+公开更新版本以 D1 settings 的 `desktopReleaseCatalog` 为准；`apps/cloud/src/desktop-releases.json` 仅在首次没有目录时初始化。存在但损坏的目录拒绝服务，不回退复活旧版本。不能用源码版本或本机安装版本推断公开版本。历史预览不代表当前版本已发布，也不代表长期运行验收完成。
 
 - 执行器启动 15 秒后及每 6 小时检查一次，也可从窗口或托盘“检查更新”。更新地址固定为 `https://tr.zhangheng.eu.org/api/updates/windows-x64/latest.json`，不随配对的工作空间地址变化。只有 Windows x64 Squirrel 安装版启用；开发及解压运行明确显示不可用。
 - 新版本显示更新说明并发 Windows 通知。用户确认“下载并安装”后才下载完整 nupkg。下载仅请求同一 Cloudflare 域名，拒绝重定向，不发送设备令牌。大小、SHA-256 和 SHA-1 均验证后生成只含本地文件名的 RELEASES；Squirrel 仅使用该本地目录，没有第二条网络链路。

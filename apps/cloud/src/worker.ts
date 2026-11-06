@@ -4,10 +4,23 @@ import { serveUpdate } from "./updates";
 export default {
   async fetch(request: Request, env: AppEnv) {
     const url = new URL(request.url);
-    if (url.pathname.startsWith("/api/updates/")) return serveUpdate(request);
+    if (url.pathname.startsWith("/api/updates/")) {
+      try {
+        return serveUpdate(request, await env.REQUESTS.getByName("updates").releaseCatalog());
+      } catch {
+        return Response.json(
+          { error: "UPDATE_UNAVAILABLE" },
+          { status: 503, headers: { "Cache-Control": "no-store" } },
+        );
+      }
+    }
     if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
     if (url.pathname === "/api/health")
-      return Response.json({ service: "TaskRelay", protocolVersion: PROTOCOL_VERSION });
+      return Response.json({
+        service: "TaskRelay",
+        protocolVersion: PROTOCOL_VERSION,
+        sourceCommit: env.RELEASE_SHA ?? null,
+      });
     const credential =
       request.headers.get("authorization") ||
       request.headers.get("cookie") ||
