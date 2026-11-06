@@ -157,7 +157,25 @@ test(
       const exited = once(child, "exit", { signal: AbortSignal.timeout(5000) });
       void exited.catch(() => {});
       await sourceControl.send("Browser.close");
-      await exited;
+      try {
+        await exited;
+      } catch (error) {
+        // 覆盖率/完整回归并行运行时，Chromium 优雅退出可能未及时完成。
+        // 与 Main 的关闭契约一致：只回收本夹具自有进程树，确认退出后才迁移。
+        if (child.exitCode === null && child.pid) {
+          const forcedExit = once(child, "exit", { signal: AbortSignal.timeout(5000) });
+          void forcedExit.catch(() => {});
+          await new Promise<void>((resolve, reject) =>
+            execFile(
+              "taskkill.exe",
+              ["/PID", String(child.pid), "/T", "/F"],
+              { windowsHide: true },
+              (failure) => (failure && child.exitCode === null ? reject(failure) : resolve()),
+            ),
+          );
+          await forcedExit;
+        } else if (child.exitCode === null) throw error;
+      }
       assert.notEqual(child.exitCode, null);
     } finally {
       await sourceControl.close();
