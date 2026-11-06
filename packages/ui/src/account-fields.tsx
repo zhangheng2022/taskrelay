@@ -1,12 +1,11 @@
 import { useId, useState } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import { Input } from './components/ui/input';
-import { Textarea } from './components/ui/textarea';
 import { FieldGroup, Field as ControlField, FieldLabel, FieldDescription } from './components/ui/field';
 import { InputGroup, InputGroupInput, InputGroupAddon, InputGroupButton } from './components/ui/input-group';
 import { Field } from './form-field';
 
-/** 账号设置与聊天确认共用的编辑表单。秘密仅保留在当前表单内存，不写入浏览器存储。 */
+/** 四项账号表单共用于设置与聊天；已有登录来源保留在内部，修改域名时清除旧关联，交服务端重新校验。秘密不写浏览器存储。 */
 export interface AccountFieldsValue {
   name: string;
   origin: string;
@@ -18,11 +17,17 @@ export interface AccountFieldsValue {
 export const emptyAccountFields: AccountFieldsValue = {
   name: '', origin: '', businessDomains: '', loginOrigins: '', username: '', password: '',
 };
+export function accountDomain(origin: string) {
+  try { return new URL(origin).host || origin; } catch { return origin; }
+}
 export function accountFieldsBody(value: AccountFieldsValue) {
   const list = (text: string) => [...new Set(text.split(/[\s,，]+/).filter(Boolean))];
+  const raw = value.origin.trim();
+  // 用户只需填写域名。已有完整 origin 保留协议与端口，鉴权与公网校验仍由服务端负责。
+  const origin = raw && !/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? `https://${raw}` : raw;
   const businessDomains = list(value.businessDomains), loginOrigins = list(value.loginOrigins);
-  try { const url = new URL(value.origin); if (!businessDomains.length) businessDomains.push(url.hostname); if (!loginOrigins.length) loginOrigins.push(url.origin); } catch { /* 无效地址由表单与服务端校验，不在渲染时抛错。 */ }
-  return { ...value, name: value.name.trim(), origin: value.origin.trim(),
+  try { const url = new URL(origin); if (!businessDomains.length) businessDomains.push(url.hostname); if (!loginOrigins.length) loginOrigins.push(url.origin); } catch { /* 无效地址由表单与服务端校验，不在渲染时抛错。 */ }
+  return { ...value, name: value.name.trim(), origin,
     businessDomains, loginOrigins };
 }
 export function AccountFields({ value, onChange, disabled, keepPassword = false }: {
@@ -33,10 +38,8 @@ export function AccountFields({ value, onChange, disabled, keepPassword = false 
   const change = (field: keyof AccountFieldsValue, next: string) => onChange({ ...value, [field]: next });
   return <FieldGroup>
     <Field label="账号名称"><Input required maxLength={80} value={value.name} disabled={disabled} onChange={e => change('name', e.target.value)}/></Field>
-    <Field label="业务网站" hint="填写实际使用的网站地址。"><Input type="url" required maxLength={2000} placeholder="https://example.com" value={value.origin} disabled={disabled} onChange={e => change('origin', e.target.value)}/></Field>
-    <Field label="所属业务域名" hint="每行一个精确域名，不包含通配符；留空使用上方网站域名。"><Textarea rows={2} maxLength={4000} placeholder="example.com" value={value.businessDomains} disabled={disabled} onChange={e => change('businessDomains', e.target.value)}/></Field>
-    <Field label="关联登录地址" hint="每行一个完整登录来源地址，如 https://login.example.com。留空使用业务网站地址。"><Textarea rows={2} maxLength={8000} placeholder="https://login.example.com" value={value.loginOrigins} disabled={disabled} onChange={e => change('loginOrigins', e.target.value)}/></Field>
-    <Field label="用户名"><Input autoComplete="off" maxLength={200} value={value.username} disabled={disabled} onChange={e => change('username', e.target.value)}/></Field>
+    <Field label="域名"><Input required maxLength={2000} placeholder="example.com" autoCapitalize="none" spellCheck={false} value={accountDomain(value.origin)} disabled={disabled} onChange={e => onChange({ ...value, origin: e.target.value, businessDomains: '', loginOrigins: '' })}/></Field>
+    <Field label="账号"><Input autoComplete="off" maxLength={200} value={value.username} disabled={disabled} onChange={e => change('username', e.target.value)}/></Field>
     <ControlField data-disabled={disabled || undefined}>
       <FieldLabel htmlFor={passwordId}>密码</FieldLabel>
       <InputGroup>

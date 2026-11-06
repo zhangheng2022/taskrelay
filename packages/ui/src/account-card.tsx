@@ -2,10 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import type { Transport } from '../../contracts/src/index';
 import type { AccountCardDetail } from '../../contracts/src/accounts';
-import { AccountFields, accountFieldsBody, emptyAccountFields, type AccountFieldsValue } from './account-fields';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from './components/ui/card';
+import { AccountFields, accountDomain, accountFieldsBody, emptyAccountFields, type AccountFieldsValue } from './account-fields';
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from './components/ui/card';
 import { Button } from './components/ui/button';
-import { Badge } from './components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from './components/ui/dialog';
 import { ErrorText, LoadFeedback } from './feedback';
 
@@ -70,18 +69,20 @@ export function AccountCard({ id, transport, offline = false, onSaved }: { id: s
   }
   const pending = detail?.status === 'pending';
   const changed = pending && baseline.current !== credentialIdentity(value);
-  const verified = detail?.verified && !changed;
   const title = detail?.kind === 'update' ? '修改站点账号' : '保存站点账号';
   const saveLabel = detail?.kind === 'update' && detail.canResume ? '保存并继续' : '保存账号';
-  const summary = accountFieldsBody(value);
   if(detail?.supersededBy)return null;
   // 聊天只显示确认所需摘要；完整字段按需进入对话框，密码控件不常驻聊天 DOM。
   return <Card className="my-2 w-full min-w-0 max-w-md gap-3 py-3 whitespace-normal" aria-label={title}>
-    <CardHeader className="gap-1 px-4"><CardTitle className="break-words">{pending ? value.name || title : title}</CardTitle><CardDescription className="break-all">{pending ? `${summary.businessDomains.join('、')} · ${value.username ? value.username.slice(0,2)+'***' : '未设置用户名'}` : '站点账号'}</CardDescription></CardHeader>
+    <CardHeader className="sr-only"><CardTitle>{title}</CardTitle></CardHeader>
     {!detail ? <CardContent className="px-4"><LoadFeedback loading={loading} error={offline ? '连接已中断，恢复后可查看账号卡片。' : error} label="正在加载账号卡片…" onRetry={() => setRetry(n => n + 1)}/></CardContent> : pending ? <>
       <CardContent className="flex flex-col gap-2 px-4">
-        <div><Badge variant="secondary">{verified ? '本次凭据已验证' : '凭据待验证'}</Badge></div>
-        <p className="break-all text-xs text-muted-foreground">登录地址：{summary.loginOrigins.join('、')}</p>
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm">
+          <dt className="text-muted-foreground">账号名称</dt><dd className="break-words">{value.name || '未设置'}</dd>
+          <dt className="text-muted-foreground">域名</dt><dd className="break-all">{accountDomain(value.origin)}</dd>
+          <dt className="text-muted-foreground">账号</dt><dd className="break-all">{value.username || '未设置'}</dd>
+          <dt className="text-muted-foreground">密码</dt><dd>{value.password ? '••••••••' : '未设置'}</dd>
+        </dl>
         {changed && detail.verified && <p className="text-sm text-muted-foreground">内容已修改，保存后需要重新验证，原登录状态不会直接沿用。</p>}
         {error && <ErrorText error={error}/>}
       </CardContent>
@@ -89,7 +90,7 @@ export function AccountCard({ id, transport, offline = false, onSaved }: { id: s
         <Dialog open={editing&&pending} onOpenChange={open=>{if(!busy)setEditing(open);}}>
           <DialogTrigger asChild><Button type="button" size="sm" variant="ghost" disabled={busy||offline}>修改信息</Button></DialogTrigger>
           <DialogContent className="max-h-[90dvh] overflow-y-auto">
-            <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>核对账号及关联域名。修改凭据后需要重新验证。</DialogDescription></DialogHeader>
+            <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>核对账号信息。修改域名、账号或密码后需要重新验证。</DialogDescription></DialogHeader>
             <form className="flex flex-col gap-5" onSubmit={event=>{event.preventDefault();void submit(false);}} onKeyDown={event=>{if(event.key==='Enter'&&event.nativeEvent.isComposing)event.preventDefault();}}>
               <AccountFields value={value} onChange={setValue} disabled={busy||offline}/>
               {changed && detail.verified && <p className="text-sm text-muted-foreground">修改的凭据需要重新验证。</p>}

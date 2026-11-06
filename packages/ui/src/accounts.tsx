@@ -48,8 +48,6 @@ export function Accounts({ snapshot, transport, refresh }: { snapshot: Snapshot;
               <Badge variant="outline">{account.syncStatus === 'synced' ? '状态已同步' : account.syncStatus === 'failed' ? '状态未同步' : account.loginReset ? '需要登录' : '暂无同步状态'}</Badge>
             </div>
             {account.syncStatus === 'failed' && <p>{syncErrorDescription(account.syncError)}</p>}
-            {(account.businessDomains?.length ?? 0) > 1 && <p className="break-all">关联业务域名：{account.businessDomains!.slice(1).join('、')}</p>}
-            {!!account.loginOrigins?.length && <p className="break-all">登录地址：{account.loginOrigins.join('、')}</p>}
             <p>优先使用{snapshot.devices.find(device => device.id === account.lastDeviceId)?.name ?? '上次可用设备'}；登录状态失效时会在聊天中协助登录。</p>
           </div>
           <div className="row-actions"><Button variant="outline" disabled={!!busy} aria-label={`编辑${account.name}`} onClick={() => setEditing(account)}>编辑</Button><Button variant="ghost" disabled={!!busy} aria-label={`清除${account.name}的登录状态`} onClick={() => void clear(account)}>{busy === account.id && <Loader2 className="animate-spin" data-icon="inline-start"/>}清除登录状态</Button></div>
@@ -61,15 +59,17 @@ export function Accounts({ snapshot, transport, refresh }: { snapshot: Snapshot;
 
 function AccountDialog({ account, transport, onClose, onSaved }: { account: SiteAccount | null; transport: Transport; onClose: () => void; onSaved: () => Promise<void> }) {
   const [value, setValue] = useState<AccountFieldsValue>({ ...emptyAccountFields });
+  const [loaded, setLoaded] = useState(!account);
   const [version, setVersion] = useState(account?.credentialVersion ?? 1), [loading, setLoading] = useState(!!account), [error, setError] = useState(''), [busy, setBusy] = useState(false), [retry, setRetry] = useState(0);
   const flight = useRef(false);
   useEffect(() => {
     if (!account) return;
-    let alive = true; setLoading(true); setError('');
+    let alive = true; setLoading(true); setLoaded(false); setError('');
     void transport.request<{ account: SiteAccount; username: string }>('GET', `/api/user/accounts/${account.id}`).then(result => {
       if (!alive) return;
       setVersion(result.account.credentialVersion ?? 1);
       setValue({ name: result.account.name, origin: result.account.origin, username: result.username, password: '', businessDomains: (result.account.businessDomains ?? [new URL(result.account.origin).hostname]).join('\n'), loginOrigins: (result.account.loginOrigins ?? [result.account.origin]).join('\n') });
+      setLoaded(true);
     }).catch(e => { if (alive) setError(e.message); }).finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [account?.id, transport, retry]);
@@ -84,8 +84,8 @@ function AccountDialog({ account, transport, onClose, onSaved }: { account: Site
     finally { flight.current = false; setBusy(false); }
   }
   return <Dialog open onOpenChange={open => { if (!open && !busy) onClose(); }}><DialogContent className="max-h-[90dvh] overflow-y-auto">
-    <DialogHeader><DialogTitle>{account ? '编辑站点账号' : '添加站点账号'}</DialogTitle><DialogDescription>{account ? '修改凭据或域名后需重新验证，供后续执行使用。' : '每个账号使用独立浏览器环境，只向确认的登录地址提供凭据。'}</DialogDescription></DialogHeader>
-    {loading || (account && !value.origin) ? <LoadFeedback loading={loading} error={error} label="正在加载账号…" onRetry={() => setRetry(v => v + 1)}/> : <form className="flex flex-col gap-5" onSubmit={event => void save(event)} onKeyDown={event => { if (event.key === 'Enter' && event.nativeEvent.isComposing) event.preventDefault(); }}>
+    <DialogHeader><DialogTitle>{account ? '编辑站点账号' : '添加站点账号'}</DialogTitle><DialogDescription>{account ? '修改域名、账号或密码后需要重新验证。' : '保存后可在任务中使用，每个账号使用独立浏览器环境。'}</DialogDescription></DialogHeader>
+    {loading || !loaded ? <LoadFeedback loading={loading} error={error} label="正在加载账号…" onRetry={() => setRetry(v => v + 1)}/> : <form className="flex flex-col gap-5" onSubmit={event => void save(event)} onKeyDown={event => { if (event.key === 'Enter' && event.nativeEvent.isComposing) event.preventDefault(); }}>
       <AccountFields value={value} onChange={setValue} disabled={busy} keepPassword={!!account}/>
       {error && <ErrorText error={error}/>}
       <div className="form-footer"><Button type="button" variant="ghost" disabled={busy} onClick={onClose}>取消</Button><Button type="submit" disabled={busy}>{busy && <Loader2 data-icon="inline-start" className="animate-spin"/>}保存账号</Button></div>

@@ -41,7 +41,9 @@ test('账号设置按精确域名分组，不合并同域的两个账号；编�
   assert.ok(within(group).getByText('工作账号')); assert.ok(within(group).getByText('个人账号'));
   assert.ok(view.getByText('凭据已验证')); assert.ok(view.getByText('需要修改凭据')); assert.equal(view.queryByText('已登录'), null);
   fireEvent.click(view.getByRole('button', { name: '编辑工作账号' }));
-  await waitFor(() => assert.equal((view.getByLabelText('用户名') as HTMLInputElement).value, 'alice'));
+  await waitFor(() => assert.equal((view.getByLabelText('账号', {exact:true}) as HTMLInputElement).value, 'alice'));
+  assert.equal((view.getByLabelText('域名') as HTMLInputElement).value, 'example.com');
+  assert.deepEqual([...view.getByRole('dialog').querySelectorAll('label')].map(label=>label.textContent), ['账号名称','域名','账号','密码']);
   assert.equal((view.getByLabelText('密码') as HTMLInputElement).value, '');
   assert.equal(document.body.textContent?.includes('existing-secret'), false);
   fireEvent.change(view.getByLabelText('账号名称'), { target: { value: '新的名称' } });
@@ -52,7 +54,7 @@ test('账号设置按精确域名分组，不合并同域的两个账号；编�
   assert.deepEqual(writes[0].body.loginOrigins, ['https://login.example.com']); assert.equal(localStorage.length, 0);
 });
 
-test('新增账号空关联字段默认使用精确业务地址，清除状态绑定当前版本', async () => {
+test('新增账号只填域名即可生成精确关联，清除状态绑定当前版本', async () => {
   const writes: { path: string; body: any }[] = [];
   const transport = transportWith(async (_method, path, body) => { writes.push({ path, body }); return {}; });
   const view = render(<Settings transport={transport} snapshot={{ ...snapshot, accounts: [account] }} refresh={async () => {}}/>);
@@ -61,29 +63,32 @@ test('新增账号空关联字段默认使用精确业务地址，清除状态�
   assert.deepEqual(writes[0], { path: '/api/user/accounts/account_one/clear-state', body: { expectedStateEpoch: 5 } });
   fireEvent.click(view.getByRole('button', { name: '添加账号' }));
   fireEvent.change(view.getByLabelText('账号名称'), { target: { value: '新账号' } });
-  fireEvent.change(view.getByLabelText('业务网站'), { target: { value: 'https://sub.example.com/home' } });
+  fireEvent.change(view.getByLabelText('域名'), { target: { value: 'sub.example.com' } });
   fireEvent.click(view.getByRole('button', { name: '保存账号' }));
   await waitFor(() => assert.equal(writes.length, 2));
+  assert.equal(writes[1].body.origin, 'https://sub.example.com');
   assert.deepEqual(writes[1].body.businessDomains, ['sub.example.com']); assert.deepEqual(writes[1].body.loginOrigins, ['https://sub.example.com']);
 });
 
-test('账号卡片通过本人接口加载，密码默认遮蔽；修改后不保留验证标记，保存期间防重', async () => {
+test('账号卡片仅展示四项信息且密码遮蔽；修改后提示重新验证，保存期间防重', async () => {
   const writes: any[] = []; let resolve!: (value: unknown) => void;
   const transport = transportWith(async (method, path, body) => {
     if (method === 'GET') { assert.equal(path, '/api/user/account-cards/card_one'); return card; }
     writes.push({ path, body }); return new Promise(done => { resolve = done; });
   });
   const view = render(<ChatAttachments transport={transport} parts={[{ type: 'account-card', cardId: card.id }]}/>);
-  await view.findByText('本次凭据已验证');
+  await view.findByRole('button',{name:'修改信息'});
   assert.equal(view.queryByLabelText('密码'),null,'紧凑卡片不把密码输入框挂入聊天');
-  assert.ok(view.getByText('登录地址：https://login.example.com'));
+  assert.deepEqual([...view.container.querySelectorAll('dt')].map(label=>label.textContent), ['账号名称','域名','账号','密码']);
+  assert.equal(view.queryByText(/登录地址|业务网站|业务域名|本次凭据已验证/),null);
+  assert.ok(view.getByText('••••••••'));
   fireEvent.click(view.getByRole('button',{name:'修改信息'}));
   const password = view.getByLabelText('密码') as HTMLInputElement;
   assert.equal(password.type, 'password'); assert.equal(password.value, 'fixture-password');
   assert.equal(view.queryByText('fixture-password'), null);
   fireEvent.click(view.getByRole('button', { name: '显示密码' })); assert.equal(password.type, 'text');
   fireEvent.change(password, { target: { value: 'replacement' } });
-  assert.ok(view.getByText('凭据待验证')); assert.equal(view.queryByText('本次凭据已验证'), null);
+  assert.ok(view.getByText('修改的凭据需要重新验证。'));
   fireEvent.click(view.getByRole('button', { name: '保存账号' })); fireEvent.click(view.getByRole('button', { name: '保存账号' }));
   assert.equal(writes.length, 1); assert.equal(writes[0].body.password, 'replacement');
   await act(async () => resolve({ accountId: 'saved', status: 'saved', resumed: false }));
@@ -95,10 +100,10 @@ test('卡片通知不会覆盖正在编辑的密码，改名称不会取消原�
   const transport = transportWith(async () => { reads++; return card; });
   transport.subscribe = fn => { notify = fn; return () => {}; };
   const view = render(<ChatAttachments transport={transport} parts={[{ type: 'account-card', cardId: card.id }]}/>);
-  await view.findByText('本次凭据已验证');
+  await view.findByRole('button',{name:'修改信息'});
   fireEvent.click(view.getByRole('button',{name:'修改信息'}));
   fireEvent.change(view.getByLabelText('账号名称'), { target: { value: '更好识别的名称' } });
-  assert.ok(view.getByText('本次凭据已验证'));
+  assert.equal(view.queryByText('修改的凭据需要重新验证。'),null);
   fireEvent.change(view.getByLabelText('密码'), { target: { value: 'edited-on-device' } });
   await act(async () => notify()); await waitFor(() => assert.equal(reads, 2));
   assert.equal((view.getByLabelText('密码') as HTMLInputElement).value, 'edited-on-device');
@@ -144,9 +149,9 @@ test('卡片切换忽略旧请求，离线禁止确认；暂不保存不发送�
   const view = render(<ChatAttachments transport={transport} parts={[{ type: 'account-card', cardId: 'old' }]}/>);
   view.rerender(<ChatAttachments transport={transport} parts={[{ type: 'account-card', cardId: 'new' }]}/>);
   fireEvent.click(await view.findByRole('button',{name:'修改信息'}));
-  await waitFor(() => assert.equal((view.getByLabelText('用户名') as HTMLInputElement).value, 'new-user'));
+  await waitFor(() => assert.equal((view.getByLabelText('账号', {exact:true}) as HTMLInputElement).value, 'new-user'));
   await act(async () => resolveOld({ ...card, username: 'old-user' }));
-  assert.equal((view.getByLabelText('用户名') as HTMLInputElement).value, 'new-user');
+  assert.equal((view.getByLabelText('账号', {exact:true}) as HTMLInputElement).value, 'new-user');
   fireEvent.click(view.getByRole('button',{name:'收起'}));
   view.rerender(<ChatAttachments transport={transport} offline parts={[{ type: 'account-card', cardId: 'new' }]}/>);
   assert.ok(view.getByRole('button', { name: '保存账号' }).hasAttribute('disabled')); assert.equal(writes.length, 0);
@@ -189,4 +194,25 @@ test('已归并卡片和空引用消息不再展示',async()=>{
   await waitFor(()=>assert.ok(!duplicate.queryByText('正在加载账号卡片…')));
   assert.equal(duplicate.container.textContent,'');
   assert.deepEqual(conversationRows([{id:'retired_card',seq:1,role:'assistant',content:'',at:new Date().toISOString(),parts:[]}]),[]);
+});
+
+test('修改账号域名不沿用旧登录关联，未改域名时保留原协议端口及关联',async()=>{
+  const writes: {body:Record<string,unknown>}[]=[];
+  const original={...account,origin:'https://example.com:8443',loginOrigins:['https://login.example.com:9443']};
+  const transport=transportWith(async(method,_path,body)=>method==='GET'?{account:original,username:'alice'}:(writes.push({body:body as Record<string,unknown>}),{}));
+  const view=render(<Settings transport={transport} snapshot={{...snapshot,accounts:[original]}} refresh={async()=>{}}/>);
+  fireEvent.click(view.getByRole('button',{name:'编辑工作账号'}));
+  await waitFor(()=>assert.equal((view.getByLabelText('域名') as HTMLInputElement).value,'example.com:8443'));
+  fireEvent.click(view.getByRole('button',{name:'保存账号'}));
+  await waitFor(()=>assert.equal(writes.length,1));
+  assert.equal(writes[0].body.origin,original.origin);assert.deepEqual(writes[0].body.loginOrigins,original.loginOrigins);
+  await waitFor(()=>assert.ok(!view.queryByRole('dialog')));
+  fireEvent.click(view.getByRole('button',{name:'编辑工作账号'}));
+  fireEvent.change(await view.findByLabelText('域名'),{target:{value:''}});
+  assert.equal((view.getByLabelText('域名') as HTMLInputElement).value,'');
+  fireEvent.change(view.getByLabelText('域名'),{target:{value:'other.example.com:8443'}});
+  fireEvent.click(view.getByRole('button',{name:'保存账号'}));
+  await waitFor(()=>assert.equal(writes.length,2));
+  assert.equal(writes[1].body.origin,'https://other.example.com:8443');
+  assert.deepEqual(writes[1].body.businessDomains,['other.example.com']);assert.deepEqual(writes[1].body.loginOrigins,['https://other.example.com:8443']);
 });
