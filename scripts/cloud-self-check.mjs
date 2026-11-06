@@ -15,7 +15,7 @@ for (const [path, expected, authorization] of checks) {
   const access = response.status === 302 && (response.headers.get('location') ?? '').includes('zhangheng.cloudflareaccess.com');
   gated ||= access;
   if (!access && response.status !== expected) throw new Error(`CHECK_FAILED ${path} ${response.status}`);
-  if (path === '/api/health' && (await response.json()).protocolVersion !== 15) throw new Error('PROTOCOL_MISMATCH');
+  if (path === '/api/health' && (await response.json()).protocolVersion !== 16) throw new Error('PROTOCOL_MISMATCH');
   console.log(JSON.stringify({origin,path,status:response.status,accessGate:access,passed:!access}));
 }
 console.log(JSON.stringify({origin,complete:!gated,note:gated?'Access still gates user/admin checks; application authorization checks pending':'Anonymous and bearer scope checks passed'}));
