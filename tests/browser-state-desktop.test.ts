@@ -44,6 +44,16 @@ test(
     await once(server, "listening");
     const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
     const source = path.join(directory, "source");
+    const browserErrors: string[] = [];
+    const observeProcess = <T extends ReturnType<typeof spawn>>(owned: T, label: string): T => {
+      owned.stderr?.on("data", (data: Buffer) => {
+        // 本测试只加载虚构站点和账号；保留有界浏览器错误，定位 Runner 特有初始化失败。
+        browserErrors.push(`${label}: ${data.toString().slice(-2000)}`);
+        if (browserErrors.length > 8) browserErrors.shift();
+      });
+      owned.once("exit", (code, signal) => t.diagnostic(`${label} exit ${code}/${signal}`));
+      return owned;
+    };
     const child = spawn(
       executable,
       [
@@ -54,11 +64,13 @@ test(
         "--disable-background-networking",
         "about:blank",
       ],
-      { windowsHide: true, stdio: "ignore" },
+      { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] },
     );
+    observeProcess(child, "source");
     const children = [child];
     let socket: WebSocket | undefined, adapter: BrowserStateAdapter | undefined;
     t.after(async () => {
+      for (const diagnostic of browserErrors) t.diagnostic(diagnostic);
       await adapter?.close();
       socket?.close();
       for (const owned of children)
@@ -151,17 +163,20 @@ test(
     // 在另一份全新 Profile 中恢复源浏览器导出值，再检查网站首次脚本读取。
     const destination = path.join(directory, "destination");
     children.push(
-      spawn(
-        executable,
-        [
-          `--user-data-dir=${destination}`,
-          "--remote-debugging-port=0",
-          "--headless=new",
-          "--no-first-run",
-          "--disable-background-networking",
-          "about:blank",
-        ],
-        { windowsHide: true, stdio: "ignore" },
+      observeProcess(
+        spawn(
+          executable,
+          [
+            `--user-data-dir=${destination}`,
+            "--remote-debugging-port=0",
+            "--headless=new",
+            "--no-first-run",
+            "--disable-background-networking",
+            "about:blank",
+          ],
+          { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] },
+        ),
+        "destination",
       ),
     );
     active = "";
