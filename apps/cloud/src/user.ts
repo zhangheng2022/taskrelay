@@ -10,6 +10,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { egress } from "./egress";
 import {
+  PROTOCOL_VERSION,
   scheduleSchema,
   modelInputSchema,
   idSchema,
@@ -470,10 +471,13 @@ export const admin = adminBase
       .first<Row>();
     if (!r) throw new Error("PAIRING_EXPIRED");
     const token = await unseal<string>(r.token_secret, c.env.MASTER_KEY, `pair:${r.id}`);
+    // 配对 start 只接受当前协议，新设备应保留这一已校验版本。
+    // 写入旧版占位值会让正常服务中的新配对被迫走仅限维护窗口的旧设备升级入口。
+    // OR IGNORE 保留重复批准的身份及吊销状态；已有旧设备仍走独立维护升级流程。
     await c.env.DB.batch([
       c.env.DB.prepare(
-        "INSERT OR IGNORE INTO devices(id,name,token_hash,protocol_version) VALUES(?,?,?,2)",
-      ).bind(r.device_id, r.name, await hash(token)),
+        "INSERT OR IGNORE INTO devices(id,name,token_hash,protocol_version) VALUES(?,?,?,?)",
+      ).bind(r.device_id, r.name, await hash(token), PROTOCOL_VERSION),
       c.env.DB.prepare("UPDATE pairings SET approved=1 WHERE id=?").bind(r.id),
     ]);
     return c.json({ ok: true });
