@@ -17,14 +17,15 @@ export async function requestJson<T>(
   let response: Response;
   let text: string;
   try {
+    // SDK 可能传入小写 content-type；通过 Headers 合并，避免 JSON 媒体类型被拼接两次。
+    const headers = new Headers(options.headers);
+    if (options.body !== undefined && !headers.has("content-type"))
+      headers.set("content-type", "application/json");
     response = await fetch(url, {
       method,
       redirect: "error",
       signal,
-      headers: {
-        ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
-        ...options.headers,
-      },
+      headers,
       ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
     });
     text = await response.text();
