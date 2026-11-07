@@ -5,10 +5,20 @@ import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { createHash } from "node:crypto";
+import { parseArgs } from "node:util";
+const { values } = parseArgs({
+  options: { scales: { type: "string", default: "1000,100000,1000000" } },
+});
+const scales = values.scales.split(",").map(Number);
+if (
+  scales.some(
+    (n, i) => !Number.isSafeInteger(n) || n < 1 || n > 1_000_000 || (i > 0 && n <= scales[i - 1]),
+  )
+)
+  throw Error("BENCHMARK_SCALES_INVALID");
 const folder = path.resolve(".cache/db-capacity", new Date().toISOString().replaceAll(":", "-"));
 mkdirSync(folder, { recursive: true });
-const scales = [1_000, 100_000, 1_000_000],
-  results = [];
+const results = [];
 function measure(db, sql, args) {
   const samples = [];
   for (let i = 0; i < 70; i++) {

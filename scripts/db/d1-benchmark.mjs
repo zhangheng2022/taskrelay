@@ -4,6 +4,17 @@ import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 import { readFileSync, readdirSync, mkdirSync, writeFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import path from "node:path";
+import { parseArgs } from "node:util";
+const { values } = parseArgs({
+  options: { scales: { type: "string", default: "1000,100000,1000000" } },
+});
+const scales = values.scales.split(",").map(Number);
+if (
+  scales.some(
+    (n, i) => !Number.isSafeInteger(n) || n < 1 || n > 1_000_000 || (i > 0 && n <= scales[i - 1]),
+  )
+)
+  throw Error("BENCHMARK_SCALES_INVALID");
 const output = path.resolve(
   ".cache/db-capacity",
   "workerd-" + new Date().toISOString().replaceAll(":", "-"),
@@ -88,7 +99,7 @@ for (const version of ["v1", "v2"]) {
       )
       .run();
     let inserted = 0;
-    for (const scale of [1_000, 100_000, 1_000_000]) {
+    for (const scale of scales) {
       let rowsRead = 0,
         rowsWritten = 0;
       const start = performance.now();

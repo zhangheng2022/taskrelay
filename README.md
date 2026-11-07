@@ -163,3 +163,5 @@ node scripts/smoke.mjs "$env:LOCALAPPDATA\TaskRelay\app-<实际版本>\TaskRelay
 云端以 LangGraph 管理交办、阶段计划和协助，D1 加密保存图检查点；桌面以 LangGraph 管理现场工具循环，协助暂停只在同一执行进程内恢复。LangChain 统一模型和工具消息，平台 adapter 保持设备租约、动作防重和美国模型出站约束。设置中的“我的记忆”仍只管理偏好，不自动影响运行。
 
 本地新库使用 `npm run db:migrate` 初始化独立 v2 基线。源码协议 18、桌面 0.19.0 / SQLite schema 4，正常运行不兼容旧库、旧字段或旧聊天游标；旧库不能直接应用新基线。原 0001–0030 SQL 仅保留在 `scripts/db/legacy-schema` 供一次性离线转换使用。`npm run db:convert -- --source <路径> --inspect` 只读预检，`npm run db:benchmark` 在忽略目录生成合成容量对照；转换、导入和回退要求见 [部署与恢复](docs/DEPLOYMENT.md#存储-v2-离线切换源码-0190尚未部署)。生产和本机安装状态分别记录在 [验收](docs/ACCEPTANCE.md)，不能从源码版本推断已上线。
+
+两个容量命令可用 `-- --scales 1000` 做小规模隔离复验，或按递增顺序传入逗号分隔的规模；默认仍为 1000、100000、1000000 条消息。小规模报告只证明对应夹具和查询入口，不替代百万规模或生产容量验收。
