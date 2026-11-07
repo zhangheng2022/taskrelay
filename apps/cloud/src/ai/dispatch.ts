@@ -1,3 +1,4 @@
+import { dbTime } from "../database";
 import type { AppEnv } from "../env";
 import { member } from "../tenancy";
 import { now } from "../store";
@@ -36,7 +37,7 @@ export async function dispatchGraphEvent(env: AppEnv, graphId: string) {
       AND NOT EXISTS(SELECT 1 FROM ai_dispatch busy WHERE busy.graph_id=? AND busy.state='running' AND busy.lease_until>=?)
     ORDER BY created_at,id LIMIT 1) RETURNING *`,
   )
-    .bind(until, graphId, at, graphId, at)
+    .bind(dbTime(until), graphId, dbTime(at), graphId, dbTime(at))
     .first<GraphEvent>();
   if (!event) return false;
   const scoped = { ...env, requestUserId: event.owner };

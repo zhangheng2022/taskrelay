@@ -1,3 +1,4 @@
+import { dbTime } from "../apps/cloud/src/database";
 import { finishRequest, browserClosedRequest } from "./runner-request";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -60,7 +61,7 @@ test("提交后失去租约进入 unknown，账号保持锁定且旧消息拒绝
   const r = (await claim(db, "device_a", "req_a"))!;
   await db
     .prepare("UPDATE runs SET write_pending=1,lease_expires_at=? WHERE id=?")
-    .bind("2020-01-01T00:00:00.000Z", r.id)
+    .bind(dbTime("2020-01-01T00:00:00.000Z"), r.id)
     .run();
   await tick(db);
   assert.equal((await getRun(db, r.id)).status, "unknown");
@@ -75,7 +76,7 @@ test("无写意图的租约过期失败，确认浏览器退出后才释放账�
   const r = (await claim(db, "device_a", "req_a"))!;
   await db
     .prepare("UPDATE runs SET lease_expires_at=? WHERE id=?")
-    .bind("2020-01-01T00:00:00.000Z", r.id)
+    .bind(dbTime("2020-01-01T00:00:00.000Z"), r.id)
     .run();
   await tick(db);
   assert.equal((await getRun(db, r.id)).status, "failed");
@@ -100,7 +101,7 @@ test("调度只补最近一次，重复 tick 不重复排队", async () => {
   );
   await tick(db);
   await tick(db);
-  const rows = await db.prepare("SELECT * FROM runs").all();
+  const rows = await db.prepare("SELECT * FROM run_details").all();
   assert.equal(rows.results.length, 1);
   assert.ok(Date.now() - new Date((rows.results[0] as any).scheduled_for).getTime() < 61000);
 });
@@ -217,14 +218,14 @@ test("真实收尾拒绝旧租约及其他设备，关闭聊天后仍可收尾�
     );
     sql
       .prepare(
-        "INSERT INTO ai_threads(id,user_id,task_id,kind,model_id,model_version,closed,created_at,updated_at) VALUES('old','legacy_owner',?,'chat','model_test',1,1,?,?)",
+        "INSERT INTO ai_threads(id,user_id,task_id,kind,model_id,model_version,closed,created_at,updated_at) VALUES('old','fixture_owner',?,'chat','model_test',1,1,?,?)",
       )
-      .run(task.id, task.createdAt, task.createdAt);
+      .run(task.id, dbTime(task.createdAt), dbTime(task.createdAt));
     sql
       .prepare(
-        "INSERT INTO ai_threads(id,user_id,task_id,kind,model_id,model_version,created_at,updated_at) VALUES('new','legacy_owner',?,'chat','model_test',1,?,?)",
+        "INSERT INTO ai_threads(id,user_id,task_id,kind,model_id,model_version,created_at,updated_at) VALUES('new','fixture_owner',?,'chat','model_test',1,?,?)",
       )
-      .run(task.id, task.createdAt, task.createdAt);
+      .run(task.id, dbTime(task.createdAt), dbTime(task.createdAt));
     sql.prepare("UPDATE runs SET thread_id='old' WHERE id=?").run(run.id);
     assert.equal((await finishRequest(db, run, "succeeded", result)).status, 200);
     assert.equal((await getRun(db, run.id)).status, "succeeded");

@@ -1,45 +1,39 @@
+import { seedMessage } from "./helpers";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { productionModelFixture } from "./production-model-fixture";
 import { seal } from "../apps/cloud/src/crypto";
 
-test("加密协助历史独立分页，清理保留期同时清理密文", async (t) => {
-  const s = await productionModelFixture(t);
-  const thread = (
-    await s.request("/api/user/threads", { modelId: "model_test", taskId: s.run.task.id })
-  ).data;
-  const insert = s.sql.prepare(
-    "INSERT INTO challenges(id,run_id,lease_epoch,version,step_id,kind,instruction,target,status,expires_at) VALUES(?,?,1,1,?,'information','测试','#field','consumed','2099-01-01')",
-  );
-  for (let i = 0; i < 51; i++) {
-    const id = "fixture_" + i;
-    insert.run(id, s.run.id, id);
-    s.sql
-      .prepare(
-        "INSERT INTO assistance_replies(challenge_id,run_id,thread_id,content_secret,created_at) VALUES(?,?,?,?,?)",
-      )
-      .run(
-        id,
-        s.run.id,
-        thread.id,
-        await seal("fixture-" + i, s.env.MASTER_KEY, `assistance:${id}`),
-        "2026-11-04T01:00:00Z",
-      );
-  }
+test("加密协助与普通消息共用 seq 分页，保留期清理正文和密文", async (t) => {
+  const s = await productionModelFixture(t),
+    thread = (await s.request("/api/user/threads", { modelId: "model_test", taskId: s.run.taskId }))
+      .data;
+  for (let i = 1; i <= 51; i++)
+    seedMessage(s.sql, {
+      id: "reply_" + i,
+      thread_id: thread.id,
+      seq: i,
+      role: "user",
+      content: "[私密回复]",
+      private_content: await seal(
+        "fixture-" + i,
+        s.env.MASTER_KEY,
+        `message:${thread.id}:reply_${i}`,
+      ),
+      turn_id: "history",
+      at: Date.now(),
+    });
   const page = (await s.request(`/api/user/threads/${thread.id}`, undefined, "GET")).data;
-  assert.equal(page.replies.length, 50);
+  assert.equal(page.messages.length, 50);
+  assert.equal(page.nextReplyCursor, undefined);
   const older = (
-    await s.request(
-      `/api/user/threads/${thread.id}?beforeReply=${page.nextReplyCursor}`,
-      undefined,
-      "GET",
-    )
+    await s.request(`/api/user/threads/${thread.id}?before=${page.nextCursor}`, undefined, "GET")
   ).data;
-  assert.equal(older.replies.length, 1);
-  assert.equal(older.replies[0].content, "fixture-0");
+  assert.equal(older.messages.length, 1);
+  assert.equal(older.messages[0].content, "fixture-1");
   const { retainHistory } = await import("../apps/cloud/src/ai/lifecycle");
   await retainHistory(s.env, "2099-01-01");
-  assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM assistance_replies").get()!.n, 0);
+  assert.equal(s.sql.prepare("SELECT count(*) n FROM message_bodies").get()!.n, 0);
 });
 
 test("已误发普通聊天的内容可转为本人可见，后续模型只能读取占位内容", async (t) => {
@@ -48,11 +42,15 @@ test("已误发普通聊天的内容可转为本人可见，后续模型只能�
     await s.request("/api/user/threads", { modelId: "model_test", taskId: s.run.task.id })
   ).data;
   const secret = "fake-old-password-OnlyTest";
-  s.sql
-    .prepare(
-      "INSERT INTO ai_messages(id,thread_id,seq,role,content,turn_id,at) VALUES('private_test',?,1,'user',?,'old_turn','2026-11-04')",
-    )
-    .run(thread.id, secret);
+  seedMessage(s.sql, {
+    id: "private_test",
+    thread_id: thread.id,
+    seq: 1,
+    role: "user",
+    content: secret,
+    turn_id: "old_turn",
+    at: "2026-11-04",
+  });
   s.sql.prepare("UPDATE ai_threads SET summary=?,version=1 WHERE id=?").run(secret, thread.id);
   const result = await s.request(
     `/api/user/threads/${thread.id}/messages/private_test/private`,
@@ -60,7 +58,7 @@ test("已误发普通聊天的内容可转为本人可见，后续模型只能�
   );
   assert.equal(result.status, 200, JSON.stringify(result.data));
   const raw = s.sql
-    .prepare("SELECT content,private_content FROM ai_messages WHERE id='private_test'")
+    .prepare("SELECT content,private_content FROM message_details WHERE id='private_test'")
     .get()!;
   assert.ok(!JSON.stringify(raw).includes(secret));
   assert.equal(

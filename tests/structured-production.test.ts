@@ -37,7 +37,7 @@ for (const protocol of ["chat", "responses"] as const)
       "provider_started_at",
       "at",
       "updated_at",
-    ].map((key) => Date.parse(String(timing[0][key])));
+    ].map((key) => Number(timing[0][key]));
     assert.ok(stamps.every(Number.isFinite));
     assert.deepEqual(
       stamps,

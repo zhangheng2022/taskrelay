@@ -1,3 +1,4 @@
+import { dbTime } from "./database";
 /** 账号执行组固定交办时的账号顺序。成员仅在前一浏览器已清理后投递，
  * 不把等待成员放入有领取期限的 runs；D1 条件写入处理重试、停止及聊天退休。
  */
@@ -25,7 +26,7 @@ export async function enqueueTaskDispatch(db: D1Database, task: TaskDefinition, 
     if (!thread) throw Error("TASK_CONTEXT_OR_VERSION_CHANGED");
     for (const accountId of task.accountIds) {
       const account = await db
-        .prepare("SELECT * FROM accounts WHERE id=? AND user_id=?")
+        .prepare("SELECT * FROM account_details WHERE id=? AND user_id=?")
         .bind(accountId, thread.user_id)
         .first<Row>();
       if (!account || !accountMatchesDomain(account, task.entryUrl))
@@ -45,7 +46,7 @@ export async function enqueueTaskDispatch(db: D1Database, task: TaskDefinition, 
         thread.id,
         task.id,
         JSON.stringify(task),
-        now(),
+        dbTime(now()),
         task.id,
         task.version,
         thread.id,
@@ -82,12 +83,12 @@ export async function ensureDispatchGroup(db: D1Database, command: Row) {
   await db.batch([
     db
       .prepare(
-        `INSERT OR IGNORE INTO account_dispatch_groups(id,task_id,task_version,thread_id,user_id,created_at,updated_at)
-      SELECT c.id,c.task_id,?,c.thread_id,t.user_id,?,? FROM conversation_commands c JOIN ai_threads t ON t.id=c.thread_id
+        `INSERT OR IGNORE INTO account_dispatch_groups(id,task_id,task_version,thread_id,user_id,created_at,updated_at,member_count)
+      SELECT c.id,c.task_id,?,c.thread_id,t.user_id,?,?,? FROM conversation_commands c JOIN ai_threads t ON t.id=c.thread_id
       WHERE c.id=? AND c.state='committed' AND c.run_task IS NOT NULL AND t.closed=0
       AND EXISTS(SELECT 1 FROM tasks WHERE id=c.task_id AND version=? AND context_withdrawn=0 AND deleted=0)`,
       )
-      .bind(task.version, now(), now(), command.id, task.version),
+      .bind(task.version, dbTime(now()), dbTime(now()), accounts.length, command.id, task.version),
     db
       .prepare(
         `INSERT OR IGNORE INTO account_dispatch_members(group_id,position,account_id)
@@ -110,7 +111,7 @@ export async function cancelDispatchGroup(db: D1Database, runId: string) {
       .prepare(
         "UPDATE account_dispatch_groups SET state='cancelled',updated_at=? WHERE id=? AND state IN ('active','paused')",
       )
-      .bind(now(), group.id),
+      .bind(dbTime(now()), group.id),
     db
       .prepare(
         "UPDATE account_dispatch_members SET state='cancelled' WHERE group_id=? AND state='pending'",
@@ -121,7 +122,7 @@ export async function cancelDispatchGroup(db: D1Database, runId: string) {
         `UPDATE runs SET cancel_requested=1,status=CASE WHEN status='queued' THEN 'cancelled' ELSE status END,updated_at=?
       WHERE dispatch_group_id=? AND status IN ('queued','running','waiting_user','verifying')`,
       )
-      .bind(now(), group.id),
+      .bind(dbTime(now()), group.id),
   ]);
 }
 
@@ -133,13 +134,13 @@ export async function advanceDispatchGroups(db: D1Database, id?: string) {
         `UPDATE account_dispatch_groups SET state='paused',updated_at=? WHERE state='active'
       AND EXISTS(SELECT 1 FROM runs WHERE dispatch_group_id=account_dispatch_groups.id AND status='unknown')`,
       )
-      .bind(now()),
+      .bind(dbTime(now())),
     db
       .prepare(
         `UPDATE account_dispatch_groups SET state='cancelled',updated_at=? WHERE state='active'
       AND EXISTS(SELECT 1 FROM runs WHERE dispatch_group_id=account_dispatch_groups.id AND (cancel_requested=1 OR status='cancelled'))`,
       )
-      .bind(now()),
+      .bind(dbTime(now())),
     db.prepare(`UPDATE account_dispatch_members SET state='done' WHERE state='enqueued' AND EXISTS(
       SELECT 1 FROM runs r WHERE r.id=account_dispatch_members.run_id AND r.status IN ('succeeded','failed','expired')
       AND r.cleanup_pending=0 AND NOT EXISTS(SELECT 1 FROM account_locks WHERE run_id=r.id))`),
@@ -150,7 +151,7 @@ export async function advanceDispatchGroups(db: D1Database, id?: string) {
         `UPDATE account_dispatch_groups SET state='completed',updated_at=? WHERE state='active'
       AND NOT EXISTS(SELECT 1 FROM account_dispatch_members WHERE group_id=account_dispatch_groups.id AND state<>'done')`,
       )
-      .bind(now()),
+      .bind(dbTime(now())),
   ]);
   const rows = await db
     .prepare(

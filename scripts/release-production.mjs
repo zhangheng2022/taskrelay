@@ -25,6 +25,16 @@ const runId = process.env.GITHUB_RUN_ID;
 const artifactRunId = process.env.ARTIFACT_RUN_ID ?? runId;
 const mode = process.env.RELEASE_MODE ?? "publish";
 const key = "productionRelease";
+// 新基线只能导入独立库；常规发布绝不能在旧迁移链或冻结转换库上自动 apply。
+const marker = await query(
+  "SELECT name FROM sqlite_master WHERE type='table' AND name='storage_meta'",
+);
+if (!marker[0].results.length) throw Error("OFFLINE_STORAGE_CUTOVER_REQUIRED");
+if (
+  (await query("SELECT version FROM storage_meta"))[0].results[0]?.version !== 2 ||
+  (await query("SELECT value FROM settings WHERE key='storageFrozen'"))[0].results[0]?.value === "1"
+)
+  throw Error("OFFLINE_STORAGE_CUTOVER_REQUIRED");
 const readState = async () =>
   (await query("SELECT value FROM settings WHERE key=?", [key]))[0].results[0]?.value;
 const digest = async (file) => {
@@ -210,15 +220,7 @@ const io = {
   },
   migrate: async () => {
     await assertQuiescent();
-    command([
-      "d1",
-      "migrations",
-      "apply",
-      "taskrelay",
-      "--remote",
-      "--config",
-      "apps/web/wrangler.jsonc",
-    ]);
+    command(["d1", "migrations", "apply", "DB", "--remote", "--config", "apps/web/wrangler.jsonc"]);
     const applied = new Set(
       (await query("SELECT name FROM d1_migrations"))[0].results.map((row) => row.name),
     );
@@ -318,7 +320,7 @@ const io = {
       (
         await query(
           "SELECT COUNT(*) n FROM devices WHERE revoked=0 AND claim_ready=1 AND protocol_version=? AND last_seen>?",
-          [PROTOCOL_VERSION, new Date(Date.now() - 90_000).toISOString()],
+          [PROTOCOL_VERSION, Date.now() - 90_000],
         )
       )[0].results[0].n > 0
     );

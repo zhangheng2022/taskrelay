@@ -1,3 +1,4 @@
+import { dbTime } from "../apps/cloud/src/database";
 import { fixturePng } from "./image-fixture";
 import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
@@ -41,7 +42,7 @@ test("撤回与加密回复分离，取消已缓存正文的运行，后续运�
   });
   s.sql
     .prepare(
-      "UPDATE tasks SET definition=json_set(definition,'$.goal',?,'$.executionOutline',json_array(?)) WHERE id=?",
+      "UPDATE task_versions SET definition=json_set(definition,'$.goal',?,'$.executionOutline',json_array(?)) WHERE task_id=? AND version=1",
     )
     .run(revoked, revoked, s.run.taskId);
   const contextPath = `/api/runner/runs/${s.run.id}/context`;
@@ -165,7 +166,7 @@ test("撤回与加密回复分离，取消已缓存正文的运行，后续运�
 test("撤回迁移识别旧仅本人可见记录，兼容正常加密回复并停止旧运行和命令", () => {
   const sql = new DatabaseSync(":memory:");
   try {
-    const migrations = new URL("../apps/cloud/migrations/", import.meta.url);
+    const migrations = new URL("../scripts/db/legacy-schema/", import.meta.url);
     for (const file of readdirSync(migrations)
       .filter((name) => /^00(?:0\d|1\d|20)_.*\.sql$/.test(name))
       .sort())
@@ -193,7 +194,7 @@ test("撤回迁移识别旧仅本人可见记录，兼容正常加密回复并�
     `);
     sql.exec(
       readFileSync(
-        new URL("../apps/cloud/migrations/0021_context_withdrawal.sql", import.meta.url),
+        new URL("../scripts/db/legacy-schema/0021_context_withdrawal.sql", import.meta.url),
         "utf8",
       ),
     );
@@ -253,7 +254,7 @@ test("待交接命令读出后删除聊天，不再排队且不能改挂到新�
     .prepare(
       "INSERT INTO conversation_commands(id,thread_id,task_id,run_task,state,created_at) VALUES('pending-delete',?,?,?,'committed',?)",
     )
-    .run(s.thread.id, s.run.taskId, JSON.stringify(s.run.task), new Date().toISOString());
+    .run(s.thread.id, s.run.taskId, JSON.stringify(s.run.task), dbTime(new Date().toISOString()));
   let release!: () => void, selected!: () => void;
   const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -412,7 +413,7 @@ test("暂存对象已由alarm退休时，迟到索引发布不能引用已回收
         // 注入生产alarm完成退休后、原上传请求才继续的跨存储顺序。
         s.sql
           .prepare("INSERT INTO evidence_retirements(object_key,retired_at) VALUES(?,?)")
-          .run(key, new Date().toISOString());
+          .run(key, dbTime(new Date().toISOString()));
         images.delete(key);
       },
       remove: async () => {

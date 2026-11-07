@@ -1,42 +1,17 @@
+import { applicationDb } from "../apps/cloud/src/database";
+import { dbTime } from "../apps/cloud/src/database";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import type { TaskDefinition } from "../packages/contracts/src/index";
 import { seal } from "../apps/cloud/src/crypto";
 export function testDb() {
   const sql = new DatabaseSync(":memory:");
-  for (const f of [
-    "0001_initial.sql",
-    "0002_conversations.sql",
-    "0003_reconciliation.sql",
-    "0004_write_recovery.sql",
-    "0005_multiuser.sql",
-    "0006_ai.sql",
-    "0007_free_runtime.sql",
-    "0008_report_run.sql",
-    "0009_batch.sql",
-    "0010_personal_quota_pause.sql",
-    "0011_manual_quota_pause.sql",
-    "0012_conversation_execution.sql",
-    "0013_remove_platform_budget.sql",
-    "0014_remove_site_authorization.sql",
-    "0015_assistance_history.sql",
-    "0016_private_messages.sql",
-    "0017_authentication_effects.sql",
-    "0018_action_ledger.sql",
-    "0019_chat_execution.sql",
-    "0020_graph_orchestration.sql",
-    "0021_context_withdrawal.sql",
-    "0022_checkpoint_chunks.sql",
-    "0023_history_cleanup.sql",
-    "0024_browser_state.sql",
-    "0025_account_dispatch.sql",
-    "0026_account_cards.sql",
-    "0027_account_card_identity.sql",
-    "0028_release_claim_barrier.sql",
-    "0029_image_references.sql",
-    "0030_inference_timing.sql",
-  ])
-    sql.exec(readFileSync(new URL(`../apps/cloud/migrations/${f}`, import.meta.url), "utf8"));
+  sql.exec(
+    readFileSync(new URL("../apps/cloud/migrations/0001_storage_v2.sql", import.meta.url), "utf8"),
+  );
+  sql.exec(
+    "INSERT INTO members(id,email,role) VALUES('fixture_owner','fixture@example.com','admin')",
+  );
   class Statement {
     args: any[] = [];
     constructor(readonly query: string) {}
@@ -88,7 +63,7 @@ export function testDb() {
       }
     },
   };
-  return { db: db as unknown as D1Database, sql };
+  return { db: applicationDb(db as unknown as D1Database), sql };
 }
 export function task(overrides: Partial<TaskDefinition> = {}): TaskDefinition {
   return {
@@ -109,7 +84,7 @@ export function task(overrides: Partial<TaskDefinition> = {}): TaskDefinition {
     ...overrides,
   };
 }
-export async function insertTask(db: D1Database, t = task()) {
+export async function insertTask(db: D1Database, t = task(), userId = "fixture_owner") {
   // 协议 16 领取必须引用真实归属账号。只补测试所需缺失账号，不覆盖调用方已配置的账号/密文。
   if (
     t.accountId &&
@@ -124,32 +99,90 @@ export async function insertTask(db: D1Database, t = task()) {
     await db.batch([
       db
         .prepare(
-          `INSERT INTO accounts(id,name,origin,username_hint,secret,created_at,profile_id,business_domains,login_origins)
-        VALUES(?,?,?,?,?,?,?,?,?)`,
+          `INSERT INTO accounts(id,name,origin,username_hint,created_at,profile_id,business_domains,user_id)
+        VALUES(?,?,?,?,?,?,?,?)`,
         )
         .bind(
           t.accountId,
           "测试账号",
           origin,
           "fi***",
-          secret,
-          t.createdAt,
+          dbTime(t.createdAt),
           t.accountId,
           JSON.stringify([new URL(origin).hostname]),
-          JSON.stringify([origin]),
+          userId,
         ),
       db
         .prepare(
           "INSERT INTO account_credential_versions(account_id,version,secret,login_origins,created_at) VALUES(?,1,?,?,?)",
         )
-        .bind(t.accountId, secret, JSON.stringify([origin]), t.createdAt),
+        .bind(t.accountId, secret, JSON.stringify([origin]), dbTime(t.createdAt)),
     ]);
   }
-  await db
-    .prepare(
-      "INSERT INTO tasks(id,version,definition,status,next_run_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
-    )
-    .bind(t.id, t.version, JSON.stringify(t), t.status, t.nextRunAt, t.createdAt, t.createdAt)
-    .run();
+  if (
+    !(await db
+      .prepare("SELECT id FROM model_profile_versions WHERE id=? AND version=?")
+      .bind(t.modelId, t.modelVersion)
+      .first())
+  )
+    await db
+      .prepare(
+        "INSERT INTO model_profile_versions(id,version,config,secret,capabilities,created_at) VALUES(?,?,?,?,?,?)",
+      )
+      .bind(t.modelId, t.modelVersion, "{}", "fixture", "{}", dbTime(t.createdAt))
+      .run();
+  await db.batch([
+    db
+      .prepare(
+        "INSERT INTO tasks(id,version,title,schedule_kind,status,next_run_at,created_at,updated_at,user_id) VALUES(?,?,?,?,?,?,?,?,?)",
+      )
+      .bind(
+        t.id,
+        t.version,
+        t.title,
+        t.schedule.kind,
+        t.status,
+        dbTime(t.nextRunAt),
+        dbTime(t.createdAt),
+        dbTime(t.createdAt),
+        userId,
+      ),
+    db
+      .prepare(
+        "INSERT INTO task_versions(task_id,version,definition,user_id,model_id,model_version) VALUES(?,?,?,?,?,?)",
+      )
+      .bind(t.id, t.version, JSON.stringify(t), userId, t.modelId, t.modelVersion),
+  ]);
   return t;
+}
+
+/** 测试仅通过新结构写入完整消息；元数据与正文同事务，不建立旧表兼容入口。 */
+export function seedMessage(
+  sql: DatabaseSync,
+  row: Record<string, import("node:sqlite").SQLInputValue>,
+) {
+  const body = { content: "", private_content: null, parts: "[]", ...row };
+  const metadata = Object.fromEntries(
+    Object.entries(row).filter(([k]) => !["content", "private_content", "parts"].includes(k)),
+  );
+  if (typeof row.at !== "number" && typeof row.at !== "string")
+    throw Error("TEST_MESSAGE_TIME_REQUIRED");
+  metadata.at = dbTime(row.at);
+  const keys = Object.keys(metadata);
+  sql.exec("SAVEPOINT seed_message");
+  try {
+    const result = sql
+      .prepare(
+        `INSERT INTO ai_messages(${keys.join(",")}) VALUES(${keys.map(() => "?").join(",")})`,
+      )
+      .run(...keys.map((k) => metadata[k]));
+    sql
+      .prepare("INSERT INTO message_bodies(id,content,private_content,parts) VALUES(?,?,?,?)")
+      .run(row.id, body.content, body.private_content, body.parts);
+    sql.exec("RELEASE seed_message");
+    return result;
+  } catch (error) {
+    sql.exec("ROLLBACK TO seed_message;RELEASE seed_message");
+    throw error;
+  }
 }

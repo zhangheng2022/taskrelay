@@ -1,3 +1,4 @@
+import { dbTime } from "../apps/cloud/src/database";
 import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { app } from "../apps/cloud/src/index";
@@ -100,9 +101,9 @@ async function fixture(t: TestContext, bound = true) {
   const definition = await insertTask(db, task({ accountId, entryUrl: accountInput.origin }));
   await db
     .prepare(
-      `INSERT INTO ai_threads(id,user_id,task_id,kind,model_id,model_version,created_at,updated_at) VALUES('thread_state','legacy_owner',?,'chat','model_test',1,?,?)`,
+      `INSERT INTO ai_threads(id,user_id,task_id,kind,model_id,model_version,created_at,updated_at) VALUES('thread_state','fixture_owner',?,'chat','model_test',1,?,?)`,
     )
-    .bind(definition.id, now(), now())
+    .bind(definition.id, dbTime(now()), dbTime(now()))
     .run();
   let sequence = 0;
   const next = async () => {
@@ -124,7 +125,8 @@ async function fixture(t: TestContext, bound = true) {
       stateCandidateKey: key,
     });
   const close = (run: TaskRun) => call(run, "browser-closed");
-  const account = () => sql.prepare("SELECT * FROM accounts WHERE id=?").get(accountId) as Row;
+  const account = () =>
+    sql.prepare("SELECT * FROM account_details WHERE id=?").get(accountId) as Row;
   return {
     db,
     sql,
@@ -278,12 +280,12 @@ test("过期、撤回、未知结果和候选基准过旧均不能发布新状�
     .run(unknown.data.key, third.id);
   s.sql
     .prepare("UPDATE browser_state_candidates SET expires_at=? WHERE object_key=?")
-    .run("2000-01-01", unknown.data.key);
+    .run(dbTime("2000-01-01"), unknown.data.key);
   await publishBrowserState(s.env, third.id);
   assert.equal(s.account().state_revision, 1);
   s.sql
     .prepare("UPDATE browser_state_candidates SET expires_at=? WHERE object_key=?")
-    .run("2999-01-01", unknown.data.key);
+    .run(dbTime("2999-01-01"), unknown.data.key);
   s.sql.prepare("UPDATE runs SET context_withdrawn=1 WHERE id=?").run(third.id);
   await publishBrowserState(s.env, third.id);
   assert.equal(s.account().state_revision, 1);
@@ -310,7 +312,9 @@ test("其他账号的候选不能借当前run发布，晚确认仅把该run已�
   );
   assert.equal(saved.status, 200, JSON.stringify(saved.data));
   assert.equal(saved.data.resumed, false);
-  const account = s.sql.prepare("SELECT * FROM accounts WHERE id=?").get(saved.data.accountId)!;
+  const account = s.sql
+    .prepare("SELECT * FROM account_details WHERE id=?")
+    .get(saved.data.accountId)!;
   assert.equal(account.state_object_key, uploaded.data.key);
   assert.notEqual(account.profile_id, s.run.profileId);
   // 即便设备猜到其他用户的账号ID，链接函数仍要求原用户一致。
@@ -414,13 +418,18 @@ test("发布暂时失败时关闭事实可重试，定时维护不能提前释�
     uploaded = await s.upload(s.run);
   await s.finish(s.run, uploaded.data.key);
   let failed = false;
+  const queries = new WeakMap<D1PreparedStatement, string>();
   s.env.DB = {
-    prepare: s.db.prepare.bind(s.db),
+    prepare: (query: string) => {
+      const statement = s.db.prepare(query);
+      queries.set(statement, query);
+      return statement;
+    },
     batch: async (statements: D1PreparedStatement[]) => {
       if (
         !failed &&
-        (statements as unknown as { query: string }[]).some((item) =>
-          item.query.includes("UPDATE accounts SET previous_state_object_key="),
+        statements.some((item) =>
+          queries.get(item)?.includes("UPDATE accounts SET previous_state_object_key="),
         )
       ) {
         failed = true;
@@ -468,14 +477,19 @@ test("晚确认创建账号后新执行先领取，旧候选即使基准版本�
   await s.close(s.run);
   let next: TaskRun | null = null,
     interleaved = false;
+  const queries = new WeakMap<D1PreparedStatement, string>();
   s.env.DB = {
-    prepare: s.db.prepare.bind(s.db),
+    prepare: (query: string) => {
+      const statement = s.db.prepare(query);
+      queries.set(statement, query);
+      return statement;
+    },
     batch: async (statements: D1PreparedStatement[]) => {
       const result = await s.db.batch(statements);
       if (
         !interleaved &&
-        (statements as unknown as { query: string }[]).some((item) =>
-          item.query.includes("UPDATE account_cards SET status='saved'"),
+        statements.some((item) =>
+          queries.get(item)?.includes("UPDATE account_cards SET status='saved'"),
         )
       ) {
         interleaved = true;
@@ -500,7 +514,7 @@ test("晚确认创建账号后新执行先领取，旧候选即使基准版本�
   assert.equal(confirmed.status, 200, JSON.stringify(confirmed.data));
   assert.ok(next);
   const account = () =>
-    s.sql.prepare("SELECT * FROM accounts WHERE id=?").get(confirmed.data.accountId)!;
+    s.sql.prepare("SELECT * FROM account_details WHERE id=?").get(confirmed.data.accountId)!;
   assert.equal(account().state_revision, 0);
   assert.equal(account().state_object_key, null);
   assert.equal(account().state_owner_run_id, (next as TaskRun).id);

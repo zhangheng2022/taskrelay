@@ -1,3 +1,4 @@
+import { dbTime } from "./database";
 /** 云端队列与租约：固化运行快照、按用户公平领取、维护账号锁，并清理过期运行及推进已确认调度。 */
 import { quotaDay } from "./tenancy";
 import {
@@ -27,7 +28,7 @@ export function runFrom(row: Row): TaskRun {
     dispatchGroupActive: ["active", "paused"].includes(row.dispatch_group_state),
     queueReason: row.queue_reason,
     taskId: row.task_id,
-    task: JSON.parse(row.task_snapshot),
+    task: JSON.parse(row.task_snapshot ?? "{}"),
     status: row.status,
     scheduledFor: row.scheduled_for,
     deadline: row.deadline,
@@ -46,6 +47,10 @@ export function runFrom(row: Row): TaskRun {
 export function taskFrom(row: Row): TaskDefinition {
   return {
     ...JSON.parse(row.definition),
+    id: row.id,
+    version: row.version,
+    title: row.title,
+    createdAt: row.created_at,
     confirmedCondition: row.confirmed_condition ?? null,
     status: row.status,
     nextRunAt: row.next_run_at,
@@ -55,8 +60,8 @@ export async function getRun(db: D1Database, id: string) {
   const row = await db
     .prepare(
       `SELECT r.*,a.name account_name,g.state dispatch_group_state,
-      (SELECT COUNT(*) FROM account_dispatch_members m WHERE m.group_id=r.dispatch_group_id) dispatch_total
-      FROM runs r LEFT JOIN accounts a ON a.id=r.account_id LEFT JOIN account_dispatch_groups g ON g.id=r.dispatch_group_id WHERE r.id=?`,
+      g.member_count dispatch_total
+      FROM run_details r LEFT JOIN accounts a ON a.id=r.account_id LEFT JOIN account_dispatch_groups g ON g.id=r.dispatch_group_id WHERE r.id=?`,
     )
     .bind(id)
     .first<Row>();
@@ -74,17 +79,17 @@ export async function queueReasons(db: D1Database, userId: string) {
     WHEN (SELECT value FROM settings WHERE key='claimsEnabled')='0' THEN '管理员已暂停领取'
     WHEN r.deadline<=? THEN '已超过领取窗口，等待清理'
     WHEN m.disabled=1 THEN '当前用户已停用'
-    WHEN ((SELECT COUNT(*) FROM runs used WHERE used.user_id=r.user_id AND used.started_day=?) + COALESCE((SELECT runs FROM quota_carry WHERE user_id=r.user_id AND day=?),0))>=m.daily_runs AND NOT COALESCE(m.daily_quota_paused=1 OR m.daily_quota_paused_until>strftime('%Y-%m-%dT%H:%M:%fZ','now'),0) THEN '今日启动额度已用完，上海时间零点重置'
+    WHEN ((SELECT COUNT(*) FROM runs used WHERE used.user_id=r.user_id AND used.started_day=?) + COALESCE((SELECT runs FROM quota_carry WHERE user_id=r.user_id AND day=?),0))>=m.daily_runs AND NOT COALESCE(m.daily_quota_paused=1 OR m.daily_quota_paused_until>CAST(unixepoch('subsec')*1000 AS INTEGER),0) THEN '今日启动额度已用完，上海时间零点重置'
     WHEN EXISTS(SELECT 1 FROM runs active WHERE active.user_id=r.user_id AND (active.status IN ('running','waiting_user','verifying') OR active.cleanup_pending=1)) THEN '等待上一项运行、人工协助或浏览器清理结束'
     WHEN EXISTS(SELECT 1 FROM account_locks l WHERE l.account_key=r.account_key AND l.run_id<>COALESCE(r.reconciliation_of,'')) THEN '账号被占用或结果待核查'
     WHEN NOT EXISTS(SELECT 1 FROM devices d WHERE d.revoked=0 AND d.claim_ready=1 AND d.protocol_version=${PROTOCOL_VERSION} AND d.last_seen>?) THEN '没有最近在线、未暂停且版本兼容的可用设备'
     WHEN NOT EXISTS(SELECT 1 FROM devices d WHERE d.revoked=0 AND d.claim_ready=1 AND d.protocol_version=${PROTOCOL_VERSION} AND d.last_seen>? AND NOT EXISTS(SELECT 1 FROM runs busy WHERE busy.device_id=d.id AND (busy.status IN ('running','waiting_user','verifying') OR busy.cleanup_pending=1))) THEN '符合条件的设备正在执行其他任务或清理浏览器'
     ELSE '等待设备领取；设备本地暂停或网络状态可能影响领取' END reason
     FROM runs r JOIN tasks t ON t.id=r.task_id JOIN members m ON m.id=r.user_id
-    LEFT JOIN accounts a ON a.id=json_extract(r.task_snapshot,'$.accountId') AND a.user_id=r.user_id
+    LEFT JOIN accounts a ON a.id=r.account_id AND a.user_id=r.user_id
     WHERE r.user_id=? AND r.status='queued'`,
     )
-    .bind(at, quotaDay(), quotaDay(), onlineAfter, onlineAfter, userId)
+    .bind(dbTime(at), quotaDay(), quotaDay(), dbTime(onlineAfter), dbTime(onlineAfter), userId)
     .all<{ id: string; reason: string }>();
   return new Map(rows.results.map((r) => [r.id, r.reason]));
 }
@@ -121,9 +126,10 @@ export async function enqueue(
   }
   const at = now(),
     deadline = new Date(new Date(scheduled).getTime() + limits.lateMs).toISOString();
-  await db
-    .prepare(
-      `INSERT OR IGNORE INTO runs(id,task_id,task_snapshot,status,scheduled_for,deadline,account_key,idempotency_key,created_at,updated_at,user_id,profile_id,execution_protocol,thread_id,account_id,dispatch_group_id,dispatch_index)
+  await db.batch([
+    db
+      .prepare(
+        `INSERT OR IGNORE INTO runs(id,task_id,task_version,status,scheduled_for,deadline,account_key,idempotency_key,created_at,updated_at,user_id,profile_id,execution_protocol,thread_id,account_id,dispatch_group_id,dispatch_index)
       SELECT ?,?,?,'queued',?,?,?,?,?,?,?,?,${PROTOCOL_VERSION},${command ? "?" : "(SELECT id FROM ai_threads WHERE task_id=? AND closed=0 LIMIT 1)"},?,?,?
       WHERE EXISTS(SELECT 1 FROM tasks WHERE id=? AND version=? AND context_withdrawn=0 AND deleted=0)
       ${
@@ -139,31 +145,37 @@ export async function enqueue(
         AND NOT EXISTS(SELECT 1 FROM account_dispatch_members earlier WHERE earlier.group_id=g.id AND earlier.position<m.position AND earlier.state<>'done'))`
           : ""
       }`,
-    )
-    .bind(
-      id,
-      task.id,
-      JSON.stringify(task),
-      scheduled,
-      deadline,
-      task.accountId ?? `task:${task.id}`,
-      key,
-      at,
-      at,
-      owner.user_id,
-      profileId,
-      command?.threadId ?? task.id,
-      task.accountId,
-      command?.groupId ?? null,
-      command?.position ?? null,
-      task.id,
-      task.version,
-      ...(command ? [command.id, command.threadId, task.id, owner.user_id] : []),
-      ...(command?.groupId ? [command.groupId, command.position] : []),
-    )
-    .run();
+      )
+      .bind(
+        id,
+        task.id,
+        task.version,
+        dbTime(scheduled),
+        dbTime(deadline),
+        task.accountId ?? `task:${task.id}`,
+        key,
+        dbTime(at),
+        dbTime(at),
+        owner.user_id,
+        profileId,
+        command?.threadId ?? task.id,
+        task.accountId,
+        command?.groupId ?? null,
+        command?.position ?? null,
+        task.id,
+        task.version,
+        ...(command ? [command.id, command.threadId, task.id, owner.user_id] : []),
+        ...(command?.groupId ? [command.groupId, command.position] : []),
+      ),
+    db
+      .prepare(
+        `INSERT OR IGNORE INTO run_snapshots(run_id,task_snapshot)
+       SELECT id,? FROM runs WHERE id=? AND idempotency_key=?`,
+      )
+      .bind(JSON.stringify(task), id, key),
+  ]);
   const saved = await db
-    .prepare("SELECT * FROM runs WHERE idempotency_key=?")
+    .prepare("SELECT * FROM run_details WHERE idempotency_key=?")
     .bind(key)
     .first<Row>();
   if (!saved) throw new Error(command ? "COMMAND_RETIRED" : "TASK_CONTEXT_OR_VERSION_CHANGED");
@@ -184,8 +196,8 @@ export async function claim(
     return null;
   const prior = await db
     .prepare(
-      `SELECT r.*,a.name account_name,g.state dispatch_group_state,(SELECT COUNT(*) FROM account_dispatch_members m WHERE m.group_id=r.dispatch_group_id) dispatch_total
-       FROM claims c JOIN runs r ON r.id=c.run_id LEFT JOIN accounts a ON a.id=r.account_id LEFT JOIN account_dispatch_groups g ON g.id=r.dispatch_group_id WHERE c.device_id=? AND c.request_id=?`,
+      `SELECT r.*,a.name account_name,g.state dispatch_group_state,g.member_count dispatch_total
+       FROM claims c JOIN run_details r ON r.id=c.run_id LEFT JOIN accounts a ON a.id=r.account_id LEFT JOIN account_dispatch_groups g ON g.id=r.dispatch_group_id WHERE c.device_id=? AND c.request_id=?`,
     )
     .bind(deviceId, requestId)
     .first<Row>();
@@ -208,7 +220,7 @@ export async function claim(
       `SELECT r.* FROM runs r JOIN tasks t ON r.task_id=t.id JOIN members m ON m.id=r.user_id LEFT JOIN accounts a ON a.id=r.account_id
        WHERE m.disabled=0 AND t.deleted=0 AND t.context_withdrawn=0
        AND NOT EXISTS(SELECT 1 FROM runs active WHERE active.user_id=r.user_id AND (active.status IN ('running','waiting_user','verifying') OR active.cleanup_pending=1))
-       AND (m.daily_quota_paused=1 OR m.daily_quota_paused_until>strftime('%Y-%m-%dT%H:%M:%fZ','now') OR ((SELECT COUNT(*) FROM runs used WHERE used.user_id=r.user_id AND used.started_day=?) + COALESCE((SELECT runs FROM quota_carry WHERE user_id=r.user_id AND day=?),0))<m.daily_runs)
+       AND (m.daily_quota_paused=1 OR m.daily_quota_paused_until>CAST(unixepoch('subsec')*1000 AS INTEGER) OR ((SELECT COUNT(*) FROM runs used WHERE used.user_id=r.user_id AND used.started_day=?) + COALESCE((SELECT runs FROM quota_carry WHERE user_id=r.user_id AND day=?),0))<m.daily_runs)
        AND EXISTS(SELECT 1 FROM devices WHERE id=? AND revoked=0 AND claim_ready=1)
        AND NOT EXISTS(SELECT 1 FROM devices preferred WHERE preferred.id=COALESCE(a.last_device_id,a.assigned_device_id) AND preferred.id<>?
          AND preferred.revoked=0 AND preferred.claim_ready=1 AND preferred.protocol_version=${PROTOCOL_VERSION} AND preferred.last_seen>?
@@ -216,15 +228,15 @@ export async function claim(
        AND r.execution_protocol=${PROTOCOL_VERSION} AND r.status='queued' AND r.deadline>?
        AND (r.dispatch_group_id IS NULL OR EXISTS(SELECT 1 FROM account_dispatch_groups g WHERE g.id=r.dispatch_group_id AND g.state='active'))
        AND (NOT EXISTS(SELECT 1 FROM account_locks l WHERE l.account_key=r.account_key) OR EXISTS(SELECT 1 FROM account_locks l JOIN runs old ON old.id=l.run_id WHERE l.account_key=r.account_key AND old.id=r.reconciliation_of AND old.status='unknown' AND old.cleanup_pending=0))
-       ORDER BY COALESCE(m.last_claim_at,''),r.created_at,r.id LIMIT 1`,
+       ORDER BY COALESCE(m.last_claim_at,0),r.created_at,r.id LIMIT 1`,
     )
     .bind(
       quotaDay(),
       quotaDay(),
       deviceId,
       deviceId,
-      new Date(Date.now() - limits.leaseMs).toISOString(),
-      at,
+      dbTime(new Date(Date.now() - limits.leaseMs).toISOString()),
+      dbTime(at),
     )
     .first<Row>();
   if (!candidate) return null;
@@ -256,7 +268,7 @@ export async function claim(
           WHERE id=? AND status='queued' AND EXISTS(SELECT 1 FROM account_locks WHERE run_id=runs.id)
           AND NOT EXISTS(SELECT 1 FROM runs r WHERE r.device_id=? AND (r.status IN ('running','waiting_user','verifying') OR r.cleanup_pending=1))`,
         )
-        .bind(deviceId, lease, at, quotaDay(), candidate.id, deviceId),
+        .bind(deviceId, dbTime(lease), dbTime(at), quotaDay(), candidate.id, deviceId),
       // 状态发布权随成功领取转移，并在释放锁后保留；旧执行的清理重试不能再发布迟到快照。
       db
         .prepare(
@@ -277,7 +289,7 @@ export async function claim(
     ]);
   } catch (e) {
     if (
-      /CLAIM_BUSY|RUN_QUOTA_EXCEEDED|USER_DISABLED|ACCOUNT_DEVICE_MISMATCH/.test(
+      /CLAIM_BUSY|RUN_QUOTA_EXCEEDED|USER_DISABLED|ACCOUNT_DEVICE_MISMATCH|UNIQUE constraint failed: runs\.(user_id|device_id)/.test(
         (e as Error).message,
       )
     )
@@ -286,8 +298,8 @@ export async function claim(
   }
   const row = await db
     .prepare(
-      `SELECT r.*,a.name account_name,g.state dispatch_group_state,(SELECT COUNT(*) FROM account_dispatch_members m WHERE m.group_id=r.dispatch_group_id) dispatch_total
-       FROM claims c JOIN runs r ON r.id=c.run_id LEFT JOIN accounts a ON a.id=r.account_id LEFT JOIN account_dispatch_groups g ON g.id=r.dispatch_group_id WHERE c.device_id=? AND c.request_id=?`,
+      `SELECT r.*,a.name account_name,g.state dispatch_group_state,g.member_count dispatch_total
+       FROM claims c JOIN run_details r ON r.id=c.run_id LEFT JOIN accounts a ON a.id=r.account_id LEFT JOIN account_dispatch_groups g ON g.id=r.dispatch_group_id WHERE c.device_id=? AND c.request_id=?`,
     )
     .bind(deviceId, requestId)
     .first<Row>();
@@ -325,12 +337,8 @@ export async function tick(db: D1Database) {
   await db.batch([
     db
       .prepare(
-        "UPDATE runs SET status='expired',updated_at=? WHERE status='queued' AND deadline<=?",
-      )
-      .bind(at, at),
-    db
-      .prepare(
-        "UPDATE runs SET status=CASE WHEN write_pending=1 OR may_have_written=1 THEN 'unknown' ELSE 'failed' END,result=?,updated_at=? WHERE status IN ('running','waiting_user','verifying') AND lease_expires_at<=?",
+        `INSERT OR IGNORE INTO run_results(run_id,result) SELECT id,? FROM runs
+      WHERE status IN ('running','waiting_user','verifying') AND lease_expires_at<=? AND history_deleted=0`,
       )
       .bind(
         JSON.stringify({
@@ -339,27 +347,31 @@ export async function tick(db: D1Database) {
           evidence: [],
           errorCode: "LEASE_EXPIRED",
         }),
-        at,
-        at,
+        dbTime(at),
       ),
+    db
+      .prepare(
+        "UPDATE runs SET status='expired',updated_at=? WHERE status='queued' AND deadline<=?",
+      )
+      .bind(dbTime(at), dbTime(at)),
+    db
+      .prepare(
+        "UPDATE runs SET status=CASE WHEN write_pending=1 OR may_have_written=1 THEN 'unknown' ELSE 'failed' END,updated_at=? WHERE status IN ('running','waiting_user','verifying') AND lease_expires_at<=?",
+      )
+      .bind(dbTime(at), dbTime(at)),
     db.prepare(
       "UPDATE account_locks SET run_id=(SELECT reconciliation_of FROM runs WHERE id=account_locks.run_id) WHERE run_id IN (SELECT id FROM runs WHERE reconciliation_of IS NOT NULL AND cleanup_pending=0 AND status IN ('failed','cancelled','expired','unknown'))",
     ),
     db.prepare(
       "DELETE FROM account_locks WHERE run_id IN (SELECT id FROM runs WHERE cleanup_pending=0 AND status IN ('failed','cancelled','expired','succeeded'))",
     ),
-    db
-      .prepare(
-        "UPDATE challenges SET status='expired',secret=NULL WHERE expires_at<=? AND status<>'consumed'",
-      )
-      .bind(at),
-    db.prepare("DELETE FROM pairings WHERE expires_at<=?").bind(at),
+    db.prepare("DELETE FROM pairings WHERE expires_at<=?").bind(dbTime(at)),
   ]);
   const due = await db
     .prepare(
-      "SELECT * FROM tasks WHERE status='active' AND next_run_at<=? ORDER BY next_run_at LIMIT 100",
+      "SELECT * FROM task_details WHERE status='active' AND next_run_at<=? ORDER BY next_run_at LIMIT 100",
     )
-    .bind(at)
+    .bind(dbTime(at))
     .all<Row>();
   for (const row of due.results) {
     const task = taskFrom(row),
@@ -381,10 +393,10 @@ export async function tick(db: D1Database) {
     await db
       .prepare("UPDATE tasks SET next_run_at=? WHERE id=? AND version=? AND next_run_at=?")
       .bind(
-        task.confirmedCondition ? nextOccurrence(task.schedule, new Date(at)) : null,
+        dbTime(task.confirmedCondition ? nextOccurrence(task.schedule, new Date(at)) : null),
         task.id,
         task.version,
-        row.next_run_at,
+        dbTime(row.next_run_at),
       )
       .run();
   }

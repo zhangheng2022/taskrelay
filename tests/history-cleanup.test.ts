@@ -1,3 +1,4 @@
+import { seedMessage } from "./helpers";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { productionModelFixture } from "./production-model-fixture";
@@ -62,25 +63,43 @@ test("删除运行中的聊天先关闭并隐藏，迟到收尾保持 unknown，
   assert.equal((await s.request(`/api/runner/runs/${s.run.id}/finish`, finish)).status, 200);
   assert.equal((await s.request(`/api/runner/runs/${s.run.id}/finish`, finish)).status, 200);
   const row = s.sql
-    .prepare("SELECT status,result,task_snapshot FROM runs WHERE id=?")
+    .prepare("SELECT status,result,task_snapshot FROM run_details WHERE id=?")
     .get(s.run.id);
   assert.equal(row?.status, "unknown");
   assert.equal(row?.result, null);
-  assert.equal(row?.task_snapshot, "{}");
+  assert.equal(row?.task_snapshot, null);
   assert.ok(s.sql.prepare("SELECT * FROM account_locks WHERE run_id=?").get(s.run.id));
   assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM ai_messages").get()?.n, 0);
   // 模拟已经越过入口租约检查的旧请求，数据库最后一道边界仍拒绝重新写入。
-  s.sql
-    .prepare(
-      "INSERT INTO run_events(id,run_id,sequence,kind,message,at) VALUES('late',?,1,'info','secret','now')",
-    )
-    .run(s.run.id);
-  assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM run_events").get()?.n, 0);
+  assert.equal(
+    s.sql.prepare("SELECT name FROM sqlite_master WHERE name='run_events'").get(),
+    undefined,
+  );
+  assert.throws(
+    () =>
+      s.sql
+        .prepare("INSERT INTO run_results(run_id,result) VALUES(?,?)")
+        .run(s.run.id, JSON.stringify({ summary: "secret" })),
+    /RUN_HISTORY_DELETED/,
+  );
 });
 
 test("全部清理固定目标，重复请求不删除之后新建的聊天，跨用户拒绝", async (t) => {
   const s = await setup(t);
   const owner = s.run.userId;
+  const groupTask = await insertTask(s.db, task({ id: "group_without_run", accountId: null }));
+  const groupThread = await s.request("/api/user/threads", {
+    modelId: "model_test",
+    taskId: groupTask.id,
+  });
+  s.sql
+    .prepare(
+      "INSERT INTO account_dispatch_groups(id,task_id,task_version,thread_id,user_id,created_at,updated_at,member_count) VALUES('not_started',?,1,?,?,?, ?,1)",
+    )
+    .run(groupTask.id, groupThread.data.id, owner, Date.now(), Date.now());
+  s.sql
+    .prepare("INSERT INTO account_dispatch_members(group_id,position) VALUES('not_started',0)")
+    .run();
   const job = await beginCleanup(s.env, owner, "all", null, "all_once");
   const newTask = await insertTask(s.db, task({ id: "new_task" }));
   const fresh = await s.request("/api/user/threads", { modelId: "model_test", taskId: newTask.id });
@@ -99,6 +118,14 @@ test("全部清理固定目标，重复请求不删除之后新建的聊天，�
   assert.ok(s.sql.prepare("SELECT id FROM tasks WHERE id=? AND deleted=0").get(newTask.id));
   assert.ok(s.sql.prepare("SELECT id FROM ai_threads WHERE id=? AND closed=0").get(fresh.data.id));
   assert.equal((await cleanupJobs(s.env, owner, job.id))[0].status, "done");
+  assert.equal(
+    s.sql
+      .prepare(
+        "SELECT definition FROM task_versions WHERE task_id='group_without_run' AND version=1",
+      )
+      .get()!.definition,
+    "{}",
+  );
 });
 
 test("清空保留暂停入口，后台只清旧运行和旧聊天，新消息不受影响", async (t) => {
@@ -109,7 +136,7 @@ test("清空保留暂停入口，后台只清旧运行和旧聊天，新消息�
     requestId: "clear_one",
   });
   assert.equal(response.status, 202);
-  const task = s.sql.prepare("SELECT * FROM tasks WHERE id=?").get(s.run.taskId)!;
+  const task = s.sql.prepare("SELECT * FROM task_details WHERE id=?").get(s.run.taskId)!;
   assert.equal(task.deleted, 0);
   assert.equal(task.status, "paused");
   assert.equal(task.context_withdrawn, 1);
@@ -123,7 +150,7 @@ test("清空保留暂停入口，后台只清旧运行和旧聊天，新消息�
   await appendMessage(s.env, fresh.data.id, { id: "new", source: "cloud", content: "新的聊天" });
   await drain(s);
   assert.equal(
-    s.sql.prepare("SELECT content FROM ai_messages WHERE id=?").get("new")?.content,
+    s.sql.prepare("SELECT content FROM message_details WHERE id=?").get("new")?.content,
     "新的聊天",
   );
   assert.equal(
@@ -146,33 +173,38 @@ test("图片删除失败可恢复，正文分批清理且密文/图副本回收�
   } as unknown as typeof s.env.EVIDENCE_STORE;
   s.sql
     .prepare(
-      "INSERT INTO artifacts(id,run_id,thread_id,object_key,content_type,expires_at) VALUES('image',?,?, 'image_key','image/png','9999-01-01')",
+      "INSERT INTO artifacts(id,run_id,thread_id,object_key,content_type,expires_at) VALUES('image',?,?, 'image_key','image/png',253370764800000)",
     )
     .run(s.run.id, s.thread);
   s.sql
-    .prepare("UPDATE ai_messages SET private_content='encrypted-secret' WHERE id='msg_secret'")
+    .prepare("UPDATE message_bodies SET private_content='encrypted-secret' WHERE id='msg_secret'")
     .run();
   for (let i = 0; i < 205; i++)
-    s.sql
-      .prepare(
-        "INSERT INTO ai_messages(id,thread_id,seq,role,content,turn_id,at) VALUES(?,?,?,'user','secret','turn','now')",
-      )
-      .run("m" + i, s.thread, i + 10);
+    seedMessage(s.sql, {
+      id: "m" + i,
+      thread_id: s.thread,
+      seq: i + 10,
+      role: "user",
+      content: "secret",
+      turn_id: "turn",
+      at: Date.now(),
+    });
   s.sql
     .prepare(
-      "INSERT INTO ai_graph_inputs(owner,id,digest,parent_thread,created_at) VALUES(?,'graph','digest',?,'now')",
+      "INSERT INTO ai_graph_inputs(owner,id,digest,parent_thread,created_at) VALUES(?,'graph','digest',?,CAST(unixepoch('subsec')*1000 AS INTEGER))",
     )
     .run(s.run.userId, s.thread);
   s.sql
     .prepare(
-      "INSERT INTO ai_checkpoints(owner,thread,ns,id,checkpoint,metadata,at) VALUES(?,'graph','','checkpoint','secret','secret','now')",
+      "INSERT INTO ai_checkpoints(owner,thread,ns,id,checkpoint,metadata,at) VALUES(?,'graph','','checkpoint','secret','secret',CAST(unixepoch('subsec')*1000 AS INTEGER))",
     )
     .run(s.run.userId);
   s.sql
     .prepare(
-      "INSERT INTO ai_calls(id,user_id,graph_id,digest,status,result,created_at,updated_at) VALUES('call',?,'graph','digest','done','secret','now','now')",
+      "INSERT INTO ai_calls(id,user_id,graph_id,digest,status,created_at,updated_at) VALUES('call',?,'graph','digest','done',CAST(unixepoch('subsec')*1000 AS INTEGER),CAST(unixepoch('subsec')*1000 AS INTEGER))",
     )
     .run(s.run.userId);
+  s.sql.prepare("INSERT INTO call_results(id,result) VALUES('call','secret')").run();
   const job = await beginCleanup(s.env, s.run.userId, "task", s.run.taskId, "retry");
   await drainHistoryCleanups(s.env);
   assert.equal((await cleanupJobs(s.env, s.run.userId, job.id))[0].error, "CLEANUP_RETRYING");
@@ -184,7 +216,7 @@ test("图片删除失败可恢复，正文分批清理且密文/图副本回收�
   assert.equal(removed, 1);
   for (const table of ["artifacts", "ai_messages", "ai_checkpoints"])
     assert.equal(s.sql.prepare(`SELECT COUNT(*) n FROM ${table}`).get()?.n, 0);
-  assert.equal(s.sql.prepare("SELECT result FROM ai_calls").get()?.result, null);
+  assert.equal(s.sql.prepare("SELECT result FROM call_details").get()?.result, null);
   assert.equal(s.sql.prepare("SELECT digest FROM ai_calls").get()?.digest, "digest");
 });
 
@@ -234,7 +266,7 @@ test("无 graphId 的桌面模型缓存按运行清理，清理途中返回的�
     /MODEL_CALL_DISCARDED/,
   );
   assert.equal(
-    s.sql.prepare("SELECT COUNT(*) n FROM ai_calls WHERE result IS NOT NULL").get()?.n,
+    s.sql.prepare("SELECT COUNT(*) n FROM call_details WHERE result IS NOT NULL").get()?.n,
     0,
   );
   await assert.rejects(
@@ -271,7 +303,7 @@ test("旧网页重试 DELETE 不扩大到新聊天，旧闭合会话的首次清
   // 模拟旧版已经关闭、没有作业的会话，不应对同任务的新聊天追加停止/清空。
   s.sql
     .prepare(
-      "INSERT INTO ai_threads(id,user_id,task_id,kind,model_id,model_version,closed,deleted,created_at,updated_at) VALUES('old_closed',?,?,'chat','model_test',1,1,1,'old','old')",
+      "INSERT INTO ai_threads(id,user_id,task_id,kind,model_id,model_version,closed,deleted,created_at,updated_at) VALUES('old_closed',?,?,'chat','model_test',1,1,1,0,0)",
     )
     .run(s.run.userId, s.run.taskId);
   await s.request("/api/user/threads/old_closed", {}, "DELETE");

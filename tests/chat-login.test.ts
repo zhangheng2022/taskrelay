@@ -203,7 +203,7 @@ for (const split of [false, true])
     );
     const raw = s.sql
       .prepare(
-        "SELECT content,private_content,reply_to FROM ai_messages WHERE role='user' AND thread_id=?",
+        "SELECT content,private_content,reply_to FROM message_details WHERE role='user' AND thread_id=?",
       )
       .all(thread.id);
     assert.equal(raw.length, replies.length);

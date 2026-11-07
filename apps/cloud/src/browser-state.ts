@@ -1,3 +1,4 @@
+import { dbTime } from "./database";
 import {
   browserStateSchema,
   BROWSER_STATE_MAX_BYTES,
@@ -43,7 +44,7 @@ export function filterBrowserState(input: unknown, origins: string[]): BrowserSt
 }
 async function accountForRun(env: AppEnv, run: TaskRun) {
   const row = await env.DB.prepare(
-    `SELECT a.* FROM accounts a JOIN runs r ON r.account_id=a.id
+    `SELECT a.* FROM account_details a JOIN runs r ON r.account_id=a.id
     JOIN account_locks l ON l.account_key=a.id AND l.run_id=r.id
     WHERE r.id=? AND a.user_id=? AND r.device_id=? AND r.lease_epoch=?`,
   )
@@ -162,13 +163,13 @@ export async function stageBrowserState(
       run.stateEpoch ?? 1,
       baseRevision,
       JSON.stringify(origins),
-      now(),
-      new Date(Date.now() + 86_400_000).toISOString(),
+      dbTime(now()),
+      dbTime(new Date(Date.now() + 86_400_000).toISOString()),
       Number(clearPrevious),
       run.id,
       run.leaseEpoch,
       run.deviceId,
-      now(),
+      dbTime(now()),
       key,
     ),
   ]);
@@ -191,7 +192,7 @@ export async function publishBrowserState(env: AppEnv, runId: string) {
         AND accounts.state_owner_run_id=r.id
         AND NOT EXISTS(SELECT 1 FROM account_locks WHERE account_key=accounts.id AND run_id<>r.id)
         AND NOT EXISTS(SELECT 1 FROM browser_state_retirements WHERE object_key=c.object_key))`,
-    ).bind(runId, runId, runId, runId, now()),
+    ).bind(runId, runId, runId, runId, dbTime(now())),
   ]);
   if (published.meta.changes)
     await env.DB.prepare(
@@ -204,7 +205,7 @@ export async function linkAccountSnapshot(
   env: AppEnv,
   input: { runId: string; accountId: string; credentialVersion: number; stateEpoch: number },
 ) {
-  const account = await env.DB.prepare("SELECT * FROM accounts WHERE id=?")
+  const account = await env.DB.prepare("SELECT * FROM account_details WHERE id=?")
     .bind(input.accountId)
     .first<Row>();
   if (!account) return;
@@ -221,7 +222,7 @@ export async function linkAccountSnapshot(
       account.state_revision,
       input.runId,
       account.user_id,
-      now(),
+      dbTime(now()),
       JSON.stringify(stateOrigins(account)),
     )
     .run();

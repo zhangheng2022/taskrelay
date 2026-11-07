@@ -1,3 +1,4 @@
+import { dbTime } from "./database";
 /**
  * 账号保存、域名匹配与凭据版本的唯一入口。用户设置写入下一版本，执行只读取领取时固定的版本；
  * 站点允许范围用于凭据和状态归属，不限制普通浏览。密文沿用既有 MASTER_KEY 和 account AAD。
@@ -87,7 +88,7 @@ export function accountSummary(row: Row) {
   };
 }
 export async function ownAccount(env: AppEnv, userId: string, id: string) {
-  const row = await env.DB.prepare("SELECT * FROM accounts WHERE id=? AND user_id=?")
+  const row = await env.DB.prepare("SELECT * FROM account_details WHERE id=? AND user_id=?")
     .bind(id, userId)
     .first<Row>();
   if (!row) throw Error("ACCOUNT_NOT_FOUND");
@@ -100,7 +101,7 @@ export async function readRunCredentials(env: AppEnv, run: TaskRun, origin: stri
     WHERE r.id=? AND r.user_id=? AND r.device_id=? AND r.lease_epoch=? AND r.lease_expires_at>?
     AND r.cancel_requested=0 AND r.context_withdrawn=0 AND r.status IN ('running','waiting_user','verifying')`,
   )
-    .bind(run.id, run.userId, run.deviceId, run.leaseEpoch, now())
+    .bind(run.id, run.userId, run.deviceId, run.leaseEpoch, dbTime(now()))
     .first<Row>();
   if (!binding?.account_id) throw Error("CREDENTIAL_NOT_AUTHORIZED");
   const a = await ownAccount(env, run.userId, binding.account_id);
@@ -133,23 +134,21 @@ export async function createAccount(env: AppEnv, userId: string, input: AccountI
   );
   await env.DB.batch([
     env.DB.prepare(
-      `INSERT INTO accounts(id,name,origin,username_hint,secret,created_at,user_id,profile_id,business_domains,login_origins)
-      VALUES(?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO accounts(id,name,origin,username_hint,created_at,user_id,profile_id,business_domains)
+      VALUES(?,?,?,?,?,?,?,?)`,
     ).bind(
       id,
       body.name,
       body.origin,
       body.username ? body.username.slice(0, 2) + "***" : "未设置",
-      secret,
-      at,
+      dbTime(at),
       userId,
       uid("profile"),
       JSON.stringify(body.businessDomains),
-      JSON.stringify(body.loginOrigins),
     ),
     env.DB.prepare(
       "INSERT INTO account_credential_versions(account_id,version,secret,login_origins,created_at) VALUES(?,1,?,?,?)",
-    ).bind(id, secret, JSON.stringify(body.loginOrigins), at),
+    ).bind(id, secret, JSON.stringify(body.loginOrigins), dbTime(at)),
   ]);
   return { id };
 }
@@ -216,7 +215,7 @@ export const accountRoutes = accountRoutesBase
       // 名称不改变认证版本，也不让有效快照失效；认证变更才推进凭据和状态版本。
       const writes = await c.env.DB.batch([
         c.env.DB.prepare(
-          `UPDATE accounts SET name=?,origin=?,username_hint=?,secret=?,business_domains=?,login_origins=?,credential_version=?,
+          `UPDATE accounts SET name=?,origin=?,username_hint=?,business_domains=?,credential_version=?,
         state_epoch=state_epoch+?,credential_status=CASE WHEN ? THEN 'unverified' ELSE credential_status END,
         login_reset=CASE WHEN ? THEN 1 ELSE login_reset END,state_object_key=CASE WHEN ? THEN NULL ELSE state_object_key END,
         previous_state_object_key=CASE WHEN ? THEN NULL ELSE previous_state_object_key END,sync_status=CASE WHEN ? THEN 'none' ELSE sync_status END,
@@ -226,9 +225,7 @@ export const accountRoutes = accountRoutesBase
           value.name,
           value.origin,
           value.username ? value.username.slice(0, 2) + "***" : "未设置",
-          secret,
           JSON.stringify(value.businessDomains),
-          JSON.stringify(value.loginOrigins),
           next,
           Number(changed),
           Number(changed),
@@ -243,8 +240,8 @@ export const accountRoutes = accountRoutesBase
         ),
         c.env.DB.prepare(
           `INSERT OR IGNORE INTO account_credential_versions(account_id,version,secret,login_origins,created_at)
-        SELECT id,credential_version,secret,login_origins,? FROM accounts WHERE id=? AND credential_version=? AND secret=?`,
-        ).bind(at, row.id, next, secret),
+        SELECT id,credential_version,?,?,? FROM accounts WHERE id=? AND credential_version=?`,
+        ).bind(secret, JSON.stringify(value.loginOrigins), dbTime(at), row.id, next),
       ]);
       if (!writes[0].meta.changes) throw Error("ACCOUNT_VERSION_CONFLICT");
       return c.json({ account: accountSummary(await ownAccount(c.env, c.get("userId"), row.id)) });

@@ -1,3 +1,4 @@
+import { dbTime } from "./database";
 import { Buffer } from "node:buffer";
 import type { AppEnv } from "./env";
 import type { TaskRun } from "../../../packages/contracts/src/index";
@@ -60,7 +61,7 @@ export async function saveSnapshot(
       id,
       run.id,
       key,
-      expiresAt,
+      dbTime(expiresAt),
       threadId,
       persistent ? 1 : 0,
       input.purpose,
@@ -71,7 +72,7 @@ export async function saveSnapshot(
       run.id,
       run.deviceId,
       run.leaseEpoch,
-      now(),
+      dbTime(now()),
     )
     .run();
   if (!saved.meta.changes) {
@@ -98,7 +99,7 @@ export async function imageReference(
     AND a.expires_at>? AND r.lease_expires_at>? AND t.closed=0 AND r.history_deleted=0
     AND r.context_withdrawn=0 AND r.cancel_requested=0 AND r.status IN ('running','waiting_user','verifying')`,
   )
-    .bind(artifactId, runId, userId, epoch, epoch, now(), now())
+    .bind(artifactId, runId, userId, epoch, epoch, dbTime(now()), dbTime(now()))
     .first<{ object_key: string }>();
   if (!row) throw Error("IMAGE_REFERENCE_INVALID");
   return row;

@@ -21,7 +21,7 @@ function fixture(search: string) {
   const creates: unknown[] = [];
   const transport: Transport = {
     async request<T>(method: string, path: string, body?: unknown) {
-      if (method === "POST" && path === "/api/user/threads") creates.push(body);
+      if (method === "POST" && path.split("?")[0] === "/api/user/threads") creates.push(body);
       return adapter.request<T>(method, path, body);
     },
   };

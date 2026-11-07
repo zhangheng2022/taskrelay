@@ -105,30 +105,33 @@ test("执行推理收到本次聊天截图事实，截图交付与模型视觉�
   const decision = "已完成，截图在聊天中。";
   await s.db
     .prepare(
-      "INSERT INTO ai_threads(id,user_id,kind,model_id,model_version,created_at,updated_at) VALUES('shot_thread','legacy_owner','chat','model_test',1,'now','now')",
+      "INSERT INTO ai_threads(id,user_id,kind,model_id,model_version,created_at,updated_at) VALUES('shot_thread','fixture_owner','chat','model_test',1,1780000000000,1780000000000)",
     )
     .run();
   await s.db
     .prepare(
-      "INSERT INTO artifacts(id,run_id,object_key,content_type,expires_at) VALUES('shot_current',?,'key','image/png','2099-01-01')",
+      "INSERT INTO artifacts(id,run_id,object_key,content_type,expires_at) VALUES('shot_current',?,'key','image/png',4070908800000)",
     )
     .bind(s.run.id)
     .run();
   await s.db
     .prepare(
-      "INSERT INTO artifacts(id,run_id,object_key,content_type,expires_at) VALUES('shot_other','other_run','key','image/png','2099-01-01')",
+      "INSERT INTO artifacts(id,run_id,object_key,content_type,expires_at) VALUES('shot_other','other_run','key','image/png',4070908800000)",
     )
     .run();
   await s.db
     .prepare(
-      "INSERT INTO ai_messages(id,thread_id,seq,role,content,turn_id,at,source,parts,run_id) VALUES('shot_message','shot_thread',1,'assistant','页面','turn','now','executor',?,?)",
+      "INSERT INTO ai_messages(id,thread_id,seq,role,turn_id,at,source,run_id) VALUES('shot_message','shot_thread',1,'assistant','turn',1780000000000,'executor',?)",
     )
+    .bind(s.run.id)
+    .run();
+  await s.db
+    .prepare("INSERT INTO message_bodies(id,content,parts) VALUES('shot_message','页面',?)")
     .bind(
       JSON.stringify([
         { type: "image", artifactId: "shot_current" },
         { type: "image", artifactId: "shot_other" },
       ]),
-      s.run.id,
     )
     .run();
   s.replies(decision);

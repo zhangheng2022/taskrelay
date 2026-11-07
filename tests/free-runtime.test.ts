@@ -1,3 +1,4 @@
+import { dbTime } from "../apps/cloud/src/database";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { productionModelFixture } from "./production-model-fixture";
@@ -8,14 +9,14 @@ import { quotaDay } from "../apps/cloud/src/tenancy";
 
 test("移除全站每日额度后，高用量账号仍可通过生产消息与模型入口，保留用量和幂等", async (t) => {
   const s = await productionModelFixture(t, "responses");
-  s.sql.prepare("UPDATE members SET daily_quota_paused=1 WHERE id='legacy_owner'").run();
+  s.sql.prepare("UPDATE members SET daily_quota_paused=1 WHERE id='fixture_owner'").run();
   s.sql
     .prepare(
       `WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<2500)
  INSERT INTO quota_reservations(id,user_id,day,kind,created_at)
- SELECT 'historical-'||x,'legacy_owner',?,'model',? FROM n`,
+ SELECT 'historical-'||x,'fixture_owner',?,'model',? FROM n`,
     )
-    .run(quotaDay(), new Date().toISOString());
+    .run(quotaDay(), dbTime(new Date().toISOString()));
   assert.equal(
     s.sql.prepare("SELECT name FROM sqlite_master WHERE name='platform_budget'").get(),
     undefined,
@@ -26,7 +27,7 @@ test("移除全站每日额度后，高用量账号仍可通过生产消息与�
   );
   s.replies("budget-free");
   const answer = await invoke(
-    { ...s.env, requestUserId: "legacy_owner" },
+    { ...s.env, requestUserId: "fixture_owner" },
     "model_test",
     1,
     { messages: [{ role: "user", content: "read only fixture" }] },
@@ -37,7 +38,7 @@ test("移除全站每日额度后，高用量账号仍可通过生产消息与�
   assert.equal(
     (
       await invoke(
-        { ...s.env, requestUserId: "legacy_owner" },
+        { ...s.env, requestUserId: "fixture_owner" },
         "model_test",
         1,
         { messages: [{ role: "user", content: "read only fixture" }] },
@@ -79,7 +80,7 @@ test("异步提交原子保存待执行回合，唤醒丢失后仍可执行且�
   assert.equal(s.jobs(), 0);
   const row = s.sql.prepare("SELECT * FROM ai_dispatch").get()!;
   assert.equal(row.turn_id, queued.data.turnId);
-  assert.equal(row.owner, "legacy_owner");
+  assert.equal(row.owner, "fixture_owner");
   assert.equal(
     (await s.request(`/api/user/threads/${thread.id}/messages`, body)).data.turnId,
     row.turn_id,
@@ -88,14 +89,14 @@ test("异步提交原子保存待执行回合，唤醒丢失后仍可执行且�
     JSON.stringify({ reply: "请补充判据", task: null, partial: "查看页面", missing: ["判据"] }),
   );
   const done = await executeTurn(
-    { ...s.env, requestUserId: "legacy_owner" },
+    { ...s.env, requestUserId: "fixture_owner" },
     thread.id,
     String(row.turn_id),
   );
   assert.equal(done.status, "done");
   assert.equal(s.jobs(), 1);
   await assert.rejects(
-    executeTurn({ ...s.env, requestUserId: "legacy_owner" }, thread.id, String(row.turn_id)),
+    executeTurn({ ...s.env, requestUserId: "fixture_owner" }, thread.id, String(row.turn_id)),
     /TURN_STALE/,
   );
   assert.equal(s.jobs(), 1);
@@ -111,7 +112,7 @@ test("已删除异步会话不能执行", async (t) => {
   });
   await s.request(`/api/user/threads/${thread.id}`, {}, "DELETE");
   await assert.rejects(
-    executeTurn({ ...s.env, requestUserId: "legacy_owner" }, thread.id, queued.data.turnId),
+    executeTurn({ ...s.env, requestUserId: "fixture_owner" }, thread.id, queued.data.turnId),
     /TURN_STALE/,
   );
   assert.equal(s.jobs(), 0);
@@ -120,7 +121,7 @@ test("已删除异步会话不能执行", async (t) => {
 test("重复保留期清理不反复改写已删除会话版本", async (t) => {
   const s = await productionModelFixture(t);
   const thread = (await s.request("/api/user/threads", { modelId: "model_test" })).data;
-  s.sql.prepare("UPDATE ai_threads SET updated_at='2000-01-01' WHERE id=?").run(thread.id);
+  s.sql.prepare("UPDATE ai_threads SET updated_at=946684800000 WHERE id=?").run(thread.id);
   await retainHistory(s.env, "2020-01-01");
   const first = s.sql.prepare("SELECT version FROM ai_threads WHERE id=?").get(thread.id)!.version;
   await retainHistory(s.env, "2020-01-01");

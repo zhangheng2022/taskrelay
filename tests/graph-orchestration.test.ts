@@ -51,7 +51,7 @@ test("协助请求只持久入队，alarm暂停后靠加密原回复恢复，重
     "waiting",
   );
   assert.ok(s.sql.prepare("SELECT interrupt_id FROM execution_help").get()!.interrupt_id);
-  s.sql.prepare("UPDATE ai_graph_inputs SET created_at='2000-01-01' WHERE id=?").run(graphId);
+  s.sql.prepare("UPDATE ai_graph_inputs SET created_at=946684800000 WHERE id=?").run(graphId);
   await retainHistory(s.env, "1990-01-01");
   assert.equal(
     s.sql.prepare("SELECT status FROM ai_graph_inputs WHERE id=?").get(graphId)!.status,
@@ -130,7 +130,7 @@ test("协助unknown不重发，删除聊天清除持久等待和所有派生密�
     0,
   );
   assert.equal(
-    s.sql.prepare("SELECT COUNT(*) n FROM ai_calls WHERE result IS NOT NULL").get()!.n,
+    s.sql.prepare("SELECT COUNT(*) n FROM call_details WHERE result IS NOT NULL").get()!.n,
     0,
   );
 });
@@ -142,7 +142,7 @@ test("取消发生在checkpoint前置检查与写入之间时，D1原子fence拒
   const graph = s.sql.prepare("SELECT id,generation FROM ai_graph_inputs").get()!;
   const saver = new D1Checkpointer(
     s.db,
-    "legacy_owner",
+    "fixture_owner",
     s.env.MASTER_KEY,
     async () => {
       s.sql.prepare("UPDATE runs SET cancel_requested=1 WHERE id=?").run(s.run.id);
@@ -200,7 +200,7 @@ test("正常最终回复的用户消息游标在收尾事务里检查，失配�
   const changed = await s.request(`/api/runner/runs/${s.run.id}/finish`, body);
   assert.equal(changed.data.error, "INSTRUCTIONS_CHANGED");
   const run = s.sql
-    .prepare("SELECT status,lease_expires_at,result FROM runs WHERE id=?")
+    .prepare("SELECT status,lease_expires_at,result FROM run_details WHERE id=?")
     .get(s.run.id)!;
   assert.equal(run.status, "running");
   assert.ok(run.lease_expires_at);

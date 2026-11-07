@@ -6,10 +6,17 @@ import { seal, unseal } from "./crypto";
 
 type Storage = Pick<DurableObjectStorage, "get" | "put" | "delete" | "deleteAll" | "setAlarm">;
 type Meta = {
+  /** KV 元数据格式；仅接受本版，旧短期出站对象不再执行。 */
+  formatVersion: 2;
+  /** 同次出站 RPC 的稳定调用 ID；对象按此身份隔离。 */
   id: string;
+  /** pending 待执行、running 已提交、done 完成、failed 失败、consumed 已确认；running 不重放。 */
   status: "pending" | "running" | "done" | "failed" | "consumed";
+  /** UTC 毫秒期限；alarm 到期清理 meta 和全部 part:N。 */
   expires: number;
+  /** part:0..N 的连续分块数；先整体按 egress:<id>:request/response 加密，再以 60000 字符分块。 */
   parts: number;
+  /** 固定公开错误分类；NULL/缺失表示无错误，禁止供应商正文。 */
   error?: string;
 };
 export type EgressResult = {
@@ -46,6 +53,7 @@ export class EgressState {
       throw new Error("MODEL_EGRESS_INPUT_INVALID");
     const existing = await this.storage.get<Meta>("meta");
     if (existing) {
+      if (existing.formatVersion !== 2) throw Error("STORAGE_CONVERSION_REQUIRED");
       if (existing.id !== id) throw new Error("MODEL_EGRESS_JOB_MISMATCH");
       return;
     }
@@ -56,6 +64,7 @@ export class EgressState {
     await this.storage.put({
       ...chunks,
       meta: {
+        formatVersion: 2,
         id,
         expires,
         status: "pending",
@@ -91,6 +100,7 @@ export class EgressState {
     const meta = await this.storage.get<Meta>("meta");
     if (!meta || meta.expires <= Date.now())
       return { status: "failed", error: "MODEL_EGRESS_EXPIRED" };
+    if (meta.formatVersion !== 2) return { status: "failed", error: "STORAGE_CONVERSION_REQUIRED" };
     return {
       status: meta.status,
       error: meta.error,
@@ -129,6 +139,12 @@ export class EgressState {
   async alarm() {
     const meta = await this.storage.get<Meta>("meta");
     if (!meta || meta.expires <= Date.now()) {
+      await this.storage.deleteAll();
+      this.wake();
+      return;
+    }
+    // 切换前已排空旧出站作业；旧对象只清理密文，绝不重新调用提供方。
+    if (meta.formatVersion !== 2) {
       await this.storage.deleteAll();
       this.wake();
       return;

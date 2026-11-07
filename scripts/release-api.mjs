@@ -1,7 +1,13 @@
 /** Actions 发布 API 边界：固定服务地址，关闭重定向和自动重试，错误不透传响应正文或凭据。 */
+import { readFileSync } from "node:fs";
 export const repository = "zhangheng2022/taskrelay";
-export const account = "b3a410496c5e49e582b4af19d2f2eec6";
-export const database = "9d387f48-6e34-4af4-a2a0-10f958d65a16";
+// 单业务 D1 的标识只由 Wrangler 配置维护，离线换库后发布/备份不能再访问旧库。
+const config = readFileSync(new URL("../apps/web/wrangler.jsonc", import.meta.url), "utf8");
+const accounts = [...config.matchAll(/"account_id"\s*:\s*"([a-f0-9]{32})"/g)],
+  databases = [...config.matchAll(/"database_id"\s*:\s*"([a-f0-9-]{36})"/g)];
+if (accounts.length !== 1 || databases.length !== 1) throw Error("RELEASE_DATABASE_CONFIG_INVALID");
+export const account = accounts[0][1];
+export const database = databases[0][1];
 export const dbPath = `/accounts/${account}/d1/database/${database}`;
 // 托管 Runner 是 API 客户端；固定使用同一 Worker 已有的机器入口，避免主站 Bot Fight 人机挑战。
 // 不携带用户 Cookie/部署令牌，不自动换域或降低主站防护；客户端更新地址仍为主站。

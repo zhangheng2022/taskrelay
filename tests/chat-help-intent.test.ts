@@ -34,7 +34,9 @@ test("协助轮询只发布一次问题，回复后内部答案不回显，新�
   await s.request(s.path, s.help);
   await s.request(s.path, s.help);
   const questions = () =>
-    s.sql.prepare("SELECT id,content,private_content FROM ai_messages WHERE source='cloud'").all();
+    s.sql
+      .prepare("SELECT id,content,private_content FROM message_details WHERE source='cloud'")
+      .all();
   assert.equal(questions().length, 1);
   assert.ok(questions()[0].private_content);
   await s.request(`/api/user/threads/${s.thread.id}/messages`, {
@@ -83,7 +85,7 @@ test("协助模型尚未发布等待状态时，提前回复也加密并绑定�
   s.replies(reply("请提供密码。", true));
   assert.equal((await s.request(s.path, s.help)).data.ready, false);
   const stored = s.sql
-    .prepare("SELECT * FROM ai_messages WHERE thread_id=? AND role='user'")
+    .prepare("SELECT * FROM message_details WHERE thread_id=? AND role='user'")
     .get(s.thread.id)!;
   assert.ok(stored.private_content);
   assert.equal(stored.reply_to, s.help.id);
@@ -104,7 +106,7 @@ test("协助登记前的执行中补充加密，完成的旧协助不会被重�
   ]) {
     await s.request(`/api/user/threads/${s.thread.id}/messages`, { requestId, content });
     const rows = s.sql
-      .prepare("SELECT * FROM ai_messages WHERE thread_id=? AND role='user' ORDER BY seq DESC")
+      .prepare("SELECT * FROM message_details WHERE thread_id=? AND role='user' ORDER BY seq DESC")
       .all(s.thread.id);
     assert.ok(rows[0].private_content);
     assert.equal(rows[0].reply_to, null);
@@ -130,9 +132,7 @@ for (const invalidation of ["cancel", "expired", "closed"] as const) {
     if (invalidation === "cancel")
       s.sql.prepare("UPDATE runs SET cancel_requested=1 WHERE id=?").run(s.run.id);
     if (invalidation === "expired")
-      s.sql
-        .prepare("UPDATE runs SET lease_expires_at='2000-01-01T00:00:00Z' WHERE id=?")
-        .run(s.run.id);
+      s.sql.prepare("UPDATE runs SET lease_expires_at=946684800000 WHERE id=?").run(s.run.id);
     if (invalidation === "closed")
       s.sql.prepare("UPDATE ai_threads SET closed=1 WHERE id=?").run(s.thread.id);
     const result = await s.request(s.path, s.help);
@@ -214,7 +214,7 @@ for (const protocol of ["chat", "responses"] as const) {
     assert.ok(
       !JSON.stringify(
         s.sql
-          .prepare("SELECT content,private_content FROM ai_messages WHERE thread_id=?")
+          .prepare("SELECT content,private_content FROM message_details WHERE thread_id=?")
           .all(s.thread.id),
       ).includes("0012aB!"),
     );
@@ -262,7 +262,7 @@ test("等待协助时连续回复均加密，模型结合最后的补充判断",
     });
   const rows = s.sql
     .prepare(
-      "SELECT content,private_content,reply_to FROM ai_messages WHERE role='user' AND thread_id=?",
+      "SELECT content,private_content,reply_to FROM message_details WHERE role='user' AND thread_id=?",
     )
     .all(s.thread.id);
   assert.equal(rows.length, 2);

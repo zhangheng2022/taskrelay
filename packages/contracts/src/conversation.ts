@@ -34,13 +34,4 @@ export type ThreadPage = {
     parts?: import("./execution").ChatPart[];
   }[];
   nextCursor: number | null;
-  replies?: {
-    id: string;
-    cursor: number;
-    role: string;
-    content: string;
-    at: string;
-    status: string;
-  }[];
-  nextReplyCursor?: number | null;
 };

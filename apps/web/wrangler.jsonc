@@ -23,6 +23,32 @@
     { "tag": "free-runtime-v1", "new_sqlite_classes": ["RequestCoordinator", "Scheduler"] },
     { "tag": "free-turn-v1", "new_sqlite_classes": ["AiTurn", "Evidence", "NotificationHub"] },
     { "tag": "browser-state-v1", "new_sqlite_classes": ["BrowserStateStore"] },
+    // 2026-11-08 用户明确要求清空全部云端数据；先由无 DO 绑定的维护入口应用删除阶段，
+    // 再部署本代码创建空命名空间。两个阶段不能合并成对旧对象的格式转换。
+    {
+      "tag": "storage-v2-reset-drop-20261108",
+      "deleted_classes": [
+        "ModelEgress",
+        "RequestCoordinator",
+        "Scheduler",
+        "AiTurn",
+        "Evidence",
+        "NotificationHub",
+        "BrowserStateStore",
+      ],
+    },
+    {
+      "tag": "storage-v2-reset-create-20261108",
+      "new_sqlite_classes": [
+        "ModelEgress",
+        "RequestCoordinator",
+        "Scheduler",
+        "AiTurn",
+        "Evidence",
+        "NotificationHub",
+        "BrowserStateStore",
+      ],
+    },
   ],
   "assets": {
     "binding": "ASSETS",
@@ -33,8 +59,8 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "taskrelay",
-      "database_id": "9d387f48-6e34-4af4-a2a0-10f958d65a16",
+      "database_name": "taskrelay-v2-20261108",
+      "database_id": "1951016f-1c9b-459e-a332-75266106f7ad",
       "migrations_dir": "../cloud/migrations",
     },
   ],

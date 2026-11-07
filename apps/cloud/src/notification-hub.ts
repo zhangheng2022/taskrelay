@@ -1,8 +1,12 @@
+import { applicationDb } from "./database";
 /** 休眠 WebSocket 仅通知“数据已变化”；每次推送重新检查会话或设备，业务数据仍由鉴权 API 读取。 */
 import { DurableObject } from "cloudflare:workers";
 import type { AppEnv } from "./env";
 type Subscriber = { owner?: string; session?: string; device?: string; expires: number };
 export class NotificationHub extends DurableObject<AppEnv> {
+  constructor(ctx: DurableObjectState, env: AppEnv) {
+    super(ctx, { ...env, DB: applicationDb(env.DB) });
+  }
   async fetch(request: Request) {
     const subscriber = JSON.parse(request.headers.get("x-subscriber") ?? "null") as Subscriber;
     if (!subscriber || request.headers.get("upgrade") !== "websocket")

@@ -1,3 +1,4 @@
+import { dbTime } from "./database";
 import { PROTOCOL_VERSION } from "../../../packages/contracts/src/index";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -21,7 +22,7 @@ pairing.post("/start", async (c) => {
   const source = await hash(c.req.header("cf-connecting-ip") ?? "local");
   await limitRequest(c.env, `pair:${source}`, 5, 600000);
   const count = await c.env.DB.prepare("SELECT COUNT(*) n FROM pairings WHERE expires_at>?")
-    .bind(now())
+    .bind(dbTime(now()))
     .first<{ n: number }>();
   if ((count?.n ?? 0) >= 20) return c.json({ error: "PAIRING_LIMIT" }, 429);
   const id = uid("pair"),
@@ -39,8 +40,8 @@ pairing.post("/start", async (c) => {
       await seal(token, c.env.MASTER_KEY, `pair:${id}`),
       deviceId,
       name,
-      new Date(Date.now() + 600000).toISOString(),
-      now(),
+      dbTime(new Date(Date.now() + 600000).toISOString()),
+      dbTime(now()),
     )
     .run();
   return c.json({
@@ -57,7 +58,7 @@ pairing.post("/poll", async (c) => {
   const row = await c.env.DB.prepare(
     "SELECT * FROM pairings WHERE id=? AND poll_hash=? AND expires_at>?",
   )
-    .bind(id, await hash(pollToken), now())
+    .bind(id, await hash(pollToken), dbTime(now()))
     .first<Row>();
   if (!row) return c.json({ error: "PAIRING_EXPIRED" }, 410);
   if (!row.approved) return c.json({ approved: false });

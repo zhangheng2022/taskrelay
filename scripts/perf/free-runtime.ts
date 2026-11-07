@@ -18,6 +18,7 @@ import type { AppEnv } from "../../apps/cloud/src/env";
 import { app } from "../../apps/cloud/src/index";
 import { stagehandSchema } from "../../apps/cloud/src/ai/stagehand-schema";
 import { z } from "zod";
+import { applicationDb } from "../../apps/cloud/src/database";
 import { validateSnapshotPng } from "../../apps/cloud/src/png";
 app.onError((e, c) => {
   console.error("fixture error", e.message);
@@ -25,6 +26,7 @@ app.onError((e, c) => {
 });
 export default {
   async fetch(req: Request, env: AppEnv, ctx: ExecutionContext) {
+    env = { ...env, DB: applicationDb(env.DB) };
     if (!["localhost", "127.0.0.1"].includes(new URL(req.url).hostname))
       return new Response(null, { status: 403 });
     const path = new URL(req.url).pathname;
@@ -52,12 +54,15 @@ export default {
     }
     if (path === "/_init") {
       await env.DB.prepare(
-        "INSERT INTO devices(id,name,token_hash,protocol_version) VALUES('fixture','fixture',?,15)",
+        "INSERT INTO members(id,email,role) VALUES('fixture_owner','fixture@example.com','admin')",
+      ).run();
+      await env.DB.prepare(
+        "INSERT INTO devices(id,name,token_hash,protocol_version) VALUES('fixture','fixture',?,18)",
       )
         .bind(await hash("d".repeat(64)))
         .run();
       await env.DB.prepare(
-        "INSERT INTO model_profiles(id,version,config,secret,capabilities,created_at) VALUES(?,1,?,?,?,?)",
+        "INSERT INTO model_profile_versions(id,version,config,secret,capabilities,created_at) VALUES(?,1,?,?,?,?)",
       )
         .bind(
           "fixture",
@@ -71,7 +76,7 @@ export default {
           }),
           await seal("fixture-only", env.MASTER_KEY, "model:fixture:1"),
           JSON.stringify({ connection: true, tools: true, structured: "schema", vision: false }),
-          new Date().toISOString(),
+          Date.now(),
         )
         .run();
       return Response.json({ ok: true });
@@ -96,7 +101,7 @@ export default {
       });
     }
     if (path === "/_checkpoint") {
-      const saver = new D1Checkpointer(env.DB, "legacy_owner", env.MASTER_KEY),
+      const saver = new D1Checkpointer(env.DB, "fixture_owner", env.MASTER_KEY),
         cp = emptyCheckpoint();
       const text = "a".repeat(1_250_000);
       cp.channel_values = { original: text };
@@ -126,7 +131,7 @@ export default {
         deleted = store("deleted-image");
       await published.put("published-image", bytes, null, true);
       await env.DB.prepare(
-        "INSERT INTO artifacts(id,run_id,thread_id,object_key,content_type,expires_at,persistent) VALUES('published-image',?,?,'published-image','image/png','9999-01-01',1)",
+        "INSERT INTO artifacts(id,run_id,thread_id,object_key,content_type,expires_at,persistent) VALUES('published-image',?,?,'published-image','image/png',253370764800000,1)",
       )
         .bind(runId, threadId)
         .run();
@@ -139,10 +144,10 @@ export default {
       await orphan.expireStaging();
       await deleted.put("deleted-image", bytes, null, true);
       await env.DB.prepare(
-        "INSERT INTO ai_threads(id,user_id,kind,model_id,model_version,closed,created_at,updated_at) VALUES('deleted-image-thread','legacy_owner','chat','fixture',1,1,'2026-01-01','2026-01-01')",
+        "INSERT INTO ai_threads(id,user_id,kind,model_id,model_version,closed,created_at,updated_at) VALUES('deleted-image-thread','fixture_owner','chat','fixture',1,1,1767225600000,1767225600000)",
       ).run();
       await env.DB.prepare(
-        "INSERT INTO artifacts(id,run_id,thread_id,object_key,content_type,expires_at,persistent) VALUES('deleted-image',?,'deleted-image-thread','deleted-image','image/png','9999-01-01',1)",
+        "INSERT INTO artifacts(id,run_id,thread_id,object_key,content_type,expires_at,persistent) VALUES('deleted-image',?,'deleted-image-thread','deleted-image','image/png',253370764800000,1)",
       )
         .bind(runId)
         .run();
@@ -178,18 +183,22 @@ export default {
         createdAt: new Date().toISOString(),
         nextRunAt: null,
       };
-      await env.DB.prepare(
-        "INSERT INTO tasks(id,version,definition,status,created_at,updated_at,user_id) VALUES(?,1,?,?,?, ?,?)",
-      )
-        .bind(
-          task.id,
-          JSON.stringify(task),
-          "active",
-          task.createdAt,
-          task.createdAt,
-          "legacy_owner",
-        )
-        .run();
+      const taskHead = env.DB.prepare(
+        "INSERT INTO tasks(id,version,title,schedule_kind,status,created_at,updated_at,user_id) VALUES(?,1,?,'manual',?,?,?,?)",
+      ).bind(
+        task.id,
+        task.title,
+        "active",
+        Date.parse(task.createdAt),
+        Date.parse(task.createdAt),
+        "fixture_owner",
+      );
+      await env.DB.batch([
+        env.DB.prepare(
+          "INSERT INTO task_versions(task_id,version,definition,user_id,model_id,model_version) VALUES(?,1,?,'fixture_owner','fixture',1)",
+        ).bind(task.id, JSON.stringify(task)),
+        taskHead,
+      ]);
       await env.DB.prepare("UPDATE ai_threads SET task_id=? WHERE id=?")
         .bind(task.id, threadId)
         .run();
@@ -202,7 +211,7 @@ export default {
         "SELECT id,status,error FROM ai_graph_inputs WHERE kind='help' LIMIT 1",
       ).first<{ id: string; status: string; error: string | null }>();
       const tuple = row
-        ? await new D1Checkpointer(env.DB, "legacy_owner", env.MASTER_KEY).getTuple({
+        ? await new D1Checkpointer(env.DB, "fixture_owner", env.MASTER_KEY).getTuple({
             configurable: { thread_id: row.id },
           })
         : null;

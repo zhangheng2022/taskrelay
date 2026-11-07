@@ -1,3 +1,4 @@
+import { dbTime } from "../apps/cloud/src/database";
 import { finishRequest, browserClosedRequest } from "./runner-request";
 import { PROTOCOL_VERSION } from "../packages/contracts/src/index";
 import { commitDecision } from "../apps/cloud/src/ai/commands";
@@ -52,12 +53,12 @@ async function fixture() {
       .prepare(
         "INSERT INTO auth_user(id,name,email,emailVerified,createdAt,updatedAt) VALUES(?,?,?,1,?,?)",
       )
-      .run(id, id, email, at, at);
+      .run(id, id, email, dbTime(at), dbTime(at));
     sql
       .prepare(
         "INSERT INTO auth_account(id,accountId,providerId,userId,password,createdAt,updatedAt) VALUES(?,?,'credential',?,?,?,?)",
       )
-      .run(id, id, id, digest, at, at);
+      .run(id, id, id, digest, dbTime(at), dbTime(at));
     const login = await request("/api/auth/sign-in/email", "", { email, password });
     assert.equal(login.status, 200, await login.clone().text());
     cookies[id] = login.headers
@@ -77,11 +78,10 @@ async function fixture() {
         d,
         await hash((d === "d1" ? "a" : "b").repeat(64)),
         PROTOCOL_VERSION,
-        new Date().toISOString(),
+        dbTime(new Date().toISOString()),
       );
   async function ownedTask(user: string, id: string, accountId: string | null = null) {
-    const t = await insertTask(db, task({ id, accountId }));
-    sql.prepare("UPDATE tasks SET user_id=? WHERE id=?").run(user, id);
+    const t = await insertTask(db, task({ id, accountId }), user);
     return t;
   }
   return { db, sql, env, request, cookies, ownedTask };
@@ -119,13 +119,17 @@ test("个人日限额支持到期或手动恢复，不绕过用户隔离、禁�
   try {
     const task = await s.ownedTask("alice", "paused_quota_task");
     s.sql
-      .prepare("UPDATE members SET daily_runs=0,daily_models=0,daily_chat=0 WHERE id='alice'")
+      .prepare(
+        "UPDATE members SET daily_quota_paused=0,daily_runs=0,daily_models=0,daily_chat=0 WHERE id='alice'",
+      )
       .run();
     const queued = await enqueue(s.db, task, "pause-a");
     assert.equal(await claim(s.db, "d1", "before-pause"), null);
     await assert.rejects(() => reserve(s.env, "alice", "chat"), /CHAT_QUOTA_EXCEEDED/);
     const until = new Date(Date.now() + 3600000).toISOString();
-    s.sql.prepare("UPDATE members SET daily_quota_paused_until=? WHERE id='alice'").run(until);
+    s.sql
+      .prepare("UPDATE members SET daily_quota_paused_until=? WHERE id='alice'")
+      .run(dbTime(until));
     assert.equal((await quotaSummary(s.db, "alice")).pausedUntil, until);
     assert.doesNotMatch((await queueReasons(s.db, "alice")).get(queued.id)!, /额度已用完/);
     await reserve(s.env, "alice", "chat");
@@ -134,14 +138,14 @@ test("个人日限额支持到期或手动恢复，不绕过用户隔离、禁�
     assert.equal(run.id, queued.id);
     const next = await enqueue(s.db, task, "manual:pause-b");
     assert.equal(await claim(s.db, "d2", "still-single"), null);
-    s.sql.prepare("UPDATE members SET daily_chat=0 WHERE id='bob'").run();
+    s.sql.prepare("UPDATE members SET daily_quota_paused=0,daily_chat=0 WHERE id='bob'").run();
     await assert.rejects(() => reserve(s.env, "bob", "chat"), /CHAT_QUOTA_EXCEEDED/);
     await reserve(s.env, "alice", "model");
     s.sql.prepare("UPDATE members SET disabled=1 WHERE id='alice'").run();
     await assert.rejects(() => reserve(s.env, "alice", "chat"), /CHAT_QUOTA_EXCEEDED/);
     s.sql
       .prepare(
-        "UPDATE members SET disabled=0,daily_quota_paused_until='2000-01-01T00:00:00.000Z' WHERE id='alice'",
+        "UPDATE members SET disabled=0,daily_quota_paused_until=946684800000 WHERE id='alice'",
       )
       .run();
     assert.equal(
@@ -200,7 +204,7 @@ test("真实登录会话隔离任务、运行、对话、协助、证据和用�
     b = await enqueue(s.db, tb, "bob-key");
   s.sql
     .prepare(
-      "INSERT INTO artifacts(id,run_id,object_key,content_type,expires_at) VALUES('artifact_b',?,'private','image/png','2099-01-01')",
+      "INSERT INTO artifacts(id,run_id,object_key,content_type,expires_at) VALUES('artifact_b',?,'private','image/png',4070908800000)",
     )
     .run(b.id);
   for (const who of ["alice", "owner"]) {
@@ -245,7 +249,7 @@ test("两用户两设备公平领取，并发一，领取重试只记一次额�
   const s = await fixture();
   const ta = await s.ownedTask("alice", "ta"),
     tb = await s.ownedTask("bob", "tb");
-  s.sql.prepare("UPDATE members SET last_claim_at='2026-01-01' WHERE id='alice'").run();
+  s.sql.prepare("UPDATE members SET last_claim_at=1767225600000 WHERE id='alice'").run();
   await enqueue(s.db, ta, "a1");
   await enqueue(s.db, ta, "a2");
   await enqueue(s.db, tb, "b1");
@@ -275,7 +279,7 @@ test("两用户两设备公平领取，并发一，领取重试只记一次额�
 
 test("个人模型额度并发预占与上海跨日，不因未知结果返还", async () => {
   const s = await fixture();
-  s.sql.prepare("UPDATE members SET daily_models=2 WHERE id='alice'").run();
+  s.sql.prepare("UPDATE members SET daily_quota_paused=0,daily_models=2 WHERE id='alice'").run();
   const attempts = await Promise.allSettled(
     Array.from({ length: 6 }, () => reserve(s.env, "alice", "model")),
   );
@@ -305,7 +309,7 @@ test("两用户使用同一幂等编号仍各自创建任务；账号、协助�
   s.env.EVIDENCE_STORE = {
     getByName: () => ({ get: async () => new Uint8Array([1, 2, 3]).buffer }),
   } as any;
-  s.sql.prepare("INSERT INTO model_profiles VALUES(?,1,?,?,?,?)").run(
+  s.sql.prepare("INSERT INTO model_profile_versions VALUES(?,1,?,?,?,?)").run(
     "model_test",
     JSON.stringify({
       name: "shared",
@@ -323,7 +327,7 @@ test("两用户使用同一幂等编号仍各自创建任务；账号、协助�
       vision: false,
       testedAt: null,
     }),
-    new Date().toISOString(),
+    dbTime(new Date().toISOString()),
   );
   async function create(who: string, input: any, requestId: string) {
     const thread = (await (
@@ -379,17 +383,12 @@ test("两用户使用同一幂等编号仍各自创建任务；账号、协助�
       .prepare(
         "INSERT INTO artifacts(id,run_id,object_key,content_type,expires_at) VALUES(?,?,?,?,?)",
       )
-      .run("image_" + who, runs[who], who, "image/png", "2099-01-01");
-    s.sql
-      .prepare(
-        "INSERT INTO challenges(id,run_id,lease_epoch,version,step_id,kind,instruction,status,expires_at) VALUES(?,?,1,1,'step','code','Code','pending','2099-01-01')",
-      )
-      .run("challenge_" + who, runs[who]);
+      .run("image_" + who, runs[who], who, "image/png", dbTime("2099-01-01"));
     s.sql
       .prepare(
         "INSERT INTO model_usage(id,run_id,model_id,model_version,input_tokens,output_tokens,at,user_id) VALUES(?,?,?,1,11,20,?,?)",
       )
-      .run("usage_" + who, runs[who], "model_test", new Date().toISOString(), who);
+      .run("usage_" + who, runs[who], "model_test", dbTime(new Date().toISOString()), who);
   }
   assert.notEqual(tasks.alice, tasks.bob);
   for (const who of ["alice", "bob"]) {
@@ -408,7 +407,6 @@ test("两用户使用同一幂等编号仍各自创建任务；账号、协助�
       [`/tasks/${tasks[other]}/chat`, undefined],
       [`/runs/${runs[other]}`, undefined],
       [`/runs/${runs[other]}/cancel`, {}],
-      [`/challenges/challenge_${other}/reply`, {}],
       [`/artifacts/image_${other}`, undefined],
     ] as const) {
       assert.equal((await s.request("/api/user" + path, cookie, body)).status, 404, path);

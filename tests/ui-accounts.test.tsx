@@ -353,8 +353,11 @@ test("账号卡片保持在原聊天可操作，独立于过程折叠；未知�
   const writes: string[] = [],
     page = { ...threadPage, taskId: task.id, messages: [message] };
   const transport = transportWith(async (method, path) => {
-    if (path === "/api/user/threads")
-      return [{ id: page.id, model_id: task.modelId, task_id: task.id }];
+    if (path.split("?")[0] === "/api/user/threads")
+      return {
+        items: [{ id: page.id, model_id: task.modelId, task_id: task.id }],
+        nextCursor: null,
+      };
     if (path.includes("/account-cards/")) return card;
     if (method === "POST") writes.push(path);
     return page;
@@ -408,20 +411,19 @@ test("紧凑卡片可直接保存，编辑收起后密码控件移除", async ()
   assert.equal((savedBody as { password: string }).password, card.password);
 });
 
-test("已归并卡片和空引用消息不再展示", async () => {
+test("失效卡片说明过期，空引用消息不展示", async () => {
   const duplicate = render(
     <ChatAttachments
       transport={transportWith(async () => ({
         ...card,
         status: "expired",
-        supersededBy: "canonical",
         password: undefined,
       }))}
       parts={[{ type: "account-card", cardId: card.id }]}
     />,
   );
   await waitFor(() => assert.ok(!duplicate.queryByText("正在加载账号卡片…")));
-  assert.equal(duplicate.container.textContent, "");
+  assert.ok(duplicate.container.textContent?.includes("这张卡片已失效"));
   assert.deepEqual(
     conversationRows([
       {

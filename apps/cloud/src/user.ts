@@ -1,3 +1,5 @@
+import { pageQuery, pageKey, pageCursor } from "./pagination";
+import { dbTime } from "./database";
 /** 用户工作空间接口：先核对资源归属，再读取任务/运行/图片或提交账号与控制请求；管理员配置单独挂载。 */
 import { validator } from "hono/validator";
 import { conditionsSchema } from "./ai/commands";
@@ -7,8 +9,6 @@ import { quotaSummary } from "./tenancy";
 import { Hono } from "hono";
 import { z } from "zod";
 import { egress } from "./egress";
-import { drizzle } from "drizzle-orm/d1";
-import { and, desc, eq } from "drizzle-orm";
 import {
   scheduleSchema,
   modelInputSchema,
@@ -18,7 +18,6 @@ import {
 import { hash } from "../../../packages/contracts/src/security";
 import { nextOccurrence } from "../../../packages/contracts/src/schedule";
 import type { AppEnv, Variables } from "./env";
-import { tasksTable } from "./schema";
 import { now, taskFrom, runFrom, getRun, tick, queueReasons, type Row } from "./store";
 import { modelFrom, getModel, storeModel, probe, probeVision, validateEndpoint } from "./models";
 import { seal, unseal } from "./crypto";
@@ -29,14 +28,12 @@ const userBase = new Hono<{ Bindings: AppEnv; Variables: Variables }>();
 const adminBase = new Hono<{ Bindings: AppEnv; Variables: Variables }>();
 userBase.use("*", async (c, next) => {
   const path = c.req.path.replace("/api/user", "");
-  const match = /^\/(tasks|runs|challenges|artifacts)\/([^/]+)/.exec(path);
+  const match = /^\/(tasks|runs|artifacts)\/([^/]+)/.exec(path);
   if (match && !(match[1] === "tasks" && ["compose", "draft"].includes(match[2]))) {
     const id = decodeURIComponent(match[2]);
     const queries: Record<string, string> = {
       tasks: "SELECT id FROM tasks WHERE id=? AND user_id=? AND deleted=0",
       runs: "SELECT id FROM runs WHERE id=? AND user_id=? AND history_deleted=0",
-      challenges:
-        "SELECT c.id FROM challenges c JOIN runs r ON r.id=c.run_id WHERE c.id=? AND r.user_id=? AND r.history_deleted=0",
       artifacts:
         "SELECT a.id FROM artifacts a JOIN runs r ON r.id=a.run_id WHERE a.id=? AND r.user_id=? AND r.history_deleted=0",
     };
@@ -77,21 +74,27 @@ export const user = userBase
     const results = await db.batch([
       db
         .prepare(
-          "SELECT * FROM tasks WHERE user_id=? AND deleted=0 ORDER BY created_at DESC LIMIT 200",
+          "SELECT * FROM task_details WHERE user_id=? AND deleted=0 ORDER BY created_at DESC,id DESC LIMIT 51",
         )
         .bind(c.get("userId")),
       db
         .prepare(
           `SELECT r.*,g.state dispatch_group_state,a.name account_name,
-      (SELECT COUNT(*) FROM account_dispatch_members dm WHERE dm.group_id=r.dispatch_group_id) dispatch_total
-      FROM runs r LEFT JOIN account_dispatch_groups g ON g.id=r.dispatch_group_id LEFT JOIN accounts a ON a.id=r.account_id
-      WHERE r.user_id=? AND r.history_deleted=0 ORDER BY r.created_at DESC LIMIT 200`,
+      g.member_count dispatch_total
+      FROM run_details r LEFT JOIN account_dispatch_groups g ON g.id=r.dispatch_group_id LEFT JOIN accounts a ON a.id=r.account_id
+      WHERE r.user_id=? AND r.history_deleted=0 ORDER BY r.created_at DESC,r.id DESC LIMIT 51`,
         )
         .bind(c.get("userId")),
       db.prepare(
-        "SELECT m.id,m.version,m.config,m.capabilities FROM model_profiles m WHERE version=(SELECT MAX(version) FROM model_profiles x WHERE x.id=m.id) ORDER BY created_at DESC",
+        "SELECT v.id,v.version,v.config,v.capabilities FROM models m JOIN model_profile_versions v ON v.id=m.id AND v.version=m.current_version ORDER BY m.created_at DESC",
       ),
-      db.prepare("SELECT * FROM accounts WHERE user_id=?").bind(c.get("userId")),
+      db
+        .prepare(
+          `SELECT a.id,a.name,a.origin,a.username_hint,a.created_at,a.assigned_device_id,a.login_reset,a.business_domains,
+        a.credential_version,a.state_epoch,a.credential_status,a.state_revision,a.sync_status,a.sync_error,a.last_device_id,v.login_origins
+        FROM accounts a JOIN account_credential_versions v ON v.account_id=a.id AND v.version=a.credential_version WHERE a.user_id=?`,
+        )
+        .bind(c.get("userId")),
       db.prepare("SELECT id,name,last_seen,revoked,protocol_version FROM devices"),
       db
         .prepare(
@@ -102,8 +105,10 @@ export const user = userBase
     const r = results.map((x) => x.results as Row[]);
     const reasons = await queueReasons(db, c.get("userId"));
     return c.json({
-      tasks: r[0].map(taskFrom),
-      runs: r[1].map((row) => runFrom({ ...row, queue_reason: reasons.get(row.id) })),
+      tasks: r[0].slice(0, 50).map(taskFrom),
+      nextTasksCursor: r[0].length > 50 ? pageCursor(r[0][49].created_at, r[0][49].id) : null,
+      nextRunsCursor: r[1].length > 50 ? pageCursor(r[1][49].created_at, r[1][49].id) : null,
+      runs: r[1].slice(0, 50).map((row) => runFrom({ ...row, queue_reason: reasons.get(row.id) })),
       models: r[2]
         .map(modelFrom)
         .map((m) => (c.get("actor") === "owner" ? m : { ...m, baseUrl: "", hasKey: false })),
@@ -126,20 +131,52 @@ export const user = userBase
       serverTime: now(),
     });
   })
-  .get("/tasks", async (c) =>
-    c.json(
-      (
-        await drizzle(c.env.DB)
-          .select()
-          .from(tasksTable)
-          .where(and(eq(tasksTable.userId, c.get("userId")), eq(tasksTable.deleted, 0)))
-          .orderBy(desc(tasksTable.createdAt))
-      ).map((row) => ({
-        ...JSON.parse(row.definition),
-        status: row.status,
-        nextRunAt: row.nextRunAt,
-      })),
-    ),
+  .get(
+    "/tasks",
+    validator("query", (value) => pageQuery.parse(value)),
+    async (c) => {
+      const before = pageKey(c.req.valid("query").before);
+      const rows = await c.env.DB.prepare(
+        `SELECT * FROM task_details WHERE user_id=? AND deleted=0 ${before ? "AND (created_at,id)<(?,?)" : ""} ORDER BY created_at DESC,id DESC LIMIT 51`,
+      )
+        .bind(c.get("userId"), ...(before ?? []))
+        .all<Row>();
+      return c.json({
+        items: rows.results.slice(0, 50).map(taskFrom),
+        nextCursor:
+          rows.results.length > 50
+            ? pageCursor(rows.results[49].created_at, rows.results[49].id)
+            : null,
+      });
+    },
+  )
+  .get("/tasks/:id", async (c) => {
+    const row = await c.env.DB.prepare(
+      "SELECT * FROM task_details WHERE id=? AND user_id=? AND deleted=0",
+    )
+      .bind(c.req.param("id"), c.get("userId"))
+      .first<Row>();
+    if (!row) throw Error("TASK_NOT_FOUND");
+    return c.json(taskFrom(row));
+  })
+  .get(
+    "/runs",
+    validator("query", (value) => pageQuery.parse(value)),
+    async (c) => {
+      const before = pageKey(c.req.valid("query").before);
+      const rows = await c.env.DB.prepare(
+        `SELECT * FROM run_details WHERE user_id=? AND history_deleted=0 ${before ? "AND (created_at,id)<(?,?)" : ""} ORDER BY created_at DESC,id DESC LIMIT 51`,
+      )
+        .bind(c.get("userId"), ...(before ?? []))
+        .all<Row>();
+      return c.json({
+        items: rows.results.slice(0, 50).map(runFrom),
+        nextCursor:
+          rows.results.length > 50
+            ? pageCursor(rows.results[49].created_at, rows.results[49].id)
+            : null,
+      });
+    },
   )
   .route("/", accountRoutes)
   .route("/", accountCardRoutes)
@@ -160,13 +197,13 @@ export const user = userBase
         if (prior.digest !== digest) throw Error("IDEMPOTENCY_CONFLICT");
         return c.json({ id });
       }
-      const row = await c.env.DB.prepare("SELECT * FROM tasks WHERE id=? AND user_id=?")
+      const row = await c.env.DB.prepare("SELECT * FROM task_details WHERE id=? AND user_id=?")
         .bind(id, c.get("userId"))
         .first<Row>();
       if (!row || row.version !== b.expectedVersion) throw Error("TASK_VERSION_CONFLICT");
       if (row.context_withdrawn) throw Error("TASK_CONTEXT_WITHDRAWN");
       const card = await c.env.DB.prepare(
-        "SELECT c.* FROM run_conditions c JOIN runs r ON r.id=c.run_id WHERE c.run_id=? AND c.task_id=? AND r.status='succeeded'",
+        "SELECT c.* FROM run_conditions c JOIN run_details r ON r.id=c.run_id WHERE c.run_id=? AND c.task_id=? AND r.status='succeeded'",
       )
         .bind(b.runId, id)
         .first<Row>();
@@ -199,7 +236,7 @@ export const user = userBase
       )
         throw Error("MODEL_CAPABILITIES_REQUIRED");
       if (b.accountId) {
-        const a = await c.env.DB.prepare("SELECT * FROM accounts WHERE id=? AND user_id=?")
+        const a = await c.env.DB.prepare("SELECT * FROM account_details WHERE id=? AND user_id=?")
           .bind(b.accountId, c.get("userId"))
           .first<Row>();
         if (!a || !accountMatchesDomain(a, base.entryUrl)) throw Error("ACCOUNT_ORIGIN_MISMATCH");
@@ -226,26 +263,27 @@ export const user = userBase
           "INSERT OR IGNORE INTO idempotency(key,digest,resource_id) SELECT ?,?,id FROM tasks WHERE id=? AND version=? AND context_withdrawn=0 AND NOT EXISTS(SELECT 1 FROM ai_threads WHERE task_id=tasks.id AND active_turn IS NOT NULL AND closed=0)",
         ).bind(key, digest, id, b.expectedVersion),
         c.env.DB.prepare(
-          "UPDATE tasks SET version=?,definition=?,status=?,next_run_at=?,confirmed_condition=?,updated_at=? WHERE id=? AND version=? AND context_withdrawn=0 AND EXISTS(SELECT 1 FROM idempotency WHERE key=? AND digest=?)",
+          "UPDATE tasks SET version=?,title=?,schedule_kind=?,status=?,next_run_at=?,confirmed_condition=?,updated_at=? WHERE id=? AND version=? AND context_withdrawn=0 AND EXISTS(SELECT 1 FROM idempotency WHERE key=? AND digest=?)",
         ).bind(
           task.version,
-          JSON.stringify(task),
+          task.title,
+          task.schedule.kind,
           task.status,
-          task.nextRunAt,
+          dbTime(task.nextRunAt),
           b.runId,
-          now(),
+          dbTime(now()),
           id,
           b.expectedVersion,
           key,
           digest,
         ),
         c.env.DB.prepare(
-          "INSERT OR IGNORE INTO task_versions(task_id,version,definition) SELECT id,version,definition FROM tasks WHERE id=? AND version=?",
-        ).bind(id, task.version),
+          "INSERT OR IGNORE INTO task_versions(task_id,version,definition,user_id,model_id,model_version) SELECT id,version,?,user_id,?,? FROM tasks WHERE id=? AND version=?",
+        ).bind(JSON.stringify(task), task.modelId, task.modelVersion, id, task.version),
         c.env.DB.prepare(
           "UPDATE run_conditions SET confirmed_at=?,approved_version=?,confirmed_content=? WHERE run_id=? AND EXISTS(SELECT 1 FROM tasks WHERE id=? AND version=? AND confirmed_condition=?)",
         ).bind(
-          now(),
+          dbTime(now()),
           task.version,
           JSON.stringify(b.conditions),
           b.runId,
@@ -267,7 +305,9 @@ export const user = userBase
     async (c) => {
       const { enabled } = c.req.valid("json"),
         id = c.req.param("id");
-      const row = await c.env.DB.prepare("SELECT * FROM tasks WHERE id=?").bind(id).first<Row>();
+      const row = await c.env.DB.prepare("SELECT * FROM task_details WHERE id=?")
+        .bind(id)
+        .first<Row>();
       if (!row) throw new Error("TASK_NOT_FOUND");
       const task = taskFrom(row);
       if (enabled) {
@@ -279,8 +319,8 @@ export const user = userBase
       )
         .bind(
           enabled ? "active" : "paused",
-          enabled ? nextOccurrence(task.schedule) : null,
-          now(),
+          dbTime(enabled ? nextOccurrence(task.schedule) : null),
+          dbTime(now()),
           id,
           Number(enabled),
         )
@@ -294,7 +334,7 @@ export const user = userBase
     validator("json", (value: z.input<typeof runRequestInput>) => runRequestInput.parse(value)),
     async (c) => {
       const { requestId } = c.req.valid("json");
-      const row = await c.env.DB.prepare("SELECT * FROM tasks WHERE id=?")
+      const row = await c.env.DB.prepare("SELECT * FROM task_details WHERE id=?")
         .bind(c.req.param("id"))
         .first<Row>();
       if (!row) throw new Error("TASK_NOT_FOUND");
@@ -307,44 +347,50 @@ export const user = userBase
       return c.json(await enqueueTaskDispatch(c.env.DB, task, `manual:${task.id}:${requestId}`));
     },
   )
-  .get("/runs/:id", async (c) => {
-    const run = await getRun(c.env.DB, c.req.param("id"));
-    if (run.status === "queued")
-      run.queueReason = (await queueReasons(c.env.DB, c.get("userId"))).get(run.id);
-    const [events, usage] = await c.env.DB.batch([
-      c.env.DB.prepare(
-        "SELECT id,run_id AS runId,sequence,kind,message,at FROM run_events WHERE run_id=? ORDER BY sequence LIMIT 500",
-      ).bind(run.id),
-      c.env.DB.prepare(
-        "SELECT u.*,p.config FROM model_usage u JOIN model_profiles p ON p.id=u.model_id AND p.version=u.model_version WHERE run_id=?",
-      ).bind(run.id),
-    ]);
-    return c.json({
-      run,
-      events: events.results,
-      usage: (usage.results as Row[]).map((r: Row) => {
-        const p = JSON.parse(r.config);
-        return {
-          input: r.input_tokens,
-          output: r.output_tokens,
-          cost:
-            r.input_tokens === null ||
-            r.output_tokens === null ||
-            p.inputPrice === null ||
-            p.outputPrice === null
-              ? null
-              : (r.input_tokens * p.inputPrice + r.output_tokens * p.outputPrice) / 1000000,
-        };
-      }),
-    });
-  })
+  .get(
+    "/runs/:id",
+    validator("query", (value) => pageQuery.parse(value)),
+    async (c) => {
+      const before = pageKey(c.req.valid("query").before);
+      const run = await getRun(c.env.DB, c.req.param("id"));
+      if (run.status === "queued")
+        run.queueReason = (await queueReasons(c.env.DB, c.get("userId"))).get(run.id);
+      const [usage] = await c.env.DB.batch([
+        c.env.DB.prepare(
+          `SELECT u.id,u.at,u.input_tokens,u.output_tokens,p.config FROM model_usage u JOIN model_profile_versions p ON p.id=u.model_id AND p.version=u.model_version WHERE run_id=? ${before ? "AND (u.at,u.id)<(?,?)" : ""} ORDER BY u.at DESC,u.id DESC LIMIT 51`,
+        ).bind(run.id, ...(before ?? [])),
+      ]);
+      return c.json({
+        run,
+        events: [],
+        nextUsageCursor:
+          usage.results.length > 50
+            ? pageCursor((usage.results[49] as Row).at, (usage.results[49] as Row).id)
+            : null,
+        usage: (usage.results.slice(0, 50) as Row[]).map((r: Row) => {
+          const p = JSON.parse(r.config);
+          return {
+            input: r.input_tokens,
+            output: r.output_tokens,
+            cost:
+              r.input_tokens === null ||
+              r.output_tokens === null ||
+              p.inputPrice === null ||
+              p.outputPrice === null
+                ? null
+                : (r.input_tokens * p.inputPrice + r.output_tokens * p.outputPrice) / 1000000,
+          };
+        }),
+      });
+    },
+  )
   .post("/runs/:id/cancel", async (c) => {
     const id = c.req.param("id");
     await cancelDispatchGroup(c.env.DB, id);
     await c.env.DB.prepare(
       "UPDATE runs SET cancel_requested=1,status=CASE WHEN status='queued' THEN 'cancelled' ELSE status END,updated_at=? WHERE id=? AND status IN ('queued','running','waiting_user','verifying')",
     )
-      .bind(now(), id)
+      .bind(dbTime(now()), id)
       .run();
     return c.json({ ok: true });
   })
@@ -362,7 +408,7 @@ export const user = userBase
       const row = await c.env.DB.prepare(
         "SELECT * FROM artifacts WHERE id=? AND expires_at>? AND purpose='chat'",
       )
-        .bind(c.req.param("id"), now())
+        .bind(c.req.param("id"), dbTime(now()))
         .first<Row>();
       if (!row) return c.json({ error: "ARTIFACT_EXPIRED" }, 404);
       const object = await getEvidence(
@@ -410,17 +456,17 @@ export const admin = adminBase
   .get("/pairings/:code", async (c) => {
     if (c.get("actor") !== "owner") return c.json({ error: "OWNER_REQUIRED" }, 403);
     const r = await c.env.DB.prepare(
-      "SELECT name,code,expires_at AS expiresAt,approved FROM pairings WHERE code=? AND expires_at>?",
+      "SELECT name,code,expires_at,approved FROM pairings WHERE code=? AND expires_at>?",
     )
-      .bind(c.req.param("code"), now())
-      .first<{ name: string; code: string; expiresAt: string; approved: number }>();
+      .bind(c.req.param("code"), dbTime(now()))
+      .first<{ name: string; code: string; expires_at: string; approved: number }>();
     if (!r) throw new Error("PAIRING_EXPIRED");
-    return c.json({ ...r, approved: !!r.approved });
+    return c.json({ name: r.name, code: r.code, expiresAt: r.expires_at, approved: !!r.approved });
   })
   .post("/pairings/:code/approve", async (c) => {
     if (c.get("actor") !== "owner") return c.json({ error: "OWNER_REQUIRED" }, 403);
     const r = await c.env.DB.prepare("SELECT * FROM pairings WHERE code=? AND expires_at>?")
-      .bind(c.req.param("code"), now())
+      .bind(c.req.param("code"), dbTime(now()))
       .first<Row>();
     if (!r) throw new Error("PAIRING_EXPIRED");
     const token = await unseal<string>(r.token_secret, c.env.MASTER_KEY, `pair:${r.id}`);

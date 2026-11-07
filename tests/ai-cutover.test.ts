@@ -1,3 +1,5 @@
+import { seedMessage } from "./helpers";
+import { dbTime } from "../apps/cloud/src/database";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -65,19 +67,19 @@ test("本地清理拒绝未发送 outbox 和未结束 journal；仅清历史，�
   assert.equal(journal.get("token"), "opaque-safeStorage-value");
   assert.equal(journal.get("cloudUrl"), "https://cloud.example");
   assert.equal(journal.cached("snapshot"), null);
-  assert.equal(journal.get("historyEpoch"), 4);
-  assert.equal(journal.diagnostic().schema, 3);
+  assert.equal(journal.get("historyEpoch"), null);
+  assert.equal(journal.diagnostic().schema, 4);
 });
 
 test("更高版本 SQLite 不允许覆盖重建", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "taskrelay-ai-version-"));
-  const db = new DatabaseSync(path.join(dir, "taskrelay.sqlite"));
+  const db = new DatabaseSync(path.join(dir, "taskrelay-v4.sqlite"));
   db.exec(
     "PRAGMA user_version=99;CREATE TABLE marker(value TEXT);INSERT INTO marker VALUES('keep');",
   );
   db.close();
   assert.throws(() => new Journal(dir), /CLIENT_UPGRADE_REQUIRED/);
-  const check = new DatabaseSync(path.join(dir, "taskrelay.sqlite"));
+  const check = new DatabaseSync(path.join(dir, "taskrelay-v4.sqlite"));
   assert.equal(check.prepare("SELECT value FROM marker").get()!.value, "keep");
   check.close();
   rmSync(dir, { recursive: true });
@@ -90,17 +92,17 @@ test("旧设备原 token 升级须维护和本地就绪；旧协议请求继续�
     (await s.request("/api/device/status", undefined, "GET")).data.error,
     "DEVICE_UPGRADE_REQUIRED",
   );
-  const body = { protocolVersion: 17, localReady: true };
+  const body = { protocolVersion: 18, localReady: true };
   assert.equal((await s.request("/api/device/upgrade", body)).data.error, "CUTOVER_NOT_READY");
   s.sql.exec(
-    "UPDATE runs SET status='succeeded';DELETE FROM account_locks;UPDATE settings SET value='1' WHERE key='maintenance';UPDATE settings SET value='0' WHERE key='claimsEnabled'",
+    "UPDATE runs SET status='succeeded',cleanup_pending=0,cleanup_confirmed=1;DELETE FROM account_locks;UPDATE settings SET value='1' WHERE key='maintenance';UPDATE settings SET value='0' WHERE key='claimsEnabled'",
   );
   assert.equal(
     (await s.request("/api/device/upgrade", { ...body, localReady: false })).status,
     400,
   );
   assert.equal((await s.request("/api/device/upgrade", body)).status, 200);
-  assert.equal((await s.request("/api/device/status", undefined, "GET")).data.protocolVersion, 17);
+  assert.equal((await s.request("/api/device/status", undefined, "GET")).data.protocolVersion, 18);
   assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM devices").get()!.n, 1);
 });
 
@@ -152,7 +154,7 @@ test("启用外部 tracing 的环境在 graph 开始前被拒绝，不上传会�
       planConversation(
         {
           env: s.env,
-          owner: "legacy_owner",
+          owner: "fixture_owner",
           id: "private",
           threadId: "private",
           kind: "chat",
@@ -170,7 +172,7 @@ test("历史保持完整，云端意图检查收到当前纠正", async (t) => {
   const s = await productionModelFixture(t);
   s.sql
     .prepare(
-      "UPDATE model_profiles SET config=json_set(config,'$.contextTokens',20000,'$.outputTokens',2048) WHERE id='model_test' AND version=1",
+      "UPDATE model_profile_versions SET config=json_set(config,'$.contextTokens',20000,'$.outputTokens',2048) WHERE id='model_test' AND version=1",
     )
     .run();
   const th = (
@@ -180,19 +182,15 @@ test("历史保持完整，云端意图检查收到当前纠正", async (t) => {
     })
   ).data;
   for (let i = 1; i <= 10; i++)
-    s.sql
-      .prepare(
-        "INSERT INTO ai_messages(id,thread_id,seq,role,content,turn_id,at) VALUES(?,?,?,?,?,?,?)",
-      )
-      .run(
-        "old" + i,
-        th.id,
-        i,
-        i % 2 ? "user" : "assistant",
-        "旧信息".repeat(400),
-        "seed",
-        new Date().toISOString(),
-      );
+    seedMessage(s.sql, {
+      id: "old" + i,
+      thread_id: th.id,
+      seq: i,
+      role: i % 2 ? "user" : "assistant",
+      content: "旧信息".repeat(400),
+      turn_id: "seed",
+      at: dbTime(new Date().toISOString()),
+    });
   s.sql.prepare("UPDATE ai_threads SET version=5 WHERE id=?").run(th.id);
   s.sql.exec("UPDATE runs SET status='succeeded'");
   s.respond((body) =>

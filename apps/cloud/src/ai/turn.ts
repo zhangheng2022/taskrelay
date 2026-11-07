@@ -1,3 +1,5 @@
+import { dbTime } from "../database";
+import { applicationDb } from "../database";
 /**
  * 每张云端图对应一个 Durable Object，由 alarm 消费 D1 中的持久化事件。
  * 定时唤醒负责补投遗留工作；图状态、请求去重和未知结果处理仍由各自存储模块负责。
@@ -8,8 +10,12 @@ import { promoteInbox } from "./conversations";
 import { drainCommands } from "./commands";
 import { dispatchGraphEvent, nextGraphWake, wakeGraph } from "./dispatch";
 
-/** One object serializes one graph; D1 owns events and LangGraph owns resumable state. */
+/** 单个对象串行消费一个图；KV 仅有 id 键绑定 D1 graph_id，不保存用户正文或检查点。
+ * 无分块/密文；alarm 可重复唤醒，先检查冻结屏障，D1 拥有事件，LangGraph 拥有图状态。 */
 export class AiTurn extends DurableObject<AppEnv> {
+  constructor(ctx: DurableObjectState, env: AppEnv) {
+    super(ctx, { ...env, DB: applicationDb(env.DB) });
+  }
   async enqueue(id: string) {
     const prior = await this.ctx.storage.get<string>("id");
     if (prior && prior !== id) throw Error("GRAPH_CONFLICT");
@@ -17,6 +23,16 @@ export class AiTurn extends DurableObject<AppEnv> {
     await this.ctx.storage.setAlarm(Date.now() + 1);
   }
   async alarm() {
+    if (
+      (
+        await this.env.DB.prepare("SELECT value FROM settings WHERE key='storageFrozen'").first<{
+          value: string;
+        }>()
+      )?.value === "1"
+    ) {
+      await this.ctx.storage.setAlarm(Date.now() + 60_000);
+      return;
+    }
     const id = await this.ctx.storage.get<string>("id");
     if (!id) return;
     // A watchdog survives process loss; the next alarm resumes only checkpointed work.
@@ -47,7 +63,7 @@ export async function wakeTurns(env: AppEnv) {
   const events = await env.DB.prepare(
     "SELECT DISTINCT graph_id FROM ai_dispatch WHERE state='pending' OR (state='running' AND lease_until<?) LIMIT 20",
   )
-    .bind(new Date().toISOString())
+    .bind(dbTime(new Date().toISOString()))
     .all<{ graph_id: string }>();
   for (const event of events.results) await wakeGraph(env, event.graph_id);
 }

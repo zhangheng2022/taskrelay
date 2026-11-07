@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { downloadBrowserArchive } from "./browser-download.mjs";
 const root = path.resolve(import.meta.dirname, ".."),
   target = path.join(root, "resources/browser");
 const desktop = JSON.parse(await readFile(path.join(root, "apps/desktop/package.json"), "utf8"));
@@ -20,34 +21,16 @@ const { buildId, sha256 } = JSON.parse(
 );
 if (!/^\d+\.\d+\.\d+\.\d+$/.test(buildId) || !/^[a-f0-9]{64}$/.test(sha256))
   throw Error("BROWSER_RELEASE_INVALID");
-console.log(`Downloading Chrome for Testing ${buildId} (Windows x64)…`);
+console.log(`Preparing Chrome for Testing ${buildId} (Windows x64)…`);
 let source;
 {
   const archive = path.join(root, ".cache", `chrome-${buildId}.zip`),
     unpack = path.join(root, ".cache", `chrome-${buildId}`);
-  await promisify(execFile)(
-    process.platform === "win32" ? "curl.exe" : "curl",
-    [
-      "--fail",
-      "--location",
-      "--retry",
-      "2",
-      "--connect-timeout",
-      "15",
-      "--max-time",
-      "300",
-      "--output",
-      archive,
-      `https://storage.googleapis.com/chrome-for-testing-public/${buildId}/win64/chrome-win64.zip`,
-    ],
-    { windowsHide: true, timeout: 330000, maxBuffer: 1024 * 1024 },
-  );
-  if (
-    createHash("sha256")
-      .update(await readFile(archive))
-      .digest("hex") !== sha256
-  )
-    throw Error("BROWSER_ARCHIVE_HASH_MISMATCH");
+  await downloadBrowserArchive({
+    archive,
+    sha256,
+    url: `https://storage.googleapis.com/chrome-for-testing-public/${buildId}/win64/chrome-win64.zip`,
+  });
   const quote = (value) => "'" + value.replaceAll("'", "''") + "'";
   if (!path.resolve(unpack).startsWith(path.join(root, ".cache") + path.sep))
     throw Error("ARCHIVE_PATH_INVALID");

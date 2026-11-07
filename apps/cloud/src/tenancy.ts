@@ -1,5 +1,5 @@
+import { dbTime } from "./database";
 import type { AppEnv } from "./env";
-export const legacyOwner = "legacy_owner";
 export interface Member {
   id: string;
   auth_id: string | null;
@@ -41,9 +41,9 @@ export async function reserve(
   const result = await env.DB.prepare(
     `INSERT OR IGNORE INTO quota_reservations(id,user_id,day,kind,created_at)
     SELECT ?,id,?,?,? FROM members m WHERE id=? AND disabled=0
-    AND (m.daily_quota_paused=1 OR m.daily_quota_paused_until>strftime('%Y-%m-%dT%H:%M:%fZ','now') OR (SELECT COUNT(*) FROM quota_reservations WHERE user_id=m.id AND day=? AND kind=?) < m.${column})`,
+    AND (m.daily_quota_paused=1 OR m.daily_quota_paused_until>CAST(unixepoch('subsec')*1000 AS INTEGER) OR (SELECT COUNT(*) FROM quota_reservations WHERE user_id=m.id AND day=? AND kind=?) < m.${column})`,
   )
-    .bind(id, day, kind, new Date().toISOString(), userId, day, kind)
+    .bind(id, day, kind, dbTime(new Date().toISOString()), userId, day, kind)
     .run();
   if (!result.meta.changes) {
     const prior = await env.DB.prepare("SELECT user_id,kind FROM quota_reservations WHERE id=?")

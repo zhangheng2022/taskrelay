@@ -1,3 +1,4 @@
+import { dbTime } from "./database";
 import { validator } from "hono/validator";
 import { PROTOCOL_VERSION } from "../../../packages/contracts/src/index";
 import { z } from "zod";
@@ -5,6 +6,7 @@ import { admin as baseAdmin } from "./user";
 const adminBase = baseAdmin;
 import { now, type Row } from "./store";
 import { quotaSummary } from "./tenancy";
+import { storageAdmin } from "./storage-admin";
 
 const quota = z.number().int().min(0).max(100000);
 
@@ -23,6 +25,7 @@ const accountMigrationInput = z
   .object({ deviceId: z.string().min(1).max(100), oldExecutionStopped: z.literal(true) })
   .strict();
 export const admin = adminBase
+  .route("/storage", storageAdmin)
   .get("/operations", async (c) => {
     const [members, devices, runs, accounts, settings] = await c.env.DB.batch<Row>([
       c.env.DB.prepare(
@@ -32,7 +35,7 @@ export const admin = adminBase
         "SELECT id,name,last_seen,revoked,protocol_version FROM devices ORDER BY name",
       ),
       c.env.DB.prepare(
-        "SELECT id,user_id,device_id,status,created_at,updated_at,json_extract(result,'$.errorCode') error_code FROM runs ORDER BY created_at DESC LIMIT 200",
+        "SELECT id,user_id,device_id,status,created_at,updated_at,json_extract(result,'$.errorCode') error_code FROM run_details ORDER BY created_at DESC,id DESC LIMIT 50",
       ),
       c.env.DB.prepare("SELECT id,user_id,assigned_device_id,login_reset FROM accounts"),
       c.env.DB.prepare("SELECT key,value FROM settings WHERE key='claimsEnabled'"),
@@ -104,7 +107,7 @@ export const admin = adminBase
         ),
         c.env.DB.prepare(
           "UPDATE runs SET cancel_requested=1,status=CASE WHEN status='queued' THEN 'cancelled' ELSE status END,updated_at=? WHERE user_id=? AND ?=1 AND status IN ('queued','running','waiting_user','verifying')",
-        ).bind(now(), id, Number(b.disabled)),
+        ).bind(dbTime(now()), id, Number(b.disabled)),
         c.env.DB.prepare(
           "DELETE FROM auth_session WHERE userId=(SELECT auth_id FROM members WHERE id=?) AND ?=1",
         ).bind(id, Number(b.disabled)),

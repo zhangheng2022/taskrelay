@@ -1,3 +1,4 @@
+import { dbTime } from "./database";
 /** 设备执行协议：用租约约束上下文、模型转发、协助与动作登记；终态独立提交后回填原聊天。 */
 import { Buffer } from "node:buffer";
 import { Hono } from "hono";
@@ -77,7 +78,7 @@ runner.post("/runs/:id/heartbeat", async (c) => {
   await c.env.DB.prepare(
     "UPDATE runs SET lease_expires_at=?,updated_at=? WHERE id=? AND lease_epoch=?",
   )
-    .bind(expiry, now(), run.id, b.epoch)
+    .bind(dbTime(expiry), dbTime(now()), run.id, b.epoch)
     .run();
   return c.json({ leaseExpiresAt: expiry, cancelRequested: run.cancelRequested });
 });
@@ -150,7 +151,7 @@ runner.post("/runs/:id/model", async (c) => {
   const images =
     b.purpose === "decision"
       ? await c.env.DB.prepare(
-          `SELECT COUNT(*) AS count FROM ai_messages m,json_each(m.parts) p
+          `SELECT COUNT(*) AS count FROM message_details m,json_each(m.parts) p
     JOIN artifacts a ON a.id=json_extract(p.value,'$.artifactId') AND a.run_id=m.run_id
     WHERE m.run_id=? AND json_extract(p.value,'$.type')='image'`,
         )
@@ -164,7 +165,7 @@ runner.post("/runs/:id/model", async (c) => {
       : [
           {
             role: "system" as const,
-            content: `运行能力与聊天附件反馈：本次运行已关联到聊天的截图数量=${images?.count ?? 0}。执行器会自动在最终答复前附上当前页面截图；保存与展示截图不需要视觉模型。只报告实际结果，不把工具一次失败等同于整个任务失败。`,
+            content: `运行能力与聊天附件反馈：本次运行已关联到聊天的截图数量=${images?.count ?? 0}。保存与展示截图不需要视觉模型，是否已附图以实际反馈为准。`,
           },
           ...b.messages,
         ];
@@ -313,7 +314,7 @@ runner.post("/runs/:id/browser-state/sync-failed", async (c) => {
       run.id,
       run.deviceId,
       run.leaseEpoch,
-      now(),
+      dbTime(now()),
     )
     .run();
   return c.json({ ok: true });
@@ -376,7 +377,7 @@ runner.post("/runs/:id/tool", async (c) => {
     const [saved] = await c.env.DB.batch([
       c.env.DB.prepare(
         "INSERT OR IGNORE INTO actions(run_id,action_id,digest,effect,status) SELECT ?,?,?,'write','intended' WHERE EXISTS(SELECT 1 FROM runs WHERE id=? AND lease_epoch=? AND lease_expires_at>? AND cancel_requested=0 AND status='running' AND write_pending=0)",
-      ).bind(run.id, b.id, b.digest, run.id, b.epoch, now()),
+      ).bind(run.id, b.id, b.digest, run.id, b.epoch, dbTime(now())),
       c.env.DB.prepare(
         "UPDATE runs SET write_pending=1 WHERE id=? AND EXISTS(SELECT 1 FROM actions WHERE run_id=? AND action_id=? AND digest=? AND status='intended')",
       ).bind(run.id, run.id, b.id, b.digest),
@@ -386,7 +387,7 @@ runner.post("/runs/:id/tool", async (c) => {
   await c.env.DB.batch([
     c.env.DB.prepare(
       "UPDATE actions SET status='observed' WHERE run_id=? AND action_id=? AND digest=? AND EXISTS(SELECT 1 FROM runs WHERE id=? AND lease_epoch=? AND lease_expires_at>?)",
-    ).bind(run.id, b.id, b.digest, run.id, b.epoch, now()),
+    ).bind(run.id, b.id, b.digest, run.id, b.epoch, dbTime(now())),
     c.env.DB.prepare(
       "UPDATE runs SET write_pending=0,may_have_written=0 WHERE id=? AND NOT EXISTS(SELECT 1 FROM actions WHERE run_id=? AND status='intended')",
     ).bind(run.id, run.id),
@@ -462,19 +463,23 @@ runner.post("/runs/:id/finish", async (c) => {
     const at = now();
     const [saved] = await c.env.DB.batch([
       c.env.DB.prepare(
-        `UPDATE runs SET status=CASE WHEN write_pending=1 THEN 'unknown' WHEN cancel_requested=1 THEN 'cancelled' ELSE ? END,result=CASE WHEN history_deleted=1 THEN NULL ELSE ? END,lease_expires_at=NULL,updated_at=?
+        `UPDATE runs SET status=CASE WHEN write_pending=1 THEN 'unknown' WHEN cancel_requested=1 THEN 'cancelled' ELSE ? END,lease_expires_at=NULL,updated_at=?
         WHERE id=? AND lease_epoch=? AND lease_expires_at>? AND status IN ('running','waiting_user','verifying')
         AND (? IS NULL OR cancel_requested=1 OR (SELECT COALESCE(MAX(seq),0) FROM ai_messages WHERE thread_id=runs.thread_id AND role='user')=?)`,
       ).bind(
         b.status,
-        JSON.stringify(b.result),
-        at,
+        dbTime(at),
         run.id,
         b.epoch,
-        at,
+        dbTime(at),
         b.expectedUserSeq ?? null,
         b.expectedUserSeq ?? null,
       ),
+      c.env.DB.prepare(
+        `INSERT OR IGNORE INTO run_results(run_id,result) SELECT id,? FROM runs
+         WHERE id=? AND lease_epoch=? AND updated_at=? AND lease_expires_at IS NULL
+         AND history_deleted=0 AND status IN ('succeeded','failed','unknown','cancelled')`,
+      ).bind(JSON.stringify(b.result), run.id, b.epoch, dbTime(at)),
       c.env.DB.prepare(
         "UPDATE execution_help SET awaiting_user=0 WHERE run_id=? AND EXISTS(SELECT 1 FROM runs WHERE id=? AND lease_epoch=? AND lease_expires_at IS NULL)",
       ).bind(run.id, run.id, b.epoch),

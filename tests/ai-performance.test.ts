@@ -11,7 +11,7 @@ import { productionModelFixture } from "./production-model-fixture";
 import { testDb } from "./helpers";
 import type { AppEnv } from "../apps/cloud/src/env";
 
-test("紧凑检查点保持 typed 消息和旧数字数组格式可读；AAD 仍隔离 owner", async (t) => {
+test("紧凑检查点保持 typed 消息，拒绝旧数字数组格式；AAD 隔离 owner", async (t) => {
   const { db, sql } = testDb();
   t.after(() => sql.close());
   const key = Buffer.alloc(32, 4).toString("base64"),
@@ -39,10 +39,7 @@ test("紧凑检查点保持 typed 消息和旧数字数组格式可读；AAD 仍
   sql
     .prepare("UPDATE ai_checkpoints SET checkpoint=?")
     .run(await seal(legacy, key, "ai-checkpoint:owner"));
-  assert.equal(
-    ((await saver.getTuple(stored))!.checkpoint.channel_values.messages as HumanMessage[])[0].type,
-    "human",
-  );
+  await assert.rejects(saver.getTuple(stored), /UNKNOWN_CHECKPOINT_ENCODING/);
   await assert.rejects(unseal(String(row.checkpoint), key, "ai-checkpoint:other"));
   await assert.rejects(
     unseal(String(row.checkpoint), Buffer.alloc(32, 5).toString("base64"), "ai-checkpoint:owner"),
@@ -75,7 +72,9 @@ test("认证实例仅复用静态配置，数据库和认证/邮件配置变化�
 test("读取模型能力不解密凭据，只有实际提供方路径读取密钥", async (t) => {
   const s = await productionModelFixture(t);
   s.sql
-    .prepare("UPDATE model_profiles SET secret='corrupt' WHERE id='model_test' AND version=1")
+    .prepare(
+      "UPDATE model_profile_versions SET secret='corrupt' WHERE id='model_test' AND version=1",
+    )
     .run();
   const { profile } = await getModelProfile(s.env, "model_test", 1);
   assert.equal(profile.version, 1);

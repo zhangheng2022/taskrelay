@@ -51,10 +51,7 @@ export function Conversation({
     else if (run.cancelRequested) activity = "正在停止…";
     else activity = "执行器正在处理…";
   }
-  const messages = [
-    ...(thread.page?.messages ?? []),
-    ...(thread.page?.replies ?? []).map((m) => ({ ...m, seq: m.cursor })),
-  ].sort((a, b) => (a.at ?? "").localeCompare(b.at ?? "") || a.seq - b.seq);
+  const messages = [...(thread.page?.messages ?? [])].sort((a, b) => a.seq - b.seq);
   async function send() {
     if (sending.current || !text.trim() || offline) return;
     sending.current = true;
@@ -100,7 +97,7 @@ export function Conversation({
             />
           </MessageScrollerItem>
         )}
-        {(thread.page?.nextCursor || thread.page?.nextReplyCursor) && (
+        {thread.page?.nextCursor && (
           <MessageScrollerItem messageId="older">
             <Button variant="ghost" onClick={() => void thread.older()}>
               加载更早消息

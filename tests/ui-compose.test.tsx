@@ -19,7 +19,8 @@ test("新交办慢请求立即显示原文和发送状态，失败恢复输入�
   const ids: string[] = [];
   let page: ThreadPage = { ...threadPage };
   const transport = transportWith(async (method, path, body) => {
-    if (path === "/api/user/threads") return [{ id: page.id, model_id: "model-ui", task_id: null }];
+    if (path.split("?")[0] === "/api/user/threads")
+      return { items: [{ id: page.id, model_id: "model-ui", task_id: null }], nextCursor: null };
     if (method === "GET") return page;
     ids.push(body.requestId);
     return new Promise((resolve, reject) => {
@@ -67,8 +68,11 @@ test("交办通过消息启动，异步完成保留会话并允许继续补充",
     opened: string[] = [];
   const transport = {
     ...transportWith(async (method, path, body) => {
-      if (path === "/api/user/threads")
-        return [{ id: threadPage.id, model_id: "model-ui", task_id: null }];
+      if (path.split("?")[0] === "/api/user/threads")
+        return {
+          items: [{ id: threadPage.id, model_id: "model-ui", task_id: null }],
+          nextCursor: null,
+        };
       if (method === "GET") return page;
       assert.ok(path.endsWith("/messages"));
       sent.push(body);
@@ -160,7 +164,8 @@ test("composer sends once on Enter; Shift+Enter and IME composition never send",
 test("消息响应丢失重试保留相同请求，不另建确认请求", async () => {
   const writes: unknown[] = [];
   const transport = transportWith(async (method, path, body) => {
-    if (path === "/api/user/threads") return method === "GET" ? [] : threadPage;
+    if (path.split("?")[0] === "/api/user/threads")
+      return method === "GET" ? { items: [], nextCursor: null } : threadPage;
     if (method === "GET") return threadPage;
     assert.ok(path.endsWith("/messages"));
     writes.push(structuredClone(body));

@@ -1,3 +1,5 @@
+import { seedMessage } from "./helpers";
+import { dbTime } from "../apps/cloud/src/database";
 import { drainHistoryCleanups } from "../apps/cloud/src/history-cleanup";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -16,7 +18,7 @@ const secret = Buffer.alloc(32, 3).toString("base64");
 test("D1 saver 保留消息类型、父检查点、命名空间和 pending writes；按 owner 隔离", async (t) => {
   const { db, sql } = testDb();
   t.after(() => sql.close());
-  const saver = new D1Checkpointer(db, "legacy_owner", secret),
+  const saver = new D1Checkpointer(db, "fixture_owner", secret),
     config = { configurable: { thread_id: "thread", checkpoint_ns: "branch" } };
   const cp = emptyCheckpoint();
   cp.id = "0001";
@@ -53,7 +55,7 @@ test("D1 saver 保留消息类型、父检查点、命名空间和 pending write
 test("D1 store 加密持久化、过滤、更新删除、namespace 与 owner 隔离，不假装支持语义检索", async (t) => {
   const { db, sql } = testDb();
   t.after(() => sql.close());
-  const store = new D1MemoryStore(db, "legacy_owner", secret);
+  const store = new D1MemoryStore(db, "fixture_owner", secret);
   await store.put(["preferences"], "one", { text: "用中文", rank: 2 });
   await store.put(["preferences", "style"], "two", { text: "简洁", rank: 1 });
   assert.equal((await store.get(["preferences"], "one"))!.value.text, "用中文");
@@ -70,12 +72,12 @@ test("D1 store 加密持久化、过滤、更新删除、namespace 与 owner 隔
 
 test("真实 graph 从 D1 恢复终态不再调用模型，改变输入拒绝；模型 unknown 不重放", async (t) => {
   const s = await productionModelFixture(t);
-  s.env.requestUserId = "legacy_owner";
+  s.env.requestUserId = "fixture_owner";
   s.replies('{"reply":"持久化结果"}');
   const thread = (await s.request("/api/user/threads", { modelId: "model_test" })).data;
   const scope = {
     env: s.env,
-    owner: "legacy_owner",
+    owner: "fixture_owner",
     id: "graph_test",
     threadId: thread.id,
     kind: "chat" as const,
@@ -119,19 +121,15 @@ test("超过200条历史完整分页；未接入执行的偏好变更不影响�
     })
   ).data;
   for (let i = 1; i <= 205; i++)
-    s.sql
-      .prepare(
-        "INSERT INTO ai_messages(id,thread_id,seq,role,content,turn_id,at) VALUES(?,?,?,?,?,?,?)",
-      )
-      .run(
-        "m" + i,
-        th.id,
-        i,
-        i % 2 ? "user" : "assistant",
-        "history " + i,
-        "seed",
-        new Date().toISOString(),
-      );
+    seedMessage(s.sql, {
+      id: "m" + i,
+      thread_id: th.id,
+      seq: i,
+      role: i % 2 ? "user" : "assistant",
+      content: "history " + i,
+      turn_id: "seed",
+      at: dbTime(new Date().toISOString()),
+    });
   const collected: number[] = [];
   let cursor: number | null = null;
   do {
@@ -161,7 +159,7 @@ test("超过200条历史完整分页；未接入执行的偏好变更不影响�
   assert.ok((s.sql.prepare("SELECT COUNT(*) n FROM ai_checkpoints").get()!.n as number) > 0);
   const checkpointCount = s.sql.prepare("SELECT COUNT(*) n FROM ai_checkpoints").get()!.n;
   const resultCount = s.sql
-    .prepare("SELECT COUNT(*) n FROM ai_calls WHERE result IS NOT NULL")
+    .prepare("SELECT COUNT(*) n FROM call_details WHERE result IS NOT NULL")
     .get()!.n;
   assert.equal(
     (await s.request("/api/user/memories/preference", { text: "使用中文", confirmed: true }, "PUT"))
@@ -170,7 +168,7 @@ test("超过200条历史完整分页；未接入执行的偏好变更不影响�
   );
   assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM ai_checkpoints").get()!.n, checkpointCount);
   assert.equal(
-    s.sql.prepare("SELECT COUNT(*) n FROM ai_calls WHERE result IS NOT NULL").get()!.n,
+    s.sql.prepare("SELECT COUNT(*) n FROM call_details WHERE result IS NOT NULL").get()!.n,
     resultCount,
   );
   const restored = (await s.request("/api/user/threads/" + th.id, undefined, "GET")).data;
@@ -189,7 +187,7 @@ test("超过200条历史完整分页；未接入执行的偏好变更不影响�
     th.id,
   );
   const graph = s.sql.prepare("SELECT id FROM ai_graph_inputs LIMIT 1").get()!;
-  const fenced = new D1Checkpointer(s.db, "legacy_owner", s.env.MASTER_KEY, async () => {}, true);
+  const fenced = new D1Checkpointer(s.db, "fixture_owner", s.env.MASTER_KEY, async () => {}, true);
   await assert.rejects(
     () =>
       fenced.put({ configurable: { thread_id: graph.id } }, emptyCheckpoint(), {

@@ -1,3 +1,4 @@
+import { dbTime } from "../database";
 /**
  * LangGraph 的 D1 存储适配：加密保存检查点及未合并写入，并按用户和图隔离读取。
  * 生产写入同时校验会话、图代次和执行租约，阻止失效回合重新写入已清理的上下文。
@@ -146,13 +147,12 @@ export class D1Checkpointer extends BaseCheckpointSaver {
     }
     const data = await unseal<{
       type: string;
-      bytes: number[] | string;
+      bytes: string;
       encoding?: "base64";
     }>(value, this.key, `ai-checkpoint:${this.owner}`);
-    let bytes: Uint8Array;
-    if (Array.isArray(data.bytes)) bytes = new Uint8Array(data.bytes);
-    else if (data.encoding === "base64") bytes = new Uint8Array(Buffer.from(data.bytes, "base64"));
-    else throw new Error("UNKNOWN_CHECKPOINT_ENCODING");
+    if (data.encoding !== "base64" || typeof data.bytes !== "string")
+      throw Error("UNKNOWN_CHECKPOINT_ENCODING");
+    const bytes = new Uint8Array(Buffer.from(data.bytes, "base64"));
     return (await this.serde.loadsTyped(data.type, bytes)) as T;
   }
   private async tuple(
@@ -246,30 +246,62 @@ export class D1Checkpointer extends BaseCheckpointSaver {
   }
   async *list(config: RunnableConfig, options: CheckpointListOptions = {}) {
     const { thread, ns } = this.scope(config);
-    const rows = await this.db
-      .prepare(
-        "SELECT id FROM ai_checkpoints WHERE owner=? AND thread=? AND ns=? AND id<? ORDER BY id DESC",
-      )
-      .bind(this.owner, thread, ns, options.before?.configurable?.checkpoint_id ?? "~")
-      .all<{ id: string }>();
-    let n = 0;
-    for (const row of rows.results) {
-      // 列表索引之后允许删除/替换；每个条目重新取得完整事务快照。
-      const t = await this.getTuple({
-        configurable: { thread_id: thread, checkpoint_ns: ns, checkpoint_id: row.id },
-      });
-      if (!t) continue;
-      if (
-        options.filter &&
-        !Object.entries(options.filter).every(
-          ([k, v]) =>
-            JSON.stringify((t.metadata as Record<string, unknown> | undefined)?.[k]) ===
-            JSON.stringify(v),
+    let before = String(options.before?.configurable?.checkpoint_id ?? "~"),
+      remaining = options.limit ?? Infinity;
+    while (remaining > 0) {
+      const size = Math.min(8, remaining),
+        where = "owner=? AND thread=? AND ns=? AND id<? ORDER BY id DESC LIMIT ?";
+      const values = [this.owner, thread, ns, before, size];
+      const ids = `SELECT id FROM ai_checkpoints WHERE ${where}`;
+      // 每页四次批量读取共享同一事务快照；不过滤前截断整个历史，匹配不足继续向前分页。
+      const [parents, writes, chunks, writeChunks] = await this.db.batch<
+        | Saved
+        | (Write & { checkpoint: string })
+        | (CheckpointChunk & { checkpoint: string })
+        | (WriteChunk & { checkpoint: string })
+      >([
+        this.db.prepare(`SELECT * FROM ai_checkpoints WHERE ${where}`).bind(...values),
+        ...[
+          ["ai_writes", "checkpoint,task,path,idx,channel,value"],
+          ["ai_checkpoint_chunks", "checkpoint,field,token,part,value"],
+          ["ai_write_chunks", "checkpoint,task,idx,token,part,value"],
+        ].map(([table, columns]) =>
+          this.db
+            .prepare(
+              `SELECT ${columns} FROM ${table} WHERE owner=? AND thread=? AND ns=? AND checkpoint IN(${ids})`,
+            )
+            .bind(this.owner, thread, ns, ...values),
+        ),
+      ]);
+      const rows = parents.results as Saved[];
+      if (!rows.length) return;
+      for (const row of rows) {
+        const tuple = await this.tuple(
+          row,
+          (writes.results as (Write & { checkpoint: string })[]).filter(
+            (w) => w.checkpoint === row.id,
+          ),
+          (chunks.results as (CheckpointChunk & { checkpoint: string })[]).filter(
+            (w) => w.checkpoint === row.id,
+          ),
+          (writeChunks.results as (WriteChunk & { checkpoint: string })[]).filter(
+            (w) => w.checkpoint === row.id,
+          ),
+        );
+        if (
+          options.filter &&
+          !Object.entries(options.filter).every(
+            ([k, v]) =>
+              JSON.stringify((tuple.metadata as Record<string, unknown>)?.[k]) ===
+              JSON.stringify(v),
+          )
         )
-      )
-        continue;
-      if (n++ >= (options.limit ?? Infinity)) break;
-      yield t;
+          continue;
+        yield tuple;
+        if (--remaining === 0) return;
+      }
+      before = rows.at(-1)!.id;
+      if (rows.length < size) return;
     }
   }
   async put(config: RunnableConfig, checkpoint: Checkpoint, metadata: CheckpointMetadata) {
@@ -289,7 +321,7 @@ export class D1Checkpointer extends BaseCheckpointSaver {
         config.configurable?.checkpoint_id ?? null,
         data.value,
         meta.value,
-        new Date().toISOString(),
+        dbTime(new Date().toISOString()),
         ...fence.values,
       );
     const location = { thread, ns, checkpoint: checkpoint.id };

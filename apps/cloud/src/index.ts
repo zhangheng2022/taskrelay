@@ -1,5 +1,7 @@
+import { dbTime } from "./database";
 /** 应用路由与维护入口：统一请求大小、来源、身份和错误响应；定时清理委托给队列与聊天生命周期模块。 */
 import { drainHistoryCleanups } from "./history-cleanup";
+import { applicationDb, requireStorageVersion } from "./database";
 import { deleteEvidence } from "./evidence";
 import { notifyUser, notifyDevices } from "./notifications";
 import { retainHistory } from "./ai/lifecycle";
@@ -10,7 +12,7 @@ import { auth } from "./auth";
 import { pairing } from "./pairing";
 import { browserApi } from "./browser-api";
 import { authHandler } from "./identity";
-import { PROTOCOL_VERSION, HISTORY_EPOCH } from "../../../packages/contracts/src/index";
+import { PROTOCOL_VERSION } from "../../../packages/contracts/src/index";
 import { quotaReset } from "./tenancy";
 import { runner } from "./runner";
 import { tick, now, type Row } from "./store";
@@ -18,6 +20,34 @@ import { advanceDispatchGroups } from "./account-dispatch";
 import { cleanupAccountCards } from "./account-cards";
 import type { AppEnv, Variables } from "./env";
 const app = new Hono<{ Bindings: AppEnv; Variables: Variables }>();
+app.use("/api/*", async (c, next) => {
+  if (c.req.path !== "/api/health") c.env = { ...c.env, DB: applicationDb(c.env.DB) };
+  await next();
+});
+app.use("/api/*", async (c, next) => {
+  if (c.req.path === "/api/health") return next();
+  await requireStorageVersion(c.env.DB);
+  const frozen = await c.env.DB.prepare(
+    "SELECT value FROM settings WHERE key='storageFrozen'",
+  ).first<{ value: string }>();
+  // 冻结保留管理员重新登录所需的会话入口，避免旧会话过期后无法完成对象核验；业务写入仍关闭。
+  const controlPaths = [
+    "/api/device/upgrade",
+    "/api/device/status",
+    "/api/device/readiness",
+    "/api/auth/config",
+    "/api/auth/sign-in/email",
+    "/api/auth/get-session",
+    "/api/auth/sign-out",
+  ];
+  if (
+    frozen?.value === "1" &&
+    !c.req.path.startsWith("/api/admin/storage/") &&
+    !controlPaths.includes(c.req.path)
+  )
+    return c.json({ error: "STORAGE_FROZEN" }, 503);
+  await next();
+});
 app.use(
   "/api/*",
   bodyLimit({
@@ -127,32 +157,34 @@ app.post("/api/device/upgrade", async (c) => {
     .strict()
     .parse(await c.req.json());
   const result = await c.env.DB.prepare(
-    `UPDATE devices SET protocol_version=${PROTOCOL_VERSION},cutover_ready_at=? WHERE id=? AND revoked=0 AND (EXISTS(SELECT 1 FROM settings WHERE key='historyEpoch' AND value='${HISTORY_EPOCH}') OR (EXISTS(SELECT 1 FROM settings WHERE key='maintenance' AND value='1') AND EXISTS(SELECT 1 FROM settings WHERE key='claimsEnabled' AND value='0'))) AND NOT EXISTS(SELECT 1 FROM runs WHERE device_id=? AND status IN ('running','waiting_user','verifying'))`,
+    `UPDATE devices SET protocol_version=${PROTOCOL_VERSION} WHERE id=? AND revoked=0
+      AND EXISTS(SELECT 1 FROM settings WHERE key='maintenance' AND value='1')
+      AND EXISTS(SELECT 1 FROM settings WHERE key='claimsEnabled' AND value='0')
+      AND NOT EXISTS(SELECT 1 FROM runs WHERE device_id=? AND (status IN ('running','waiting_user','verifying') OR cleanup_pending=1))`,
   )
-    .bind(now(), c.get("deviceId"), c.get("deviceId"))
+    .bind(c.get("deviceId"), c.get("deviceId"))
     .run();
   if (!result.meta.changes) throw new Error("CUTOVER_NOT_READY");
-  const epoch = await c.env.DB.prepare(
-    "SELECT value FROM settings WHERE key='historyEpoch'",
-  ).first<{ value: string }>();
-  return c.json({ protocolVersion: PROTOCOL_VERSION, historyEpoch: Number(epoch?.value ?? 0) });
+  return c.json({ protocolVersion: PROTOCOL_VERSION });
 });
 app.get("/api/device/status", async (c) => {
   const rows = await c.env.DB.prepare(
-    "SELECT key,value FROM settings WHERE key IN ('maintenance','historyEpoch')",
+    "SELECT key,value FROM settings WHERE key IN ('maintenance')",
   ).all<{ key: string; value: string }>();
   const s = Object.fromEntries(rows.results.map((r) => [r.key, r.value]));
   return c.json({
     deviceId: c.get("deviceId"),
     protocolVersion: PROTOCOL_VERSION,
     maintenance: s.maintenance === "1",
-    historyEpoch: Number(s.historyEpoch ?? 0),
   });
 });
 app.post("/api/device/readiness", async (c) => {
   const b = z.object({ ready: z.boolean() }).parse(await c.req.json());
-  await c.env.DB.prepare("UPDATE devices SET claim_ready=?,last_seen=? WHERE id=? AND revoked=0")
-    .bind(b.ready ? 1 : 0, now(), c.get("deviceId"))
+  // 就绪值不变时沿用鉴权入口已合并的心跳；暂停/恢复立即写入，避免每次轮询更新相同设备行。
+  await c.env.DB.prepare(
+    "UPDATE devices SET claim_ready=?,last_seen=? WHERE id=? AND revoked=0 AND (claim_ready<>? OR last_seen IS NULL OR last_seen<?)",
+  )
+    .bind(b.ready ? 1 : 0, dbTime(now()), c.get("deviceId"), b.ready ? 1 : 0, Date.now() - 60_000)
     .run();
   return c.json({ ok: true });
 });
@@ -198,6 +230,14 @@ export default {
 export { app };
 
 export async function maintenance(env: AppEnv) {
+  if (
+    (
+      await env.DB.prepare("SELECT value FROM settings WHERE key='storageFrozen'").first<{
+        value: string;
+      }>()
+    )?.value === "1"
+  )
+    return;
   await drainHistoryCleanups(env);
   await tick(env.DB);
   await cleanupAccountCards(env);
@@ -205,7 +245,7 @@ export async function maintenance(env: AppEnv) {
   const expired = await env.DB.prepare(
     "SELECT * FROM artifacts WHERE expires_at<=? OR (purpose='vision' AND run_id IN (SELECT id FROM runs WHERE status IN ('succeeded','failed','cancelled','expired','unknown'))) LIMIT 100",
   )
-    .bind(now())
+    .bind(dbTime(now()))
     .all<Row>();
   for (const row of expired.results) {
     await deleteEvidence(env, row.object_key);
@@ -220,13 +260,4 @@ export async function maintenance(env: AppEnv) {
   );
   const cutoff = new Date(Date.now() - days * 86400000).toISOString();
   await retainHistory(env, cutoff);
-  await env.DB.batch([
-    env.DB.prepare(
-      "DELETE FROM batch_progress WHERE updated_at<? AND run_id IN (SELECT id FROM runs WHERE status IN ('succeeded','failed','cancelled','expired'))",
-    ).bind(cutoff),
-    env.DB.prepare(
-      "DELETE FROM run_events WHERE at<? AND run_id IN (SELECT id FROM runs WHERE status IN ('succeeded','failed','cancelled','expired'))",
-    ).bind(cutoff),
-    env.DB.prepare("DELETE FROM conversations WHERE at<?").bind(cutoff),
-  ]);
 }

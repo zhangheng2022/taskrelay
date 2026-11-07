@@ -1,3 +1,4 @@
+import { dbTime } from "../database";
 import {
   BaseStore,
   type Operation,
@@ -69,8 +70,8 @@ export class D1MemoryStore extends BaseStore {
         ns,
         key,
         await seal(value, this.secret, `memory:${this.owner}:${ns}:${key}`),
-        at,
-        at,
+        dbTime(at),
+        dbTime(at),
       );
   }
   async batch<Op extends Operation[]>(ops: Op): Promise<OperationResults<Op>> {

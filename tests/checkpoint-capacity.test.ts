@@ -81,34 +81,18 @@ for (const replacement of ["checkpoint", "pending-write"] as const)
     } else assert.equal(latest.pendingWrites![0][2], text + "新值");
   });
 
-test("list 的父行在索引读取后被删除时跳过，getTuple 返回 undefined", async (t) => {
+test("list 的批量快照在并发删除后仍完整可读，随后 getTuple 返回 undefined", async (t) => {
   const { db, sql } = testDb();
   t.after(() => sql.close());
   const saver = new D1Checkpointer(db, "owner", key),
     cp = emptyCheckpoint();
-  cp.channel_values = { input: "分块数据".repeat(100_000) };
+  cp.channel_values = { input: "完整页面".repeat(100000) };
   const config = await saver.put({ configurable: { thread_id: "removed" } }, cp, metadata);
-  const prepare = db.prepare.bind(db);
-  let removed = false;
-  t.mock.method(db, "prepare", (query: string) => {
-    const statement = prepare(query);
-    if (/SELECT (?:id|\*) FROM ai_checkpoints WHERE.*id</.test(query)) {
-      const all = statement.all.bind(statement);
-      t.mock.method(statement, "all", async <T>() => {
-        const rows = await all<T>();
-        if (!removed) {
-          removed = true;
-          await saver.deleteThread("removed");
-        }
-        return rows;
-      });
-    }
-    return statement;
-  });
+  afterCheckpointRead(t, db, () => saver.deleteThread("removed"));
   const listed = [];
   for await (const tuple of saver.list(config)) listed.push(tuple);
-  assert.equal(removed, true);
-  assert.deepEqual(listed, []);
+  assert.equal(listed.length, 1);
+  assert.equal(listed[0].checkpoint.channel_values.input, cp.channel_values.input);
   assert.equal(await saver.getTuple(config), undefined);
 });
 
@@ -169,9 +153,9 @@ test("大检查点和 pending writes 原样恢复、幂等隔离、替换及删�
 
 test("真实规划图在完整历史超过 D1 单值限制时仍可进入摘要并完成", async (t) => {
   const s = await productionModelFixture(t);
-  s.env.requestUserId = "legacy_owner";
+  s.env.requestUserId = "fixture_owner";
   s.sql.exec(
-    "UPDATE model_profiles SET config=json_set(config,'$.contextTokens',650000,'$.outputTokens',4096) WHERE id='model_test' AND version=1",
+    "UPDATE model_profile_versions SET config=json_set(config,'$.contextTokens',650000,'$.outputTokens',4096) WHERE id='model_test' AND version=1",
   );
   const thread = (await s.request("/api/user/threads", { modelId: "model_test" })).data;
   const prepare = s.db.prepare.bind(s.db);
@@ -217,7 +201,7 @@ test("真实规划图在完整历史超过 D1 单值限制时仍可进入摘要�
   const result = await planConversation(
     {
       env: s.env,
-      owner: "legacy_owner",
+      owner: "fixture_owner",
       id: "large_graph",
       threadId: thread.id,
       kind: "chat",
@@ -232,7 +216,7 @@ test("真实规划图在完整历史超过 D1 单值限制时仍可进入摘要�
   const finalRequest = JSON.stringify(s.requests.at(-1)!.body);
   assert.match(finalRequest, /原文保留 0012Ab! 继续/);
   assert.ok(finalRequest.length < JSON.stringify(history).length / 2, "保留约三成近期历史");
-  const tuple = await new D1Checkpointer(s.db, "legacy_owner", s.env.MASTER_KEY).getTuple({
+  const tuple = await new D1Checkpointer(s.db, "fixture_owner", s.env.MASTER_KEY).getTuple({
     configurable: { thread_id: "large_graph" },
   });
   assert.deepEqual(tuple!.checkpoint.channel_values.messages, messages);

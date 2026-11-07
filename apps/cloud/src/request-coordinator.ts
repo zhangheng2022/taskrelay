@@ -1,3 +1,4 @@
+import { applicationDb } from "./database";
 import { DurableObject } from "cloudflare:workers";
 import { app, maintenance } from "./index";
 import type { AppEnv } from "./env";
@@ -9,8 +10,7 @@ import { loadReleaseCatalog } from "./updates";
  * the application authenticates the original request on every invocation. */
 export class RequestCoordinator extends DurableObject<AppEnv> {
   constructor(ctx: DurableObjectState, env: AppEnv) {
-    super(ctx, env);
-    ctx.storage.sql.exec("DROP TABLE IF EXISTS admission");
+    super(ctx, { ...env, DB: applicationDb(env.DB) });
   }
   async fetch(request: Request) {
     return app.fetch(request, this.env);
@@ -22,11 +22,24 @@ export class RequestCoordinator extends DurableObject<AppEnv> {
 
 /** The scheduling atom is the single global task queue, not all HTTP traffic. */
 export class Scheduler extends DurableObject<AppEnv> {
+  constructor(ctx: DurableObjectState, env: AppEnv) {
+    super(ctx, { ...env, DB: applicationDb(env.DB) });
+  }
   async wake() {
     if ((await this.ctx.storage.getAlarm()) === null)
       await this.ctx.storage.setAlarm(Date.now() + 1);
   }
   async alarm() {
+    if (
+      (
+        await this.env.DB.prepare("SELECT value FROM settings WHERE key='storageFrozen'").first<{
+          value: string;
+        }>()
+      )?.value === "1"
+    ) {
+      await this.ctx.storage.setAlarm(Date.now() + 60_000);
+      return;
+    }
     // 先设看门狗；失败或进程中断后仍可重试持久清理作业。
     await this.ctx.storage.setAlarm(Date.now() + 60_000);
     await maintenance(this.env);
