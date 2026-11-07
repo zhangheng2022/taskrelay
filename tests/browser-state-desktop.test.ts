@@ -19,9 +19,20 @@ const executable = path.resolve("resources/browser/chrome-win64/chrome.exe");
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 test(
   "正式状态适配器在独立 Chromium 恢复分区 Cookie、HttpOnly 和页面首读 Local Storage",
-  { skip: process.platform !== "win32" || !existsSync(executable), timeout: 45_000 },
+  { skip: process.platform !== "win32" || !existsSync(executable), timeout: 90_000 },
   async (t) => {
     await grantBrowserReadAccess(path.dirname(executable));
+    // 固定模拟端口文件刚出现时的首次探测失败，随后仍连接真实 Chromium，
+    // 让启动竞态的回归路径每次都会执行，不依赖 Runner 恰好变慢。
+    const connectCdp = LocalCdp.connect.bind(LocalCdp);
+    let initialProbe = true;
+    t.mock.method(LocalCdp, "connect", async (url: string) => {
+      if (initialProbe) {
+        initialProbe = false;
+        throw Error("CDP_DISCOVERY_FAILED");
+      }
+      return connectCdp(url);
+    });
     // Runner 故障只记录固定命令名，不输出 Cookie、存储值或响应正文。
     // 保存原方法供 mock 通过 apply(this, args) 调用，保留实际实例，不能绑定到 prototype。
     // oxlint-disable-next-line typescript/unbound-method
@@ -70,6 +81,28 @@ test(
     );
     observeProcess(child, "source");
     const children = [child];
+    // 端口文件可能早于 HTTP/CDP 服务就绪；与 Main 相同，只在启动期有界重试
+    // 幂等下载禁用策略。进程退出立即失败，状态恢复与业务操作不参与重试。
+    const waitForDownloadPolicy = async (owned: ReturnType<typeof spawn>, url: string) => {
+      const deadline = Date.now() + 20_000;
+      let lastError: unknown;
+      while (Date.now() < deadline) {
+        if (owned.exitCode !== null || owned.signalCode !== null)
+          throw Error("FIXTURE_BROWSER_START_FAILED");
+        let cdp: LocalCdp | undefined;
+        try {
+          cdp = await LocalCdp.connect(url);
+          await cdp.send("Browser.setDownloadBehavior", { behavior: "deny" }, undefined, 4000);
+          return;
+        } catch (error) {
+          lastError = error;
+        } finally {
+          await cdp?.close();
+        }
+        await delay(150);
+      }
+      throw new Error("FIXTURE_BROWSER_START_TIMEOUT", { cause: lastError });
+    };
     let socket: WebSocket | undefined, adapter: BrowserStateAdapter | undefined;
     t.after(async () => {
       for (const diagnostic of browserErrors) t.diagnostic(diagnostic);
@@ -102,12 +135,7 @@ test(
     let cdpUrl = `http://127.0.0.1:${active.split("\n")[0].trim()}`;
     // DevToolsActivePort 出现不等于 Main 的 launch 已完成；与 OwnedBrowser 一样
     // 确认默认上下文接受下载禁用策略后，才把浏览器交给状态适配器。
-    const sourceReady = await LocalCdp.connect(cdpUrl);
-    try {
-      await sourceReady.send("Browser.setDownloadBehavior", { behavior: "deny" });
-    } finally {
-      await sourceReady.close();
-    }
+    await waitForDownloadPolicy(child, cdpUrl);
     adapter = await BrowserStateAdapter.connect(cdpUrl);
     const cookies = [
       {
@@ -212,12 +240,7 @@ test(
     assert.ok(active);
     cdpUrl = `http://127.0.0.1:${active.split("\n")[0].trim()}`;
     await adapter.close();
-    const destinationReady = await LocalCdp.connect(cdpUrl);
-    try {
-      await destinationReady.send("Browser.setDownloadBehavior", { behavior: "deny" });
-    } finally {
-      await destinationReady.close();
-    }
+    await waitForDownloadPolicy(children[1], cdpUrl);
     adapter = await BrowserStateAdapter.connect(cdpUrl);
     t.diagnostic("恢复独立环境");
     await adapter.restore(exported);
