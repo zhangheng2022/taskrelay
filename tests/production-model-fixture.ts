@@ -176,7 +176,26 @@ export async function productionModelFixture(
     replies: (...values: (string | Error | Response)[]) => {
       replies = values;
     },
-    async request(path: string, body: unknown, method = "POST") {
+    async request(path: string, body: unknown, method = "POST", binary?: Uint8Array) {
+      let form: FormData | undefined;
+      if (binary) {
+        const metadata = body as {
+          epoch: number;
+          captureId: string;
+          purpose: string;
+          thumbnail?: Uint8Array;
+        };
+        form = new FormData();
+        for (const key of ["epoch", "captureId", "purpose"] as const)
+          form.set(key, String(metadata[key]));
+        form.set("image", new Blob([new Uint8Array(binary)], { type: "image/png" }), "image.png");
+        if (metadata.thumbnail)
+          form.set(
+            "thumbnail",
+            new Blob([new Uint8Array(metadata.thumbnail)], { type: "image/png" }),
+            "thumbnail.png",
+          );
+      }
       if (path.startsWith("/api/runner/runs/") && body && typeof body === "object")
         body = { instructionVersion: 0, ...body };
       if (path.endsWith("/stagehand") && body && typeof body === "object")
@@ -192,12 +211,12 @@ export async function productionModelFixture(
         {
           method,
           headers: {
-            "content-type": "application/json",
+            ...(form ? {} : { "content-type": "application/json" }),
             ...(path.startsWith("/api/runner/") || path.startsWith("/api/device/")
               ? { "x-taskrelay-protocol": "17", Authorization: `Bearer ${token}` }
               : {}),
           },
-          body: method === "GET" ? undefined : JSON.stringify(body),
+          body: method === "GET" ? undefined : (form ?? JSON.stringify(body)),
         },
         env,
       );

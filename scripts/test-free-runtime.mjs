@@ -3,6 +3,7 @@ import { build } from "esbuild";
 import { mkdir, readFile, readdir } from "node:fs/promises";
 import assert from "node:assert/strict";
 import WebSocket from "ws";
+import sharp from "sharp";
 const out = ".cache/free-runtime";
 await mkdir(out, { recursive: true });
 await build({
@@ -60,6 +61,11 @@ try {
         .replace(/\r?\n/g, " "),
     );
   const origin = (await mf.ready).origin;
+  const png = await sharp({ create: { width: 12, height: 7, channels: 4, background: "white" } })
+    .png()
+    .toBuffer();
+  const checked = await fetch(origin + "/_image-validation", { method: "POST", body: png });
+  assert.deepEqual(await checked.json(), { width: 12, height: 7, rejected: true });
   const request = async (path, body) => {
     const r = await fetch(origin + path, {
       method: body ? "POST" : "GET",

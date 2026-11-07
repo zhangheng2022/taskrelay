@@ -1,5 +1,7 @@
 # 部署与恢复
 
+2026-11-07 图片链路源码批次：桌面版本 0.18.0，协议仍为 17，尚未部署、发布或安装。发布须先应用 `0029_image_references.sql`，再部署云端／网站，最后发布桌面；旧 JSON 上传、旧图片及 `format=data` 保留兼容，新桌面依赖新版云端的 multipart 和图片引用入口，不能先更新桌面。迁移只添加图片用途、租约代次和摘要字段；不绑定 R2，不更换 MASTER_KEY。打包在 runtime 依赖下载时因 npm 域名解析失败中断，尚无本批可验收安装包；不得复用旧 smoke 报告。
+
 2026-11-06 首次 [Actions 正式发布 42239257763](https://github.com/zhangheng2022/taskrelay/actions/runs/42239257763) 已完成，源提交 `41c916c133c449736afc92cd66203cff2d16cf83`。先记录 D1 恢复点并应用 0028，再部署 Worker `09848417-7a05-4d18-8dde-6be64eb360ab`（100%），随后发布 [0.17.1](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.17.1)、完整核验 Cloudflare 下载并切换 D1 更新目录。发布记录为 complete，领取恢复 1、维护恢复 0；两个域名健康均报告该 SHA，更新目录均为 0.17.1，匿名用户／管理员接口均为 401。
 
 安装包由 GitHub 托管 Windows 构建和实际安装验收。包内／安装 ASAR 为 `0b67b1d6f07fcf4b2fb272f94f98a88d5f92575e03ab194f0f3d823fc841a011`，更新包 SHA-256 为 `77959e67264fc565b3d01b43d806d0d4d0820428a7fc60de211d050eedcd9701`。用户本机仍为 0.17.0，更新通道升级与升级后 Microsoft 只读验收未完成，原因见 ACCEPTANCE；不能用托管安装报告替代本机证据。

@@ -6,6 +6,7 @@ export async function putEvidence(
   bytes: ArrayBuffer,
   expires: string | null,
   pendingPersistent = false,
+  thumbnail?: ArrayBuffer,
 ) {
   if (!env.EVIDENCE_STORE) throw new Error("EVIDENCE_NOT_CONFIGURED");
   await env.EVIDENCE_STORE.getByName(key).put(
@@ -13,10 +14,11 @@ export async function putEvidence(
     bytes,
     expires === null ? null : Date.parse(expires),
     pendingPersistent,
+    thumbnail,
   );
 }
-export async function getEvidence(env: AppEnv, key: string) {
-  if (env.EVIDENCE_STORE) return env.EVIDENCE_STORE.getByName(key).get(key);
+export async function getEvidence(env: AppEnv, key: string, thumbnail = false) {
+  if (env.EVIDENCE_STORE) return env.EVIDENCE_STORE.getByName(key).get(key, thumbnail);
   // Only isolated legacy tests use an injected storage adapter.
   if (env.DEV_MODE === "1" && env.EVIDENCE) {
     const r = await env.EVIDENCE.get(key);

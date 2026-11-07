@@ -2,6 +2,8 @@ import { PROTOCOL_VERSION, HISTORY_EPOCH } from "../../../../packages/contracts/
 import { safeStorage } from "electron";
 import { Journal } from "./journal";
 import WebSocket from "ws";
+import { z } from "zod";
+import { idSchema } from "../../../../packages/contracts/src/index";
 /** Main 的云端适配器：保存设备令牌、协商协议与历史代次，并提供 HTTP 请求和变更通知。
  * WebSocket 仅触发重新读取；运行、租约和任务状态仍以鉴权后的 HTTP 响应为准。
  */
@@ -118,21 +120,50 @@ export class Cloud {
     publicCall = false,
     binary?: Uint8Array,
   ): Promise<T> {
+    // 图片及缩略图用标准 multipart 二进制上传；不会把字节编码进 JSON 或 URL。
+    let multipart: FormData | undefined;
+    if (binary && p.endsWith("/snapshots")) {
+      const metadata = z
+        .object({
+          epoch: z.number().int().positive(),
+          captureId: idSchema,
+          purpose: z.enum(["chat", "vision"]),
+          thumbnail: z.instanceof(Uint8Array).optional(),
+        })
+        .parse(body);
+      multipart = new FormData();
+      multipart.set("epoch", String(metadata.epoch));
+      multipart.set("captureId", metadata.captureId);
+      multipart.set("purpose", metadata.purpose);
+      multipart.set(
+        "image",
+        new Blob([new Uint8Array(binary)], { type: "image/png" }),
+        "image.png",
+      );
+      if (metadata.thumbnail)
+        multipart.set(
+          "thumbnail",
+          new Blob([new Uint8Array(metadata.thumbnail)], { type: "image/png" }),
+          "thumbnail.png",
+        );
+    }
     const response = await fetch(`${this.url}${p}`, {
       method,
       headers: {
         "x-taskrelay-protocol": String(PROTOCOL_VERSION),
         ...(publicCall ? {} : { Authorization: `Bearer ${this.token()}` }),
-        ...(binary
-          ? {
-              "Content-Type": "image/png",
-              "x-lease-epoch": String((body as { epoch: number }).epoch),
-            }
-          : body
-            ? { "Content-Type": "application/json" }
-            : {}),
+        ...(multipart
+          ? {}
+          : binary
+            ? {
+                "Content-Type": "image/png",
+                "x-lease-epoch": String((body as { epoch: number }).epoch),
+              }
+            : body
+              ? { "Content-Type": "application/json" }
+              : {}),
       },
-      body: binary ? Buffer.from(binary) : body ? JSON.stringify(body) : undefined,
+      body: multipart ?? (binary ? Buffer.from(binary) : body ? JSON.stringify(body) : undefined),
       redirect: "error",
       signal: AbortSignal.timeout(
         p.includes("/heartbeat") || p.endsWith("/claim") || method === "GET" ? 12000 : 180000,
@@ -142,7 +173,11 @@ export class Cloud {
       throw new Error("OFFLINE");
     });
     if (!response.headers.get("content-type")?.includes("application/json"))
-      throw new Error("CLOUD_RESPONSE_INVALID");
+      throw new Error(
+        [502, 503, 504].includes(response.status)
+          ? `HTTP_${response.status}`
+          : "CLOUD_RESPONSE_INVALID",
+      );
     this.online = true;
     const data = (await response.json()) as T & { error?: string };
     if (!response.ok)

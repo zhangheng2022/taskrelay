@@ -8,7 +8,8 @@ import { AccountCard } from "./account-card";
 
 // 地址由宿主提供，浏览器负责鉴权请求、懒加载和图片解码；组件只维护显示状态。
 // 图片地址变化时由父级 key 重置，避免旧图片的加载结果污染新附件。
-function ChatImage({ src, alt }: { src?: string; alt: string }) {
+function ChatImage({ src, thumbnail, alt }: { src?: string; thumbnail?: string; alt: string }) {
+  const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<"processing" | "done" | "error">(src ? "processing" : "error");
   const [previewState, setPreviewState] = useState<"processing" | "done" | "error">("processing");
   return (
@@ -19,7 +20,20 @@ function ChatImage({ src, alt }: { src?: string; alt: string }) {
       className="max-w-full"
     >
       {state === "error" ? (
-        <p>图片加载失败或已不可用。</p>
+        <div className="flex flex-col gap-2">
+          <p>图片加载失败或已不可用。</p>
+          {src && (
+            <Button
+              variant="outline"
+              onClick={() => {
+                setAttempt((value) => value + 1);
+                setState("processing");
+              }}
+            >
+              重新加载图片
+            </Button>
+          )}
+        </div>
       ) : (
         <>
           {state === "processing" && <p role="status">正在加载图片…</p>}
@@ -33,7 +47,8 @@ function ChatImage({ src, alt }: { src?: string; alt: string }) {
               >
                 <AttachmentMedia variant="image">
                   <img
-                    src={src}
+                    key={attempt}
+                    src={thumbnail ?? src}
                     alt={alt}
                     loading="lazy"
                     decoding="async"
@@ -84,7 +99,15 @@ export function ChatAttachments({
       {parts.map((p, i) => {
         if (p.type === "image") {
           const src = transport.artifactUrl?.(p.artifactId);
-          return <ChatImage key={`${p.artifactId}:${src ?? ""}`} src={src} alt={p.alt} />;
+          const thumbnail = transport.artifactUrl?.(p.artifactId, "thumbnail");
+          return (
+            <ChatImage
+              key={`${p.artifactId}:${src ?? ""}:${thumbnail ?? ""}`}
+              src={src}
+              thumbnail={thumbnail}
+              alt={p.alt}
+            />
+          );
         }
         return p.type === "account-card" ? (
           <AccountCard

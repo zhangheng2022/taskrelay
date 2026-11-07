@@ -258,7 +258,7 @@ export interface Transport {
     options?: { signal?: AbortSignal },
   ): Promise<T>;
   /** 宿主提供受鉴权的图片地址；图片二进制不经过 JSON 请求通道。 */
-  artifactUrl?(id: string): string;
+  artifactUrl?(id: string, variant?: "original" | "thumbnail"): string;
   subscribe?(fn: () => void): () => void;
   desktop?: {
     status(): Promise<DesktopStatus>;

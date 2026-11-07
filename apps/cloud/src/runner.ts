@@ -19,7 +19,7 @@ import {
   aiMessageToModelResponse,
   toLangChainMessages,
 } from "../../../packages/model/src/langchain";
-import { putEvidence, deleteEvidence } from "./evidence";
+import { saveSnapshot, imageReference } from "./images";
 import { appendMessage, conversationContext, runThread } from "./chat-messages";
 import { resolveHelp } from "./execution-help";
 import { estimateTokens } from "../../../packages/model/src/agent-context";
@@ -125,7 +125,9 @@ runner.post("/runs/:id/messages", async (c) => {
   for (const part of b.parts)
     if (
       part.type === "image" &&
-      !(await c.env.DB.prepare("SELECT id FROM artifacts WHERE id=? AND run_id=? AND thread_id=?")
+      !(await c.env.DB.prepare(
+        "SELECT id FROM artifacts WHERE id=? AND run_id=? AND thread_id=? AND purpose='chat'",
+      )
         .bind(part.artifactId, run.id, thread.id)
         .first())
     )
@@ -202,11 +204,16 @@ runner.post("/runs/:id/stagehand", async (c) => {
       ),
       schema: z.record(z.string(), z.unknown()).optional(),
       image: z.string().max(2_000_000).optional(),
+      imageArtifactId: idSchema.optional(),
     })
     .parse(await c.req.json());
   const run = await requireLease(c.env.DB, c.req.param("id"), c.get("deviceId"), b.epoch);
   const { profile } = await getModelProfile(c.env, run.task.modelId, run.task.modelVersion);
-  if (b.image && !profile.capabilities.vision) throw Error("VISION_NOT_SUPPORTED");
+  if (b.image && b.imageArtifactId) throw Error("IMAGE_REFERENCE_INVALID");
+  if (b.imageArtifactId)
+    await imageReference(c.env, b.imageArtifactId, run.id, run.userId, b.epoch);
+  if ((b.image || b.imageArtifactId) && !profile.capabilities.vision)
+    throw Error("VISION_NOT_SUPPORTED");
   const operation = `stagehand_${run.id}_${b.requestId}`;
   const model = new RelayChatModel(
     c.env,
@@ -217,6 +224,7 @@ runner.post("/runs/:id/stagehand", async (c) => {
   );
   const options = {
     image: b.image,
+    imageRef: b.imageArtifactId ? { artifactId: b.imageArtifactId, epoch: b.epoch } : undefined,
     maxTokens: profile.outputTokens ?? 4096,
     invalidCode: "STAGEHAND_SCHEMA_INVALID",
   };
@@ -386,49 +394,48 @@ runner.post("/runs/:id/tool", async (c) => {
   return c.json({ ok: true });
 });
 runner.post("/runs/:id/snapshots", async (c) => {
-  const b = lease
-    .extend({ captureId: idSchema, image: z.string().max(2_000_000) })
-    .parse(await c.req.json());
-  const run = await requireLease(c.env.DB, c.req.param("id"), c.get("deviceId"), b.epoch, true),
-    thread = await runThread(c.env, run.id);
-  const bytes = Buffer.from(b.image, "base64");
-  if (
-    bytes.length > 1_500_000 ||
-    !bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
-  )
-    throw Error("PNG_REQUIRED");
-  const id = `snapshot_${b.captureId}`;
-  const prior = await c.env.DB.prepare("SELECT id,run_id,thread_id FROM artifacts WHERE id=?")
-    .bind(id)
-    .first<Row>();
-  if (prior) {
-    if (prior.run_id !== run.id || prior.thread_id !== thread.id) throw Error("ARTIFACT_CONFLICT");
-    return c.json({ id });
-  }
-  // 每次上传独占对象，只有赢得索引插入的对象对外发布。进程中断或D1
-  // 写入结果未知时不贸然删除；Evidence alarm 根据持久索引保留或回收。
-  const key = `chat/${thread.id}/${id}/${crypto.randomUUID()}`;
-  await putEvidence(c.env, key, new Uint8Array(bytes).buffer, null, true);
-  const saved = await c.env.DB.prepare(
-    `INSERT OR IGNORE INTO artifacts(id,run_id,object_key,content_type,expires_at,thread_id,persistent)
-    SELECT ?,?,?,'image/png','9999-12-31T23:59:59.999Z',?,1 WHERE EXISTS(SELECT 1 FROM ai_threads WHERE id=? AND closed=0)
-    AND NOT EXISTS(SELECT 1 FROM evidence_retirements WHERE object_key=?)
-    AND EXISTS(SELECT 1 FROM runs WHERE id=? AND device_id=? AND lease_epoch=? AND lease_expires_at>? AND status IN ('running','waiting_user','verifying'))`,
-  )
-    .bind(id, run.id, key, thread.id, thread.id, key, run.id, c.get("deviceId"), b.epoch, now())
-    .run();
-  if (!saved.meta.changes) {
-    const winner = await c.env.DB.prepare(
-      "SELECT id,run_id,thread_id,object_key FROM artifacts WHERE id=?",
+  const contentType = c.req.header("content-type") ?? "";
+  let input: {
+    epoch: number;
+    captureId: string;
+    purpose: "chat" | "vision";
+    image: Uint8Array;
+    thumbnail?: Uint8Array;
+  };
+  if (contentType.startsWith("multipart/form-data")) {
+    const form = await c.req.formData();
+    const metadata = lease
+      .extend({ captureId: idSchema, purpose: z.enum(["chat", "vision"]).default("chat") })
+      .parse({
+        epoch: Number(form.get("epoch")),
+        captureId: form.get("captureId"),
+        purpose: form.get("purpose") ?? "chat",
+      });
+    const image = form.get("image"),
+      thumbnail = form.get("thumbnail");
+    if (
+      !(image instanceof File) ||
+      image.type !== "image/png" ||
+      (thumbnail !== null && (!(thumbnail instanceof File) || thumbnail.type !== "image/png"))
     )
-      .bind(id)
-      .first<Row>();
-    if (winner?.object_key !== key) await deleteEvidence(c.env, key);
-    if (winner?.run_id === run.id && winner.thread_id === thread.id) return c.json({ id });
-    if (winner) throw Error("ARTIFACT_CONFLICT");
-    throw Error("THREAD_NOT_FOUND");
+      throw Error("PNG_REQUIRED");
+    input = {
+      ...metadata,
+      image: new Uint8Array(await image.arrayBuffer()),
+      ...(thumbnail instanceof File
+        ? { thumbnail: new Uint8Array(await thumbnail.arrayBuffer()) }
+        : {}),
+    };
+  } else {
+    // 保留已安装客户端的 JSON 协议；两种入口使用相同的验证、归属和幂等发布。
+    const body = lease
+      .extend({ captureId: idSchema, image: z.string().max(2_000_000) })
+      .parse(await c.req.json());
+    input = { ...body, purpose: "chat", image: Buffer.from(body.image, "base64") };
   }
-  return c.json({ id });
+  const run = await requireLease(c.env.DB, c.req.param("id"), c.get("deviceId"), input.epoch, true);
+  const thread = await runThread(c.env, run.id);
+  return c.json(await saveSnapshot(c.env, run, thread.id, input));
 });
 runner.post("/runs/:id/finish", async (c) => {
   const b = lease

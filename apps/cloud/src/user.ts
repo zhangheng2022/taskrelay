@@ -350,15 +350,26 @@ export const user = userBase
   })
   .get(
     "/artifacts/:id",
-    validator("query", (value: { format?: string | string[] }) =>
-      z.object({ format: z.literal("data").optional() }).parse(value),
+    validator("query", (value: { format?: string | string[]; variant?: string | string[] }) =>
+      z
+        .object({
+          format: z.literal("data").optional(),
+          variant: z.enum(["original", "thumbnail"]).optional(),
+        })
+        .parse(value),
     ),
     async (c) => {
-      const row = await c.env.DB.prepare("SELECT * FROM artifacts WHERE id=? AND expires_at>?")
+      const row = await c.env.DB.prepare(
+        "SELECT * FROM artifacts WHERE id=? AND expires_at>? AND purpose='chat'",
+      )
         .bind(c.req.param("id"), now())
         .first<Row>();
       if (!row) return c.json({ error: "ARTIFACT_EXPIRED" }, 404);
-      const object = await getEvidence(c.env, row.object_key);
+      const object = await getEvidence(
+        c.env,
+        row.object_key,
+        c.req.valid("query").variant === "thumbnail",
+      );
       if (!object) return c.json({ error: "ARTIFACT_EXPIRED" }, 404);
       if (c.req.valid("query").format === "data") {
         const bytes = Buffer.from(object);

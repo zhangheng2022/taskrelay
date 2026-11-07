@@ -1,3 +1,4 @@
+import { fixturePng } from "./image-fixture";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { productionModelFixture } from "./production-model-fixture";
@@ -22,7 +23,7 @@ test("聊天图片长期保存，清空聊天同时删除图片，旧运行不�
   const r = await s.request(`/api/runner/runs/${s.run.id}/snapshots`, {
     epoch: s.run.leaseEpoch,
     captureId: "shot_one",
-    image: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString("base64"),
+    image: fixturePng.toString("base64"),
   });
   assert.equal(r.status, 200, JSON.stringify(r.data));
   assert.ok(

@@ -65,7 +65,10 @@ export async function prepareExtension(source: string, cache: string) {
     } catch (error) {
       if (!["EEXIST", "ENOTEMPTY", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? ""))
         throw error;
-      // Another initialization may have published the same content; verify it below.
+      // Windows 也可能因目录权限返回 EPERM。只有目标已出现时才校验并发发布结果。
+      await lstat(target).catch(() => {
+        throw error;
+      });
     }
     return await verify();
   } finally {

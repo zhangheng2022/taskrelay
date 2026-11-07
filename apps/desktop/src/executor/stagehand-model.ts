@@ -12,7 +12,7 @@ export function stagehandModel(options: {
     requestId: string;
     messages: Message[];
     schema?: Record<string, unknown>;
-    image?: string;
+    imageArtifactId?: string;
   }): Promise<{ text: string; structured?: unknown }>;
 }): ClientLLM {
   return {
@@ -48,7 +48,7 @@ export function stagehandModel(options: {
         requestId: crypto.randomUUID(),
         messages,
         schema,
-        image,
+        imageArtifactId: image,
       });
       options.guard();
       await options.beforeReturn?.(result.structured ?? result.text);
