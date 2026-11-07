@@ -1,5 +1,31 @@
 # TaskRelay 验收记录
 
+## 2026-11-07 跨任务执行基线
+
+Windows PowerShell 运行以下命令复核。使用固定决策、页面和 RPC 适配器，调用生产 `execute()` 和执行图。每个样本先验证执行结果、写入次数、实际模型调用和空反馈，再按场景报告执行时长 P50/P95。用相同 Node、平台、样本数和机器负载做比较。本基线只测本地编排，真实模型的决策质量、线上耗时和云端排队要另外取样。
+
+```powershell
+$env:TASKRELAY_BASELINE_SAMPLES='20'
+node --import tsx --test --test-name-pattern='跨任务执行基线' tests/executor-runtime.test.ts
+Remove-Item Env:TASKRELAY_BASELINE_SAMPLES
+```
+
+在同一机上对只读、单次提交、跨页、多项目、协助后继续、空读取、提交结果未知七类场景改变一个变量：移除只读工具入口紧邻的第二次上下文请求。前后各 20 次。只读与空读取每次由 7 次上下文请求降至 6 次，提交、跨页、协助后继续由 11 次降至 10 次，多项目由 15 次降至 14 次。未知提交保持 11 次且实际只提交一次。前后模型请求次数一致。本地毫秒级 P95 有涨有跌，当前数据只支持请求数下降。
+
+桌面可在现有“导出诊断”中读取 `journal[].timing`。云端需先应用迁移 `0030_inference_timing.sql`。按所有者及运行 ID 绑定下面的只读查询，保留没有用量行的调用；老记录及未取得响应的时点可能为空。任务交办、等设备、执行和等人应分别报告。
+
+```sql
+SELECT a.id, a.status, a.created_at, a.egress_started_at,
+       u.inference_started_at, u.provider_started_at, u.at AS response_at,
+       a.updated_at, u.input_tokens, u.output_tokens
+FROM ai_calls AS a
+LEFT JOIN model_usage AS u ON u.call_id = a.id AND u.run_id = a.run_id AND u.user_id = a.user_id
+WHERE a.user_id = ? AND a.run_id = ?
+ORDER BY a.created_at;
+```
+
+本轮定向测试 107/107 通过，类型、lint、仓库检查和 Web 构建通过。全量测试 418 项通过 404 项，14 项未通过，涉及 Windows 符号链接权限、Chromium 启动、本机代理与 CDP、workerd 回环访问。使用锁文件的本地缓存完成 Windows 隔离打包，检查了 sharp 原生模块的 ASAR 解包标记和磁盘文件。打包进程实际启动后未生成 smoke 报告，重试退出码为 `0x80000003`。本轮未做系统安装、生产迁移或真实模型对照。
+
 ## 2026-11-07 桌面扩展发布与本地集成测试复验
 
 扩展目录重命名在受管 Windows 的系统临时目录返回 `EPERM`，当时目标目录不存在。原实现把它当作并发发布，随后的目录检查用 `ENOENT` 覆盖了原始错误。现在仅在目标可读取时进入内容校验，真实发布错误保留。扩展与 Git 范围检测的测试夹具改用项目可写的独占临时目录。3 项扩展测试、1 项 Git 测试恢复通过，新增权限失败回归在修复前失败、修复后通过。

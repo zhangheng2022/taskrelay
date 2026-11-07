@@ -21,6 +21,28 @@ for (const protocol of ["chat", "responses"] as const)
     assert.equal(r.status, 200, JSON.stringify(r.data));
     assert.deepEqual(r.data.response.calls, [call]);
     assert.equal(s.jobs(), 1);
+    const timing = s.sql
+      .prepare(
+        `SELECT a.id,a.created_at,a.egress_started_at,u.inference_started_at,
+      u.provider_started_at,u.at,a.updated_at FROM ai_calls a
+      JOIN model_usage u ON u.call_id=a.id AND u.run_id=a.run_id WHERE a.run_id=?`,
+      )
+      .all(s.run.id);
+    assert.equal(timing.length, 1);
+    assert.equal(timing[0].id, `execute_${s.run.id}_model_one`);
+    const stamps = [
+      "created_at",
+      "egress_started_at",
+      "inference_started_at",
+      "provider_started_at",
+      "at",
+      "updated_at",
+    ].map((key) => Date.parse(String(timing[0][key])));
+    assert.ok(stamps.every(Number.isFinite));
+    assert.deepEqual(
+      stamps,
+      [...stamps].sort((a, b) => a - b),
+    );
     const body = s.requests[0].body;
     assert.equal(body.model, "vendor/non-gpt");
     assert.equal(body.tool_choice, "auto");

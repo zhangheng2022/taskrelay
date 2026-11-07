@@ -5,6 +5,7 @@ import { run } from "./ui-fixtures";
 import type { ModelResponse } from "../packages/model/src/index";
 import type { ClientLLM } from "@browserbasehq/stagehand";
 import sharp from "sharp";
+import { executionTimingSchema } from "../apps/desktop/src/shared/execution-timing";
 const answer = (text: string): ModelResponse => ({
   text,
   calls: [],
@@ -13,6 +14,129 @@ const answer = (text: string): ModelResponse => ({
 const tool = (name: string, args: Record<string, unknown> = {}): ModelResponse => ({
   ...answer(""),
   calls: [{ id: crypto.randomUUID(), name, arguments: JSON.stringify(args) }],
+});
+
+// 固定决策和页面反馈，只比较生产 execute 编排成本。每个样本先核对结果，再纳入分位数。
+test("跨任务执行基线", async (t) => {
+  const samples = Number(process.env.TASKRELAY_BASELINE_SAMPLES ?? 1);
+  assert.ok(Number.isSafeInteger(samples) && samples >= 1 && samples <= 100);
+  const read = () => tool("extract", { instruction: "读取当前记录" });
+  const submit = () => tool("act", { instruction: "提交当前记录" });
+  type Case = {
+    name: string;
+    turns: ModelResponse[];
+    options?: Parameters<typeof scenario>[1];
+    writes: number;
+    reads: number;
+    navigations?: number;
+    help?: boolean;
+    empty?: boolean;
+    unknown?: boolean;
+  };
+  const cases: Case[] = [
+    { name: "只读", turns: [read()], options: { extraction: "0" }, writes: 0, reads: 1 },
+    { name: "单次提交", turns: [submit(), read()], writes: 1, reads: 1 },
+    {
+      name: "跨页",
+      turns: [tool("navigate", { url: "https://example.com/details" }), read()],
+      writes: 0,
+      reads: 1,
+      navigations: 2,
+    },
+    { name: "多项目", turns: [submit(), submit(), read()], writes: 2, reads: 1 },
+    {
+      name: "协助后继续",
+      turns: [tool("ask", { message: "请补充信息" }), read()],
+      options: { helpWaits: 1 },
+      help: true,
+      writes: 0,
+      reads: 1,
+    },
+    {
+      name: "空读取",
+      turns: [read()],
+      options: { extraction: "  " },
+      empty: true,
+      writes: 0,
+      reads: 1,
+    },
+    {
+      name: "提交结果未知",
+      turns: [submit(), submit()],
+      options: { unknownActionResult: true },
+      unknown: true,
+      writes: 1,
+      reads: 0,
+    },
+  ];
+  for (const item of cases) {
+    const durations: number[] = [];
+    const decisions: number[] = [];
+    const contextCalls: number[] = [];
+    const sdkCalls: number[] = [];
+    for (let i = 0; i < samples; i++) {
+      const result = await scenario(structuredClone(item.turns), item.options);
+      assert.equal(
+        result.finish.result.outcome,
+        item.unknown ? "unconfirmed" : "reported",
+        item.name,
+      );
+      assert.equal(result.clicks, item.writes, item.name);
+      assert.equal(result.navigations, item.navigations ?? 1, item.name);
+      const checkpoint = result.checkpoints.at(-1);
+      assert.equal(checkpoint.state, "finished");
+      const report = executionTimingSchema.parse(checkpoint.payload.timing);
+      assert.equal(report.phases.extract?.calls ?? 0, item.reads);
+      assert.equal(report.emptyExtractions, Number(!!item.empty));
+      assert.equal(report.phases.helpWait?.calls ?? 0, Number(!!item.help));
+      assert.equal(
+        report.phases.decision?.calls,
+        result.calls.filter((c) => c.path.endsWith("/model") && c.body.purpose === "decision")
+          .length,
+      );
+      assert.equal(
+        report.phases.stagehandModel?.calls ?? 0,
+        result.calls.filter((c) => c.path.endsWith("/stagehand")).length,
+      );
+      if (item.reads) {
+        const feedback = result.calls.find(
+          (c) =>
+            c.path.endsWith("/messages") &&
+            c.body.parts.some((p: { name?: string }) => p.name === "extract"),
+        )!.body;
+        assert.equal(
+          feedback.content,
+          item.empty ? "本次未读到页面内容。" : "已读取当前页面信息。",
+        );
+        if (item.empty) {
+          const last = result.calls.filter((c) => c.path.endsWith("/model")).at(-1)!.body;
+          assert.equal(
+            JSON.parse(last.messages.find((m: { role: string }) => m.role === "tool").content)
+              .readFeedback.empty,
+            true,
+          );
+        }
+      }
+      durations.push(report.elapsedMs);
+      contextCalls.push(report.phases.context!.calls);
+      decisions.push(report.phases.decision!.calls);
+      sdkCalls.push(report.phases.stagehandModel?.calls ?? 0);
+    }
+    durations.sort((a, b) => a - b);
+    const percentile = (p: number) => durations[Math.ceil(samples * p) - 1];
+    if (samples > 1)
+      t.diagnostic(
+        JSON.stringify({
+          scenario: item.name,
+          samples,
+          p50Ms: percentile(0.5),
+          p95Ms: percentile(0.95),
+          decisionCalls: [Math.min(...decisions), Math.max(...decisions)],
+          contextCalls: [Math.min(...contextCalls), Math.max(...contextCalls)],
+          stagehandCalls: [Math.min(...sdkCalls), Math.max(...sdkCalls)],
+        }),
+      );
+  }
 });
 
 test("正式 execute 保存账号工具只发布私有卡片请求，不把凭据写入恢复记录或普通消息", async () => {
@@ -96,6 +220,12 @@ test("收尾前新指令使旧候选失效，再次完成时重新捕获状态",
 test("八次读取保留八份反馈但只在首尾拍照，相同图片复用；相同提供方调用标识不吞真实调用", async () => {
   const repeated = tool("extract", { instruction: "读取当前结果" });
   const s = await scenario(Array.from({ length: 8 }, () => structuredClone(repeated)));
+  let contextChecks = 0;
+  for (const request of s.calls) {
+    if (request.path.endsWith("/model")) contextChecks = 0;
+    if (request.path.endsWith("/context")) contextChecks++;
+    if (request.path.endsWith("/stagehand")) assert.equal(contextChecks, 1);
+  }
   assert.equal(s.captures, 2);
   assert.equal(s.calls.filter((c) => c.path.endsWith("/snapshots")).length, 1);
   const messages = s.calls.filter(
@@ -158,6 +288,7 @@ async function scenario(
     actionError?: boolean;
     actionRejected?: boolean;
     emptyObserve?: boolean;
+    extraction?: string;
     navigationError?: boolean;
     cancelConnect?: boolean;
     createError?: boolean;
@@ -172,6 +303,7 @@ async function scenario(
     cancel?: boolean;
     cancelStagehand?: boolean;
     newInstruction?: boolean;
+    correctionAfterDecision?: boolean;
     navigationObservationFailure?: boolean;
     unknownActionResult?: boolean;
     helpWaits?: number;
@@ -301,6 +433,7 @@ async function scenario(
           return { response: answer("已读取页面并尝试操作，保留最近工具反馈继续。") } as T;
         if (options.cancel) cancelled = true;
         const response = turns.shift() ?? answer("已处理当前页面，结果如上。");
+        if (options.correctionAfterDecision && response.calls.length) changeInstructions();
         finalReply = !response.calls.length;
         return { response } as T;
       }
@@ -395,7 +528,13 @@ async function scenario(
     },
     extract: async (instruction: string) => {
       await infer(instruction);
-      return { data: { text: "实际页面信息" }, metadata };
+      return {
+        data:
+          options.extraction === undefined
+            ? { text: "实际页面信息" }
+            : { extraction: options.extraction },
+        metadata,
+      };
     },
   };
   await execute(
@@ -449,6 +588,18 @@ async function scenario(
     finish: calls.filter((c) => c.path.endsWith("/finish")).at(-1)?.body,
   };
 }
+
+test("只读工具执行前收到更正时跳过过期调用", async () => {
+  for (const name of ["observe", "extract"]) {
+    const result = await scenario([tool(name, { instruction: "读取旧目标" })], {
+      correctionAfterDecision: true,
+    });
+    assert.ok(!result.calls.some((c) => c.path.endsWith("/stagehand")));
+    const last = result.calls.filter((c) => c.path.endsWith("/model")).at(-1)!.body;
+    assert.match(JSON.stringify(last.messages), /INSTRUCTIONS_CHANGED/);
+    assert.match(JSON.stringify(last.messages), /请先核对新补充要求/);
+  }
+});
 
 test("初始化期间停止不再导航，关闭 Stagehand 失败仍释放代理", async () => {
   const s = await scenario([], { cancelConnect: true, closeError: true });

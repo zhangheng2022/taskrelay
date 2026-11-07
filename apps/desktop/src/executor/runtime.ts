@@ -1,4 +1,6 @@
 import { imageUploader } from "./image-upload";
+import { ExecutionClock } from "./timing";
+import type { TimingPhase } from "../shared/execution-timing";
 import type { Page, ClientLLM } from "@browserbasehq/stagehand";
 import type { TaskRun } from "../../../../packages/contracts/src/index";
 import type { Message, ModelResponse } from "../../../../packages/model/src/index";
@@ -66,6 +68,9 @@ export async function execute(
   port: RuntimePort,
   adapters = { loadSdk: () => import("@browserbasehq/stagehand"), startProxy, delay },
 ) {
+  const clock = new ExecutionClock();
+  const checkpoint = (state: string, payload: Record<string, unknown>) =>
+    port.checkpoint(state, { ...payload, timing: clock.report() });
   let proxy: Awaited<ReturnType<typeof startProxy>> | undefined, page: Page | undefined;
   let session: Awaited<ReturnType<typeof connectExecutionBrowser>>["session"] | undefined;
   let browserContext: import("@browserbasehq/stagehand").BrowserContext | undefined;
@@ -94,27 +99,42 @@ export async function execute(
   const guard = () => {
     if (port.cancelled()) throw Error("CANCEL_REQUESTED");
   };
-  const api = <T>(suffix: string, body: Record<string, unknown> = {}) =>
-    port.rpc<T>(`/api/runner/runs/${run.id}/${suffix}`, { epoch: run.leaseEpoch, ...body });
+  const api = <T>(suffix: string, body: Record<string, unknown> = {}, phase?: TimingPhase) => {
+    const request = () =>
+      port.rpc<T>(`/api/runner/runs/${run.id}/${suffix}`, { epoch: run.leaseEpoch, ...body });
+    const requestId = typeof body.requestId === "string" ? body.requestId : undefined;
+    return phase ? clock.measure(phase, request, requestId) : request();
+  };
   // 事件身份贯穿 Main 重试与云端唯一键。不同推理的同名调用不会被误合并。
   const say = async (event: string, content: string, parts: ChatPart[] = [], progress = true) => {
-    await api("messages", {
-      id: `${progress ? "progress" : "image"}_${await hash(`${run.id}:${run.leaseEpoch}:${event}`)}`,
-      content: redactSnapshot(content, secrets),
-      parts,
-    });
+    await api(
+      "messages",
+      {
+        id: `${progress ? "progress" : "image"}_${await hash(`${run.id}:${run.leaseEpoch}:${event}`)}`,
+        content: redactSnapshot(content, secrets),
+        parts,
+      },
+      "message",
+    );
+    if (event.startsWith("thought:")) clock.narrativeDelivered();
     screenshots.published(parts);
   };
   const upload = imageUploader(`${run.id}:${run.leaseEpoch}`, guard, (captureId, image, purpose) =>
-    port.rpc(
-      `/api/runner/runs/${run.id}/snapshots`,
-      { epoch: run.leaseEpoch, captureId, purpose, thumbnail: image.thumbnail },
-      image.image,
+    clock.measure("upload", () =>
+      port.rpc<{ id: string }>(
+        `/api/runner/runs/${run.id}/snapshots`,
+        { epoch: run.leaseEpoch, captureId, purpose, thumbnail: image.thumbnail },
+        image.image,
+      ),
     ),
   );
+  const capture = (thumbnail = true) =>
+    clock.measure("screenshot", async () =>
+      prepareSnapshot(await maskedScreenshot(page!, [...secrets]), thumbnail),
+    );
   const screenshots = chatSnapshots(
     `${run.id}:${run.leaseEpoch}`,
-    async () => prepareSnapshot(await maskedScreenshot(page!, [...secrets])),
+    () => capture(),
     (captureId, image) => upload(image, "chat", captureId),
   );
   const shot = async (event: string) => {
@@ -151,7 +171,7 @@ export async function execute(
       messages: ChatContext[];
       modelContext?: ContextBudget;
       accountBinding?: { accountId: string | null; credentialVersion: number; stateEpoch: number };
-    }>("context", { after: cursor });
+    }>("context", { after: cursor }, "context");
     if (result.modelContext) modelContext = result.modelContext;
     if (result.accountBinding) {
       if (accountContext?.accountId && result.accountBinding.accountId !== accountContext.accountId)
@@ -205,14 +225,19 @@ export async function execute(
       try {
         stateCandidateKey = (await port.rpc<{ key: string | null }>("local:state-capture", {})).key;
       } catch {}
-    await port.checkpoint("finishing", { run, status, result, writePending });
-    await api("finish", {
-      status,
-      result,
-      stateCandidateKey,
-      ...(expectedUserSeq === undefined ? {} : { expectedUserSeq }),
-    });
-    await port.checkpoint("finished", { status });
+    await checkpoint("finishing", { run, status, result, writePending });
+    await api(
+      "finish",
+      {
+        status,
+        result,
+        stateCandidateKey,
+        ...(expectedUserSeq === undefined ? {} : { expectedUserSeq }),
+      },
+      "finish",
+    );
+    clock.narrativeDelivered();
+    await checkpoint("finished", { status });
   };
   const loadCredentials = async () => {
     if (!accountContext?.accountId) return;
@@ -256,7 +281,7 @@ export async function execute(
     const url = await page!.url();
     visitedOrigins.add(publicUrl(url).origin);
     // 成功读取原生页面结构才算后续观察返回；结构仅供 Stagehand，不能灌入主决策历史。
-    await page!.snapshot({ includeIframes: true });
+    await clock.measure("pageSnapshot", () => page!.snapshot({ includeIframes: true }));
     const tabs = await browserContext!.pages();
     return {
       url,
@@ -269,14 +294,18 @@ export async function execute(
   const settle = async () => {
     const observation = await observe();
     if (pending) {
-      await api("tool", {
-        ...pending,
-        phase: "result",
-        result: JSON.stringify({ observed: true }),
-      });
+      await api(
+        "tool",
+        {
+          ...pending,
+          phase: "result",
+          result: JSON.stringify({ observed: true }),
+        },
+        "actionJournal",
+      );
       pending = undefined;
       writePending = false;
-      await port.checkpoint("observed", { run, writePending: false });
+      await checkpoint("observed", { run, writePending: false });
     }
     return observation;
   };
@@ -285,8 +314,12 @@ export async function execute(
     guard();
     const id = crypto.randomUUID(),
       digest = await hash(JSON.stringify(call));
-    await port.checkpoint("intent", { run, actionId: id, writePending: true });
-    const accepted = await api<{ execute: boolean }>("tool", { id, digest, phase: "start" });
+    await checkpoint("intent", { run, actionId: id, writePending: true });
+    const accepted = await api<{ execute: boolean }>(
+      "tool",
+      { id, digest, phase: "start" },
+      "actionJournal",
+    );
     if (!accepted.execute) throw Error("TOOL_ALREADY_RECEIVED");
     pending = { id, digest };
     writePending = true;
@@ -346,7 +379,7 @@ export async function execute(
     const sdk = await adapters.loadSdk();
     proxy = await adapters.startProxy();
     guard();
-    await port.checkpoint("starting", { run });
+    await checkpoint("starting", { run });
     const launch = await port.rpc<{ cdpUrl: string; state?: BrowserStateAccess }>("local:browser", {
       proxyPort: proxy.port,
       accountId: run.profileId,
@@ -362,14 +395,8 @@ export async function execute(
         guard,
         redact: (text) => text,
         context: sdkContext,
-        image: async () =>
-          (
-            await upload(
-              await prepareSnapshot(await maskedScreenshot(page!, [...secrets]), false),
-              "vision",
-            )
-          ).id,
-        request: (input) => api("stagehand", input),
+        image: async () => (await upload(await capture(false), "vision")).id,
+        request: (input) => api("stagehand", input, "stagehandModel"),
         beforeReturn: async (result) => {
           await beforeAction?.(result);
         },
@@ -384,7 +411,7 @@ export async function execute(
     let entryError: string | undefined;
     guard();
     try {
-      await page.goto(run.task.entryUrl);
+      await clock.measure("navigate", () => page!.goto(run.task.entryUrl));
     } catch (e) {
       entryError = (e as Error).message;
     }
@@ -399,6 +426,7 @@ export async function execute(
     await runExecutionGraph({
       guard,
       observe: async () => {
+        clock.round++;
         guard();
         await context();
         await loadCredentials();
@@ -450,12 +478,16 @@ export async function execute(
       },
       decide: async (messages, purpose) => {
         const requestId = crypto.randomUUID();
-        const reply = await api<{ response: ModelResponse }>("model", {
-          requestId,
-          messages,
+        const reply = await api<{ response: ModelResponse }>(
+          "model",
+          {
+            requestId,
+            messages,
+            purpose,
+            supportsScreenshot: true,
+          },
           purpose,
-          supportsScreenshot: true,
-        });
+        );
         // 提供方可能在不同回合重复 call id；给本次推理的每个调用加命名空间。
         reply.response.calls = await Promise.all(
           reply.response.calls.map(async (call, index) => ({
@@ -500,7 +532,10 @@ export async function execute(
           await context();
           if (userSeq !== plannedUserSeq) throw Error("INSTRUCTIONS_CHANGED");
         };
-        await fresh();
+        // 执行图已在串行队列内核对本调用的 userSeq。只读页面工具沿用这次检查，
+        // 写操作与凭据路径继续在原有边界检查；本地停止信号在进入 SDK 前仍然生效。
+        if (call.name === "observe" || call.name === "extract") guard();
+        else await fresh();
         if (writePending && !["observe", "extract", "wait", "screenshot"].includes(call.name))
           throw Error("ACTION_RESULT_PENDING");
         if (call.name === "offerAccountSave") {
@@ -551,33 +586,48 @@ export async function execute(
           const instruction = args.instruction as string;
           const result =
             call.name === "observe"
-              ? await session!.observe(instruction, { page: page!, cache: false })
-              : await session!.extract(instruction, { page: page!, cache: false });
-          const empty =
-            call.name === "observe" && Array.isArray(result.data) && result.data.length === 0;
+              ? await clock.measure("observe", () =>
+                  session!.observe(instruction, { page: page!, cache: false }),
+                )
+              : await clock.measure("extract", () =>
+                  session!.extract(instruction, { page: page!, cache: false }),
+                );
+          const emptyCandidates = Array.isArray(result.data) && result.data.length === 0;
+          const value = result.data;
+          const extracted =
+            value && typeof value === "object" && "extraction" in value ? value.extraction : value;
+          const emptyExtraction =
+            extracted == null || (typeof extracted === "string" && !extracted.trim());
+          if (call.name === "extract" && emptyExtraction) clock.emptyExtractions++;
+          const serialized = JSON.stringify(value) ?? "null";
           await say(
             `tool:${call.id}`,
             call.name === "observe"
-              ? empty
+              ? emptyCandidates
                 ? "未找到符合指令的可操作内容，继续根据实际页面判断。"
                 : "已找到候选操作，尚未执行。"
-              : "已读取当前页面信息。",
+              : emptyExtraction
+                ? "本次未读到页面内容。"
+                : "已读取当前页面信息。",
             [
               {
                 type: "tool",
                 name: call.name,
-                result: redactSnapshot(JSON.stringify(result.data), secrets),
+                result: redactSnapshot(serialized, secrets),
               },
             ],
           );
-          const serialized = JSON.stringify(result.data),
-            prior = reads.get(call.name);
+          const prior = reads.get(call.name);
           const count = prior?.data === serialized ? prior.count + 1 : 1;
           reads.set(call.name, { data: serialized, count });
           return {
             data: result.data,
             metadata: result.metadata,
-            readFeedback: { unchangedFromPreviousRead: count > 1, consecutiveSameRead: count },
+            readFeedback: {
+              ...(call.name === "extract" && emptyExtraction ? { empty: true } : {}),
+              unchangedFromPreviousRead: count > 1,
+              consecutiveSameRead: count,
+            },
           };
         }
         const pagesBefore = await browserContext!.pages();
@@ -589,7 +639,7 @@ export async function execute(
           await fresh();
           await arm(call);
           try {
-            await page!.goto(args.url as string);
+            await clock.measure("navigate", () => page!.goto(args.url as string));
             result = "页面导航已返回";
           } catch (e) {
             error = (e as Error).message;
@@ -601,10 +651,12 @@ export async function execute(
             await arm(call);
           };
           try {
-            const acted = await session!.act(args.instruction as string, {
-              page: page!,
-              cache: false,
-            });
+            const acted = await clock.measure("act", () =>
+              session!.act(args.instruction as string, {
+                page: page!,
+                cache: false,
+              }),
+            );
             result = acted.data;
             metadata = acted.metadata;
             if (!acted.data.success) error = acted.data.message || "STAGEHAND_ACTION_FAILED";
@@ -672,46 +724,50 @@ export async function execute(
         await helpShot(request, answer);
         return { request, answer };
       },
-      pollHelp: async (request) => {
-        if (request.cardId) {
-          for (;;) {
-            guard();
-            await pause(1500);
-            await context();
-            const state = await api<{
-              status: string;
-              accountId?: string;
-              credentialVersion?: number;
-              stateEpoch?: number;
-              resumed: boolean;
-            }>("account-card-status", { cardId: request.cardId, afterUserSeq: request.userSeq });
-            if (state.status === "pending") continue;
-            if (state.status === "saved" && state.resumed) {
-              accountContext = {
-                accountId: state.accountId ?? accountContext?.accountId ?? null,
-                credentialVersion: state.credentialVersion ?? 1,
-                stateEpoch: state.stateEpoch ?? 1,
-              };
-              accounts.length = 0;
-              loadedCredentialOrigins.clear();
+      pollHelp: (request) =>
+        clock.measure("helpWait", async () => {
+          if (request.cardId) {
+            for (;;) {
+              guard();
+              await pause(1500);
+              await context();
+              const state = await api<{
+                status: string;
+                accountId?: string;
+                credentialVersion?: number;
+                stateEpoch?: number;
+                resumed: boolean;
+              }>("account-card-status", { cardId: request.cardId, afterUserSeq: request.userSeq });
+              if (state.status === "pending") continue;
+              if (state.status === "saved" && state.resumed) {
+                accountContext = {
+                  accountId: state.accountId ?? accountContext?.accountId ?? null,
+                  credentialVersion: state.credentialVersion ?? 1,
+                  stateEpoch: state.stateEpoch ?? 1,
+                };
+                accounts.length = 0;
+                loadedCredentialOrigins.clear();
+                return {
+                  ready: true,
+                  accountId: state.accountId,
+                  message: "用户已更新凭据，请重新登录并观察结果。",
+                };
+              }
               return {
                 ready: true,
-                accountId: state.accountId,
-                message: "用户已更新凭据，请重新登录并观察结果。",
+                message: "账号卡片未保存或已失效，请按用户当前意图继续或求助。",
               };
             }
-            return { ready: true, message: "账号卡片未保存或已失效，请按用户当前意图继续或求助。" };
           }
-        }
-        for (;;) {
-          guard();
-          await context();
-          await pause(1500);
-          const answer = await api<HelpResponse>("help", { ...request });
-          await helpShot(request, answer);
-          if (answer.ready) return answer;
-        }
-      },
+          for (;;) {
+            guard();
+            await context();
+            await pause(1500);
+            const answer = await api<HelpResponse>("help", { ...request });
+            await helpShot(request, answer);
+            if (answer.ready) return answer;
+          }
+        }),
       consumeHelp: async (request, answer) => {
         if (request.cardId) {
           await loadCredentials();
@@ -779,6 +835,7 @@ export async function execute(
       writePending ? "unconfirmed" : stopped ? "stopped" : "error",
     ).catch(() => {});
   } finally {
+    clock.close();
     await session?.close().catch(() => {});
     await proxy?.close().catch(() => {});
   }
