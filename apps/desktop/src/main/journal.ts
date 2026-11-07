@@ -1,4 +1,5 @@
 import { HISTORY_EPOCH } from "../../../../packages/contracts/src/index";
+import { executionTimingSchema } from "../shared/execution-timing";
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
@@ -86,11 +87,22 @@ export class Journal {
     this.set("historyEpoch", HISTORY_EPOCH);
   }
   diagnostic() {
+    // 只取计时子对象；最新检查点可能只涵盖运行的一部分。
+    const rows = this.db
+      .prepare(
+        `SELECT run_id,state,updated_at,
+      CASE WHEN json_type(payload,'$.timing')='object'
+           THEN json_extract(payload,'$.timing') END AS timing
+      FROM journal ORDER BY updated_at DESC LIMIT 30`,
+      )
+      .all() as { run_id: string; state: string; updated_at: string; timing: string | null }[];
     return {
       schema: 3,
-      journal: this.db
-        .prepare("SELECT run_id,state,updated_at FROM journal ORDER BY updated_at DESC LIMIT 30")
-        .all(),
+      journal: rows.map(({ timing, ...row }) => {
+        const parsed =
+          typeof timing === "string" && executionTimingSchema.safeParse(JSON.parse(timing));
+        return { ...row, ...(parsed && parsed.success ? { timing: parsed.data } : {}) };
+      }),
       outboxCount: this.db.prepare("SELECT COUNT(*) count FROM outbox").get(),
     };
   }

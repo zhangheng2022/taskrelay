@@ -66,7 +66,10 @@ export class ExecutorHost {
           errorCode: "EXECUTOR_RESTARTED",
         },
       });
-      this.journal.checkpoint(row.run_id, row.generation, row.epoch, "abandoned", { uncertain });
+      this.journal.checkpoint(row.run_id, row.generation, row.epoch, "abandoned", {
+        uncertain,
+        timing: payload.timing,
+      });
       if (payload.run?.cleanupPending)
         this.queueCleanup(row.run_id, row.epoch, payload.run.profileId);
     }
@@ -462,6 +465,7 @@ export class ExecutorHost {
     });
     this.journal.checkpoint(run.id, gen, run.leaseEpoch, "abandoned", {
       uncertain,
+      timing: payload.timing,
     });
   }
   private queueCleanup(runId: string, epoch: number, profileId: string) {

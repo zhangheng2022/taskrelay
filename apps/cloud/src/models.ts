@@ -77,9 +77,11 @@ export async function recordUsage(
   response: ModelResponse,
   runId: string | null,
   userId: string,
+  timing: { callId: string; inferenceStartedAt: string; providerStartedAt: string },
 ) {
   await env.DB.prepare(
-    "INSERT INTO model_usage(id,run_id,model_id,model_version,input_tokens,output_tokens,at,user_id) VALUES(?,?,?,?,?,?,?,?)",
+    `INSERT INTO model_usage(id,run_id,model_id,model_version,input_tokens,output_tokens,at,user_id,
+      call_id,inference_started_at,provider_started_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
   )
     .bind(
       uid("usage"),
@@ -90,6 +92,9 @@ export async function recordUsage(
       response.usage.output,
       now(),
       userId,
+      timing.callId,
+      timing.inferenceStartedAt,
+      timing.providerStartedAt,
     )
     .run();
 }
@@ -145,8 +150,11 @@ export async function invoke(
   }
   try {
     const reservationId = await reserve(env, userId, "model", callId);
-    await env.DB.prepare("UPDATE ai_calls SET status='running',updated_at=? WHERE id=?")
-      .bind(now(), callId)
+    const egressStartedAt = now();
+    await env.DB.prepare(
+      "UPDATE ai_calls SET status='running',updated_at=?,egress_started_at=? WHERE id=?",
+    )
+      .bind(egressStartedAt, egressStartedAt, callId)
       .run();
     return await egress<ModelResponse>(
       env,
@@ -205,6 +213,7 @@ export async function performInference(
   userId: string,
   reservationId: string,
 ) {
+  const inferenceStartedAt = now();
   if (
     !(await env.DB.prepare(
       "SELECT id FROM quota_reservations WHERE id=? AND user_id=? AND kind='model'",
@@ -219,8 +228,13 @@ export async function performInference(
   if (request.imageRef && !profile.capabilities.vision) throw Error("VISION_NOT_SUPPORTED");
   const { imageRef, ...wire } = request;
   if (imageRef) wire.image = await resolveModelImage(env, imageRef, runId, userId);
+  const providerStartedAt = now();
   const result = await infer(profile, key, wire);
-  await recordUsage(env, profile, result, runId, userId);
+  await recordUsage(env, profile, result, runId, userId, {
+    callId: reservationId,
+    inferenceStartedAt,
+    providerStartedAt,
+  });
   return result;
 }
 // Only received, invalid output can spend the repair budget. Transport failures

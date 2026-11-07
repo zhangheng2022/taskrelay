@@ -5,10 +5,45 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Journal } from "../apps/desktop/src/main/journal";
+import { ExecutionClock } from "../apps/desktop/src/executor/timing";
+import { recentSpanLimit } from "../apps/desktop/src/shared/execution-timing";
 import { productionModelFixture } from "./production-model-fixture";
 import { egress } from "../apps/cloud/src/egress";
 import { seal } from "../apps/cloud/src/crypto";
 import { planConversation } from "../apps/cloud/src/ai/planning-graph";
+
+test("诊断保留有界嵌套计时并过滤未知字段和旧检查点", async (t) => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "taskrelay-timing-"));
+  const journal = new Journal(dir);
+  t.after(() => {
+    journal.close();
+    rmSync(dir, { recursive: true });
+  });
+  const clock = new ExecutionClock();
+  t.after(() => clock.close());
+  for (let i = 0; i < recentSpanLimit; i++) await clock.measure("context", async () => undefined);
+  await assert.rejects(
+    clock.measure("act", () =>
+      clock.measure("stagehandModel", async () => {
+        throw Error("fixture-secret");
+      }),
+    ),
+  );
+  const report = clock.report();
+  assert.equal(report.recent.length, recentSpanLimit);
+  assert.equal(report.recent.at(-2)!.parent, report.recent.at(-1)!.id);
+  assert.equal(report.phases.stagehandModel!.failures, 1);
+  assert.equal(report.phases.context!.calls, recentSpanLimit);
+  journal.checkpoint("legacy", "g", 1, "finished", {});
+  journal.checkpoint("valid", "g", 1, "finished", { timing: report, other: "fixture-secret" });
+  journal.checkpoint("invalid", "g", 1, "finished", {
+    timing: { ...report, other: "fixture-secret" },
+  });
+  const rows = journal.diagnostic().journal;
+  assert.deepEqual(rows.find((row) => row.run_id === "valid")?.timing, report);
+  assert.ok(rows.filter((row) => row.run_id !== "valid").every((row) => !("timing" in row)));
+  assert.doesNotMatch(JSON.stringify(rows), /fixture-secret/);
+});
 
 test("本地清理拒绝未发送 outbox 和未结束 journal；仅清历史，保留设备令牌和配置", (t) => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "taskrelay-ai-"));
