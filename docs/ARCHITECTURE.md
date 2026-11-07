@@ -1,6 +1,6 @@
 # TaskRelay 当前架构
 
-交付由 GitHub Actions 拥有：Quality 在 PR 与 master 汇总固定 `quality-gate`，手动 Production release 只接受同一 SHA 的主分支成功报告。发布状态机以 D1 settings 的 `productionRelease` 做条件更新，保存原开关、恢复点及不可变产物引用；失败不自动恢复领取或回滚数据库。0028 触发器在领取事务中检查暂停状态，管理员设置入口拒绝与进行中的发布竞争。更新目录由 RequestCoordinator 从 D1 `desktopReleaseCatalog` 读取；Worker 只路由，旧编译目录仅作首次初始化。
+交付由 GitHub Actions 拥有：Quality 在 PR 与 master 汇总固定 `quality-gate`，手动 Production release 只接受同一 SHA 的主分支成功报告。发布状态机以 D1 settings 的 `productionRelease` 做条件更新，保存原开关、恢复点及不可变产物引用；失败不自动恢复领取或回滚数据库。新基线的 release_claim_barrier 触发器在领取事务中检查暂停状态，管理员设置入口拒绝与进行中的发布竞争。更新目录由 RequestCoordinator 从 D1 `desktopReleaseCatalog` 读取；Worker 只路由，旧编译目录仅作首次初始化。
 
 ```mermaid
 flowchart TD
@@ -26,7 +26,7 @@ Main 的浏览器关闭／下载策略和账号状态适配器统一经 LocalCdp
 
 ZIP 解压与 Squirrel 安装不保证带有 Chromium LPAC 文件权限。Main 首次启动前，仅对自有 `browser/chrome-win64` 程序资源补充 `ALL RESTRICTED APPLICATION PACKAGES` 的读取／执行 ACL，拒绝重解析路径与链接，失败不启动；Profile、父目录、应用数据及密钥目录不在授权范围。浏览器沙箱继续启用，不能用 `--no-sandbox` 处理此类初始化错误。
 
-网站用户／管理员路由改为 Hono 可推导链式组合，前端 hc 只导入路由类型，网络发送仍经 Transport。Transport 支持主动取消：读取取消与超时分开；写入已发出后取消仍是结果未确认。TanStack Query 管理工作空间、账号摘要、设置和本机状态读取；缓存仅在当前用户组件树内存中，退出／切换时取消并清空，无隐式重试或离线写入队列。敏感账号详情、密码与卡片草稿不进入缓存；聊天保留 requestId、会话版本及双游标协议。Better Auth React 管认证请求与会话变化，成功后仍经本人成员接口复核。模型编辑由 React Hook Form＋Zod 管理，刷新不覆盖草稿。
+网站用户／管理员路由改为 Hono 可推导链式组合，前端 hc 只导入路由类型，网络发送仍经 Transport。Transport 支持主动取消：读取取消与超时分开；写入已发出后取消仍是结果未确认。TanStack Query 管理工作空间、账号摘要、设置和本机状态读取；缓存仅在当前用户组件树内存中，退出／切换时取消并清空，无隐式重试或离线写入队列。敏感账号详情、密码与卡片草稿不进入缓存；聊天保留 requestId、会话版本和统一消息 seq 游标。Better Auth React 管认证请求与会话变化，成功后仍经本人成员接口复核。模型编辑由 React Hook Form＋Zod 管理，刷新不覆盖草稿。
 
 本文描述当前源码。部署与安装见 [DEPLOYMENT](DEPLOYMENT.md)，验证证据与未完成项见 [ACCEPTANCE](ACCEPTANCE.md)。旧版本设计从 Git 历史追溯，不与当前流程并列。
 
