@@ -3,6 +3,7 @@
  * 普通调用只提交加密出站作业；仅美国区域 ModelEgress 的 alarm 可调用提供方适配器。
  */
 import { reserve } from "./tenancy";
+import { resolveModelImage } from "./images";
 import { z } from "zod";
 import { infer, type Inference, type ModelResponse } from "../../../packages/model/src/index";
 import { publicEndpoint } from "../../../packages/contracts/src/security";
@@ -214,7 +215,11 @@ export async function performInference(
     throw new Error("MODEL_RESERVATION_REQUIRED");
   const { profile, key } = await getModel(env, id, version);
   await validateEndpoint(profile.baseUrl);
-  const result = await infer(profile, key, request);
+  if (request.imageRef && request.image) throw Error("IMAGE_REFERENCE_INVALID");
+  if (request.imageRef && !profile.capabilities.vision) throw Error("VISION_NOT_SUPPORTED");
+  const { imageRef, ...wire } = request;
+  if (imageRef) wire.image = await resolveModelImage(env, imageRef, runId, userId);
+  const result = await infer(profile, key, wire);
   await recordUsage(env, profile, result, runId, userId);
   return result;
 }
@@ -231,7 +236,12 @@ export async function generateStructured<T>(
   invalidCode = "MODEL_INVALID_JSON",
   operationId?: string,
   graphId?: string,
-  media?: { image?: string; format?: "schema" | "json"; wireSchema?: Record<string, unknown> },
+  media?: {
+    image?: string;
+    imageRef?: Inference["imageRef"];
+    format?: "schema" | "json";
+    wireSchema?: Record<string, unknown>;
+  },
   graphGeneration?: number,
 ): Promise<{ data: T; response: ModelResponse }> {
   const { profile } = await getModelProfile(env, id, version);
@@ -270,6 +280,7 @@ export async function generateStructured<T>(
           : instructions,
         ...format,
         ...(media?.image ? { image: media.image } : {}),
+        ...(media?.imageRef ? { imageRef: media.imageRef } : {}),
         maxTokens: profile.outputTokens ?? 4096,
       },
       runId,

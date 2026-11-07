@@ -101,13 +101,17 @@ test("完整生产链：执行器模型转发、多项目操作、云端求助�
   const port: RuntimePort = {
     cancelled: () => false,
     checkpoint: async () => {},
-    rpc: async <T>(path: string, body: any) => {
+    rpc: async <T>(path: string, body: any, binary?: Uint8Array) => {
       if (path === "local:browser") return { cdpUrl: "fixture" } as T;
-      const response = await s.request(path, body);
+      if (path.endsWith("/snapshots")) {
+        assert.ok(binary?.length);
+        assert.equal(body.image, undefined, "图片不再编码进入 JSON");
+      }
+      const response = await s.request(path, body, "POST", binary);
       if (response.status !== 200) throw Error(response.data.error ?? "REQUEST_FAILED");
       // 模拟成功响应丢失后的同次 RPC 重传，不能增加图片、过程或最终结果。
       if (["/messages", "/snapshots", "/finish"].some((suffix) => path.endsWith(suffix))) {
-        const retry = await s.request(path, body);
+        const retry = await s.request(path, body, "POST", binary);
         assert.equal(retry.status, 200);
         assert.deepEqual(retry.data, response.data);
       }

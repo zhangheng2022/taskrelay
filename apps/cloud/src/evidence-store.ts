@@ -2,13 +2,21 @@ import { DurableObject } from "cloudflare:workers";
 import { Buffer } from "node:buffer";
 import { seal, unseal } from "./crypto";
 import type { AppEnv } from "./env";
+import { imageLimits } from "../../../packages/contracts/src/images";
 
 /** 每次上传独占分块加密对象。聊天截图先暂存，alarm 根据D1发布索引决定
  * 永久保留或清理孤儿；删除聊天先关闭写入，因此过期核对不能复活已删除图片。 */
 export class Evidence extends DurableObject<AppEnv> {
-  async put(key: string, bytes: ArrayBuffer, expires: number | null, pendingPersistent = false) {
+  async put(
+    key: string,
+    bytes: ArrayBuffer,
+    expires: number | null,
+    pendingPersistent = false,
+    thumbnail?: ArrayBuffer,
+  ) {
     if (
       bytes.byteLength > 2_000_000 ||
+      (thumbnail !== undefined && thumbnail.byteLength > imageLimits.thumbnailBytes) ||
       (expires !== null && (expires <= Date.now() || expires > Date.now() + 600_000))
     )
       throw new Error("EVIDENCE_INVALID");
@@ -29,13 +37,19 @@ export class Evidence extends DurableObject<AppEnv> {
         this.env.MASTER_KEY,
         `evidence:${key}:${i}`,
       );
+    if (thumbnail)
+      values.thumbnail = await seal(
+        Buffer.from(thumbnail).toString("base64"),
+        this.env.MASTER_KEY,
+        `evidence:${key}:thumbnail`,
+      );
     await this.ctx.storage.transaction(async (tx) => {
       await tx.put(values);
       if (expiry !== null) await tx.setAlarm(expiry);
       else await tx.deleteAlarm();
     });
   }
-  async get(key: string): Promise<ArrayBuffer | null> {
+  async get(key: string, thumbnail = false): Promise<ArrayBuffer | null> {
     let meta = await this.ctx.storage.get(["key", "expires", "parts", "pendingPersistent"]);
     if (
       meta.get("key") === key &&
@@ -50,6 +64,17 @@ export class Evidence extends DurableObject<AppEnv> {
       (meta.get("expires") !== null && Number(meta.get("expires")) <= Date.now())
     )
       return null;
+    // 旧对象没有缩略图时回退原图；权限和过期检查与原图完全一致。
+    if (thumbnail) {
+      const cipher = await this.ctx.storage.get<string>("thumbnail");
+      if (cipher)
+        return new Uint8Array(
+          Buffer.from(
+            await unseal<string>(cipher, this.env.MASTER_KEY, `evidence:${key}:thumbnail`),
+            "base64",
+          ),
+        ).buffer;
+    }
     const chunks: Uint8Array[] = [];
     for (let i = 0; i < Number(meta.get("parts")); i++) {
       const cipher = await this.ctx.storage.get<string>("part" + i);
@@ -111,6 +136,7 @@ export class Evidence extends DurableObject<AppEnv> {
           "part1",
           "part2",
           "part3",
+          "thumbnail",
         ]);
         await tx.deleteAlarm();
       }

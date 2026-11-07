@@ -202,7 +202,9 @@ export async function maintenance(env: AppEnv) {
   await tick(env.DB);
   await cleanupAccountCards(env);
   await advanceDispatchGroups(env.DB);
-  const expired = await env.DB.prepare("SELECT * FROM artifacts WHERE expires_at<=? LIMIT 100")
+  const expired = await env.DB.prepare(
+    "SELECT * FROM artifacts WHERE expires_at<=? OR (purpose='vision' AND run_id IN (SELECT id FROM runs WHERE status IN ('succeeded','failed','cancelled','expired','unknown'))) LIMIT 100",
+  )
     .bind(now())
     .all<Row>();
   for (const row of expired.results) {

@@ -18,6 +18,7 @@ import type { AppEnv } from "../../apps/cloud/src/env";
 import { app } from "../../apps/cloud/src/index";
 import { stagehandSchema } from "../../apps/cloud/src/ai/stagehand-schema";
 import { z } from "zod";
+import { validateSnapshotPng } from "../../apps/cloud/src/png";
 app.onError((e, c) => {
   console.error("fixture error", e.message);
   return c.json({ error: e.message }, 500);
@@ -27,6 +28,17 @@ export default {
     if (!["localhost", "127.0.0.1"].includes(new URL(req.url).hostname))
       return new Response(null, { status: 403 });
     const path = new URL(req.url).pathname;
+    if (path === "/_image-validation") {
+      const bytes = new Uint8Array(await req.arrayBuffer());
+      const size = await validateSnapshotPng(bytes);
+      let rejected = false;
+      try {
+        await validateSnapshotPng(bytes.subarray(0, 8));
+      } catch {
+        rejected = true;
+      }
+      return Response.json({ ...size, rejected });
+    }
     if (path === "/_schema") {
       const validate = stagehandSchema(z.toJSONSchema(z.strictObject({ extraction: z.string() })));
       const valid = validate({ extraction: "fixture" });
@@ -67,10 +79,15 @@ export default {
     if (path === "/_evidence") {
       const store = env.EVIDENCE_STORE.getByName("fixture");
       const bytes = new Uint8Array(1_100_000).fill(51).buffer;
-      await store.put("fixture", bytes, Date.now() + 60000);
+      const thumbnail = new Uint8Array(900).fill(17).buffer;
+      await store.put("fixture", bytes, Date.now() + 60000, false, thumbnail);
       const result = await store.get("fixture");
       const other = await store.get("other");
+      const small = await store.get("fixture", true);
+      if (small?.byteLength !== 900 || new Uint8Array(small)[0] !== 17)
+        throw Error("THUMBNAIL_FAILED");
       await store.remove();
+      if (await store.get("fixture", true)) throw Error("THUMBNAIL_NOT_REMOVED");
       return Response.json({
         size: result?.byteLength,
         first: result ? new Uint8Array(result)[0] : null,

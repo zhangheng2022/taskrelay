@@ -1,3 +1,4 @@
+import { fixturePng } from "./image-fixture";
 import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
@@ -287,7 +288,7 @@ test("待交接命令读出后删除聊天，不再排队且不能改挂到新�
   assert.equal(await claim(s.db, "device_test", "deleted-command"), null);
 });
 
-const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString("base64");
+const png = fixturePng.toString("base64");
 test("相同截图并发请求各自拥有暂存对象，冲突仅清理落败对象并返回同一图片", async (t) => {
   const s = await setup(t),
     images = new Map<string, ArrayBuffer>();

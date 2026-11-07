@@ -1,21 +1,36 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import fs, { mkdir, readFile, writeFile } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import path from "node:path";
 import { prepareExtension } from "../apps/desktop/src/main/extension";
+import { workspaceFixture } from "./workspace-fixture";
 
 async function fixture(t: import("node:test").TestContext) {
-  const root = await mkdtemp(path.join(tmpdir(), "relay-extension-"));
+  const root = await workspaceFixture(t, "extension");
   const source = path.join(root, "安装 包", "extension"),
     cache = path.join(root, "runtime");
   await mkdir(path.join(source, "nested"), { recursive: true });
   await writeFile(path.join(source, "manifest.json"), '{"manifest_version":3}');
   await writeFile(path.join(source, "content-script.js"), "// 中文\nglobalThis.fixture = true;\n");
   await writeFile(path.join(source, "nested", "worker.js"), "// worker");
-  t.after(() => rm(root, { recursive: true, force: true }));
   return { source, cache };
 }
+test("扩展发布被拒且没有并发发布者时保留原始权限错误，清理暂存目录", async (t) => {
+  const { source, cache } = await fixture(t);
+  const denied = Object.assign(new Error("fixture rename denied"), { code: "EPERM" });
+  const mock = t.mock.method(fs, "rename", async () => {
+    throw denied;
+  });
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(prepareExtension(source, cache), (error) => error === denied);
+    assert.deepEqual(await fs.readdir(cache), []);
+  } finally {
+    mock.mock.restore();
+    syncBuiltinESMExports();
+  }
+});
 test("正式扩展准备：保留完整字节，复用相同内容，升级使用独立目录", async (t) => {
   const { source, cache } = await fixture(t);
   const prepared = await prepareExtension(source, cache);

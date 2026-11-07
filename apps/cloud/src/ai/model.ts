@@ -37,6 +37,7 @@ export interface RelayModelOptions extends BaseChatModelCallOptions {
   tools?: Tool[];
   maxTokens?: number;
   image?: string;
+  imageRef?: { artifactId: string; epoch: number };
   tokenParameter?: Inference["tokenParameter"];
   /** Explicit formats are used by capability probes before capabilities are known. */
   schema?: Record<string, unknown>;
@@ -176,6 +177,7 @@ export class RelayChatModel extends BaseChatModel<RelayModelOptions> {
       const { profile } = await getModelProfile(this.env, this.modelId, this.version);
       if (
         (options.image ||
+          options.imageRef ||
           wireMessages.some((message) =>
             message.content_blocks?.some((part) => part.type === "image_url"),
           )) &&
@@ -203,6 +205,7 @@ export class RelayChatModel extends BaseChatModel<RelayModelOptions> {
           : {}),
         ...(options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
         ...(options.image ? { image: options.image } : {}),
+        ...(options.imageRef ? { imageRef: options.imageRef } : {}),
         ...(options.tokenParameter ? { tokenParameter: options.tokenParameter } : {}),
         ...(options.schema ? { schema: options.schema } : {}),
         ...(options.jsonMode ? { jsonMode: true } : {}),
@@ -270,6 +273,7 @@ export class RelayChatModel extends BaseChatModel<RelayModelOptions> {
       const wireMessages = fromLangChainMessages(messages);
       if (
         options?.image ||
+        options?.imageRef ||
         wireMessages.some((message) =>
           message.content_blocks?.some((part) => part.type === "image_url"),
         )
@@ -290,6 +294,7 @@ export class RelayChatModel extends BaseChatModel<RelayModelOptions> {
         this.graphId,
         {
           ...(options?.image ? { image: options.image } : {}),
+          ...(options?.imageRef ? { imageRef: options.imageRef } : {}),
           ...(wireSchema ? { wireSchema } : {}),
           ...(config.method ? { format: config.method === "jsonMode" ? "json" : "schema" } : {}),
         },

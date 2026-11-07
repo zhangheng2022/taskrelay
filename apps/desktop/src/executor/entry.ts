@@ -147,7 +147,7 @@ async function onMessage({ data }: { data: any }) {
           await page.locator("#password").fill("synthetic-smoke-secret");
           const masked = await maskedScreenshot(page, ["synthetic-smoke-secret"]);
           if (
-            !masked.startsWith("iVBORw0KGgo") ||
+            !masked.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) ||
             (await page.locator("[data-taskrelay-mask]").count()) !== 0 ||
             (await page.locator("#password").inputValue()) !== "synthetic-smoke-secret"
           )

@@ -7,6 +7,7 @@ import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { PROTOCOL_VERSION } from "../packages/contracts/src/index";
+import { workspaceFixture } from "./workspace-fixture";
 
 const exec = promisify(execFile);
 test("CDP 策略可幂等应用和升级已有边界补丁，未知源码拒绝改写", async (t) => {
@@ -52,12 +53,7 @@ test("CDP 策略可幂等应用和升级已有边界补丁，未知源码拒绝�
   assert.equal(await readFile(target, "utf8"), patched + "\n// unexpected upstream change\n");
 });
 test("安装验收范围识别独立浏览器测试改动，纯文档可跳过", async (t) => {
-  const prefix = path.join(os.tmpdir(), "taskrelay-scope-");
-  const directory = await mkdtemp(prefix);
-  t.after(async () => {
-    assert.ok(path.resolve(directory).startsWith(prefix));
-    await rm(directory, { recursive: true, force: true });
-  });
+  const directory = await workspaceFixture(t, "scope");
   const git = (...args: string[]) => exec("git", args, { cwd: directory });
   await git("init");
   await git("config", "user.name", "Scope Fixture");

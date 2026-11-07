@@ -1,3 +1,4 @@
+import { fixturePng } from "./image-fixture";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
@@ -49,7 +50,7 @@ test("私有快照：生产上传校验租约、文件类型、归属及过期�
     epoch: s.run.leaseEpoch,
     captureId: crypto.randomUUID(),
     phase: "waiting",
-    image: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString("base64"),
+    image: fixturePng.toString("base64"),
   };
   assert.equal((await s.request(root, { ...body, epoch: 99 })).data.error, "LEASE_EXPIRED");
   assert.equal((await s.request(root, { ...body, image: "text" })).data.error, "PNG_REQUIRED");
@@ -169,7 +170,7 @@ test("不可信页面无法通过截图读取其他站点秘密；敏感文字�
     ]);
     assert.doesNotMatch(inputs.join("\n"), /visible-secret|other-site-password|001234/);
     assert.deepEqual(Array.from((dom.window as any).captured), []);
-    const { data, info } = await sharp(Buffer.from(image, "base64"))
+    const { data, info } = await sharp(Buffer.from(image))
       .ensureAlpha()
       .raw()
       .toBuffer({ resolveWithObject: true });
@@ -217,7 +218,7 @@ test("相邻 span 分割秘密和邮箱仍遮蔽全部片段，跨块普通文�
       "visible-secret",
       "invisible-other-site-secret",
     ]);
-    const { data, info } = await sharp(Buffer.from(image, "base64"))
+    const { data, info } = await sharp(Buffer.from(image))
       .ensureAlpha()
       .raw()
       .toBuffer({ resolveWithObject: true });

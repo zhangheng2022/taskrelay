@@ -61,7 +61,7 @@ test("Stagehand 图片只转发脱敏截图，取消时不交回可执行的定�
       if (cancelled) throw Error("CANCEL_REQUESTED");
     },
     redact: (text) => text,
-    image: async () => "data:image/png;base64,bWFza2Vk",
+    image: async () => "vision_masked",
     request: async (body) => {
       sent = body;
       cancelled = true;
@@ -83,7 +83,8 @@ test("Stagehand 图片只转发脱敏截图，取消时不交回可执行的定�
     }),
     /CANCEL_REQUESTED/,
   );
-  assert.equal(sent.image, "data:image/png;base64,bWFza2Vk");
+  assert.equal(sent.imageArtifactId, "vision_masked");
+  assert.equal(sent.image, undefined);
   assert.doesNotMatch(JSON.stringify(sent), /c2VjcmV0/);
 });
 

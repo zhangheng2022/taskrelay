@@ -29,6 +29,7 @@ export interface Tool {
 export interface Inference {
   messages: Message[];
   image?: string;
+  imageRef?: { artifactId: string; epoch: number };
   tools?: Tool[];
   toolChoice?: "auto" | "required";
   schema?: Record<string, unknown>;
@@ -51,6 +52,7 @@ export async function infer(
   request: Inference,
   fetcher: Fetcher = fetch,
 ): Promise<ModelResponse> {
+  if (request.imageRef) throw Error("IMAGE_REFERENCE_UNRESOLVED");
   // 从尾部单次扫描，避免未匹配的长斜杠序列触发正则反复回溯。
   let end = profile.baseUrl.length;
   while (end > 0 && profile.baseUrl[end - 1] === "/") end--;

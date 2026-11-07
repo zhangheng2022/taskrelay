@@ -9,7 +9,7 @@ test("图片上传后消息发布失败，后续节点复用对象但仍附图�
     "run:epoch",
     async () => {
       captures++;
-      return "masked-png";
+      return { image: Buffer.from("masked-png") };
     },
     async () => {
       uploads++;

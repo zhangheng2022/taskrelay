@@ -1,6 +1,7 @@
 import type { Page } from "@browserbasehq/stagehand";
 import { Buffer } from "node:buffer";
 import sharp from "sharp";
+import { imageLimits, type SnapshotImage } from "../../../../packages/contracts/src/images";
 
 export function redactSnapshot(value: string, secrets: Iterable<string>) {
   for (const secret of secrets) if (secret) value = value.split(secret).join("[已隐藏]");
@@ -129,11 +130,9 @@ export async function maskedScreenshot(page: Page, secrets: string[]) {
             data.writeUInt32BE(0x777777ff, (y * info.width + x) * 4);
       }
     }
-    return (
-      await sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } })
-        .png()
-        .toBuffer()
-    ).toString("base64");
+    return await sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } })
+      .png()
+      .toBuffer();
   } finally {
     await page
       .evaluate((marker) => {
@@ -154,6 +153,51 @@ export async function maskedScreenshot(page: Page, secrets: string[]) {
       }, marker)
       .catch(() => {});
   }
+}
+
+/** 在脱敏完成后按字节预算缩放；不量化颜色，不裁掉页面，也不回退未经脱敏的原图。 */
+export async function prepareSnapshot(
+  masked: Uint8Array,
+  thumbnail = true,
+): Promise<SnapshotImage> {
+  const source = Buffer.from(masked);
+  const meta = await sharp(source, { limitInputPixels: imageLimits.pixels }).metadata();
+  if (!meta.width || !meta.height) throw Error("SNAPSHOT_CAPTURE_FAILED");
+  const encode = async (maxBytes: number, width: number, height: number, minimum: number) => {
+    for (;;) {
+      const image = await sharp(source, { limitInputPixels: imageLimits.pixels })
+        .resize({ width, height, fit: "inside", withoutEnlargement: true })
+        .png({ compressionLevel: 9 })
+        .toBuffer();
+      if (image.length <= maxBytes) return image;
+      if (Math.max(width, height) <= minimum) throw Error("IMAGE_TOO_LARGE");
+      const scale = Math.max(0.75, minimum / Math.max(width, height));
+      width = Math.max(1, Math.floor(width * scale));
+      height = Math.max(1, Math.floor(height * scale));
+    }
+  };
+  const image =
+    source.length <= imageLimits.bytes
+      ? source
+      : await encode(
+          imageLimits.bytes,
+          meta.width,
+          meta.height,
+          Math.min(640, Math.max(meta.width, meta.height)),
+        );
+  return {
+    image,
+    ...(thumbnail
+      ? {
+          thumbnail: await encode(
+            imageLimits.thumbnailBytes,
+            imageLimits.thumbnailWidth,
+            imageLimits.thumbnailHeight,
+            128,
+          ),
+        }
+      : {}),
+  };
 }
 
 export async function loadingFacts(page: Page) {

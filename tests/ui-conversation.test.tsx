@@ -441,7 +441,7 @@ test("截图直接显示在聊天，不渲染旧运行事件卡；停止不调�
   await waitFor(() => assert.ok(v.getByRole("img", { name: "执行现场" })));
   assert.equal(
     v.getByRole("img", { name: "执行现场" }).getAttribute("src"),
-    "/api/user/artifacts/image_one",
+    "/api/user/artifacts/image_one?variant=thumbnail",
   );
   assert.equal(v.queryByText(/页面快照 #/), null);
   fireEvent.click(v.getByRole("button", { name: "停止执行" }));

@@ -1,9 +1,10 @@
+import { imageUploader } from "./image-upload";
 import type { Page, ClientLLM } from "@browserbasehq/stagehand";
 import type { TaskRun } from "../../../../packages/contracts/src/index";
 import type { Message, ModelResponse } from "../../../../packages/model/src/index";
 import { type ChatPart, type HelpResponse } from "../../../../packages/contracts/src/execution";
 import { publicUrl, hash } from "../../../../packages/contracts/src/security";
-import { maskedScreenshot, redactSnapshot, loadingFacts } from "./snapshots";
+import { maskedScreenshot, prepareSnapshot, redactSnapshot, loadingFacts } from "./snapshots";
 import { startProxy } from "./proxy";
 import { stagehandModel } from "./stagehand-model";
 import { runExecutionGraph } from "./execution-graph";
@@ -104,12 +105,29 @@ export async function execute(
     });
     screenshots.published(parts);
   };
+  const upload = imageUploader(`${run.id}:${run.leaseEpoch}`, guard, (captureId, image, purpose) =>
+    port.rpc(
+      `/api/runner/runs/${run.id}/snapshots`,
+      { epoch: run.leaseEpoch, captureId, purpose, thumbnail: image.thumbnail },
+      image.image,
+    ),
+  );
   const screenshots = chatSnapshots(
     `${run.id}:${run.leaseEpoch}`,
-    () => maskedScreenshot(page!, [...secrets]),
-    (captureId, image) => api("snapshots", { captureId, image }),
+    async () => prepareSnapshot(await maskedScreenshot(page!, [...secrets])),
+    (captureId, image) => upload(image, "chat", captureId),
   );
-  const shot = screenshots.take;
+  const shot = async (event: string) => {
+    const image = await screenshots.take(event);
+    if (image.error) {
+      guard();
+      // 网络中断时消息也可能暂不可达；最终回复和显式截图工具仍携带失败事实。
+      await say(`snapshot-error:${event}`, `${image.error}，本次未附图。`, [], false).catch(
+        () => {},
+      );
+    }
+    return image;
+  };
   const errorShot = async (error: string) => {
     let scene: unknown;
     try {
@@ -344,7 +362,13 @@ export async function execute(
         guard,
         redact: (text) => text,
         context: sdkContext,
-        image: async () => `data:image/png;base64,${await maskedScreenshot(page!, [...secrets])}`,
+        image: async () =>
+          (
+            await upload(
+              await prepareSnapshot(await maskedScreenshot(page!, [...secrets]), false),
+              "vision",
+            )
+          ).id,
         request: (input) => api("stagehand", input),
         beforeReturn: async (result) => {
           await beforeAction?.(result);
@@ -728,7 +752,7 @@ export async function execute(
         try {
           await complete(
             writePending ? "unknown" : "succeeded",
-            text,
+            image.error ? `${text}\n\n${image.error}，本次未附最终截图。` : text,
             writePending ? "unconfirmed" : "reported",
             plannedUserSeq,
           );
