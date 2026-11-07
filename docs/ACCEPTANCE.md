@@ -1,5 +1,11 @@
 # TaskRelay 验收记录
 
+## 2026-11-08 发布前 CI 回归：本地回执 FIFO
+
+PR #10 的首轮 Linux 测试发现同毫秒写入时，`created_at,id` 索引会按随机请求 ID 倒置 finish/browser-closed；本机较慢写入未稳定触发。未切换生产。schema 4 基线在发布前增加 outbox 内的递增 `ordinal` 及唯一索引；序号分配与入队在同一 SQL 写入完成，时间只保存事实时点，重复 ID 不改变原位置。离线转换按旧时间/rowid 顺序固化新序号，重复转换同时核对顺序，目标被重排即拒绝。
+
+确定性回归覆盖同毫秒、时钟回拨、随机 ID、重复请求、重启、旧回执转换与目标顺序篡改；本地定向验证通过。前批本机 0.19.0 调试产物不含此修复，不能作为最终发布证据；正式托管构建和主分支门槛须对修复后的提交重新验收。
+
 ## 2026-11-07 补齐审查、下载与桌面包内 smoke（本机，未部署/安装）
 
 补审前批跳过的 `.codex/config.toml`、`.graphifyrc`、执行器提示词差异和完整 1935 行 Drizzle 映射，保留原有内容。对照 SQL、认证调用、归属约束、状态、时间及密文语义，未发现新增可复现问题。下载和 Forge 变更也完成差异复审；OCR preview/rule 成功，宿主累计审查本工作区差异 **total_files=190、reviewed_files=190、skipped_files=0、coverage_rate=100%**，包含默认排除的 SQL、测试、声明和配置，不是全仓审查，未调用 OCR 外部模型。逐路径记录仍在 `.cache/db-refactor/ocr-review.json`。

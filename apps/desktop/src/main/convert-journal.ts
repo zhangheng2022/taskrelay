@@ -1,6 +1,6 @@
 /** 离线转换旧 Main SQLite；只读源库，写入独立 schema 4 文件，原库永久保留。
  * 必须持有应用单实例锁且尚未启动执行器；转换只保留事实，不恢复浏览器或清空 unknown。 */
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 import {
   existsSync,
   renameSync,
@@ -58,11 +58,14 @@ export function convertJournal(directory: string) {
           )
             throw Error("LOCAL_TARGET_CONFLICT");
           const find = check.prepare(`SELECT * FROM ${table} WHERE ${primary}=?`);
+          const order = table === "outbox" ? " ORDER BY created_at,rowid" : "";
+          let ordinal = 0;
           // 本地索引逐条比较，避免重复转换以全量数组两两查找而退化为 O(n²)。
-          for (const row of old.prepare(`SELECT * FROM ${table}${where}`).iterate()) {
+          for (const row of old.prepare(`SELECT * FROM ${table}${where}${order}`).iterate()) {
             const actual = find.get(row[primary!]);
             if (
               !actual ||
+              (table === "outbox" && actual.ordinal !== ++ordinal) ||
               !Object.entries(row).every(
                 ([k, v]) =>
                   actual[k] ===
@@ -90,7 +93,14 @@ export function convertJournal(directory: string) {
     next.exec(journalSchema);
     next.exec("BEGIN IMMEDIATE");
     for (const table of ["config", "journal", "outbox"]) {
-      for (const row of old.prepare(`SELECT * FROM ${table}`).iterate()) {
+      // 旧队列同时间沿 rowid 的原插入顺序；显式固化到新序号，不能按幂等 ID 重排。
+      const order = table === "outbox" ? " ORDER BY created_at,rowid" : "";
+      let ordinal = 0;
+      for (const original of old.prepare(`SELECT * FROM ${table}${order}`).iterate()) {
+        const row: Record<string, SQLOutputValue> = {
+          ...original,
+          ...(table === "outbox" ? { ordinal: ++ordinal } : {}),
+        };
         if (table === "config" && row.key === "historyEpoch") continue;
         const columns = Object.keys(row),
           values = columns.map((k) => {

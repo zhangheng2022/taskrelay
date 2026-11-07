@@ -6,6 +6,33 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+test("回执按入队顺序发送：同毫秒、时钟回拨、随机 ID 与重复请求不能倒置结果和关闭确认", (t) => {
+  const directory = mkdtempSync(path.join(tmpdir(), "taskrelay-fifo-"));
+  let journal = new Journal(directory);
+  t.after(() => {
+    journal.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
+  const clock = t.mock.method(Date, "now", () => 1000);
+  journal.queue("z_finish", "/api/runner/runs/run/finish", { epoch: 2 });
+  journal.queue("a_closed", "/api/runner/runs/run/browser-closed", { epoch: 2 });
+  clock.mock.mockImplementation(() => 500);
+  journal.queue("b_later", "/api/runner/runs/later/finish", { epoch: 3 });
+  journal.queue("z_finish", "/ignored-retry", { epoch: 99 });
+  journal.close();
+  journal = new Journal(directory);
+  assert.deepEqual(
+    journal.pending().map((r) => r.id),
+    ["z_finish", "a_closed", "b_later"],
+  );
+  assert.equal(JSON.parse(journal.pending()[0].body).epoch, 2);
+  journal.remove("z_finish");
+  assert.deepEqual(
+    journal.pending().map((r) => r.id),
+    ["a_closed", "b_later"],
+  );
+});
+
 test("正式 Cloud.connect 允许转换后的终态回执等待确认，仍拒绝未收尾检查点和其他旧请求", async (t) => {
   const bundle = await build({
     entryPoints: ["apps/desktop/src/main/cloud.ts"],

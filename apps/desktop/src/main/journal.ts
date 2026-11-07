@@ -78,13 +78,18 @@ export class Journal {
   }
   queue(id: string, p: string, body: unknown) {
     this.db
-      .prepare("INSERT OR IGNORE INTO outbox(id,path,body,created_at) VALUES(?,?,?,?)")
+      // 序号在同一 SQL 写入中从索引尾部取得；重复幂等 ID 不改变原回执的位置。
+      .prepare(
+        "INSERT OR IGNORE INTO outbox(id,path,body,created_at,ordinal) SELECT ?,?,?,?,COALESCE(MAX(ordinal),0)+1 FROM outbox",
+      )
       .run(id, p, JSON.stringify(body), Date.now());
   }
   pending() {
-    return this.db
-      .prepare("SELECT id,path,body FROM outbox ORDER BY created_at,id LIMIT 100")
-      .all() as { id: string; path: string; body: string }[];
+    return this.db.prepare("SELECT id,path,body FROM outbox ORDER BY ordinal LIMIT 100").all() as {
+      id: string;
+      path: string;
+      body: string;
+    }[];
   }
   remove(id: string) {
     this.db.prepare("DELETE FROM outbox WHERE id=?").run(id);

@@ -230,6 +230,9 @@ test("桌面离线转换保留配置、待确认回执和检查点，正常 Main
   db.exec(
     `INSERT INTO config VALUES('token','"opaque-safeStorage"');INSERT INTO cache VALUES('old','{}');INSERT INTO journal VALUES('run','generation',2,'unknown','{}','2026-11-01T00:00:00.000Z');INSERT INTO outbox VALUES('receipt','/finish','{"epoch":2}','2026-11-01T00:00:00.000Z')`,
   );
+  db.exec(
+    `INSERT INTO outbox VALUES('a_closed','/browser-closed','{"epoch":2}','2026-11-01T00:00:00.000Z')`,
+  );
   db.close();
   assert.throws(() => new Journal(directory), /LOCAL_STORAGE_CONVERSION_REQUIRED/);
   writeFileSync(path.join(directory, "taskrelay-v4.sqlite.partial"), "interrupted sqlite");
@@ -248,10 +251,18 @@ test("桌面离线转换保留配置、待确认回执和检查点，正常 Main
   try {
     assert.equal(journal.get("token"), "opaque-safeStorage");
     assert.equal(journal.pending()[0].id, "receipt");
+    assert.deepEqual(
+      journal.pending().map((r) => r.id),
+      ["receipt", "a_closed"],
+    );
     assert.equal(journal.incomplete()[0].generation, "generation");
     assert.equal(journal.cached("old"), null);
     assert.equal(journal.diagnostic().schema, 4);
   } finally {
     journal.close();
   }
+  const changed = new DatabaseSync(path.join(directory, "taskrelay-v4.sqlite"));
+  changed.exec("UPDATE outbox SET ordinal=ordinal+10 WHERE id='receipt'");
+  changed.close();
+  assert.throws(() => convertJournal(directory), /LOCAL_TARGET_CONFLICT/);
 });

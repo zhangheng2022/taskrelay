@@ -39,15 +39,17 @@ CREATE TABLE outbox (
   path TEXT NOT NULL,
   -- 事实回执 JSON，保留原租约 epoch 和请求身份。
   body TEXT NOT NULL CHECK(json_valid(body)),
-  -- 入队 UTC Unix 毫秒；同毫秒以 ID 稳定排序。
-  created_at INTEGER NOT NULL CHECK(typeof(created_at)='integer')
+  -- 入队 UTC Unix 毫秒；只用于事实时点，不作为发送顺序。
+  created_at INTEGER NOT NULL CHECK(typeof(created_at)='integer'),
+  -- 本机 outbox 内的入队顺序；同毫秒或系统时钟回拨也必须先发送较早事实。
+  ordinal INTEGER NOT NULL CHECK(ordinal>0)
 );
 -- 恢复仅扫描未完成检查点，终态历史增长不增加恢复扫描量。
 CREATE INDEX journal_open ON journal(updated_at,run_id) WHERE state NOT IN ('finished','abandoned');
 -- 有界诊断读取最新 30 条，避免扫描并排序全部历史。
 CREATE INDEX journal_latest ON journal(updated_at DESC,run_id DESC);
--- 发送队列的稳定顺序，不为每次待发送查询重新排序。
-CREATE INDEX outbox_order ON outbox(created_at,id);
+-- FIFO 顺序唯一索引；结果必须先于随后入队的浏览器关闭确认，不依赖随机请求 ID。
+CREATE UNIQUE INDEX outbox_order ON outbox(ordinal);
 PRAGMA user_version=4;
 COMMIT;
 `;
