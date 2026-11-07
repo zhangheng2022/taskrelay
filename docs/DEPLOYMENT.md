@@ -1,5 +1,38 @@
 # 部署与恢复
 
+## 2026-11-08 全量重置发布（已授权，准备中）
+
+用户本轮明确要求清空全部数据、不保留历史，覆盖前批存量离线转换要求。本次清空云端认证/业务成员、账号凭据、模型配置、配对设备、任务、聊天、运行、图片/浏览器状态以及各 DO 的旧状态；保留既有平台 Secret，不读取、生成或覆盖 MASTER_KEY，不生成历史转换归档。上线后需重新登录、配置模型及配对设备；本机安装和旧 Profile 不由云端清空操作处理。
+
+已创建 Free 范围内的新 D1 `taskrelay-v2-20261108`（`1951016f-1c9b-459e-a332-75266106f7ad`），按新基线初始化，尚未切换生产。生产仍为原 D1 和协议 17。提交代码并通过主分支质量门槛后，从固定 SHA 触发正式发布；preflight 成功后再暂停旧库交办/领取并确认无活动或清理。先部署 `scripts/db/reset-worker.ts`，移除全部 DO 绑定/类并应用 `storage-v2-reset-drop-20261108`，再由正式发布部署正常入口、应用 `storage-v2-reset-create-20261108` 创建七个空 SQLite DO 命名空间。两阶段不合并为旧对象格式转换；删除阶段永久销毁旧命名空间数据。模型出站仍由美国 jurisdiction 执行。
+
+本地迁移与生产发布按绑定名 `DB` 查库，避免换库后脚本仍指向旧名称；旧的直接写入事件/挑战表的 UI seed 脚本已移除，界面检查沿用独立 Transport 夹具。新库在切换前保持冻结；删除阶段和核验完成后才解除冻结供正式发布流程使用。核验新 Worker、唯一 D1 绑定、新命名空间、公开更新包和权限后删除原业务 D1。旧数据销毁后不能回滚旧库/旧命名空间。正式托管安装证据、生产版本和最终结果将在验收文档记录；当前准备状态不等于部署成功。
+
+## 存储 v2 离线切换（源码 0.19.0，尚未部署）
+
+以下保留数据的切换方案仍供未来需要时参考，本次按上节用户授权执行全量重置。
+
+本轮是独立新基线，协议 18、图 relay-graph-4、桌面 SQLite 4。下方既有 0001–0030 增量发布记录是历史证据，不能对当前生产库直接执行新 `0001_storage_v2.sql`。常规 `release-production` 预检拒绝没有 storage_meta=2 或仍冻结的库；发布 API 的目标 ID 从唯一 Wrangler D1 配置读取。当前配置仍指向原生产库，本轮没有创建云资源、改绑定、部署或实际安装。本机 0.19.0 的安装包已生成，包内 smoke 通过，下载器使用固定资源分段缓存和完整校验，详见 [验收记录](ACCEPTANCE.md#2026-11-07-补齐审查下载与桌面包内-smoke本机未部署安装)。这些调试产物不替代托管 Windows 的正式安装及发布验收。
+
+1. 维护窗口先在旧代码中停接交办、暂停领取，等正在执行和浏览器清理结束，排空模型、图投递、命令、inbox、清理作业和设备待确认回执。unknown 已终态且清理确认的运行可保留，其账号锁不解锁、不重放。停止旧 Main；为源 D1 记录恢复点并导出，在受控本机完成 SQLite checkpoint。不得转换仍有非空 WAL 的文件。
+2. 将 Worker 临时切换到 `scripts/db/freeze-worker.ts`，保留原 Worker、DO 类名/namespace/jurisdiction 和绑定；它对请求返回 503，alarm 只延后，不写 D1 或对象正文。必须先排空再冻结，不能用换代码中断仍有未知提交的 I/O。记录源恢复点、源文件 SHA-256、设备列表和已有 MASTER_KEY 的安全保管位置；**不得生成或覆盖 MASTER_KEY**。
+3. 只读预检并核对每表数量、成员归属、密文和对象引用数量。未绑定旧成员的归属由操作者制作 `owner-bindings.json`（业务成员 ID → 已验证 auth_user ID），不能依赖首次登录接管。冻结对象正文的 GCM/分块核验在第 6 步完成；退休 checkpoint 的原格式不恢复，完整原库另行加密归档。
+
+   ```powershell
+   npm run db:convert -- --source <旧库.sqlite> --inspect
+   npm run db:convert -- --source <旧库.sqlite> --target <新库.sqlite> --archive <旧库.archive.enc> --owner-bindings <owner-bindings.json>
+   npm run db:convert -- --source <新库.sqlite> --target <私有导入.sql> --export
+   ```
+
+   命令从安全环境读取原 MASTER_KEY，不在参数或输出中打印密钥。转换拒绝未排空、非法归属、丢失身份、错误密钥、未映射表或缺失引用；输出 `.conversion.json` 清单和整体 AES-GCM 原库归档。历史 ID、版本和对象键保留，早期可见消息进入统一历史；旧图关闭并推进 generation，旧待确认卡失效。输入始终只读，重试核对源/目标/归档摘要；同源中断的 `.partial` 从头重建，完整归档必须通过认证，不能把部分文件当恢复点。导入文件包含私有数据，按数据库同等权限保管，禁止提交仓库。
+
+4. 在同一账号、现有 Free 范围内另建独立 D1（仍只绑定一个业务库；若额度/资源数不够则阻断），先对**新库**应用当前基线，再以 Wrangler D1 `execute --file <私有导入.sql> --remote` 导入。导出文件只接受空新基线，延迟外键、事务内暂时移除触发器并在结束前恢复，逐表核对行数；长 JSON/密文以临时分块表组装为完整值后才写目标表。导入失败保留冻结状态，核验整次事务/恢复点后重试，不对半导入库续写或开放业务。核对 foreign_key_check、结构、数量、顺序、样本解密与对象引用；D1 行/值仍受平台 2 MB 限制。
+5. 旧 Main 关闭并持有完整备份后，运行新版可执行文件的 `--taskrelay-convert-storage`，持有单实例锁，仅写独立 `taskrelay-v4.sqlite`，原 `taskrelay.sqlite` 保留。配置、generation、epoch、journal、待确认回执 ID/body 保留，时间转换为 UTC 毫秒，cache 不迁移。正常 Main 拒绝旧结构或更高版本，不重建。必须逐设备验证转换及包内/实际安装；用户无需安装 Node.js。终态/浏览器关闭回执可在升级后以原身份确认，未收尾检查点和其他旧请求仍阻止协议升级，不能为了升级清掉回执或 unknown。
+6. 把唯一 D1 绑定改为已核验新库并部署匹配代码，DO 绑定及原 MASTER_KEY 保持不变；新库初始 maintenance=1、claimsEnabled=0、storageFrozen=1。通过原 Better Auth 管理员会话调用 `GET /api/admin/storage/status`，每批至多 10 个引用调用 `POST /api/admin/storage/objects/convert`，body 为 `{objects:[{kind:"evidence"或"browser-state",key:原对象键}]}`。入口只接受真实 D1 引用，逐块验证密文、键、顺序与大小后标记格式 2。缺对象/缺片/错误密钥/未来格式均阻断；pending 每次最多返回 50 条，循环至空。冻结期间仅保留必要会话登录、设备状态/升级和管理员存储控制入口；其他业务和后台写入暂停。
+7. 核对全部设备、回执、对象及新库后，管理员调用 `POST /api/admin/storage/activate`，body 为 `{objectsVerified:true,clientsPrepared:true}`。数据库事务再次核对所有引用已有验证记录且无排队/活动/未清理运行，只取消 storageFrozen；维护与领取开关继续由受控发布流程恢复，不自动解锁账号。开放前可以整体退回原代码、原 D1/DO 元数据与旧 Main 恢复点；**开放写入后不得直接切回旧库**，需要新的停写与正向数据恢复方案。DO 元数据转换前也应保留对象恢复点，不能把只有 D1 备份称为完整回退。
+
+源库、加密归档、对象恢复点和清单不自动删除。切换前还须核对清单目标字节数和导出写行估算：单库超过 500 MB 或导入所需读/写超过当日 Free 剩余额度时阻断，不在一个维护窗口内强行导入、不临时购买服务。估算不含全部 DDL、已有种子删除及并行认证活动，实际计量以 D1 meta 为准。此流程仍需匹配产物及实际源库预检通过后执行；隔离验证不证明生产 D1 并发、真实模型地区、实际 Windows 安装或网站闭环。
+
 2026-11-07 图片链路源码批次：桌面版本 0.18.0，协议仍为 17，尚未部署、发布或安装。发布须先应用 `0029_image_references.sql`，再部署云端／网站，最后发布桌面；旧 JSON 上传、旧图片及 `format=data` 保留兼容，新桌面依赖新版云端的 multipart 和图片引用入口，不能先更新桌面。迁移只添加图片用途、租约代次和摘要字段；不绑定 R2，不更换 MASTER_KEY。打包在 runtime 依赖下载时因 npm 域名解析失败中断，尚无本批可验收安装包；不得复用旧 smoke 报告。
 
 2026-11-06 首次 [Actions 正式发布 42239257763](https://github.com/zhangheng2022/taskrelay/actions/runs/42239257763) 已完成，源提交 `41c916c133c449736afc92cd66203cff2d16cf83`。先记录 D1 恢复点并应用 0028，再部署 Worker `09848417-7a05-4d18-8dde-6be64eb360ab`（100%），随后发布 [0.17.1](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.17.1)、完整核验 Cloudflare 下载并切换 D1 更新目录。发布记录为 complete，领取恢复 1、维护恢复 0；两个域名健康均报告该 SHA，更新目录均为 0.17.1，匿名用户／管理员接口均为 401。

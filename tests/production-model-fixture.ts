@@ -1,3 +1,4 @@
+import { dbTime } from "../apps/cloud/src/database";
 import { requestUrl, jsonBody } from "./http-fixture";
 import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
@@ -18,18 +19,11 @@ export async function productionModelFixture(
   t.after(() => sql.close());
   const key = Buffer.alloc(32, 9).toString("base64"),
     token = "c".repeat(64);
-  const task = await insertTask(db);
-  await enqueue(db, task, "model_fixture");
-  await db
-    .prepare("INSERT INTO devices(id,name,token_hash,protocol_version) VALUES(?,?,?,17)")
-    .bind("device_test", "fixture", await hash(token))
-    .run();
-  const run = (await claim(db, "device_test", "claim_fixture"))!;
   // A newer configuration must never replace the version in the run snapshot.
   for (const version of [1, 2]) {
     await db
       .prepare(
-        "INSERT INTO model_profiles(id,version,config,secret,capabilities,created_at) VALUES(?,?,?,?,?,?)",
+        "INSERT INTO model_profile_versions(id,version,config,secret,capabilities,created_at) VALUES(?,?,?,?,?,?)",
       )
       .bind(
         "model_test",
@@ -50,10 +44,17 @@ export async function productionModelFixture(
           vision: false,
           testedAt: null,
         }),
-        new Date().toISOString(),
+        dbTime(new Date().toISOString()),
       )
       .run();
   }
+  const task = await insertTask(db);
+  await enqueue(db, task, "model_fixture");
+  await db
+    .prepare("INSERT INTO devices(id,name,token_hash,protocol_version) VALUES(?,?,?,18)")
+    .bind("device_test", "fixture", await hash(token))
+    .run();
+  const run = (await claim(db, "device_test", "claim_fixture"))!;
   const env = { DB: db, MASTER_KEY: key, DEV_MODE: "1" } as AppEnv;
   attachTestEgress(env);
   let responder: ((body: any) => string) | null = null;
@@ -213,7 +214,7 @@ export async function productionModelFixture(
           headers: {
             ...(form ? {} : { "content-type": "application/json" }),
             ...(path.startsWith("/api/runner/") || path.startsWith("/api/device/")
-              ? { "x-taskrelay-protocol": "17", Authorization: `Bearer ${token}` }
+              ? { "x-taskrelay-protocol": "18", Authorization: `Bearer ${token}` }
               : {}),
           },
           body: method === "GET" ? undefined : (form ?? JSON.stringify(body)),

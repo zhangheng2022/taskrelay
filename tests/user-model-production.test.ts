@@ -11,21 +11,28 @@ async function setup(t: TestContext, protocol: "chat" | "responses" = "chat") {
   s.sql.prepare("UPDATE runs SET thread_id=? WHERE id=?").run(thread.id, s.run.id);
   const account = { username: "user@example.com", password: "Secret!001", note: "使用邮箱登录" };
   const secret = await seal(account, s.env.MASTER_KEY, "account:account_help");
+  s.sql.exec("BEGIN");
   s.sql
     .prepare(
-      "INSERT INTO accounts(id,name,origin,username_hint,secret,profile_id,user_id,created_at) VALUES('account_help','已保存账号','https://example.com','',?,'profile_test','legacy_owner','2026-11-05')",
+      "INSERT INTO accounts(id,name,origin,username_hint,profile_id,user_id,created_at) VALUES('account_help','已保存账号','https://example.com','','profile_test','fixture_owner',1793836800000)",
     )
-    .run(secret);
+    .run();
   s.sql
     .prepare(
-      "INSERT INTO account_credential_versions(account_id,version,secret,login_origins,created_at) VALUES('account_help',1,?,'[\"https://example.com\"]','2026-11-05')",
+      "INSERT INTO account_credential_versions(account_id,version,secret,login_origins,created_at) VALUES('account_help',1,?,'[\"https://example.com\"]',1793836800000)",
     )
     .run(secret);
+  s.sql.exec("COMMIT");
   // 新协议在领取时固定账号，协助只使用此账号，不在已打开的 Profile 内切换身份。
   s.sql.prepare("UPDATE account_locks SET account_key='account_help' WHERE run_id=?").run(s.run.id);
   s.sql
     .prepare(
-      "UPDATE runs SET account_id='account_help',account_key='account_help',profile_id='profile_test',task_snapshot=json_set(task_snapshot,'$.accountId','account_help') WHERE id=?",
+      "UPDATE runs SET account_id='account_help',account_key='account_help',profile_id='profile_test' WHERE id=?",
+    )
+    .run(s.run.id);
+  s.sql
+    .prepare(
+      "UPDATE run_snapshots SET task_snapshot=json_set(task_snapshot,'$.accountId','account_help') WHERE run_id=?",
     )
     .run(s.run.id);
   return {
@@ -107,7 +114,12 @@ for (const unavailable of ["owner", "origin", "device", "locked"] as const)
     const s = await setup(t);
     if (unavailable === "owner") {
       s.sql.prepare("INSERT INTO members(id) VALUES('another_user')").run();
-      s.sql.prepare("UPDATE accounts SET user_id='another_user' WHERE id='account_help'").run();
+      assert.throws(
+        () =>
+          s.sql.prepare("UPDATE accounts SET user_id='another_user' WHERE id='account_help'").run(),
+        /FOREIGN KEY/,
+      );
+      return;
     }
     if (unavailable === "origin")
       s.sql

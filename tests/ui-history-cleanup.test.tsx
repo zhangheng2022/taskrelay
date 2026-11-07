@@ -16,6 +16,51 @@ afterEach(() => {
 });
 const job = { id: "job", status: "pending", completed: 0, total: 3, error: null };
 
+test("删除接受后迟到的列表翻页不能重新显示已删除历史", async () => {
+  history.replaceState(null, "", "/#" + task.id);
+  let deleted = false,
+    resolvePage!: (value: unknown) => void;
+  const pending = new Promise((resolve) => {
+    resolvePage = resolve;
+  });
+  const transport = transportWith(async (method, path) => {
+    if (path === "/api/user/snapshot")
+      return {
+        ...snapshot,
+        tasks: deleted ? [] : [task],
+        nextTasksCursor: deleted ? null : "older",
+      };
+    if (path.startsWith("/api/user/tasks?")) return pending;
+    if (path.includes("preview")) return { chats: 1, active: 0 };
+    if (path === "/api/user/history-cleanups") {
+      if (method === "GET") return [];
+      deleted = true;
+      return job;
+    }
+    if (method === "GET" && path.split("?")[0] === "/api/user/threads")
+      return {
+        items: deleted ? [] : [{ id: threadPage.id, task_id: task.id, model_id: task.modelId }],
+        nextCursor: null,
+      };
+    return { ...threadPage, taskId: deleted ? null : task.id };
+  });
+  const view = render(<App transport={transport} />);
+  fireEvent.click(await view.findByRole("button", { name: "加载更多任务" }));
+  fireEvent.keyDown(await view.findByRole("button", { name: "任务操作" }), { key: "Enter" });
+  fireEvent.click(await view.findByRole("menuitem", { name: "删除聊天" }));
+  const confirm = await view.findByRole("button", { name: "确认删除聊天" });
+  await waitFor(() => assert.equal(confirm.hasAttribute("disabled"), false));
+  fireEvent.click(confirm);
+  await waitFor(() => assert.equal(location.hash, ""));
+  await act(async () =>
+    resolvePage({
+      items: [{ ...task, id: "removed-old", title: "不可复活的旧任务" }],
+      nextCursor: null,
+    }),
+  );
+  assert.equal(view.queryByText("不可复活的旧任务"), null);
+});
+
 test("清理须确认，失败重试复用请求 ID，重复点击不并发提交", async () => {
   const bodies: unknown[] = [];
   let resolve!: (value: unknown) => void,
@@ -65,8 +110,11 @@ test("删除其他聊天保留当前输入，删除当前聊天才返回新任�
       tasks = tasks.filter((t) => t.id !== body.targetId);
       return job;
     }
-    if (path === "/api/user/threads" && method === "GET")
-      return [{ id: threadPage.id, model_id: task.modelId, task_id: task.id }];
+    if (path.split("?")[0] === "/api/user/threads" && method === "GET")
+      return {
+        items: [{ id: threadPage.id, model_id: task.modelId, task_id: task.id }],
+        nextCursor: null,
+      };
     return { ...threadPage, taskId: task.id };
   });
   const v = render(<App transport={transport} />);
@@ -113,8 +161,11 @@ test("发送未完成时从顶部清空，旧请求结束后新会话仍可发�
       taskId: task.id,
       messages: [],
     };
-    if (path === "/api/user/threads" && method === "GET")
-      return [{ id: page.id, model_id: task.modelId, task_id: task.id }];
+    if (path.split("?")[0] === "/api/user/threads" && method === "GET")
+      return {
+        items: [{ id: page.id, model_id: task.modelId, task_id: task.id }],
+        nextCursor: null,
+      };
     if (method === "POST" && path.endsWith("/messages")) {
       writes.push(path);
       if (writes.length === 1)

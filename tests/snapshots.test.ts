@@ -66,12 +66,12 @@ test("私有快照：生产上传校验租约、文件类型、归属及过期�
   assert.equal(binary.headers.get("X-Content-Type-Options"), "nosniff");
   assert.deepEqual(Buffer.from(await binary.arrayBuffer()), Buffer.from(body.image, "base64"));
   s.sql.exec("INSERT INTO members(id,role) VALUES('other_snapshot','user')");
-  s.sql.prepare("UPDATE runs SET user_id='other_snapshot' WHERE id=?").run(s.run.id);
-  assert.equal((await read()).status, 404);
-  s.sql.prepare("UPDATE runs SET user_id='legacy_owner' WHERE id=?").run(s.run.id);
-  s.sql
-    .prepare("UPDATE artifacts SET expires_at='2000-01-01T00:00:00Z' WHERE id=?")
-    .run(saved.data.id);
+  assert.throws(
+    () => s.sql.prepare("UPDATE runs SET user_id='other_snapshot' WHERE id=?").run(s.run.id),
+    /FOREIGN KEY/,
+  );
+  assert.equal((await read()).status, 200);
+  s.sql.prepare("UPDATE artifacts SET expires_at=946684800000 WHERE id=?").run(saved.data.id);
   assert.equal((await read()).status, 404);
   assert.equal(s.jobs(), 0);
 });

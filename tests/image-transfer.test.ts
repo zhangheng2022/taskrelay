@@ -209,7 +209,7 @@ for (const protocol of ["chat", "responses"] as const)
     const s = await setup(t, protocol);
     s.sql
       .prepare(
-        "UPDATE model_profiles SET capabilities=json_set(capabilities,'$.vision',json('true'))",
+        "UPDATE model_profile_versions SET capabilities=json_set(capabilities,'$.vision',json('true'))",
       )
       .run();
     const saved = await s.upload("vision");
@@ -289,7 +289,7 @@ for (const protocol of ["chat", "responses"] as const)
       "IMAGE_REFERENCE_INVALID",
     );
     s.sql
-      .prepare("UPDATE artifacts SET lease_epoch=?,expires_at='2000-01-01' WHERE id=?")
+      .prepare("UPDATE artifacts SET lease_epoch=?,expires_at=946684800000 WHERE id=?")
       .run(s.run.leaseEpoch, artifactId);
     assert.equal(
       (await s.request(`/api/runner/runs/${s.run.id}/stagehand`, { ...body, requestId: "expired" }))

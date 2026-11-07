@@ -6,28 +6,15 @@ import type { Transport } from "../../contracts/src/index";
 import type { ThreadPage } from "../../contracts/src/conversation";
 export type { ThreadPage } from "../../contracts/src/conversation";
 import { createApi, rpcData } from "./api";
-function mergeReplies(a: ThreadPage["replies"], b: ThreadPage["replies"]) {
-  return [...(a ?? []).filter((m) => !b?.some((n) => n.id === m.id)), ...(b ?? [])].sort(
-    (a, b) => a.cursor - b.cursor,
-  );
-}
 function mergeLatest(previous: ThreadPage, next: ThreadPage): ThreadPage {
   // 最新页只更新尾部内容；历史游标属于已加载的历史范围，null 也表示已读到底。
-  // 若两次读取之间新增超过一页，仍从新窗口回补缺口；旧协助 cursor 非连续编号，
-  // 没有重叠时保守回补，避免把此前的 null 当作新消息也已全部加载。
+  // 若两次读取之间新增超过一页，仍从新窗口回补缺口，避免遗漏新消息。
   const messageGap =
     next.nextCursor !== null &&
     (next.messages[0]?.seq ?? 0) > (previous.messages.at(-1)?.seq ?? 0) + 1;
-  const replyGap =
-    next.nextReplyCursor !== undefined &&
-    next.nextReplyCursor !== null &&
-    (next.replies?.[0]?.cursor ?? 0) > (previous.replies?.at(-1)?.cursor ?? 0);
   return {
     ...next,
     nextCursor: previous.messages.length && !messageGap ? previous.nextCursor : next.nextCursor,
-    nextReplyCursor:
-      previous.replies?.length && !replyGap ? previous.nextReplyCursor : next.nextReplyCursor,
-    replies: mergeReplies(previous.replies, next.replies),
     messages: [
       ...previous.messages.filter((m) => !next.messages.some((n) => n.id === m.id)),
       ...next.messages,
@@ -77,9 +64,15 @@ export function useThread(
     setLoading(!!modelId);
     if (!modelId) return;
     (async () => {
-      const list = await rpcData(createApi(transport).api.user.threads.$get());
+      const list = await rpcData(
+        createApi(transport).api.user.threads.$get({
+          query: { modelId, ...(taskId ? { taskId } : { unattached: "true" as const }) },
+        }),
+      );
       if (generation.current !== g) return;
-      const found = list.find((t) => t.model_id === modelId && (t.task_id ?? undefined) === taskId);
+      const found = list.items.find(
+        (t) => t.model_id === modelId && (t.task_id ?? undefined) === taskId,
+      );
       const p = found
         ? await rpcData(
             createApi(transport).api.user.threads[":id"].$get({
@@ -209,7 +202,7 @@ export function useThread(
   }
   async function older() {
     const p = current.current;
-    if (!p || loadingOlder.current || (!p.nextCursor && !p.nextReplyCursor)) return;
+    if (!p || loadingOlder.current || !p.nextCursor) return;
     const g = generation.current;
     const ticket = Symbol();
     loadingOlder.current = ticket;
@@ -217,7 +210,7 @@ export function useThread(
       const old = await rpcData(
         createApi(transport).api.user.threads[":id"].$get({
           param: { id: p.id },
-          query: { before: p.nextCursor ?? 1, beforeReply: p.nextReplyCursor ?? 1 },
+          query: { before: p.nextCursor ?? 1 },
         }),
       );
       if (g === generation.current && current.current)
@@ -228,11 +221,6 @@ export function useThread(
             current.current.nextCursor === p.nextCursor
               ? old.nextCursor
               : current.current.nextCursor,
-          nextReplyCursor:
-            current.current.nextReplyCursor === p.nextReplyCursor
-              ? old.nextReplyCursor
-              : current.current.nextReplyCursor,
-          replies: mergeReplies(old.replies, current.current.replies),
           messages: [...current.current.messages, ...old.messages]
             .filter((m, i, a) => a.findIndex((n) => n.id === m.id) === i)
             .sort((a, b) => a.seq - b.seq),

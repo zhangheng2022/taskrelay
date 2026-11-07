@@ -1,3 +1,4 @@
+import { dbTime } from "../database";
 /**
  * 将云端交办决策转为任务快照与待投递命令，在同一事务中保存二者。
  * 后续投递以回合标识去重，使中断后的补投不会重复创建执行批次。
@@ -38,7 +39,7 @@ export async function commitDecision(
     return;
   }
   const existing = t.task_id
-    ? await env.DB.prepare("SELECT * FROM tasks WHERE id=? AND user_id=?")
+    ? await env.DB.prepare("SELECT * FROM task_details WHERE id=? AND user_id=?")
         .bind(t.task_id, t.user_id)
         .first<Row>()
     : null;
@@ -93,23 +94,41 @@ export async function commitDecision(
     env.DB.prepare(
       `INSERT OR IGNORE INTO conversation_commands(id,thread_id,task_id,run_task,created_at)
       SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM ai_threads WHERE id=? AND active_turn=? AND version=? AND closed=0)`,
-    ).bind(turnId, t.id, definition.id, JSON.stringify(definition), now(), t.id, turnId, t.version),
+    ).bind(
+      turnId,
+      t.id,
+      definition.id,
+      JSON.stringify(definition),
+      dbTime(now()),
+      t.id,
+      turnId,
+      t.version,
+    ),
     env.DB.prepare(
-      `INSERT INTO tasks(id,version,definition,status,next_run_at,created_at,updated_at,user_id)
-      SELECT ?,?,?,?,NULL,?,?,? WHERE ${fence} ON CONFLICT(id) DO UPDATE SET version=excluded.version,definition=excluded.definition,status=excluded.status,next_run_at=NULL,confirmed_condition=NULL,context_withdrawn=0,updated_at=excluded.updated_at`,
+      `INSERT INTO tasks(id,version,title,schedule_kind,status,next_run_at,created_at,updated_at,user_id)
+      SELECT ?,?,?,?,?,NULL,?,?,? WHERE ${fence} ON CONFLICT(id) DO UPDATE SET version=excluded.version,title=excluded.title,schedule_kind=excluded.schedule_kind,status=excluded.status,next_run_at=NULL,confirmed_condition=NULL,context_withdrawn=0,updated_at=excluded.updated_at`,
     ).bind(
       definition.id,
       definition.version,
-      JSON.stringify(definition),
+      definition.title,
+      definition.schedule.kind,
       definition.status,
-      definition.createdAt,
-      now(),
+      dbTime(definition.createdAt),
+      dbTime(now()),
       t.user_id,
       turnId,
     ),
     env.DB.prepare(
-      `INSERT OR IGNORE INTO task_versions(task_id,version,definition) SELECT ?,?,? WHERE ${fence}`,
-    ).bind(definition.id, definition.version, JSON.stringify(definition), turnId),
+      `INSERT OR IGNORE INTO task_versions(task_id,version,definition,user_id,model_id,model_version) SELECT ?,?,?,?,?,? WHERE ${fence}`,
+    ).bind(
+      definition.id,
+      definition.version,
+      JSON.stringify(definition),
+      t.user_id,
+      definition.modelId,
+      definition.modelVersion,
+      turnId,
+    ),
     env.DB.prepare(`UPDATE ai_threads SET task_id=? WHERE id=? AND ${fence}`).bind(
       definition.id,
       t.id,

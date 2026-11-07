@@ -10,6 +10,7 @@ import { hashPassword } from "better-auth/crypto";
 import { z } from "zod";
 import type { AppEnv } from "../../apps/cloud/src/env";
 import { AiTurn as ProductionAiTurn } from "../../apps/cloud/src/ai/turn";
+import { applicationDb } from "../../apps/cloud/src/database";
 
 const reply = {
   reply: "请描述任务目标",
@@ -37,12 +38,13 @@ const value = { text: "中文 checkpoint ".repeat(700) };
 function profileEnv(bindings: AppEnv) {
   const env = {
     ...bindings,
+    DB: applicationDb(bindings.DB),
     DEV_MODE: "0",
     AUTH_SECRET: "isolated-profiling-secret-at-least-32-characters",
     AUTH_BASE_URL: "http://localhost",
     OWNER_EMAIL: "profile@example.com",
     MASTER_KEY: btoa(String.fromCharCode(...new Uint8Array(32).fill(9))),
-    requestUserId: "legacy_owner",
+    requestUserId: "profiler",
   } as AppEnv;
   attachTestEgress(env);
   return env;
@@ -69,9 +71,12 @@ export default {
         env.DB.prepare(
           "INSERT INTO auth_account(id,accountId,providerId,userId,password,createdAt,updatedAt) VALUES(?,?,'credential',?,?,?,?)",
         ).bind("profiler", "profiler", "profiler", await hashPassword(password), at, at),
+        env.DB.prepare(
+          "INSERT INTO members(id,auth_id,email,role) VALUES('profiler','profiler','profile@example.com','admin')",
+        ),
         env.DB.prepare("UPDATE members SET daily_models=10000,daily_chat=10000"),
         env.DB.prepare(
-          "INSERT INTO model_profiles(id,version,config,secret,capabilities,created_at) VALUES(?,?,?,?,?,?)",
+          "INSERT INTO model_profile_versions(id,version,config,secret,capabilities,created_at) VALUES(?,?,?,?,?,?)",
         ).bind(
           "model_test",
           1,
@@ -91,7 +96,7 @@ export default {
             vision: false,
             testedAt: null,
           }),
-          new Date().toISOString(),
+          Date.now(),
         ),
       ]);
       return identity(env).handler(
@@ -108,7 +113,7 @@ export default {
       return Response.json({ ok: true, operations: 10 });
     }
     if (path === "/bench/checkpoint") {
-      const saver = new D1Checkpointer(env.DB, "legacy_owner", env.MASTER_KEY);
+      const saver = new D1Checkpointer(env.DB, "profiler", env.MASTER_KEY);
       for (let i = 0; i < 10; i++) {
         const c = { configurable: { thread_id: crypto.randomUUID() } },
           cp = emptyCheckpoint();

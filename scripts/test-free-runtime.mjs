@@ -72,7 +72,7 @@ try {
       headers: {
         "Content-Type": "application/json",
         ...(path.startsWith("/api/runner/")
-          ? { Authorization: "Bearer " + "d".repeat(64), "x-taskrelay-protocol": "15" }
+          ? { Authorization: "Bearer " + "d".repeat(64), "x-taskrelay-protocol": "18" }
           : {}),
       },
       body: body ? JSON.stringify(body) : undefined,
@@ -150,7 +150,7 @@ try {
     { retained: 1100000, duplicateSafe: true, orphan: null, deleted: null, retired: 2 },
   );
   const ws = new WebSocket(origin.replace("http:", "ws:") + "/api/device/events", {
-    headers: { Authorization: "Bearer " + "d".repeat(64), "x-taskrelay-protocol": "15" },
+    headers: { Authorization: "Bearer " + "d".repeat(64), "x-taskrelay-protocol": "18" },
   });
   await new Promise((resolve, reject) => {
     ws.once("open", resolve);

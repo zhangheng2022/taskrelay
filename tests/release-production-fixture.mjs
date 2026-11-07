@@ -5,6 +5,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import fs from "node:fs";
 import { Readable } from "node:stream";
 import { createHash } from "node:crypto";
+import { dbPath } from "../scripts/release-api.mjs";
 import childProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import { requestUrl } from "./http-fixture.ts";
@@ -49,19 +50,20 @@ const migrations = readdirSync("apps/cloud/migrations")
 sql.exec("CREATE TABLE d1_migrations(name TEXT PRIMARY KEY)");
 const migrate = (names) => {
   for (const name of names) {
+    if (sql.prepare("SELECT name FROM d1_migrations WHERE name=?").get(name)) continue;
     sql.exec(readFileSync(`apps/cloud/migrations/${name}`, "utf8"));
     sql.prepare("INSERT INTO d1_migrations VALUES(?)").run(name);
   }
 };
-migrate(migrations.slice(0, -1));
+migrate(migrations);
 sql.exec(
   "INSERT OR REPLACE INTO settings(key,value) VALUES('claimsEnabled','1'),('maintenance','0')",
 );
 sql
   .prepare(
-    "INSERT INTO devices(id,name,token_hash,last_seen,protocol_version) VALUES('fixture','fixture','fixture',?,17)",
+    "INSERT INTO devices(id,name,token_hash,last_seen,protocol_version) VALUES('fixture','fixture','fixture',?,18)",
   )
-  .run(new Date().toISOString());
+  .run(Date.now());
 if (mode === "no-device") sql.exec("UPDATE devices SET claim_ready=0");
 const state = () =>
   Object.fromEntries(
@@ -220,7 +222,7 @@ globalThis.fetch = async (input, options) => {
     assert.equal(deployed, true);
     return Response.json({
       service: "TaskRelay",
-      protocolVersion: 17,
+      protocolVersion: 18,
       sourceCommit: mode === "resume-unknown" ? "b".repeat(40) : process.env.RELEASE_SHA,
     });
   }
@@ -263,8 +265,8 @@ globalThis.fetch = async (input, options) => {
     assert.equal(catalog.releases.at(-1).sha256, candidate.sha256);
     return new Response(mode === "bad-download" ? Buffer.alloc(bytes.length) : bytes);
   }
-  const db =
-    "https://api.cloudflare.com/client/v4/accounts/b3a410496c5e49e582b4af19d2f2eec6/d1/database/9d387f48-6e34-4af4-a2a0-10f958d65a16";
+  // 与生产入口读取同一绑定身份；网络仍全部截获到隔离 SQLite，不访问实际 D1。
+  const db = `https://api.cloudflare.com/client/v4${dbPath}`;
   if (url === db + "/time_travel/bookmark")
     return Response.json({ success: true, result: { bookmark: "fixture-bookmark" } });
   if (url === db + "/query") {

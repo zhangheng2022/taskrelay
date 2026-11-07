@@ -1,3 +1,4 @@
+import { dbTime } from "../apps/cloud/src/database";
 import { requestUrl, jsonBody } from "./http-fixture";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -100,12 +101,12 @@ test("认证数据库异常不向响应或控制台泄露查询参数", async ()
     .prepare(
       "INSERT INTO auth_user(id,name,email,emailVerified,createdAt,updatedAt) VALUES(?,?,?,1,?,?)",
     )
-    .run("broken", "Test", "broken@example.com", at, at);
+    .run("broken", "Test", "broken@example.com", dbTime(at), dbTime(at));
   sql
     .prepare(
       "INSERT INTO auth_account(id,accountId,providerId,userId,password,createdAt,updatedAt) VALUES('broken','broken','credential','broken','old-secret-hash',?,?)",
     )
-    .run(at, at);
+    .run(dbTime(at), dbTime(at));
   await ctx.internalAdapter.createVerificationValue({
     identifier: "reset-password:test-token",
     value: "broken",

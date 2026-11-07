@@ -23,6 +23,7 @@ import { writeFile } from "node:fs/promises";
 import { existsSync, realpathSync } from "node:fs";
 import { z } from "zod";
 import { Journal } from "./journal";
+import { convertJournal } from "./convert-journal";
 import { Cloud } from "./cloud";
 import { OwnedBrowser } from "./browser";
 import { ProtectedStateFiles } from "./protected-state";
@@ -303,6 +304,15 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
   void app
     .whenReady()
     .then(async () => {
+      if (process.argv.includes("--taskrelay-convert-storage")) {
+        try {
+          convertJournal(app.getPath("userData"));
+          app.exit(0);
+        } catch {
+          app.exit(1);
+        }
+        return;
+      }
       // Resolve Windows filesystem virtualization before native child-process launches.
       // A redirected path can be readable by fs while CreateProcess rejects it.
       const root = realpathSync.native(

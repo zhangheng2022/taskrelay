@@ -171,7 +171,6 @@ export function AccountCard({
   const changed = pending && baseline.current !== credentialIdentity(value);
   const title = detail?.kind === "update" ? "修改站点账号" : "保存站点账号";
   const saveLabel = detail?.kind === "update" && detail.canResume ? "保存并继续" : "保存账号";
-  if (detail?.supersededBy) return null;
   // 聊天只显示确认所需摘要；完整字段按需进入对话框，密码控件不常驻聊天 DOM。
   return (
     <Card className="my-2 w-full min-w-0 max-w-md gap-3 py-3 whitespace-normal" aria-label={title}>

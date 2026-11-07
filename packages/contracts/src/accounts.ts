@@ -56,5 +56,4 @@ export interface AccountCardDetail {
   username?: string;
   password?: string;
   expiresAt: string;
-  supersededBy?: string;
 }

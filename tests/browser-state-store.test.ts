@@ -1,3 +1,4 @@
+import { dbTime } from "../apps/cloud/src/database";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { build } from "esbuild";
@@ -14,12 +15,15 @@ test(
     export class InspectedState extends BrowserStateStore {
       async inspect(){return Object.fromEntries(await this.ctx.storage.list());}
       async reconcileNow(){await super.alarm();}
+      async legacy(){await this.ctx.storage.delete('formatVersion');}
     }
     export default {async fetch(request,env){
       const {key,operation,value}=await request.json(),state=env.STATES.getByName(key);
       if(operation==='put'){await state.put(key,new TextEncoder().encode(value).buffer);return Response.json({ok:true});}
       if(operation==='get'){const data=await state.get(key);return Response.json({value:data?new TextDecoder().decode(data):null});}
       if(operation==='alarm'){await state.reconcileNow();return Response.json({ok:true});}
+      if(operation==='legacy'){await state.legacy();return Response.json({ok:true});}
+      if(operation==='convert')return Response.json(await state.convertMetadata(key));
       return Response.json(await state.inspect());
     }};`,
         resolveDir: process.cwd(),
@@ -53,7 +57,7 @@ test(
     t.after(() => mf.dispose());
     const db = await mf.getD1Database("DB");
     await db.exec(
-      "CREATE TABLE accounts(state_object_key TEXT,previous_state_object_key TEXT); CREATE TABLE browser_state_candidates(object_key TEXT,retired INTEGER,expires_at TEXT); CREATE TABLE browser_state_retirements(object_key TEXT PRIMARY KEY,retired_at TEXT);",
+      "CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT); CREATE TABLE accounts(state_object_key TEXT,previous_state_object_key TEXT); CREATE TABLE browser_state_candidates(object_key TEXT,retired INTEGER,expires_at INTEGER); CREATE TABLE browser_state_retirements(object_key TEXT PRIMARY KEY,retired_at INTEGER);",
     );
     const request = async (operation: string, key = "snapshot", value?: string) => {
       const response = await mf.dispatchFetch("https://fixture.test/", {
@@ -72,6 +76,17 @@ test(
     assert.equal(stored.parts, 3);
     assert.equal(JSON.stringify(stored).includes("synthetic-private-token"), false);
     assert.equal((await request("get")).value, payload);
+    await request("legacy");
+    const rejected = await mf.dispatchFetch("https://fixture.test/", {
+      method: "POST",
+      body: JSON.stringify({ operation: "get", key: "snapshot" }),
+    });
+    assert.equal(rejected.status, 500);
+    await db.prepare("INSERT INTO settings VALUES('storageFrozen','1')").run();
+    assert.equal((await request("convert")).converted, true);
+    assert.equal((await request("convert")).converted, false);
+    assert.equal((await request("get")).value, payload);
+    await db.prepare("DELETE FROM settings WHERE key='storageFrozen'").run();
     const duplicate = await mf.dispatchFetch("https://fixture.test/", {
       method: "POST",
       body: JSON.stringify({ key: "snapshot", operation: "put", value: "replace" }),
@@ -91,11 +106,11 @@ test(
     await request("put", "pending", "temporary");
     await db
       .prepare("INSERT INTO browser_state_candidates VALUES(?,0,?)")
-      .bind("pending", new Date(Date.now() + 60_000).toISOString())
+      .bind("pending", dbTime(new Date(Date.now() + 60_000).toISOString()))
       .run();
     await request("alarm", "pending");
     assert.equal((await request("get", "pending")).value, "temporary");
-    await db.prepare("UPDATE browser_state_candidates SET expires_at='2000-01-01'").run();
+    await db.prepare("UPDATE browser_state_candidates SET expires_at=946684800000").run();
     await request("alarm", "pending");
     assert.equal((await request("get", "pending")).value, null);
   },

@@ -1,3 +1,4 @@
+import { dbTime } from "../apps/cloud/src/database";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { productionModelFixture } from "./production-model-fixture";
@@ -36,7 +37,7 @@ for (const protocol of ["chat", "responses"] as const)
     assert.equal(
       s.sql.prepare("SELECT execution_protocol FROM runs WHERE task_id=?").get(r.data.taskId)!
         .execution_protocol,
-      17,
+      18,
     );
   });
 test("意图不明只追问，不创建运行", async (t) => {
@@ -66,7 +67,7 @@ test("交办已入队但尚未提升时，原请求重试继续处理且不重�
       body.requestId,
       await hash(body.content),
       body.content,
-      new Date().toISOString(),
+      dbTime(new Date().toISOString()),
     );
   s.replies(decision());
   const reply = await s.request(`/api/user/threads/${th.id}/messages`, body);
@@ -155,7 +156,7 @@ test("本人聊天和当前任务模型可读协助回复，普通存储仍为�
   assert.ok(r.data.messages.some((m: any) => m.content === "0012Ab!"));
   assert.deepEqual((await s.request("/api/user/snapshot", null, "GET")).data.waitingHelp, []);
   assert.doesNotMatch(
-    JSON.stringify(s.sql.prepare("SELECT content FROM ai_messages").all()),
+    JSON.stringify(s.sql.prepare("SELECT content FROM message_details").all()),
     /0012Ab/,
   );
   const ctx = await s.request(`/api/runner/runs/${s.run.id}/context`, { epoch: s.run.leaseEpoch });
@@ -172,7 +173,7 @@ test("最长原始交办超过模型窗口时明确拒绝，不把用户原话�
     th = (await s.request("/api/user/threads", { modelId: "model_test" })).data;
   s.sql
     .prepare(
-      "UPDATE model_profiles SET config=json_set(config,'$.contextTokens',6000,'$.outputTokens',1024) WHERE id='model_test'",
+      "UPDATE model_profile_versions SET config=json_set(config,'$.contextTokens',6000,'$.outputTokens',1024) WHERE id='model_test'",
     )
     .run();
   s.respond((body) =>
@@ -218,7 +219,7 @@ test("摘要用途使用固定任务模型且没有决策工具，context 返回
       .data;
   s.sql.prepare("UPDATE runs SET thread_id=? WHERE id=?").run(th.id, s.run.id);
   s.sql.exec(
-    "UPDATE model_profiles SET config=json_set(config,'$.contextTokens',24000,'$.outputTokens',2048) WHERE id='model_test' AND version=1",
+    "UPDATE model_profile_versions SET config=json_set(config,'$.contextTokens',24000,'$.outputTokens',2048) WHERE id='model_test' AND version=1",
   );
   const ctx = await s.request(`/api/runner/runs/${s.run.id}/context`, { epoch: s.run.leaseEpoch });
   assert.deepEqual(ctx.data.modelContext, { contextTokens: 24000, outputTokens: 2048 });

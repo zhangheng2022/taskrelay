@@ -27,7 +27,7 @@ test("聊天图片长期保存，清空聊天同时删除图片，旧运行不�
   });
   assert.equal(r.status, 200, JSON.stringify(r.data));
   assert.ok(
-    Date.parse(String(s.sql.prepare("SELECT expires_at FROM artifacts").get()!.expires_at)) >
+    Number(s.sql.prepare("SELECT expires_at FROM artifacts").get()!.expires_at) >
       Date.now() + 86400000,
   );
   assert.equal(images.size, 1);
@@ -49,7 +49,7 @@ test("图片删除暂时失败后本人可以重试，删除标记阻止新写�
       .data;
   s.sql
     .prepare(
-      "INSERT INTO artifacts(id,run_id,object_key,content_type,expires_at,thread_id,persistent) VALUES('delete_retry',?,'image','image/png','9999-01-01',?,1)",
+      "INSERT INTO artifacts(id,run_id,object_key,content_type,expires_at,thread_id,persistent) VALUES('delete_retry',?,'image','image/png',253370764800000,?,1)",
     )
     .run(s.run.id, th.id);
   let fails = true;

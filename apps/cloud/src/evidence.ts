@@ -19,7 +19,7 @@ export async function putEvidence(
 }
 export async function getEvidence(env: AppEnv, key: string, thumbnail = false) {
   if (env.EVIDENCE_STORE) return env.EVIDENCE_STORE.getByName(key).get(key, thumbnail);
-  // Only isolated legacy tests use an injected storage adapter.
+  // Only isolated tests use an injected storage adapter.
   if (env.DEV_MODE === "1" && env.EVIDENCE) {
     const r = await env.EVIDENCE.get(key);
     return r ? (r.arrayBuffer ? r.arrayBuffer() : new Response(r.body).arrayBuffer()) : null;

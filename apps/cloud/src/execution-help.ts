@@ -1,3 +1,4 @@
+import { dbTime } from "./database";
 import type { AppEnv } from "./env";
 import type { ExecutionHelp, HelpResponse } from "../../../packages/contracts/src/execution";
 import type { TaskRun } from "../../../packages/contracts/src/index";
@@ -38,7 +39,7 @@ export async function queueHelpReply(env: AppEnv, helpId: string, messageId: str
       messageId,
       help.interrupt_id,
       help.question_round,
-      now(),
+      dbTime(now()),
       help.thread_id,
       help.id,
       help.graph_id,
@@ -72,7 +73,7 @@ export async function resolveHelp(
       thread.id,
       run.leaseEpoch,
       JSON.stringify(request),
-      now(),
+      dbTime(now()),
       graphId,
       thread.id,
     ),
@@ -86,7 +87,7 @@ export async function resolveHelp(
       run.userId,
       run.id,
       help.id,
-      now(),
+      dbTime(now()),
       help.id,
       run.id,
       run.leaseEpoch,

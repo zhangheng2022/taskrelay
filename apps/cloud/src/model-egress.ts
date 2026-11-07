@@ -1,3 +1,4 @@
+import { applicationDb } from "./database";
 import { DurableObject } from "cloudflare:workers";
 import type { AppEnv } from "./env";
 import { EgressState } from "./egress-state";
@@ -7,7 +8,7 @@ import { performInference } from "./models";
 export class ModelEgress extends DurableObject<AppEnv> {
   private jobs: EgressState;
   constructor(ctx: DurableObjectState, env: AppEnv) {
-    super(ctx, env);
+    super(ctx, { ...env, DB: applicationDb(env.DB) });
     this.jobs = new EgressState(ctx.storage, env.MASTER_KEY, async (value) => {
       const job = value as EgressJob;
       if (job.kind === "trace") {
@@ -30,7 +31,7 @@ export class ModelEgress extends DurableObject<AppEnv> {
       }
       if (job.kind !== "inference") throw new Error("MODEL_EGRESS_INPUT_INVALID");
       return performInference(
-        env,
+        this.env,
         job.modelId,
         job.version,
         job.request,
@@ -47,7 +48,17 @@ export class ModelEgress extends DurableObject<AppEnv> {
     return this.jobs.ack();
   }
   // Only an alarm calls the provider. No browser request/headers enter this context.
-  alarm() {
+  async alarm() {
+    if (
+      (
+        await this.env.DB.prepare("SELECT value FROM settings WHERE key='storageFrozen'").first<{
+          value: string;
+        }>()
+      )?.value === "1"
+    ) {
+      await this.ctx.storage.setAlarm(Date.now() + 60_000);
+      return;
+    }
     return this.jobs.alarm();
   }
 }

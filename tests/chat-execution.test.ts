@@ -86,7 +86,7 @@ test("完整生产链：执行器模型转发、多项目操作、云端求助�
     if (text.includes("askUser")) {
       const input = s.sql
         .prepare(
-          "SELECT id FROM ai_messages WHERE role='user' AND private_content IS NOT NULL ORDER BY seq DESC LIMIT 1",
+          "SELECT id FROM message_details WHERE role='user' AND private_content IS NOT NULL ORDER BY seq DESC LIMIT 1",
         )
         .get();
       return JSON.stringify(
@@ -169,11 +169,11 @@ test("完整生产链：执行器模型转发、多项目操作、云端求助�
     second,
     1,
     JSON.stringify(
-      s.sql.prepare("SELECT content,parts FROM ai_messages WHERE source='executor'").all(),
+      s.sql.prepare("SELECT content,parts FROM message_details WHERE source='executor'").all(),
     ),
   );
   assert.equal((dom.window.document.querySelector("#answer") as HTMLInputElement).value, "0012Ab!");
-  const saved = s.sql.prepare("SELECT status,result FROM runs WHERE id=?").get(s.run.id)!;
+  const saved = s.sql.prepare("SELECT status,result FROM run_details WHERE id=?").get(s.run.id)!;
   assert.equal(saved.status, "succeeded", String(saved.result));
   const chat = (await s.request(`/api/user/threads/${thread.id}`, null, "GET")).data;
   assert.ok(chat.messages.some((m: any) => m.source === "cloud" && /确认码/.test(m.content)));
@@ -188,5 +188,8 @@ test("完整生产链：执行器模型转发、多项目操作、云端求助�
   );
   assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM artifacts").get()!.n, 1);
   assert.match(JSON.stringify(s.requests), /0012Ab/);
-  assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM batch_progress").get()!.n, 0);
+  assert.equal(
+    s.sql.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE name='batch_progress'").get()!.n,
+    0,
+  );
 });

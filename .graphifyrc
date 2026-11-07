@@ -1,0 +1,2 @@
+# Wrangler 配置使用 JSONC；沿用已验证能读取当前文件的 JSON 结构提取器。
+language.jsonc=json

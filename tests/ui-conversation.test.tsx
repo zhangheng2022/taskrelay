@@ -8,6 +8,45 @@ import type { ThreadPage } from "../packages/ui/src/use-thread";
 import { createWebTransport } from "../apps/web/src/transport";
 afterEach(cleanup);
 
+test("统一消息按 seq 展示，设备时钟偏差不会倒置历史", async () => {
+  const page = {
+    ...threadPage,
+    messages: [
+      {
+        id: "first",
+        seq: 1,
+        role: "assistant",
+        content: "第一条序号消息",
+        at: "2026-11-07T12:00:00Z",
+      },
+      {
+        id: "second",
+        seq: 2,
+        role: "assistant",
+        content: "第二条序号消息",
+        at: "2026-11-07T11:00:00Z",
+      },
+    ],
+  };
+  const transport = transportWith(async (method, path) =>
+    path.split("?")[0] === "/api/user/threads"
+      ? { items: [{ id: page.id, model_id: task.modelId, task_id: task.id }], nextCursor: null }
+      : page,
+  );
+  const view = render(
+    <Conversation
+      transport={transport}
+      task={task}
+      run={null}
+      offline={false}
+      refresh={async () => {}}
+    />,
+  );
+  const first = await view.findByText("第一条序号消息"),
+    second = await view.findByText("第二条序号消息");
+  assert.ok(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING);
+});
+
 test("发送确认沿用同一动画状态行，不把历史消息重新注册为滚动锚点", async () => {
   let resolvePost!: (value: unknown) => void;
   let page: ThreadPage = {
@@ -22,8 +61,11 @@ test("发送确认沿用同一动画状态行，不把历史消息重新注册�
     })),
   };
   const transport = transportWith(async (method, path) => {
-    if (path === "/api/user/threads")
-      return [{ id: page.id, model_id: task.modelId, task_id: task.id }];
+    if (path.split("?")[0] === "/api/user/threads")
+      return {
+        items: [{ id: page.id, model_id: task.modelId, task_id: task.id }],
+        nextCursor: null,
+      };
     if (method === "POST")
       return new Promise((resolve) => {
         resolvePost = resolve;
@@ -72,8 +114,11 @@ test("刷新失败和离线不继续显示旧的云端处理中，恢复后以�
     failed = false;
   let page: ThreadPage = { ...threadPage, activeTurn: "turn" };
   const transport = transportWith(async (_method, path) => {
-    if (path === "/api/user/threads")
-      return [{ id: page.id, model_id: task.modelId, task_id: task.id }];
+    if (path.split("?")[0] === "/api/user/threads")
+      return {
+        items: [{ id: page.id, model_id: task.modelId, task_id: task.id }],
+        nextCursor: null,
+      };
     if (failed) throw Error("OFFLINE");
     return page;
   });
@@ -128,8 +173,11 @@ test("发送立即回显及显示发送中，写入期间通知合并并在返�
   const accepted = { ...threadPage, messages: [user], activeTurn: "turn", waiting: null };
   let latest: ThreadPage = { ...threadPage, waiting: { id: "help", request: "{}" } };
   const transport = transportWith(async (method, path) => {
-    if (path === "/api/user/threads")
-      return [{ id: latest.id, model_id: task.modelId, task_id: task.id }];
+    if (path.split("?")[0] === "/api/user/threads")
+      return {
+        items: [{ id: latest.id, model_id: task.modelId, task_id: task.id }],
+        nextCursor: null,
+      };
     if (method === "POST")
       return new Promise((resolve) => {
         resolvePost = resolve;
@@ -188,8 +236,11 @@ test("读取期间到达的新通知在读取结束后补读，不能丢失最�
     reads = 0;
   const page = { ...threadPage, messages: [] };
   const transport = transportWith(async (_method, path) => {
-    if (path === "/api/user/threads")
-      return [{ id: page.id, model_id: task.modelId, task_id: task.id }];
+    if (path.split("?")[0] === "/api/user/threads")
+      return {
+        items: [{ id: page.id, model_id: task.modelId, task_id: task.id }],
+        nextCursor: null,
+      };
     reads++;
     if (reads === 2)
       return new Promise((resolve) => {
@@ -269,8 +320,8 @@ test("执行过程稳定合并八次读取，刷新不重复，展开保留全�
     ],
   };
   const transport = transportWith(async (_method, path) =>
-    path === "/api/user/threads"
-      ? [{ id: page.id, model_id: task.modelId, task_id: task.id }]
+    path.split("?")[0] === "/api/user/threads"
+      ? { items: [{ id: page.id, model_id: task.modelId, task_id: task.id }], nextCursor: null }
       : page,
   );
   transport.subscribe = (fn) => {
@@ -305,8 +356,11 @@ test("响应丢失后收到空闲会话通知，重试仍使用原 requestId", a
   let notify = () => {};
   let page: ThreadPage = { ...threadPage, taskId: task.id, activeTurn: null };
   const transport = transportWith(async (method, path, body) => {
-    if (path === "/api/user/threads")
-      return [{ id: page.id, model_id: task.modelId, task_id: task.id }];
+    if (path.split("?")[0] === "/api/user/threads")
+      return {
+        items: [{ id: page.id, model_id: task.modelId, task_id: task.id }],
+        nextCursor: null,
+      };
     if (method === "POST" && path.endsWith("/messages")) {
       ids.push(body.requestId);
       page = {
@@ -371,8 +425,11 @@ test("统一聊天：协助和补充都使用同一个输入框与消息入口",
     ],
   };
   const transport = transportWith(async (method, path, body) => {
-    if (method === "GET" && path === "/api/user/threads")
-      return [{ id: page.id, model_id: task.modelId, task_id: task.id }];
+    if (method === "GET" && path.split("?")[0] === "/api/user/threads")
+      return {
+        items: [{ id: page.id, model_id: task.modelId, task_id: task.id }],
+        nextCursor: null,
+      };
     if (method === "POST" && path.endsWith("/messages")) {
       writes.push({ path, body });
       page = {
@@ -421,8 +478,11 @@ test("截图直接显示在聊天，不渲染旧运行事件卡；停止不调�
     ],
   };
   const transport = transportWith(async (method, path, body) => {
-    if (method === "GET" && path === "/api/user/threads")
-      return [{ id: page.id, model_id: task.modelId, task_id: task.id }];
+    if (method === "GET" && path.split("?")[0] === "/api/user/threads")
+      return {
+        items: [{ id: page.id, model_id: task.modelId, task_id: task.id }],
+        nextCursor: null,
+      };
     assert.ok(!path.includes("/artifacts/"), "图片不得经过 JSON 通道");
     if (method === "POST") writes.push({ path, body });
     return page;
@@ -455,8 +515,11 @@ test("连续运行通知合并读取，不饿死聊天刷新", async () => {
     reads = 0;
   const page = { ...threadPage, taskId: task.id, messages: [] };
   const transport = transportWith(async (_method, path) => {
-    if (path === "/api/user/threads")
-      return [{ id: page.id, model_id: task.modelId, task_id: task.id }];
+    if (path.split("?")[0] === "/api/user/threads")
+      return {
+        items: [{ id: page.id, model_id: task.modelId, task_id: task.id }],
+        nextCursor: null,
+      };
     reads++;
     if (reads === 1) return page;
     return new Promise((resolve) => {

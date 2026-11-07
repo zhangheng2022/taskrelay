@@ -1,5 +1,98 @@
 # TaskRelay 验收记录
 
+## 2026-11-07 补齐审查、下载与桌面包内 smoke（本机，未部署/安装）
+
+补审前批跳过的 `.codex/config.toml`、`.graphifyrc`、执行器提示词差异和完整 1935 行 Drizzle 映射，保留原有内容。对照 SQL、认证调用、归属约束、状态、时间及密文语义，未发现新增可复现问题。下载和 Forge 变更也完成差异复审；OCR preview/rule 成功，宿主累计审查本工作区差异 **total_files=190、reviewed_files=190、skipped_files=0、coverage_rate=100%**，包含默认排除的 SQL、测试、声明和配置，不是全仓审查，未调用 OCR 外部模型。逐路径记录仍在 `.cache/db-refactor/ocr-review.json`。
+
+浏览器原下载每次从头开始，curl 的单次超时及更短的外层进程超时不能覆盖当前慢链路。构建下载改为系统 curl、4 路并发、4 MiB 分段，校验 Content-Range/长度与 ETag，超时保留合法前缀；重跑只补缺少内容，整体 SHA-256 通过后才替换缓存。错误范围或哈希不替换原缓存，已校验的完整缓存不再请求网络，3 个进程/网络隔离测试通过。Chrome for Testing 固定 157.0.8103.38 的 210600182 字节官方压缩包校验为 `ae0deef27d449e1d7529df7705d609bab102de48464da13567ed3dd2ee1a0586`，305 个资源文件逐一校验通过，缓存命中复验通过。没有换版本、放宽 TLS、禁用沙箱或跳过哈希。
+
+Forge 的默认 Electron 下载曾停留在 0 字节；改用同一下载入口并保留已安装 Electron 依赖的官方清单及 `@electron/get` 二次校验。Electron 45.2.3 的 158182975 字节官方压缩包 SHA-256 为 `489cd061908e697394b004298bf5ffd345c935d10e8ca197ba819f019ab2dec0`。`npm run make` 成功，主进程、Preload、Executor 和 Renderer 均构建，生成 Windows x64 解包程序及 Squirrel 安装包。
+
+| 本机构建产物                                                             |    字节数 | SHA-256                                                            |
+| ------------------------------------------------------------------------ | --------: | ------------------------------------------------------------------ |
+| `apps/desktop/out/make/squirrel.windows/x64/TaskRelay Setup.exe`         | 388406272 | `054991071b4750cbfdace3409eb42805237b19725551fb0afe5fe4206b992cb2` |
+| `apps/desktop/out/make/squirrel.windows/x64/TaskRelay-0.19.0-full.nupkg` | 387866332 | `34f71983f7865f026a76f45e94a057e110697b767f412f2da948fd9d6d04c2e4` |
+| `apps/desktop/out/TaskRelay-win32-x64/resources/app.asar`                |  80488206 | `588f5f615241b7ae2d0012077132b5573b2d1807e456ec0e3c4367937cf19a0b` |
+
+最终 make 结束后，使用独立新目录运行 `node scripts/smoke.mjs apps/desktop/out/TaskRelay-win32-x64/TaskRelay.exe out/desktop-0.19.0-20261107-235740/packaged-smoke.json`，退出码 0、passed=true。报告确认为 0.19.0、Electron 45.2.3、实际 Node 24.22.2、Stagehand 4.4.0；原生 ESM、ASAR 中的 SDK/CDP 加载、LangGraph 工具与中断恢复、真实 Chromium 状态往返、观察/操作、错误验证码、前导零、多步登录、表单及脱敏截图通过，提交/签到/错误码各一次。报告 ASAR 哈希与当前产物一致，新于本批全部产物；RELEASES 的 nupkg 名称、字节数和 SHA-1 核对一致。实际 Electron 在隔离目录创建的 SQLite `user_version=4`、`integrity_check=ok`；结束后未发现本次 smoke 路径的残留 TaskRelay/Chromium 进程。
+
+完整 `npm test` **434/434 通过、0 失败、0 跳过**，包括此前因缺少浏览器跳过的正式状态适配器测试；下载器最后定向复验 3/3，通过类型检查、lint、仓库检查及格式/差异检查。前批 UI 首轮超时根因仍未确定，本轮完整套件包含全部 UI 用例且未复现。Graphify 最终更新到 6710 节点、11495 边、590 社区；声明文件未产生符号、缓存及社区标签告警保留，未用 LLM 补标签。
+
+证据保存在忽略目录 `out/desktop-0.19.0-20261107-235740/{packaged-smoke.json,build-evidence.json}` 和 `.cache/db-refactor/`。本批为未签名、本机脏工作区调试产物；没有执行安装器、替换系统安装、转换现有设备库、改动云绑定或部署生产，原 MASTER_KEY 不变。不运行或放宽要求干净源码和托管 Windows 系统入口证据的正式 `release-manifest`。包内 smoke 是确定性模型与本地站点流程，不调用 `runtime.execute()` / `ExecutorHost`，不证明生产调度、真实模型/网站、干净 Windows、实际安装升级或百台设备在线；这些边界及前批 Free 容量限制继续保留。
+
+## 2026-11-07 存储 v2 重构（源码完成，未部署/安装）
+
+以下为同日上一批源码交付记录；后续审查和本机打包结果以上节为准。
+
+新基线含 55 张表、442 个字段、50 个显式索引和 24 个触发器；SQL 表/字段/索引中文注释覆盖均为 100%，包括 Better Auth、关联、分块和清理表。Drizzle 对照测试逐项核对表/列类型与空值、主键、外键、全部索引顺序/部分条件及 CHECK。桌面 4 张本地表改为逐字段多行 SQL 和中文说明，DO 类型/入口注明 KV 格式 2、对象归属、分块/AAD 与 alarm 仲裁。源码协议 18、图 relay-graph-4、桌面 0.19.0 / schema 4；既有未提交改动保留，旧 30 份 SQL 冻结为离线输入，未提交产物或密钥。
+
+离线验收覆盖源库只读预检、显式归属、新库初始化、密文解密、unknown 锁、可见历史顺序、退休图归档、重复执行、同源临时库/归档中断重做、错误密钥/目标改写拒绝、外键及整体归档核验。桌面转换保留配置、generation、epoch 和待确认回执身份，不迁移 cache；正常 Main 拒绝旧库及未来 schema。原 MASTER_KEY 未重新生成/覆盖。源库真实全量数据和私有 DO 对象尚未执行预检/转换，生产切换不在本轮执行范围。
+
+生产入口隔离回归涵盖跨用户关联拒绝、活动/清理占用、unknown、重复请求、停止、租约过期、删除与迟到结果竞争、组仍引用历史版本时的正文清理、长模型缓存分块与缺片阻断。实际 workerd/D1 验证新基线循环版本事务、两个设备并发领取同一用户最多成功一个、查询计划及外键；实际 SQLite DO 验证分块加密、退休墓碑和冻结时旧元数据转换。Wrangler `--local` 向独立空 D1 导入 360011 字节 Unicode JSON，返回字节数一致、json_valid=1、foreign_key_check 为空；没有远程导入。Miniflare/本机 D1 不证明部署并发或 Free 配额达标。
+
+容量对照使用 1000 名合成用户、100 台登记设备、1060 个任务/聊天/运行，逐级增加至 100 万消息，另有 10% 用量、5% 附件索引、5% 图记录。v1 另含其旧默认成员，因此实计 1001 名；设备登记数不证明 100 台持续在线/并发浏览器。两种测试均无生产数据、真实模型或网站流量：
+
+- 原生 SQLite：v1 532348928 字节，v2 565919744 字节；生成数据使用 MEMORY/OFF，不能以加载时长证明生产写入性能。报告在 `.cache/db-capacity/2026-11-07T14-44-59.178Z/report.json`。
+- 实际本机 workerd/D1：v1 527536128 字节，v2 552624128 字节；报告在 `.cache/db-capacity/workerd-2026-11-07T14-45-10.324Z/report.json`。以下 p50/p95 为 20 次热测、本机 RPC/桥接在内的毫秒值，读写行数来自真实隔离 D1 meta；不等于部署时延或计费承诺。
+
+| 查询           | v1 p50/p95 ms | v2 p50/p95 ms | 每次 rows_read：v1 → v2 | 最终计划                             |
+| -------------- | ------------- | ------------- | ----------------------- | ------------------------------------ |
+| 任务前 50 条   | 7.29 / 11.15  | 7.22 / 9.82   | 123 → 50                | tasks_visible 覆盖索引，无额外排序   |
+| 聊天前 50 条   | 6.92 / 8.36   | 7.06 / 8.97   | 123 → 50                | threads_visible 覆盖索引，无额外排序 |
+| 消息前 50 条   | 6.96 / 8.89   | 6.32 / 8.67   | 50 → 50                 | thread_id/seq 索引                   |
+| 指定运行用量   | 21.20 / 43.97 | 16.19 / 27.55 | 100000 → 1001           | usage_run，消除全表扫描              |
+| 聊天附件 10 条 | 7.03 / 15.83  | 6.63 / 10.35  | 451 → 10                | artifacts_thread                     |
+| 原聊天图记录   | 15.80 / 17.75 | 10.44 / 11.06 | 50000 → 1001            | graphs_thread 覆盖索引               |
+
+上述只读查询 rows_written 均为 0。累计加载百万消息及配套记录时，v1 meta 写行数 345 万，v2 为 590 万；正文拆表和匹配查询的索引增加了写入及空间成本，不宣称所有延迟都下降。已去掉确认冗余的索引和用量表无引用需求的额外联合唯一索引；实际业务还有模型账本、checkpoint/outbox、鉴权与状态更新，本夹具不覆盖它们的完整成本。转换清单给出目标字节数与是否落入 Free 单库范围；导出给出插入/分块写行估算，均明确未核验当日剩余导入额度，不能据此直接切换。
+
+**单库 Free 边界已触达：两版百万消息夹具均超过 500 MB。** 官方当前单库上限为 500 MB，账号每日 500 万读行、10 万写行，索引也计写行和空间，超日限额会报错至 UTC 零点恢复。[容量限制](https://developers.cloudflare.com/d1/platform/limits/)、[计量规则](https://developers.cloudflare.com/d1/platform/pricing/)、[日限额强制执行](https://developers.cloudflare.com/changelog/post/2026-09-01-d1-free-tier-limit-enforcement/)。仅按本夹具 5.9 写行/消息估算，约 1.69 万消息/日已用完写额度，尚未计算其他业务；这不是可用吞吐承诺。100 台设备若按每分钟一次心跳全天在线，单心跳估算约 14.4 万次写入，也超出 Free 日写额度。就绪值不变时已合并心跳，暂停/恢复仍立即写入；不能承诺百台持续在线达标。
+
+建议在单库 350 MB、日读/写使用约 70% 或 p95 持续恶化时启动运维容量复核，结合真实数据保留期、冷归档方案与实际活跃设备评估；这些只是预警，不新增任务预算或运行硬限额，不自动付费或改为多 D1。真实源库若超空间或当日导入余量不足，必须阻断切换并另行安排，不能静默删历史/unknown 或绕过平台限额。
+
+类型检查、lint、仓库检查及 Web 构建通过，构建仍有大分块提示。完整 `npm test` 为 **431 项：430 通过、0 失败、1 跳过**；跳过项需要当前缺失的真实 Chromium，不能算通过。独立 UI 套件首次为 64/65，通知刷新用例等待消息超时；该文件单独复验 10/10，随后完整 `npm run test:ui` 为 **65/65**，首轮超时根因未确定。最后一轮仅补充 SQL/Drizzle 注释，类型检查与结构/实际 D1 定向测试 3/3 再次通过。`node scripts/test-free-runtime.mjs` 的真实本机 workerd 网关、alarm、中断恢复、防重、加密多分块、发布仲裁、孤儿清理、WebSocket 及吊销检查通过。日志在忽略目录 `.cache/db-refactor/`，不提交产物。
+
+Hono CLI 已核对路由及 health=200/协议18，shadcn CLI 已读取当前配置和 button/sidebar 文档。Graphify 已通过本机独立工具路径执行查询及更新，最终结构为 6696 节点、11460 边、580 社区。本轮分批更新中有 20 个文件未提取到符号，最后一轮变更的 3 个测试文件也未产生符号；图工具的缓存及社区标签告警保留，未调用 LLM 补标签，不能把图更新称为全部解析无误。
+
+OCR `delegate preview` 和所有路径的 `delegate rule` 执行成功，未调用 OCR 外部模型。宿主按最终差异及上下文审查，并补审默认排除的 SQL、测试、脚本和配置：`total_files=185`、`reviewed_files=181`、`skipped_files=4`、`coverage_rate=97.84%`，范围为工作区差异，不是全仓。30 份旧迁移移出活动目录后的内容已与原版逐一核对一致；两个锁文件仅同步桌面/暂存运行时版本，未改依赖。跳过项为原有且本轮未改的 `.codex/config.toml`、`.graphifyrc`、`apps/desktop/src/executor/runtime.ts`，以及未逐行人工审查的生成映射 `apps/cloud/src/schema.ts`；后者已由人工核对 SQL、注释和自动化全量结构对照覆盖，不能据此算作逐行已审。逐路径状态及已修问题记录在 `.cache/db-refactor/ocr-review.json`。审查修复了毫秒排序/写入、历史版本引用清理、清理批次边界、分页迟到响应及离线转换路径/完整性问题；未发现其他可复现的未解决差异问题。UI 首轮超时及下述交付/容量限制仍保留。
+
+桌面 `npm run package` 未通过：缺少 `resources/browser/manifest.json`；随后按固定版本下载浏览器，原准备流程及断点续传均超时，完整官方压缩包未取得，未放宽 SHA-256/资源校验。无本批可验收桌面包，包内与实际安装 smoke 未执行；干净 Windows、真实模型地区、网站闭环和百台设备持续在线均未验收。Web 构建与源码回归不代替这些证据。
+
+## 2026-11-07 Graphify SQL 解析与覆盖排查
+
+通过 `uv tool install --force "graphifyy[sql]==0.9.103"` 为 Graphify 独立工具环境安装 `tree-sitter-sql 0.3.11`，工具版本仍固定为 0.9.103，未修改项目 npm 依赖。新增 `.graphifyrc` 的 `language.jsonc=json` 映射，补入原先未分类的 `apps/web/wrangler.jsonc`；当前配置提取出 32 个节点和 31 条结构边，Wrangler 自身配置读取同时确认 7 个 DO 绑定和 1 个 D1 绑定，但 Graphify 不会把数组内每项绑定都独立建模。
+
+31 个 SQL 文件（30 个云端迁移、1 个 `scripts/acceptance-site/batch.sql` 隔离夹具）均已产生提取结果且在最终图中有节点，缺失依赖问题已解除。底层语法树核对发现 13 个 SQL 文件存在方言恢复节点，提取器仍返回结构，不能称为“零解析错误”；JSONC 尾逗号也存在恢复标记，当前字段节点和 Wrangler 配置读取已核对，但不承诺任意 JSONC 构造均能完整提取。30 个迁移在内存 SQLite 中按顺序执行成功，`foreign_key_check` 为空；隔离夹具独立执行产生 8 条记录，既有迁移测试 1/1 通过。图表示各迁移中的声明、引用、索引和触发器关系，不等同于执行全部迁移后的实时数据库结构。重建后为 6397 个节点、10744 条边、566 个社区，SQL 引用及 JSONC 配置的图查询验证通过。
+
+原先 39 个“未提取符号”文件已逐项核对；安装 SQL 解析器后，新增仅含 DROP/DELETE 的 `0013_remove_platform_budget.sql` 也只保留文件节点，因此现有单文件提取无符号共 40 个。它们不是全部缺失：文件节点及可提取的导入/调用仍保留，后续引用解析还可能补充节点。分类如下，未为消除告警改写业务源码：
+
+| 数量 | 文件类型与核对结果                                                                                              |
+| ---- | --------------------------------------------------------------------------------------------------------------- |
+| 24   | `tests/` 中匿名 `test()` 回调或循环注册的测试，当前提取器未建测试用例符号                                       |
+| 5    | 桌面 4 份 Vite 配置与 Web Vite 配置，均为匿名默认配置，文件与导入关系保留                                       |
+| 4    | `apps/web/src/ui-review.ts`、`scripts/{change-scope.mjs,check-secrets.mjs,check-powershell.ps1}` 为顶层执行脚本 |
+| 1    | `scripts/install-smoke.ps1` 为顶层执行脚本                                                                      |
+| 3    | `scripts/{check-coverage,quality-gate,release-api}.d.mts` 的 ambient 声明未被当前符号提取器建模                 |
+| 1    | `scripts/PSScriptAnalyzerSettings.psd1` 为数据字典，不定义函数                                                  |
+| 1    | `docs/RELEASE-NOTES.md` 无章节标题，仅保留文档文件节点                                                          |
+| 1    | `apps/cloud/migrations/0013_remove_platform_budget.sql` 仅删除表及设置，不定义新对象                            |
+
+未分类仍为 12 个：`wrangler.jsonc` 已补入，同时新增的工具配置 `.graphifyrc` 本身不生成源码符号。其余为 3 个 CSS（生产 `packages/ui/src/styles.css` 及 `.agents`/`.claude` 中两份技能样式）、2 个 TOML（`.codex/config.toml`、`.gitleaks.toml`）、4 个规则/列表文件（`.git-blame-ignore-revs`、`.gitattributes`、`.gitignore`、`.prettierignore`）、环境变量模板 `apps/web/.env.example` 及二进制 `resources/icon.ico`。CSS/TOML 不在当前结构提取器支持范围，其他文件无适合的代码符号模型；没有用错误语言映射或新增排除规则隐藏它们。
+
+另发现 `packages/contracts/src/conversation.ts:34` 的 `import("./execution").ChatPart[]` 带单行语法恢复标记；`ThreadPage` 仍入图，TypeScript 类型检查通过，不能据此声称所有类型字段关系均已完整提取。逐文件提取结果、语法形态和未分类原因保存在忽略产物 `graphify-out/{extraction-audit.json,EXTRACTION_AUDIT.md}`。
+
+本批仅新增工具配置并更新本节记录；仓库检查、类型检查及配置读取验证通过。OCR preview/rule 已执行，宿主审查本轮 2 个增量文件（`.graphifyrc`、本节记录）：total_files=2、reviewed_files=2、skipped_files=0、coverage_rate=100%，无未解决的配置或文档问题；preview 中其余 5 个既有变更没有新增差异，沿用前批审查，不把 40 个文件的提取形态核对称为完整业务代码审查。未修改运行逻辑或数据库，未重新运行前一批完整业务回归，未调用 LLM、提交、部署、打包或安装桌面应用。
+
+## 2026-11-07 固定提示词精简（仅源码）
+
+精简云端交办、桌面执行、云端协助及截图反馈文案，明确最新用户原文优先、已绑定与未绑定账号的区别，以及 `askUser` 两种答复的接收者。已授权步骤直接执行，缺少目标、范围、授权或关键选择时才澄清；`ask` 不充当用户确认凭证。账号工具细则留在原 description，自动截图由运行时管理并据实反馈。没有修改 Agent 编排、工具 Schema、模型出站、账号/站点隔离、加密、停止、租约或未知结果防重逻辑。
+
+相关定向测试 **92/92** 通过，覆盖模型/结构化输出、美国出站 adapter、原文进入 Stagehand、临时凭据登录与更正、账号卡片、协助恢复、截图及未知操作等现有生产入口。`npm test` 首轮因加载 `node_modules/langchain/dist/agents/utils.js` 返回 `UNKNOWN`，导致 `auth-mail.test.ts` 未运行；该文件单独复验 **3/3** 后，再次完整运行 **419 项：418 通过、0 失败、1 跳过**。跳过项为缺少可用 Chromium 的真实浏览器验证，不算通过。类型检查、lint、仓库检查和 Web 构建通过；构建保留既有大分块及混合导入提示。Hono CLI 直接读取 Worker 导出返回 `INVALID_APP`，改用仓库外仅重导出真实 `app` 的临时入口后，确认 73 条路由及健康接口 200。
+
+使用临时 npm CLI `@alibaba-group/open-code-review@1.13.6` 执行 OCR delegate preview/rule，未修改项目依赖、未调用 OCR 外部模型。宿主审查全部 4 个源码差异及上下文，并补审默认排除的 2 个文档：total_files=6、reviewed_files=6、skipped_files=0、coverage_rate=100%，无未解决发现；范围仅本次差异，不是全仓审查。首次更新关系图时，当前进程无法解析 `graphify` 命令；随后用户安装并处理 Windows 智能应用控制拦截后，通过绝对路径运行 `graphify 0.9.103 update .` 成功生成 6202 节点、10486 边及 537 个社区，产物位于已忽略的 `graphify-out/`。本次为本地结构提取，未调用 LLM；31 个 SQL 文件因缺少 `tree_sitter_sql` 未入图，另有 39 个代码文件未提取到符号、12 个文件未分类，不能宣称关系图覆盖全部源码。
+
+本批未提交、部署、打包或安装，未进行真实模型/网站对照或连续观察。确定性回归证明现有接口与安全流程仍工作，不能证明模型一定遵守精简后的文案，也不能将字数减少等同于决策质量或线上耗时改善。
+
 ## 2026-11-07 网站邮箱登录 415 回归
 
 共享请求层使用大小写不敏感的 `Headers` 保留调用方的媒体类型，仅在发送 JSON 且调用方未指定时补充默认值。合成已验证账号通过网站的 `authClient.signIn.email` 进入生产 Hono / Better Auth 路由；同一测试在修复前返回 `UNSUPPORTED_MEDIA_TYPE`，修复后使用服务端签发的 Cookie 成功读取同一账号的会话。

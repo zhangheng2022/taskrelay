@@ -1,3 +1,4 @@
+import { dbTime } from "./database";
 /** 网站认证：配置 Better Auth、验证邮箱后绑定业务成员，并为注册和邮件入口实施准入校验。 */
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "@better-auth/drizzle-adapter";
@@ -5,7 +6,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { sendAuthMail } from "./mail";
 import type { AppEnv } from "./env";
 import * as schema from "./auth-schema";
-import { legacyOwner, member } from "./tenancy";
+import { member } from "./tenancy";
 
 // Reuse configuration and endpoint construction, not session/authorization data.
 // Each getSession still reads D1 (cookieCache remains disabled).
@@ -92,16 +93,10 @@ export async function ensureMember(
   }
   const email = user.email.toLowerCase();
   const owner = email === env.OWNER_EMAIL.toLowerCase();
-  if (owner)
-    await env.DB.prepare(
-      "UPDATE members SET auth_id=?,email=? WHERE id=? AND (auth_id IS NULL OR auth_id=?)",
-    )
-      .bind(user.id, email, legacyOwner, user.id)
-      .run();
-  else
-    await env.DB.prepare("INSERT OR IGNORE INTO members(id,auth_id,email) VALUES(?,?,?)")
-      .bind(user.id, user.id, email)
-      .run();
+  // 新认证身份只创建自己的业务成员；旧数据归属只能由离线转换器显式绑定。
+  await env.DB.prepare("INSERT OR IGNORE INTO members(id,auth_id,email,role) VALUES(?,?,?,?)")
+    .bind(user.id, user.id, email, owner ? "admin" : "user")
+    .run();
   const row = await env.DB.prepare("SELECT id FROM members WHERE auth_id=?")
     .bind(user.id)
     .first<{ id: string }>();
@@ -113,7 +108,15 @@ export async function limitRequest(env: AppEnv, key: string, max: number, window
   const r = await env.DB.prepare(
     `INSERT INTO request_limits(key,count,expires_at) VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET count=CASE WHEN expires_at<=? THEN 1 ELSE count+1 END,expires_at=CASE WHEN expires_at<=? THEN ? ELSE expires_at END WHERE expires_at<=? OR count<?`,
   )
-    .bind(key, at + windowMs, at, at, at + windowMs, at, max)
+    .bind(
+      key,
+      dbTime(at + windowMs),
+      dbTime(at),
+      dbTime(at),
+      dbTime(at + windowMs),
+      dbTime(at),
+      max,
+    )
     .run();
   if (!r.meta.changes) throw new Error("RATE_LIMITED");
 }

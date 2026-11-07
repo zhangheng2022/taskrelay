@@ -1,3 +1,4 @@
+import { dbTime } from "../database";
 /**
  * 建立云端图的运行作用域：固定输入摘要、图版本及代次，统一提供存储与有效性校验。
  * 运行依赖留在闭包中，检查点只保存业务状态；独立异步上下文防止嵌套调用串用图状态。
@@ -45,7 +46,7 @@ export async function openGraph(scope: GraphScope, input: unknown) {
       digest,
       scope.threadId,
       scope.turnId ?? null,
-      new Date().toISOString(),
+      dbTime(new Date().toISOString()),
       GRAPH_VERSION,
       scope.kind,
       scope.runId ?? null,

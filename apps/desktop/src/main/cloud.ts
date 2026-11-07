@@ -1,10 +1,10 @@
-import { PROTOCOL_VERSION, HISTORY_EPOCH } from "../../../../packages/contracts/src/index";
+import { PROTOCOL_VERSION } from "../../../../packages/contracts/src/index";
 import { safeStorage } from "electron";
 import { Journal } from "./journal";
 import WebSocket from "ws";
 import { z } from "zod";
 import { idSchema } from "../../../../packages/contracts/src/index";
-/** Main 的云端适配器：保存设备令牌、协商协议与历史代次，并提供 HTTP 请求和变更通知。
+/** Main 的云端适配器：保存设备令牌、协商协议，并提供 HTTP 请求和变更通知。
  * WebSocket 仅触发重新读取；运行、租约和任务状态仍以鉴权后的 HTTP 响应为准。
  */
 export class Cloud {
@@ -28,14 +28,21 @@ export class Cloud {
     return safeStorage.decryptString(Buffer.from(encrypted, "base64"));
   }
   async connect(executorIdle: boolean) {
-    type Status = { maintenance: boolean; historyEpoch: number };
+    // 离线转换保留的终态/关闭回执不执行浏览器副作用，可在协议升级后以原身份确认。
+    // 其他旧请求及未收尾检查点仍阻止升级，不能用格式切换重放未知操作。
+    const localReady =
+      executorIdle &&
+      !this.journal.incomplete().length &&
+      this.journal
+        .pending()
+        .every((row) => /^\/api\/runner\/runs\/[^/]+\/(finish|browser-closed)$/.test(row.path));
+    type Status = { maintenance: boolean };
     let status: Status;
     try {
       status = await this.request<Status>("GET", "/api/device/status");
     } catch (error) {
       if ((error as Error).message !== "DEVICE_UPGRADE_REQUIRED") throw error;
-      if (!executorIdle || this.journal.pending().length || this.journal.incomplete().length)
-        throw new Error("LOCAL_HISTORY_UNRESOLVED");
+      if (!localReady) throw new Error("LOCAL_HISTORY_UNRESOLVED");
       await this.request("POST", "/api/device/upgrade", {
         protocolVersion: PROTOCOL_VERSION,
         localReady: true,
@@ -43,25 +50,12 @@ export class Cloud {
       status = await this.request<Status>("GET", "/api/device/status");
     }
     if (!status.maintenance) this.readyUntil = 0;
-    if (
-      status.maintenance &&
-      Date.now() > this.readyUntil &&
-      executorIdle &&
-      !this.journal.pending().length &&
-      !this.journal.incomplete().length
-    ) {
+    if (status.maintenance && Date.now() > this.readyUntil && localReady) {
       await this.request("POST", "/api/device/upgrade", {
         protocolVersion: PROTOCOL_VERSION,
         localReady: true,
       });
       this.readyUntil = Date.now() + 180000;
-    }
-    if (
-      status.historyEpoch === HISTORY_EPOCH &&
-      this.journal.get("historyEpoch") !== HISTORY_EPOCH
-    ) {
-      if (!executorIdle) throw new Error("EXECUTOR_BUSY");
-      this.journal.clearHistory();
     }
     return status;
   }

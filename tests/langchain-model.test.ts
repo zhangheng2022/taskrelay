@@ -1,3 +1,4 @@
+import { dbTime } from "../apps/cloud/src/database";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { AIMessage, HumanMessage, ToolMessage } from "@langchain/core/messages";
@@ -16,18 +17,18 @@ function helpGraphFixture(s: Awaited<ReturnType<typeof productionModelFixture>>)
     .prepare(
       "INSERT INTO ai_threads(id,user_id,kind,model_id,model_version,created_at,updated_at) VALUES('lc_thread',?,'chat','model_test',1,?,?)",
     )
-    .run(s.run.userId, new Date().toISOString(), new Date().toISOString());
+    .run(s.run.userId, dbTime(new Date().toISOString()), dbTime(new Date().toISOString()));
   s.sql
     .prepare(
       "INSERT INTO ai_graph_inputs(owner,id,digest,parent_thread,created_at,kind,run_id,lease_epoch,generation) VALUES(?,'lc_graph','digest','lc_thread',?,'help',?,?,7)",
     )
-    .run(s.run.userId, new Date().toISOString(), s.run.id, s.run.leaseEpoch);
+    .run(s.run.userId, dbTime(new Date().toISOString()), s.run.id, s.run.leaseEpoch);
   return new RelayChatModel(s.env, "model_test", 1, "lc_fenced", s.run.id, "lc_graph", 7);
 }
 
 for (const mutation of [
   "UPDATE runs SET lease_epoch=lease_epoch+1",
-  "UPDATE runs SET lease_expires_at='2000-01-01'",
+  "UPDATE runs SET lease_expires_at=946684800000",
   "UPDATE runs SET cancel_requested=1",
   "UPDATE ai_graph_inputs SET generation=generation+1",
   "UPDATE ai_threads SET closed=1",
@@ -43,7 +44,9 @@ for (const mutation of [
       model.withStructuredOutput(z.object({ answer: z.string() })).invoke("处理协助"),
       /MODEL_CALL_DISCARDED/,
     );
-    const row = s.sql.prepare("SELECT status,result FROM ai_calls WHERE id='lc_fenced:0'").get()!;
+    const row = s.sql
+      .prepare("SELECT status,result FROM call_details WHERE id='lc_fenced:0'")
+      .get()!;
     assert.equal(row.status, "unknown");
     assert.equal(row.result, null);
     assert.equal(s.jobs(), 1);
@@ -235,7 +238,7 @@ for (const protocol of ["chat", "responses"] as const)
       model = new RelayChatModel(s.env, "model_test", 1, "lc_image", s.run.id);
     s.sql
       .prepare(
-        "UPDATE model_profiles SET capabilities=json_set(capabilities,'$.vision',json('true')) WHERE id='model_test' AND version=1",
+        "UPDATE model_profile_versions SET capabilities=json_set(capabilities,'$.vision',json('true')) WHERE id='model_test' AND version=1",
       )
       .run();
     s.replies("red");

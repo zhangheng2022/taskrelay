@@ -1,3 +1,4 @@
+import { dbTime } from "../apps/cloud/src/database";
 import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { app } from "../apps/cloud/src/index";
@@ -8,7 +9,6 @@ import { hash } from "../packages/contracts/src/security";
 import { testDb, insertTask, task } from "./helpers";
 import { cleanupAccountCards, pendingCardOrigins } from "../apps/cloud/src/account-cards";
 import { readRunCredentials } from "../apps/cloud/src/accounts";
-import { seal, unseal } from "../apps/cloud/src/crypto";
 
 const input = {
   name: "测试账号",
@@ -56,9 +56,9 @@ async function fixture(t: TestContext, bound = false) {
   const definition = await insertTask(db, task({ accountId, entryUrl: input.origin }));
   await db
     .prepare(
-      `INSERT INTO ai_threads(id,user_id,task_id,kind,model_id,model_version,created_at,updated_at) VALUES('thread_cards','legacy_owner',?,'chat','model_test',1,?,?)`,
+      `INSERT INTO ai_threads(id,user_id,task_id,kind,model_id,model_version,created_at,updated_at) VALUES('thread_cards','fixture_owner',?,'chat','model_test',1,?,?)`,
     )
-    .bind(definition.id, now(), now())
+    .bind(definition.id, dbTime(now()), dbTime(now()))
     .run();
   await enqueue(db, definition, "card_fixture");
   const run = (await claim(db, "device_cards", "card_claim"))!;
@@ -96,7 +96,7 @@ test("登录保存卡片由本人确认；密文草稿、引用消息和临时�
   const raw = s.sql.prepare("SELECT * FROM account_cards").get()!;
   assert.ok(raw.secret);
   assert.ok(!JSON.stringify(raw).includes(input.password));
-  const messages = s.sql.prepare("SELECT content,parts FROM ai_messages").all();
+  const messages = s.sql.prepare("SELECT content,parts FROM message_details").all();
   assert.equal(messages.length, 1);
   assert.ok(!JSON.stringify(messages).includes(input.password));
   assert.deepEqual(JSON.parse(String(messages[0].parts)), [{ type: "account-card", cardId }]);
@@ -111,7 +111,9 @@ test("登录保存卡片由本人确认；密文草稿、引用消息和临时�
     .get(s.run.id)!;
   assert.equal(binding.account_id, saved.data.accountId);
   assert.equal(binding.account_key, saved.data.accountId);
-  const account = s.sql.prepare("SELECT * FROM accounts WHERE id=?").get(saved.data.accountId)!;
+  const account = s.sql
+    .prepare("SELECT * FROM account_details WHERE id=?")
+    .get(saved.data.accountId)!;
   assert.equal(account.profile_id, s.run.profileId);
   assert.equal(account.credential_status, "valid");
   assert.equal(account.last_device_id, s.run.deviceId, "已验证登录不必等待快照成功才记住设备");
@@ -207,7 +209,9 @@ test("编辑已验证卡片的凭据不会继承验证和当前环境；晚确�
     password: "edited-secret",
   });
   assert.equal(saved.status, 200);
-  const account = s.sql.prepare("SELECT * FROM accounts WHERE id=?").get(saved.data.accountId)!;
+  const account = s.sql
+    .prepare("SELECT * FROM account_details WHERE id=?")
+    .get(saved.data.accountId)!;
   assert.equal(account.credential_status, "unverified");
   assert.notEqual(account.profile_id, s.run.profileId);
   assert.equal(account.last_device_id, null, "修改过凭据的卡片不能把来源设备当作已验证设备");
@@ -242,10 +246,13 @@ test("关闭、撤回、过期和跨用户访问均使卡片不可使用；草�
   assert.equal(offered.status, 200);
   const id = offered.data.cardId;
   s.sql.prepare("INSERT INTO members(id) VALUES('other_user')").run();
-  s.sql.prepare("UPDATE account_cards SET user_id='other_user' WHERE id=?").run(id);
-  assert.equal((await s.request(`/api/user/account-cards/${id}`)).status, 404);
+  assert.throws(
+    () => s.sql.prepare("UPDATE account_cards SET user_id='other_user' WHERE id=?").run(id),
+    /FOREIGN KEY/,
+  );
+  assert.equal((await s.request(`/api/user/account-cards/${id}`)).status, 200);
   s.sql
-    .prepare("UPDATE account_cards SET user_id='legacy_owner',expires_at='2000-01-01' WHERE id=?")
+    .prepare("UPDATE account_cards SET user_id='fixture_owner',expires_at=946684800000 WHERE id=?")
     .run(id);
   await cleanupAccountCards(s.env);
   assert.equal(
@@ -409,78 +416,21 @@ test("同轮同凭据的名称、说明和域名顺序变化只产生一张卡�
   assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM accounts").get()!.n, 1);
 });
 
-test("升级前的重复草稿通过本人读取归并，旧确认入口不能再创建第二个账号", async (t) => {
+test("新基线拒绝缺少身份摘要的活跃账号卡，不在读取时回填旧字段", async (t) => {
   const s = await fixture(t),
-    offered = await s.offer(),
-    first = offered.data.cardId;
-  const row = s.sql.prepare("SELECT * FROM account_cards WHERE id=?").get(first)!;
-  const draft = await unseal<Record<string, unknown>>(
-    String(row.secret),
-    s.env.MASTER_KEY,
-    `account-card:${first}`,
-  );
-  s.sql.prepare("UPDATE account_cards SET identity_digest=NULL WHERE id=?").run(first);
-  const duplicate = "card_legacy_duplicate",
-    later = new Date(Date.now() + 1000).toISOString();
-  s.sql
-    .prepare(
-      `INSERT INTO account_cards(id,user_id,thread_id,run_id,lease_epoch,kind,secret,input_digest,created_at,expires_at)
-    VALUES(?,?,?,?,?,'save',?,?,?,?)`,
-    )
-    .run(
-      duplicate,
-      row.user_id,
-      row.thread_id,
-      row.run_id,
-      row.lease_epoch,
-      await seal(
-        { ...draft, name: "重复展示名", evidence: "另一条说明" },
-        s.env.MASTER_KEY,
-        `account-card:${duplicate}`,
-      ),
-      "legacy_digest",
-      later,
-      row.expires_at,
-    );
-  s.sql
-    .prepare(
-      `INSERT INTO ai_messages(id,thread_id,seq,role,content,turn_id,at,source,parts,run_id)
-    VALUES(?,?,2,'assistant','可以保存账号',?,?,'executor',?,?)`,
-    )
-    .run(
-      `account-card_${duplicate}`,
-      row.thread_id,
-      "legacy_turn",
-      later,
-      JSON.stringify([{ type: "account-card", cardId: duplicate }]),
-      row.run_id,
-    );
-  const replies = await Promise.all([
-    s.request(`/api/user/account-cards/${first}`),
-    s.request(`/api/user/account-cards/${duplicate}`),
-  ]);
-  assert.equal(replies[0].data.status, "pending");
-  assert.equal(replies[1].data.status, "expired");
-  assert.equal(replies[1].data.supersededBy, first);
-  assert.equal(replies[1].data.password, undefined);
-  assert.equal(
-    s.sql.prepare("SELECT secret FROM account_cards WHERE id=?").get(duplicate)!.secret,
-    null,
+    offered = await s.offer();
+  assert.equal(offered.status, 200);
+  assert.throws(
+    () =>
+      s.sql
+        .prepare("UPDATE account_cards SET identity_digest=NULL WHERE id=?")
+        .run(offered.data.cardId),
+    /CHECK/,
   );
   assert.equal(
-    s.sql.prepare("SELECT content FROM ai_messages WHERE id=?").get(`account-card_${duplicate}`)!
-      .content,
-    "",
+    (await s.request(`/api/user/account-cards/${offered.data.cardId}`)).data.status,
+    "pending",
   );
-  const confirmed = await Promise.all([
-    s.request(`/api/user/account-cards/${first}/confirm`, input),
-    s.request(`/api/user/account-cards/${duplicate}/confirm`, input),
-  ]);
-  assert.deepEqual(
-    confirmed.map((r) => r.status),
-    [200, 409],
-  );
-  assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM accounts").get()!.n, 1);
 });
 
 test("不同用户名、密码或登录域范围不被错误合并", async (t) => {

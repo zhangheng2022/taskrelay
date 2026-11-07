@@ -1,9 +1,8 @@
 import { z } from "zod";
 import { batchVerificationSchema, batchReportSchema } from "./batch";
 
-export const PROTOCOL_VERSION = 17;
-export const EXECUTION_GRAPH_VERSION = "relay-graph-3";
-export const HISTORY_EPOCH = 4;
+export const PROTOCOL_VERSION = 18;
+export const EXECUTION_GRAPH_VERSION = "relay-graph-4";
 export const limits = {
   leaseMs: 90_000,
   heartbeatMs: 15_000,
@@ -222,6 +221,8 @@ export interface Device {
   protocolVersion: number;
 }
 export interface Snapshot {
+  nextTasksCursor?: string | null;
+  nextRunsCursor?: string | null;
   me?: { id: string; email: string; role: "admin" | "user" };
   quota?: {
     resetAt: string;

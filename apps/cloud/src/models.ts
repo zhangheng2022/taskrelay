@@ -1,3 +1,4 @@
+import { dbTime } from "./database";
 /**
  * 模型服务入口：管理配置版本、能力探测、调用去重、结构化校验与实际用量。
  * 普通调用只提交加密出站作业；仅美国区域 ModelEgress 的 alarm 可调用提供方适配器。
@@ -15,6 +16,7 @@ import { visionFixture } from "./vision-fixture";
 import { egress } from "./egress";
 import { hash } from "../../../packages/contracts/src/security";
 import { graphWriteFence } from "./ai/fence";
+import { callResultStatements, unpackCallCipher } from "./call-cache";
 
 export async function validateEndpoint(baseUrl: string) {
   return publicEndpoint(baseUrl, async (host) => {
@@ -51,7 +53,7 @@ export function modelFrom(row: Row): ModelProfile {
 }
 export async function getModel(env: AppEnv, id: string, version?: number) {
   const row = await env.DB.prepare(
-    `SELECT * FROM model_profiles WHERE id=? ${version ? "AND version=?" : ""} ORDER BY version DESC LIMIT 1`,
+    `SELECT v.* FROM model_profile_versions v JOIN models m ON m.id=v.id WHERE v.id=? AND v.version=${version ? "?" : "m.current_version"}`,
   )
     .bind(...(version ? [id, version] : [id]))
     .first<Row>();
@@ -64,7 +66,7 @@ export async function getModel(env: AppEnv, id: string, version?: number) {
 /** Configuration checks do not need to read or decrypt provider credentials. */
 export async function getModelProfile(env: AppEnv, id: string, version?: number) {
   const row = await env.DB.prepare(
-    `SELECT id,version,config,capabilities FROM model_profiles WHERE id=? ${version ? "AND version=?" : ""} ORDER BY version DESC LIMIT 1`,
+    `SELECT v.id,v.version,v.config,v.capabilities FROM model_profile_versions v JOIN models m ON m.id=v.id WHERE v.id=? AND v.version=${version ? "?" : "m.current_version"}`,
   )
     .bind(...(version ? [id, version] : [id]))
     .first<Row>();
@@ -90,11 +92,11 @@ export async function recordUsage(
       profile.version,
       response.usage.input,
       response.usage.output,
-      now(),
+      dbTime(now()),
       userId,
       timing.callId,
-      timing.inferenceStartedAt,
-      timing.providerStartedAt,
+      dbTime(timing.inferenceStartedAt),
+      dbTime(timing.providerStartedAt),
     )
     .run();
 }
@@ -131,21 +133,41 @@ export async function invoke(
   const inserted = await env.DB.prepare(
     `INSERT OR IGNORE INTO ai_calls(id,user_id,graph_id,run_id,digest,status,created_at,updated_at) SELECT ?,?,?,?,?,'reserved',?,? ${fence ? `WHERE ${fence.sql}` : ""}`,
   )
-    .bind(callId, userId, graphId ?? null, runId, digest, now(), now(), ...(fence?.values ?? []))
+    .bind(
+      callId,
+      userId,
+      graphId ?? null,
+      runId,
+      digest,
+      dbTime(now()),
+      dbTime(now()),
+      ...(fence?.values ?? []),
+    )
     .run();
   if (!inserted.meta.changes) {
     // A deduplicated result still belongs to its original live graph. Replaying
     // an operation must not bypass deletion, cancellation, or generation fences.
-    const prior = await env.DB.prepare(
-      `SELECT * FROM ai_calls WHERE id=? ${fence ? `AND ${fence.sql}` : ""}`,
-    )
-      .bind(callId, ...(fence?.values ?? []))
-      .first<Row>();
+    const [parents, chunks] = await env.DB.batch<Row>([
+      env.DB.prepare(
+        `SELECT * FROM call_details WHERE id=? ${fence ? `AND ${fence.sql}` : ""}`,
+      ).bind(callId, ...(fence?.values ?? [])),
+      env.DB.prepare(
+        "SELECT token,part,value FROM call_result_chunks WHERE id=? ORDER BY part",
+      ).bind(callId),
+    ]);
+    const prior = parents.results[0];
     if (!prior && fence) throw Error("MODEL_CALL_DISCARDED");
     if (!prior || prior.user_id !== userId || prior.digest !== digest)
       throw new Error("MODEL_CALL_CONFLICT");
     if (prior.status === "done" && prior.result)
-      return unseal<ModelResponse>(prior.result, env.MASTER_KEY, `ai-call:${callId}`);
+      return unseal<ModelResponse>(
+        unpackCallCipher(
+          prior.result,
+          chunks.results as { part: number; token: string; value: string }[],
+        ),
+        env.MASTER_KEY,
+        `ai-call:${callId}`,
+      );
     throw new Error(prior.status === "failed" ? prior.error : "MODEL_CALL_OUTCOME_UNKNOWN");
   }
   try {
@@ -154,7 +176,7 @@ export async function invoke(
     await env.DB.prepare(
       "UPDATE ai_calls SET status='running',updated_at=?,egress_started_at=? WHERE id=?",
     )
-      .bind(egressStartedAt, egressStartedAt, callId)
+      .bind(dbTime(egressStartedAt), dbTime(egressStartedAt), callId)
       .run();
     return await egress<ModelResponse>(
       env,
@@ -168,16 +190,17 @@ export async function invoke(
         runId,
       },
       async (result) => {
-        const saved = await env.DB.prepare(
-          `UPDATE ai_calls SET status='done',result=?,updated_at=? WHERE id=? AND status='running' ${fence ? `AND ${fence.sql}` : ""}`,
-        )
-          .bind(
-            await seal(result, env.MASTER_KEY, `ai-call:${callId}`),
-            now(),
-            callId,
-            ...(fence?.values ?? []),
-          )
-          .run();
+        const at = now(),
+          cipher = await seal(result, env.MASTER_KEY, `ai-call:${callId}`);
+        const [saved] = await env.DB.batch([
+          env.DB.prepare(
+            `UPDATE ai_calls SET status='done',updated_at=? WHERE id=? AND status='running' ${fence ? `AND ${fence.sql}` : ""}`,
+          ).bind(dbTime(at), callId, ...(fence?.values ?? [])),
+          ...callResultStatements(env.DB, callId, cipher, {
+            sql: `EXISTS(SELECT 1 FROM ai_calls WHERE id=? AND status='done' AND updated_at=? ${fence ? `AND ${fence.sql}` : ""})`,
+            values: [callId, dbTime(at), ...(fence?.values ?? [])],
+          }),
+        ]);
         if (!saved.meta.changes) throw new Error("MODEL_CALL_DISCARDED");
       },
     );
@@ -193,14 +216,14 @@ export async function invoke(
           ? "failed"
           : "unknown",
         code,
-        now(),
+        dbTime(now()),
         callId,
       )
       .run();
     throw error;
   } finally {
     if (!operationId)
-      await env.DB.prepare("UPDATE ai_calls SET result=NULL WHERE id=?").bind(callId).run();
+      await env.DB.prepare("DELETE FROM call_results WHERE id=?").bind(callId).run();
   }
 }
 // Called exclusively by the region-bound Durable Object's alarm.
@@ -380,7 +403,9 @@ export async function probe(env: AppEnv, id: string, version: number): Promise<M
       });
     }
     caps.connection = true;
-    await env.DB.prepare("UPDATE model_profiles SET capabilities=? WHERE id=? AND version=?")
+    await env.DB.prepare(
+      "UPDATE model_profile_versions SET capabilities=? WHERE id=? AND version=?",
+    )
       .bind(JSON.stringify(caps), id, version)
       .run();
   } catch (e) {
@@ -437,7 +462,7 @@ export async function probe(env: AppEnv, id: string, version: number): Promise<M
       }
   }
   if (errors.length) caps.error = errors.join(",");
-  await env.DB.prepare("UPDATE model_profiles SET capabilities=? WHERE id=? AND version=?")
+  await env.DB.prepare("UPDATE model_profile_versions SET capabilities=? WHERE id=? AND version=?")
     .bind(JSON.stringify(caps), id, version)
     .run();
   return caps;
@@ -462,7 +487,7 @@ export async function storeModel(env: AppEnv, input: Record<string, unknown>, id
     throw new Error("MODEL_DNS_FAILED");
   }
   const prior = await env.DB.prepare(
-    "SELECT version FROM model_profiles WHERE id=? ORDER BY version DESC LIMIT 1",
+    "SELECT version FROM model_profile_versions WHERE id=? ORDER BY version DESC LIMIT 1",
   )
     .bind(id)
     .first<{ version: number }>();
@@ -478,18 +503,22 @@ export async function storeModel(env: AppEnv, input: Record<string, unknown>, id
     vision: false,
     testedAt: null,
   };
-  await env.DB.prepare(
-    "INSERT INTO model_profiles(id,version,config,secret,capabilities,created_at) VALUES(?,?,?,?,?,?)",
-  )
-    .bind(
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO models(id,current_version,created_at) VALUES(?,?,?)
+    ON CONFLICT(id) DO UPDATE SET current_version=excluded.current_version`,
+    ).bind(id, version, dbTime(now())),
+    env.DB.prepare(
+      "INSERT INTO model_profile_versions(id,version,config,secret,capabilities,created_at) VALUES(?,?,?,?,?,?)",
+    ).bind(
       id,
       version,
       JSON.stringify(config),
       await seal(key, env.MASTER_KEY, `model:${id}:${version}`),
       JSON.stringify(capabilities),
-      now(),
-    )
-    .run();
+      dbTime(now()),
+    ),
+  ]);
   return { id, version, ...config, hasKey: true, capabilities };
 }
 export async function probeVision(env: AppEnv, id: string) {
@@ -516,7 +545,7 @@ export async function probeVision(env: AppEnv, id: string) {
     vision,
     visionTestedAt: now(),
   };
-  await env.DB.prepare("UPDATE model_profiles SET capabilities=? WHERE id=? AND version=?")
+  await env.DB.prepare("UPDATE model_profile_versions SET capabilities=? WHERE id=? AND version=?")
     .bind(JSON.stringify(capabilities), id, profile.version)
     .run();
   return capabilities;

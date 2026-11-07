@@ -1,3 +1,4 @@
+import { dbTime } from "./database";
 /** 聊天删除的持久作业。接收事务固定目标、关闭聊天并撤回执行授权；
  * Scheduler 每轮只回收有限条正文/图片。摘要与幂等墓碑分离，迟到执行仅可收尾，不能恢复正文。
  * 清空保留一个暂停的任务入口；删除隐藏任务。账号、模型、设备与未知操作的租约记录不受影响。
@@ -75,7 +76,7 @@ export async function beginCleanup(
   await env.DB.batch([
     env.DB.prepare(
       "INSERT OR IGNORE INTO history_cleanup_jobs(id,user_id,request_id,scope,target_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
-    ).bind(id, userId, requestId, scope, targetId, at, at),
+    ).bind(id, userId, requestId, scope, targetId, dbTime(at), dbTime(at)),
     env.DB.prepare(
       `INSERT INTO history_cleanup_targets(job_id,kind,resource_id,cutoff_version)
    SELECT ?,'task',id,version FROM tasks WHERE ${taskWhere} AND ${scope === "thread" ? "EXISTS(SELECT 1 FROM ai_threads WHERE id=? AND closed=0)" : "1=1"} AND ${fresh}`,
@@ -98,17 +99,26 @@ export async function beginCleanup(
       `UPDATE ai_threads SET closed=1,deleted=1,version=version+1,active_turn=NULL,draft=NULL,partial='{}',summary='',summary_seq=0 WHERE id IN(${threads})`,
     ).bind(id),
     env.DB.prepare(
-      `UPDATE runs SET history_deleted=1,context_withdrawn=1,cancel_requested=1,status=CASE WHEN status='queued' THEN 'cancelled' ELSE status END,result=NULL,task_snapshot='{}',updated_at=? WHERE id IN(${runs})`,
-    ).bind(at, id),
-    // 清空也去除任务中的旧业务上下文；保留名称和模型选择，下一次必须重新交办。
+      `UPDATE runs SET history_deleted=1,context_withdrawn=1,cancel_requested=1,status=CASE WHEN status='queued' THEN 'cancelled' ELSE status END,updated_at=? WHERE id IN(${runs})`,
+    ).bind(dbTime(at), id),
+    env.DB.prepare(`DELETE FROM run_results WHERE run_id IN(${runs})`).bind(id),
+    env.DB.prepare(`DELETE FROM run_snapshots WHERE run_id IN(${runs})`).bind(id),
+    // 新版本是清空后的空入口；旧版本正文由固定目标分批回收，安全身份继续保留。
     env.DB.prepare(
-      `UPDATE tasks SET deleted=?,version=version+1,context_withdrawn=1,status='paused',next_run_at=NULL,confirmed_condition=NULL,
-   definition=CASE WHEN ?=1 THEN '{}' ELSE json_object('id',id,'version',version+1,'title',json_extract(definition,'$.title'),
-   'goal','请重新交办任务','entryUrl','https://example.com','accountId',NULL,'modelId',json_extract(definition,'$.modelId'),
-   'modelVersion',json_extract(definition,'$.modelVersion'),'allowedActions',json('["read"]'),
-   'verification',json('{"kind":"goal","value":"请重新交办任务"}'),'schedule',json('{"kind":"manual"}'),'createdAt',created_at) END,updated_at=?
-   WHERE id IN(SELECT resource_id FROM history_cleanup_targets WHERE job_id=? AND kind='task')`,
-    ).bind(Number(deleting), Number(deleting), at, id),
+      `INSERT INTO task_versions(task_id,version,definition,user_id,model_id,model_version)
+      SELECT t.id,t.version+1,json_object('id',t.id,'version',t.version+1,'title',CASE WHEN ?=1 THEN '已删除任务' ELSE t.title END,
+        'goal','请重新交办任务','entryUrl','https://example.com','accountId',NULL,
+        'modelId',v.model_id,'modelVersion',v.model_version,'allowedActions',json('["read"]'),
+        'verification',json('{"kind":"goal","value":"请重新交办任务"}'),
+        'schedule',json('{"kind":"manual"}'),'createdAt',json_extract(v.definition,'$.createdAt')),
+        t.user_id,v.model_id,v.model_version FROM tasks t JOIN task_versions v ON v.task_id=t.id AND v.version=t.version
+      WHERE t.id IN(SELECT resource_id FROM history_cleanup_targets WHERE job_id=? AND kind='task')`,
+    ).bind(Number(deleting), id),
+    env.DB.prepare(
+      `UPDATE tasks SET deleted=?,version=version+1,context_withdrawn=1,status='paused',
+      title=CASE WHEN ?=1 THEN '已删除任务' ELSE title END,schedule_kind='manual',next_run_at=NULL,confirmed_condition=NULL,updated_at=?
+      WHERE id IN(SELECT resource_id FROM history_cleanup_targets WHERE job_id=? AND kind='task')`,
+    ).bind(Number(deleting), Number(deleting), dbTime(at), id),
     env.DB.prepare(
       `UPDATE ai_graph_inputs SET active=0,generation=generation+1,status='cancelled',error='THREAD_DELETED' WHERE parent_thread IN(${threads}) OR run_id IN(${runs})`,
     ).bind(id, id),
@@ -160,11 +170,12 @@ export async function drainHistoryCleanups(env: AppEnv) {
         if (kind === "task") {
           const result = await env.DB.batch([
             env.DB.prepare(
-              "DELETE FROM task_versions WHERE rowid IN(SELECT rowid FROM task_versions WHERE task_id=? AND version<=? LIMIT 100)",
+              "DELETE FROM task_versions WHERE rowid IN(SELECT rowid FROM task_versions WHERE task_id=? AND version<=? AND version<>(SELECT version FROM tasks WHERE id=task_versions.task_id) AND NOT EXISTS(SELECT 1 FROM runs WHERE runs.task_id=task_versions.task_id AND runs.task_version=task_versions.version) AND NOT EXISTS(SELECT 1 FROM account_dispatch_groups g WHERE g.task_id=task_versions.task_id AND g.task_version=task_versions.version) LIMIT 100)",
             ).bind(resource, target.cutoff_version),
+            // 运行安全身份仍引用历史版本；保留最小版本身份并回收正文，不能破坏 FK 或释放 unknown。
             env.DB.prepare(
-              "DELETE FROM conversations WHERE rowid IN(SELECT rowid FROM conversations WHERE task_id=? AND at<=(SELECT created_at FROM history_cleanup_jobs WHERE id=?) LIMIT 100)",
-            ).bind(resource, job.id),
+              "UPDATE task_versions SET definition='{}' WHERE rowid IN(SELECT rowid FROM task_versions WHERE task_id=? AND version<=? AND definition<>'{}' AND version<>(SELECT version FROM tasks WHERE id=task_versions.task_id) LIMIT 100)",
+            ).bind(resource, target.cutoff_version),
           ]);
           if (result.every((r) => !r.meta.changes))
             await env.DB.prepare(
@@ -184,8 +195,8 @@ export async function drainHistoryCleanups(env: AppEnv) {
           }
           const tables =
             kind === "thread"
-              ? ["ai_messages", "assistance_replies", "execution_help"]
-              : ["run_events", "challenges", "batch_progress", "run_conditions", "execution_help"];
+              ? ["ai_messages", "execution_help"]
+              : ["run_conditions", "execution_help"];
           const statements = tables.map((table) =>
             env.DB.prepare(
               `DELETE FROM ${table} WHERE rowid IN(SELECT rowid FROM ${table} WHERE ${field}=? LIMIT 100)`,
@@ -204,11 +215,25 @@ export async function drainHistoryCleanups(env: AppEnv) {
                 `DELETE FROM ${table} WHERE rowid IN(SELECT p.rowid FROM ${table} p JOIN ai_graph_inputs g ON g.id=p.thread AND g.owner=p.owner WHERE g.${graphWhere} LIMIT 100)`,
               ).bind(resource),
             );
-          statements.push(
-            env.DB.prepare(
-              `UPDATE ai_calls SET result=NULL,status='unknown',error='THREAD_DELETED' WHERE rowid IN(SELECT rowid FROM ai_calls WHERE (graph_id IN(SELECT id FROM ai_graph_inputs WHERE ${graphWhere}) ${kind === "run" ? "OR run_id=?" : ""}) AND (result IS NOT NULL OR status<>'unknown') LIMIT 100)`,
-            ).bind(resource, ...(kind === "run" ? [resource] : [])),
-          );
+          const calls = await env.DB.prepare(
+            `SELECT id FROM ai_calls WHERE (graph_id IN(SELECT id FROM ai_graph_inputs WHERE ${graphWhere}) ${kind === "run" ? "OR run_id=?" : ""})
+            AND (status<>'unknown' OR error IS NULL OR error<>'THREAD_DELETED' OR EXISTS(SELECT 1 FROM call_results b WHERE b.id=ai_calls.id)) LIMIT 100`,
+          )
+            .bind(resource, ...(kind === "run" ? [resource] : []))
+            .all<{ id: string }>();
+          if (calls.results.length) {
+            // 固定本批 ID；删除正文后不重新选择另一批，避免单次 alarm 清理无界数量的调用。
+            const ids = calls.results.map((r) => r.id),
+              placeholders = ids.map(() => "?").join(",");
+            statements.push(
+              env.DB.prepare(`DELETE FROM call_results WHERE id IN(${placeholders})`).bind(...ids),
+            );
+            statements.push(
+              env.DB.prepare(
+                `UPDATE ai_calls SET status='unknown',error='THREAD_DELETED' WHERE id IN(${placeholders}) AND (status<>'unknown' OR error IS NULL OR error<>'THREAD_DELETED')`,
+              ).bind(...ids),
+            );
+          }
           const results = await env.DB.batch(statements);
           // 再经过一个无删除轮次才完成，避免刚好满批时漏掉余下内容。
           if (!images.results.length && results.every((r) => !r.meta.changes))
@@ -222,14 +247,14 @@ export async function drainHistoryCleanups(env: AppEnv) {
       await env.DB.prepare(
         "UPDATE history_cleanup_jobs SET error=NULL,updated_at=?,status=CASE WHEN EXISTS(SELECT 1 FROM history_cleanup_targets WHERE job_id=? AND done=0) THEN 'pending' ELSE 'done' END WHERE id=?",
       )
-        .bind(now(), job.id, job.id)
+        .bind(dbTime(now()), job.id, job.id)
         .run();
       await notifyUser(env, job.user_id);
     } catch {
       await env.DB.prepare(
         "UPDATE history_cleanup_jobs SET error='CLEANUP_RETRYING',updated_at=? WHERE id=?",
       )
-        .bind(now(), job.id)
+        .bind(dbTime(now()), job.id)
         .run();
     }
   }

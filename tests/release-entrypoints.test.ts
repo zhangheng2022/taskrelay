@@ -131,7 +131,7 @@ test("真实生产发布入口核对 SQL、安装包和恢复结果，异常保�
       assert.equal(output.state.productionRelease, undefined);
       assert.equal(output.state.claimsEnabled, "1");
       assert.equal(output.state.maintenance, "0");
-      assert.equal(output.migrations, migrationCount - 1);
+      assert.equal(output.migrations, migrationCount);
       continue;
     }
     assert.deepEqual(

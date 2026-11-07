@@ -10,7 +10,7 @@ import {
   Settings as SettingsIcon,
   Sun,
 } from "lucide-react";
-import type { Snapshot, Transport } from "../../contracts/src/index";
+import type { Snapshot, Transport, TaskDefinition, TaskRun } from "../../contracts/src/index";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Skeleton } from "./components/ui/skeleton";
@@ -94,6 +94,80 @@ function Workspace({ transport }: { transport: Transport }) {
   const [page, setPage] = useState<"tasks" | "runs" | "settings">("tasks"),
     [selected, setSelected] = useState<string | null>(() => location.hash.slice(1) || null),
     [runId, setRunId] = useState<string | null>(null);
+  const [older, setOlder] = useState<{
+    owner: Transport;
+    tasks: TaskDefinition[];
+    runs: TaskRun[];
+    tasksCursor?: string | null;
+    runsCursor?: string | null;
+  }>({ owner: transport, tasks: [], runs: [] });
+  const olderOwner = useRef(transport);
+  olderOwner.current = transport;
+  const pagingGeneration = useRef(0),
+    pagingFlight = useRef<symbol | null>(null);
+  const [pagingOwner, setPagingOwner] = useState<Transport | null>(null);
+  const loadingMore = pagingOwner === transport;
+  const loadedHistory =
+    older.owner === transport ? older : { owner: transport, tasks: [], runs: [] };
+  const tasksCursor =
+    loadedHistory.tasksCursor === undefined ? snapshot?.nextTasksCursor : loadedHistory.tasksCursor;
+  const runsCursor =
+    loadedHistory.runsCursor === undefined ? snapshot?.nextRunsCursor : loadedHistory.runsCursor;
+  const selectedTask = useTransportQuery<TaskDefinition>(
+    transport,
+    ["task", selected],
+    (signal) =>
+      rpcData(
+        createApi(transport).api.user.tasks[":id"].$get(
+          { param: { id: selected ?? "" } },
+          { init: { signal } },
+        ),
+      ),
+    transport.subscribe ? 60000 : 15000,
+    !!selected && !!snapshot && !snapshot.tasks.some((t) => t.id === selected),
+  );
+  async function more(kind: "tasks" | "runs") {
+    const cursor = kind === "tasks" ? tasksCursor : runsCursor;
+    if (!cursor || loadingMore) return;
+    const owner = transport;
+    const generation = pagingGeneration.current,
+      ticket = Symbol();
+    pagingFlight.current = ticket;
+    setPagingOwner(owner);
+    try {
+      const next =
+        kind === "tasks"
+          ? await rpcData(createApi(transport).api.user.tasks.$get({ query: { before: cursor } }))
+          : await rpcData(createApi(transport).api.user.runs.$get({ query: { before: cursor } }));
+      if (olderOwner.current !== owner || pagingGeneration.current !== generation) return;
+      setOlder((previous) => {
+        const base = previous.owner === owner ? previous : { owner, tasks: [], runs: [] };
+        if (kind === "tasks")
+          return {
+            ...base,
+            tasks: [...base.tasks, ...(next.items as TaskDefinition[])].filter(
+              (t, i, a) => a.findIndex((x) => x.id === t.id) === i,
+            ),
+            tasksCursor: next.nextCursor,
+          };
+        return {
+          ...base,
+          runs: [...base.runs, ...(next.items as TaskRun[])].filter(
+            (t, i, a) => a.findIndex((x) => x.id === t.id) === i,
+          ),
+          runsCursor: next.nextCursor,
+        };
+      });
+    } catch (error) {
+      if (olderOwner.current === owner && pagingGeneration.current === generation)
+        setActionError((error as Error).message);
+    } finally {
+      if (pagingFlight.current === ticket) {
+        pagingFlight.current = null;
+        setPagingOwner(null);
+      }
+    }
+  }
   const [detail, setDetail] = useState(false),
     [search, setSearch] = useState(""),
     [draftKey, setDraftKey] = useState(0);
@@ -120,8 +194,23 @@ function Workspace({ transport }: { transport: Transport }) {
       setBusy(false);
     }
   }
-  const data = snapshot ?? empty,
-    task = data.tasks.find((t) => t.id === selected) ?? null;
+  const base = snapshot ?? empty;
+  const data = {
+      ...base,
+      tasks: [
+        ...base.tasks,
+        ...loadedHistory.tasks.filter((t) => !base.tasks.some((x) => x.id === t.id)),
+      ],
+      runs: [
+        ...base.runs,
+        ...loadedHistory.runs.filter((r) => !base.runs.some((x) => x.id === r.id)),
+      ],
+    },
+    task =
+      base.tasks.find((t) => t.id === selected) ??
+      selectedTask.data ??
+      loadedHistory.tasks.find((t) => t.id === selected) ??
+      null;
   const run =
     data.runs.find((r) => r.id === runId) ??
     (task ? data.runs.find((r) => r.taskId === task.id) : null) ??
@@ -166,6 +255,10 @@ function Workspace({ transport }: { transport: Transport }) {
     });
   }
   async function cleanupAccepted(value: CleanupSelection) {
+    pagingGeneration.current++;
+    pagingFlight.current = null;
+    setPagingOwner(null);
+    setOlder({ owner: transport, tasks: [], runs: [] });
     if (value.scope === "all" || (value.scope === "task" && value.targetId === selected)) newTask();
     if (value.scope === "clear" && value.targetId === selected) setChatEpoch((n) => n + 1);
     await refresh();
@@ -252,6 +345,16 @@ function Workspace({ transport }: { transport: Transport }) {
                 <p className="px-2 py-4 text-xs text-muted-foreground">
                   新建一个任务，从一句话开始。
                 </p>
+              )}
+              {tasksCursor && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    disabled={loadingMore || offline}
+                    onClick={() => void more("tasks")}
+                  >
+                    加载更多任务
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
               )}
             </SidebarMenu>
           </SidebarGroup>
@@ -533,8 +636,19 @@ function Workspace({ transport }: { transport: Transport }) {
                   </EmptyHeader>
                 </Empty>
               )}
+              {runsCursor && (
+                <Button
+                  variant="ghost"
+                  disabled={loadingMore || offline}
+                  onClick={() => void more("runs")}
+                >
+                  加载更多运行记录
+                </Button>
+              )}
             </div>
           </div>
+        ) : selectedTask.isFetching && !task ? (
+          <LoadingState label="正在读取任务" />
         ) : !task ? (
           <TaskCompose
             key={draftKey}

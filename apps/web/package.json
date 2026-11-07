@@ -6,6 +6,6 @@
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
     "deploy": "vite build && wrangler deploy",
-    "db:migrate": "wrangler d1 migrations apply taskrelay --local"
+    "db:migrate": "wrangler d1 migrations apply DB --local"
   }
 }

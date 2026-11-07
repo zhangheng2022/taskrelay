@@ -51,9 +51,12 @@ test("会话首次加载失败后可恢复；只重读会话，不自动发送�
   const requests: string[] = [];
   const transport = transportWith(async (method, path) => {
     requests.push(method + " " + path);
-    if (path === "/api/user/threads") {
+    if (path.split("?")[0] === "/api/user/threads") {
       if (++reads === 1) throw new Error("OFFLINE");
-      return [{ id: threadPage.id, kind: "compose", model_id: "model-ui", task_id: null }];
+      return {
+        items: [{ id: threadPage.id, kind: "compose", model_id: "model-ui", task_id: null }],
+        nextCursor: null,
+      };
     }
     assert.equal(method, "GET");
     return await new Promise((r) => {

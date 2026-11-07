@@ -207,7 +207,7 @@ export function createFixtureTransport(options: URLSearchParams): Transport {
       // StrictMode probes the initial effect twice; both probes must see the outage.
       if (
         options.get("network") === "fail-once" &&
-        path === "/api/user/threads" &&
+        path.split("?")[0] === "/api/user/threads" &&
         threadFailures++ < 2
       )
         throw new Error("OFFLINE");
@@ -254,13 +254,16 @@ export function createFixtureTransport(options: URLSearchParams): Transport {
           }
           result = job;
         }
-      } else if (path === "/api/user/threads") {
+      } else if (path.split("?")[0] === "/api/user/threads") {
         if (method === "GET")
-          result = [...threads.values()].map((t) => ({
-            ...t,
-            model_id: t.modelId,
-            task_id: t.taskId ?? null,
-          }));
+          result = {
+            items: [...threads.values()].map((t) => ({
+              ...t,
+              model_id: t.modelId,
+              task_id: t.taskId ?? null,
+            })),
+            nextCursor: null,
+          };
         else {
           const input = body as { modelId: string; taskId?: string };
           const boundTask = snapshot.tasks.find((task) => task.id === input.taskId);

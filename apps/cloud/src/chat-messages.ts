@@ -1,3 +1,4 @@
+import { dbTime } from "./database";
 /**
  * 统一聊天消息的幂等写入、敏感正文加密与执行上下文读取，供交办和执行协助共用。
  * 消息绑定原会话，关闭的会话拒绝新写入；运行上下文解密前校验任务与会话归属。
@@ -34,6 +35,7 @@ export async function runThread(env: AppEnv, runId: string) {
 }
 export interface ChatMessageWrite {
   id: string;
+  turnId?: string;
   role?: "user" | "assistant";
   source: "user" | "cloud" | "executor";
   content: string;
@@ -51,35 +53,47 @@ export async function messageStatement(
   message: ChatMessageWrite,
   fence?: { sql: string; values: (string | number | null)[] },
 ) {
-  const secret = message.private
-    ? await seal(message.content, env.MASTER_KEY, `message:${threadId}:${message.id}`)
-    : null;
-  return env.DB.prepare(
-    `INSERT OR IGNORE INTO ai_messages(id,thread_id,seq,role,content,turn_id,at,source,parts,run_id,reply_to,private_content,context_withdrawn)
-    SELECT ?,id,(SELECT COALESCE(MAX(seq),0)+1 FROM ai_messages WHERE thread_id=?),?,?,?,?,?,?,?,?,?,
+  const secret =
+    message.private || (message.role === "user" && message.runId !== undefined)
+      ? await seal(message.content, env.MASTER_KEY, `message:${threadId}:${message.id}`)
+      : null;
+  // 元数据与正文一同交给调用方事务；重复发布只能读取既有正文，不能覆盖。
+  return [
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO ai_messages(id,thread_id,seq,role,turn_id,at,source,run_id,reply_to,context_withdrawn)
+    SELECT ?,id,(SELECT COALESCE(MAX(seq),0)+1 FROM ai_messages WHERE thread_id=?),?,?,?,?,?,?,
       CASE WHEN EXISTS(SELECT 1 FROM runs WHERE id=? AND context_withdrawn=1) THEN 1 ELSE 0 END
       FROM ai_threads WHERE id=? AND closed=0 ${fence ? `AND (${fence.sql})` : ""}`,
-  ).bind(
-    message.id,
-    threadId,
-    message.role ?? "assistant",
-    secret ? "[用户已提供私密信息]" : message.content,
-    message.id,
-    message.at ?? now(),
-    message.source,
-    JSON.stringify(message.parts ?? []),
-    message.runId ?? null,
-    message.replyTo ?? null,
-    secret,
-    message.role === "user" ? null : (message.runId ?? null),
-    threadId,
-    ...(fence?.values ?? []),
-  );
+    ).bind(
+      message.id,
+      threadId,
+      message.role ?? "assistant",
+      message.turnId ?? message.id,
+      dbTime(message.at ?? now()),
+      message.source,
+      message.runId ?? null,
+      message.replyTo ?? null,
+      message.role === "user" ? null : (message.runId ?? null),
+      threadId,
+      ...(fence?.values ?? []),
+    ),
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO message_bodies(id,content,private_content,parts)
+     SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM ai_messages WHERE id=? AND thread_id=?)`,
+    ).bind(
+      message.id,
+      secret ? "[用户已提供私密信息]" : message.content,
+      secret,
+      JSON.stringify(message.parts ?? []),
+      message.id,
+      threadId,
+    ),
+  ];
 }
 export async function appendMessage(env: AppEnv, threadId: string, message: ChatMessageWrite) {
   const insert = await messageStatement(env, threadId, message);
   await env.DB.batch([
-    insert,
+    ...insert,
     ...(message.role === "user" && message.replyTo
       ? [
           env.DB.prepare(
@@ -114,7 +128,7 @@ export async function conversationContext(
     `SELECT m.id,m.seq,m.role,m.content,m.source,m.parts,m.reply_to,m.run_id,m.private_content,m.context_withdrawn,
     (SELECT json_extract(h.request,'$.origin') FROM execution_help h WHERE h.thread_id=m.thread_id AND (h.id=m.reply_to OR h.id||'_request'=m.reply_to) LIMIT 1) AS origin,
     (SELECT account_id FROM runs WHERE id=m.run_id) AS accountId
-    FROM ai_messages m WHERE m.thread_id=? AND m.seq>? ORDER BY m.seq`,
+    FROM message_details m WHERE m.thread_id=? AND m.seq>? ORDER BY m.seq`,
   )
     .bind(threadId, after)
     .all<ContextRow>();

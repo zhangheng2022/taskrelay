@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 test("多人迁移保留已有数据、密文、ID，并拒绝不存在的归属", () => {
   const sql = new DatabaseSync(":memory:");
   const migrate = (name: string) =>
-    sql.exec(readFileSync(new URL(`../apps/cloud/migrations/${name}`, import.meta.url), "utf8"));
+    sql.exec(readFileSync(new URL(`../scripts/db/legacy-schema/${name}`, import.meta.url), "utf8"));
   for (const file of [
     "0001_initial.sql",
     "0002_conversations.sql",

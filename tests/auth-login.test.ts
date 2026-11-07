@@ -1,3 +1,4 @@
+import { dbTime } from "../apps/cloud/src/database";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { hashPassword } from "better-auth/crypto";
@@ -23,12 +24,19 @@ test("网站邮箱登录发送单一 JSON 媒体类型并签发可用会话", as
     .prepare(
       "INSERT INTO auth_user(id,name,email,emailVerified,createdAt,updatedAt) VALUES(?,?,?,1,?,?)",
     )
-    .run("login-fixture", "Test", email, at, at);
+    .run("login-fixture", "Test", email, dbTime(at), dbTime(at));
   sql
     .prepare(
       "INSERT INTO auth_account(id,accountId,providerId,userId,password,createdAt,updatedAt) VALUES(?,?,'credential',?,?,?,?)",
     )
-    .run("login-account", "login-fixture", "login-fixture", await hashPassword(password), at, at);
+    .run(
+      "login-account",
+      "login-fixture",
+      "login-fixture",
+      await hashPassword(password),
+      dbTime(at),
+      dbTime(at),
+    );
   let cookie = "";
   let mediaType: string | null = null;
   t.mock.method(globalThis, "fetch", async (input: string | URL, init?: RequestInit) => {

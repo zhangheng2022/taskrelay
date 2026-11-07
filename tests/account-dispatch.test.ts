@@ -1,3 +1,4 @@
+import { dbTime } from "../apps/cloud/src/database";
 import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { app } from "../apps/cloud/src/index";
@@ -25,7 +26,7 @@ async function fixture(t: TestContext) {
       .prepare(
         "INSERT INTO devices(id,name,token_hash,protocol_version,last_seen) VALUES(?,?,?,?,?)",
       )
-      .run(id, id, await hash(token), PROTOCOL_VERSION, new Date().toISOString());
+      .run(id, id, await hash(token), PROTOCOL_VERSION, dbTime(new Date().toISOString()));
   async function request(
     path: string,
     body?: unknown,
@@ -64,7 +65,7 @@ async function fixture(t: TestContext) {
   }
   sql
     .prepare(
-      "INSERT INTO model_profiles(id,version,config,secret,capabilities,created_at) VALUES(?,1,?,?,?,?)",
+      "INSERT INTO model_profile_versions(id,version,config,secret,capabilities,created_at) VALUES(?,1,?,?,?,?)",
     )
     .run(
       "model_test",
@@ -84,7 +85,7 @@ async function fixture(t: TestContext) {
         vision: false,
         testedAt: null,
       }),
-      new Date().toISOString(),
+      dbTime(new Date().toISOString()),
     );
   const created = await request("/api/user/threads", { modelId: "model_test" });
   assert.equal(created.status, 200, JSON.stringify(created.data));
@@ -275,7 +276,7 @@ test("租约过期且无写操作也必须等待旧浏览器清理，不能换�
   const definition = await insertTask(s.db, task({ id: "standalone", accountId: s.accounts[0] }));
   await enqueue(s.db, definition, "lease-old");
   const first = (await claim(s.db, "d1", "lease-claim"))!;
-  s.sql.prepare("UPDATE runs SET lease_expires_at='2000-01-01T00:00:00Z' WHERE id=?").run(first.id);
+  s.sql.prepare("UPDATE runs SET lease_expires_at=946684800000 WHERE id=?").run(first.id);
   await tick(s.db);
   await enqueue(s.db, definition, "lease-new");
   assert.equal(s.sql.prepare("SELECT status FROM runs WHERE id=?").get(first.id)!.status, "failed");
@@ -358,9 +359,9 @@ test("管理员确认停机迁移保留已发布状态并退休旧候选，迟�
   s.sql
     .prepare(
       `INSERT INTO browser_state_candidates(object_key,user_id,account_id,run_id,device_id,lease_epoch,credential_version,state_epoch,base_revision,origins,created_at,expires_at)
-    VALUES('candidate_before_migrate','legacy_owner',?,?,?,?,1,1,3,'["https://example.com"]',?,'2099-01-01T00:00:00.000Z')`,
+    VALUES('candidate_before_migrate','fixture_owner',?,?,?,?,1,1,3,'["https://example.com"]',?,4070908800000)`,
     )
-    .run(s.accounts[0], run.id, "d1", run.leaseEpoch, at);
+    .run(s.accounts[0], run.id, "d1", run.leaseEpoch, dbTime(at));
   s.sql
     .prepare("UPDATE runs SET state_candidate_key='candidate_before_migrate' WHERE id=?")
     .run(run.id);
@@ -433,7 +434,7 @@ test("成员关闭间隙的补充交给后继账号，不另起冲突规划", as
   assert.equal(sent.status, 202, JSON.stringify(sent.data));
   assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM ai_turns").get()!.n, 0);
   assert.equal(
-    s.sql.prepare("SELECT content FROM ai_messages WHERE role='user'").get()!.content,
+    s.sql.prepare("SELECT content FROM message_details WHERE role='user'").get()!.content,
     "[用户已提供私密信息]",
   );
   assert.equal(
@@ -503,7 +504,7 @@ test("交办落地后已有排队消息成为完整加密补充，并清除inbox
     .prepare(
       "INSERT INTO conversation_inbox(id,thread_id,request_id,digest,content,created_at) VALUES('queued_extra',?,'queued-extra',?,?,?)",
     )
-    .run(s.thread.id, await hash(content), content, new Date().toISOString());
+    .run(s.thread.id, await hash(content), content, dbTime(new Date().toISOString()));
   await promoteInbox(s.env, String(s.thread.id));
   await promoteInbox(s.env, String(s.thread.id));
   const inbox = s.sql
