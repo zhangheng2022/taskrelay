@@ -1,5 +1,31 @@
 # TaskRelay 验收记录
 
+## 2026-11-08 存储 v2 生产全量重置与正式桌面发布
+
+按用户“数据全部清空，不保留历史数据”的明确要求执行，取代本轮生产保留数据转换计划。[Quality 42396015821](https://github.com/zhangheng2022/taskrelay/actions/runs/42396015821) 与 [正式发布 42396374508](https://github.com/zhangheng2022/taskrelay/actions/runs/42396374508) 成功，源码固定为 `8f0009b29330b3903434c944ee8946c41164164c`。Worker 版本 `d8748c53-2466-4e44-8030-969a564da839` 的流量为 100%，协议 18。本文后续“尚未部署”段落是前批时间点记录，当前状态以上述最终发布为准。
+
+维护窗口暂停旧库领取和交办，运行/浏览器清理、AI 回合、调用、dispatch、命令、inbox 与清理作业待处理数均为 0。先部署无 DO 类/绑定的维护入口，应用 `storage-v2-reset-drop-20261108`，核验七个旧命名空间全部消失；再由正式发布应用 `storage-v2-reset-create-20261108` 建立七个新 SQLite DO 命名空间，其 ID 均不同。Secret 通过 keep_bindings 保留，未读取、生成或覆盖 MASTER_KEY 等平台密钥。
+
+唯一业务 D1 已切为 `taskrelay-v2-20261108`（`1951016f-1c9b-459e-a332-75266106f7ad`），storage_meta=2、基线迁移已登记、foreign_key_check 为空。切换后核验认证用户/会话、成员、设备、模型、账号、任务、运行、聊天、消息和附件计数均为 0。核验新绑定、公开下载及权限后，旧业务 D1 `9d387f48-6e34-4af4-a2a0-10f958d65a16` 已通过 API 删除并从列表消失；既有独立验收库未删除。未制作旧数据转换归档，本机旧库和 Profile 未清除。
+
+正式 [0.19.0 Release](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.19.0) 已公开，托管 Windows 新构建的包内 smoke、系统快捷方式启动、进程/安装路径核对、实际安装 smoke 与 release-manifest 均通过。实际安装可执行文件为 `C:\Users\runneradmin\AppData\Local\TaskRelay\app-0.19.0\TaskRelay.exe`，安装资源位于同目录 resources，安装与构建 ASAR 哈希一致，非 Codex LocalCache 副本。
+
+| 正式产物                    |    字节数 | SHA-256                                                            |
+| --------------------------- | --------: | ------------------------------------------------------------------ |
+| TaskRelay.Setup.exe         | 388404224 | `de8e4bb61132a15b34615c265b9a5239f3aedad8f5fe797e68d647ac0be7cb2a` |
+| TaskRelay-0.19.0-full.nupkg | 387865151 | `c559d3ea24a73792169882a666f5146a2a7edcd3719c56970af648c8ee73f0c5` |
+| 构建/安装 app.asar          |         — | `984f44b2a7f4f210e725ba9e5bc04f03070aee3464ee72bab446fea4ece05930` |
+
+正式流水线通过 Cloudflare 入口完整下载 nupkg 并核对字节数及 SHA-256 后才激活更新目录。workers.dev health=200，协议/SHA 正确；匿名 `/api/user/me`、`/api/admin/operations` 均为 401，首页及实际 JS 资源 `/assets/index-Dpf0pjn_.js` 为 200，最新更新目录为 0.19.0。主域命令行请求被 Cloudflare 防护返回 403；真实 Edge 的主域 health 显示同一协议/SHA，主页正常显示登录和管理员首次注册入口。未调整防护、注册账号或发送邮件。
+
+网站 maintenance=0、storageFrozen=0；因配对设备已清空，发布阶段为 **awaiting-device**，claimsEnabled=0。代码、网站、公开安装包和更新目录已上线，执行领取尚未恢复。须重新注册并验证管理员、配置模型、处理旧本地库并配对新版设备；设备就绪后按 DEPLOYMENT 的固定 SHA/recovery-run 恢复发布，不能将当前状态写成 complete。
+
+最终主分支完整测试为 442 项：441 通过、0 失败、1 项需真实 Chromium 的测试跳过；正式 Windows 作业准备浏览器后，该真实状态适配器套件 2/2 通过。覆盖率为行 73.12%、分支 81.14%、函数 80.45%；类型、lint、格式、仓库、工作流、安全和 Web 构建门禁通过。前批 UI、workerd/D1、离线转换与容量证据见各自段落；本次没有对生产做百万行压力验证。
+
+OCR delegate preview/rule 对最终提交范围 `b658569..8f0009b` 执行成功；宿主沿用分批审查并复审最后增量，含默认排除的 SQL、测试、配置、声明及删除项：total_files=166、reviewed_files=166、skipped_files=0、coverage_rate=100%，无未解决发现，不是全仓审查。锁文件仅版本同步，旧迁移移动内容逐一核对相同；未提交原有 `.codex/config.toml`、截图、缓存、用户数据或产物。Graphify 最后一轮更新为 6714 节点、11512 边、575 社区，保留提取和社区标签限制，未调用 LLM。
+
+本次生产无已配置模型或就绪设备，没有执行真实模型/网站任务；不能据此声称验证了模型实际地区、完整调度/租约/恢复闭环、百台设备连续在线或用户本机升级。托管 Windows 安装是本次正式安装证据，用户本机尚未安装/重新配对。
+
 ## 2026-11-08 发布说明校正
 
 主分支 `4974fcb` 的 Quality 门禁通过。正式发布 42395304459 的 Web 和真实 Chromium 状态检查通过，切换前发现发布说明仍为 0.18.0、包含与本次协议 18 不符的兼容描述，因此主动取消该运行，未进入生产切换。更新 0.19.0 说明，明确客户端升级、本地库离线转换、云端全量重置及重新注册/配置/配对要求；不更改包代码或放宽门禁，正式产物仍须对新固定提交重新生成。
