@@ -1,5 +1,11 @@
 # 部署与恢复
 
+## 2026-11-08 0.19.3 已上线（领取已恢复）
+
+用户授权提交并部署，PR #19 合并后的固定源提交 `9bebe3d5e4effb5598535fd4f65568b290a0d60d` 通过主分支 Quality 42487677936 和 [正式发布 42488175891](https://github.com/zhangheng2022/taskrelay/actions/runs/42488175891)。[0.19.3 Release](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.19.3) 已公开，正式包内、实际安装及系统入口 smoke 通过；Cloudflare 完整下载哈希核验后启用更新目录。主域健康、源码 SHA、协议 18、页面资源及匿名权限核验正常，Worker 接收 100% 流量。没有待应用迁移，没有清空业务数据或更换平台 Secret；证据及验证限制见 ACCEPTANCE。
+
+首次切换因缺少持续在线就绪设备停在 awaiting-device，maintenance=0、claimsEnabled=0。[恢复发布 42489088082](https://github.com/zhangheng2022/taskrelay/actions/runs/42489088082) 使用 mode=resume、原源 SHA 及 recovery-run=42488175891 成功继续原状态，没有重打包、重新部署或手改领取开关。最终回读 phase=complete、maintenance=0、claimsEnabled=1，1 台协议 18 的有效设备在线就绪。另一台电脑仍需通过“检查更新”确认升级到 0.19.3；在线就绪不等于该电脑已更新，字段去重的实际任务效果仍待用户复测。下方未部署和 0.19.2 记录均为历史时点。
+
 ## 2026-11-08 本地字段去重优化 0.19.3（未部署）
 
 按用户要求优化模型输入表示及共享摘要提示，源码版本为 0.19.3，协议 18／本地 schema 4 不变。变化字段完整覆盖同次工具结果的基础现场，引用必须能在实际消息中唯一定位、且比完整表示更小；摘要提示聚焦进展并保留关键执行事实。验证证据见 ACCEPTANCE。本批只进行本地源码测试及打包验收，不安装或发布更新、不部署云端；既有正式 0.19.2 发布及恢复记录保持有效。
