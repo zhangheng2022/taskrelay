@@ -8,6 +8,24 @@ $version = (Get-Content -LiteralPath 'apps/desktop/package.json' -Raw | ConvertF
 $setupPath = Join-Path $workspacePath 'apps/desktop/out/make/squirrel.windows/x64/TaskRelay Setup.exe'
 $installRoot = [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'TaskRelay'))
 $installedExe = Join-Path $installRoot "app-$version/TaskRelay.exe"
+# 父进程退出会连带结束子进程；枚举后 PID 已消失属于收尾完成，仍存活时的停止错误继续阻止验收。
+function Stop-InstalledTaskRelay {
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    param()
+    if (-not $PSCmdlet.ShouldProcess($installedExe, '停止候选安装进程')) { return }
+    Get-CimInstance Win32_Process -Filter "Name='TaskRelay.exe'" | Where-Object ExecutablePath -EQ $installedExe | ForEach-Object {
+        $candidateId = $_.ProcessId
+        try { Stop-Process -Id $candidateId -Force -ErrorAction Stop }
+        catch {
+            if (Get-Process -Id $candidateId -ErrorAction SilentlyContinue) { throw }
+        }
+    }
+    $stopDeadline = [DateTime]::UtcNow.AddSeconds(10)
+    while (Get-CimInstance Win32_Process -Filter "Name='TaskRelay.exe'" | Where-Object ExecutablePath -EQ $installedExe) {
+        if ([DateTime]::UtcNow -ge $stopDeadline) { throw 'INSTALLED_PROCESSES_STILL_RUNNING' }
+        Start-Sleep -Milliseconds 100
+    }
+}
 $builtAsar = Join-Path $workspacePath 'apps/desktop/out/TaskRelay-win32-x64/resources/app.asar'
 $setup = Start-Process -FilePath $setupPath -ArgumentList '--silent' -PassThru -Wait -WindowStyle Hidden
 if ($setup.ExitCode -ne 0) { throw 'INSTALLER_FAILED' }
@@ -21,7 +39,7 @@ $entry = $links | Where-Object {
 } | Select-Object -First 1
 if (-not $entry) { throw 'SYSTEM_SHORTCUT_MISSING' }
 # 全新 Runner 尚未配对；仅关闭本次安装路径的进程，确保下一次由系统入口创建。
-Get-CimInstance Win32_Process -Filter "Name='TaskRelay.exe'" | Where-Object ExecutablePath -EQ $installedExe | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+Stop-InstalledTaskRelay
 Start-Process -FilePath $entry.FullName -WindowStyle Hidden
 $deadline = [DateTime]::UtcNow.AddSeconds(45)
 $launched = $null
@@ -41,7 +59,7 @@ $entryEvidence = @{
     processId = $launched.ProcessId; installedAsarPath = $installedAsar; asarSha256 = $installedHash
     checkedAt = [DateTime]::UtcNow.ToString('o'); runner = $env:RUNNER_ENVIRONMENT
 }
-Get-CimInstance Win32_Process -Filter "Name='TaskRelay.exe'" | Where-Object ExecutablePath -EQ $installedExe | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+Stop-InstalledTaskRelay
 & node scripts/smoke.mjs $installedExe 'out/installed-smoke.json'
 if ($LASTEXITCODE -ne 0) { throw 'INSTALLED_SMOKE_FAILED' }
 $entryEvidence | ConvertTo-Json | Set-Content -LiteralPath 'out/system-entry.json' -Encoding utf8
