@@ -107,65 +107,74 @@ function harness(turns: ModelResponse[]) {
   };
 }
 
-test("实际执行图在摘要移走引用目标后恢复完整现场，并按实际保护输入重新计算预算", async () => {
-  const h = harness([]),
-    sizes: ContextSizeReport[] = [];
-  const url = "https://example.com/login?state=" + "x".repeat(3000);
-  const page = compactPageUrls({
-    url,
-    title: "旧现场仍是当前现场",
-    tabs: [{ index: 0, url }],
-    loading: { readyState: "complete" },
+for (const changedNetwork of [false, true])
+  test(`实际图摘要移走引用目标后恢复完整现场并回算预算：${changedNetwork}`, async () => {
+    const h = harness([]),
+      sizes: ContextSizeReport[] = [];
+    const url = "https://example.com/login?state=" + "x".repeat(3000);
+    const page = compactPageUrls({
+      url,
+      title: "旧现场仍是当前现场",
+      tabs: [{ index: 0, url }],
+      loading: { readyState: "complete" },
+      network: [{ code: "INITIAL" }],
+    });
+    const current = changedNetwork
+      ? { ...page, network: [{ code: "RESULT_UNKNOWN", at: "latest" }] }
+      : page;
+    let summaries = 0;
+    h.port.budget = () => ({ contextTokens: 10000, outputTokens: 1024 });
+    h.port.contextSize = (report) => sizes.push(report);
+    h.port.observe = async () => ({
+      userSeq: 1,
+      messages: [
+        { role: "system", content: "执行测试" },
+        {
+          role: "user",
+          content: JSON.stringify({
+            userMessages: [{ content: "完整原文" }],
+            untrustedPage: current,
+          }),
+        },
+      ],
+      history: [
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [{ id: "old", type: "function", function: { name: "act", arguments: "{}" } }],
+        },
+        {
+          role: "tool",
+          tool_call_id: "old",
+          content: JSON.stringify({ observation: page, feedback: { success: true } }),
+        },
+        { role: "user", content: "最新事实" + "x".repeat(8000) },
+      ],
+    });
+    h.port.decide = async (messages, purpose) => {
+      if (purpose === "summary") {
+        summaries++;
+        return { response: response([], "旧操作已返回，并已观察页面；保留当前完整现场。") };
+      }
+      h.sent.push(messages);
+      return { response: response([], "完成") };
+    };
+    await runExecutionGraph(h.port);
+    assert.equal(summaries, 1);
+    assert.equal(h.sent.length, 1);
+    const payload = JSON.parse(h.sent[0][1].content);
+    assert.equal(payload.untrustedPage.url, url);
+    assert.deepEqual(payload.untrustedPage, current);
+    assert.deepEqual(payload.userMessages, [{ content: "完整原文" }]);
+    assert.ok(!h.sent[0].some((m) => m.tool_call_id === "old"));
+    const before = sizes.find((s) => s.phase === "before-summary")!,
+      after = sizes.find((s) => s.phase === "after-summary")!;
+    assert.ok(
+      after.protectedMessages.estimatedTokens > before.protectedMessages.estimatedTokens + 1000,
+    );
+    assert.ok(after.replacement!.estimatedTokens <= after.budget.historyAllowanceTokens);
+    assert.equal(h.performed.length, 0);
   });
-  let summaries = 0;
-  h.port.budget = () => ({ contextTokens: 10000, outputTokens: 1024 });
-  h.port.contextSize = (report) => sizes.push(report);
-  h.port.observe = async () => ({
-    userSeq: 1,
-    messages: [
-      { role: "system", content: "执行测试" },
-      {
-        role: "user",
-        content: JSON.stringify({ userMessages: [{ content: "完整原文" }], untrustedPage: page }),
-      },
-    ],
-    history: [
-      {
-        role: "assistant",
-        content: "",
-        tool_calls: [{ id: "old", type: "function", function: { name: "act", arguments: "{}" } }],
-      },
-      {
-        role: "tool",
-        tool_call_id: "old",
-        content: JSON.stringify({ observation: page, feedback: { success: true } }),
-      },
-      { role: "user", content: "最新事实" + "x".repeat(8000) },
-    ],
-  });
-  h.port.decide = async (messages, purpose) => {
-    if (purpose === "summary") {
-      summaries++;
-      return { response: response([], "旧操作已返回，并已观察页面；保留当前完整现场。") };
-    }
-    h.sent.push(messages);
-    return { response: response([], "完成") };
-  };
-  await runExecutionGraph(h.port);
-  assert.equal(summaries, 1);
-  assert.equal(h.sent.length, 1);
-  const payload = JSON.parse(h.sent[0][1].content);
-  assert.equal(payload.untrustedPage.url, url);
-  assert.deepEqual(payload.userMessages, [{ content: "完整原文" }]);
-  assert.ok(!h.sent[0].some((m) => m.tool_call_id === "old"));
-  const before = sizes.find((s) => s.phase === "before-summary")!,
-    after = sizes.find((s) => s.phase === "after-summary")!;
-  assert.ok(
-    after.protectedMessages.estimatedTokens > before.protectedMessages.estimatedTokens + 1000,
-  );
-  assert.ok(after.replacement!.estimatedTokens <= after.budget.historyAllowanceTokens);
-  assert.equal(h.performed.length, 0);
-});
 
 test("图中断恢复只登记一次协助，不重跑前一浏览器动作，未执行调用保留原生配对", async () => {
   const h = harness([
