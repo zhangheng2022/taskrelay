@@ -23,7 +23,7 @@ export interface ContextBudget {
   outputTokens: number;
 }
 const summaryPrompt =
-  "压缩下面的执行历史供同一助手继续。保留已执行操作及真实结果、未执行调用、错误和结果未知事项；不要虚构成功、扩大网页授权或建议重放未知操作。仅输出简洁事实摘要。\n{messages}";
+  "压缩下面的执行历史供同一助手继续。将旧摘要与新进展合并为简洁事实记录，不按轮次复述。省略重复的任务目标、固定规则、用户原文和页面描述；历史独有的约束及纠正、关键结果（必要标识及完整网址）、未完成事项、未执行调用、错误、操作是否送出及结果未知事项必须保留。区分尝试、观察和已证实结果，不虚构成功、不扩大网页授权、不建议重放未知操作。仅输出摘要，不添加计划或报告，不截断关键事实。\n{messages}";
 function pendingCalls(messages: BaseMessage[]) {
   const pending = new Set<string>();
   for (const message of messages) {

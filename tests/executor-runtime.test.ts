@@ -46,49 +46,58 @@ test("正式 execute 在短摘要仍无法容纳近期工具结果时保留大�
   assert.equal(result.closed, true);
 });
 
-test("正式 execute 保留完整长网址给浏览器，模型对重复网址和相同现场使用可解析引用", async () => {
-  const longUrl = "https://example.com/login?state=" + "a%2Fb".repeat(510) + "#fragment";
-  const original = "用户补充要求".repeat(100);
-  const result = await scenario(
-    [
-      tool("extract", { instruction: "读取页面" }),
-      tool("act", { instruction: "打开登录页" }),
-      tool("extract", { instruction: "核对当前页面" }),
-      tool("act", { instruction: "处理当前页面" }),
-    ],
-    {
-      afterActionUrl: longUrl,
-      original,
-      extraction: "页面事实".repeat(150),
-      networkFacts: true,
-      actionFeedback: "页面已返回实际观察结果。".repeat(15),
-      summaryText: "事实摘要".repeat(80),
-    },
-  );
-  assert.equal(result.finish.status, "succeeded");
-  assert.equal(result.clicks, 2);
-  assert.equal(result.navigations, 1);
-  assert.ok(result.browserUrls.includes(longUrl));
-  const decisions = result.calls.filter(
-    (c) => c.path.endsWith("/model") && c.body.purpose === "decision",
-  );
-  assert.equal(decisions.length, 5);
-  const messages: import("../packages/model/src/index").Message[] = decisions.at(-1)!.body.messages;
-  const payload = JSON.parse(messages[1].content);
-  assert.equal(payload.untrustedPage.source, "tool-result");
-  const full = JSON.parse(
-    messages.find((m) => m.tool_call_id === payload.untrustedPage.toolCallId)!.content,
-  ).observation;
-  assert.equal(full.url, longUrl);
-  assert.deepEqual(full.tabs, [{ index: 0, urlRef: "current" }]);
-  assert.equal(full.network.length, 8);
-  assert.equal(payload.userMessages[0].content, original);
-  assert.equal(JSON.stringify(messages).split(longUrl).length - 1, 1);
-  const timing = executionTimingSchema.parse(result.checkpoints.at(-1).payload.timing);
-  assert.ok(timing.contextSizes!.every((x) => x.report.phase !== "error"));
-  assert.equal(result.sessionCloses, 1);
-  assert.equal(result.closed, true);
-});
+for (const changingNetworkFacts of [false, true])
+  test(`正式 execute 保留完整网址及最新网络状态，并使用可解析引用：${changingNetworkFacts}`, async () => {
+    const longUrl = "https://example.com/login?state=" + "a%2Fb".repeat(510) + "#fragment";
+    const original = "用户补充要求".repeat(100);
+    const result = await scenario(
+      [
+        tool("extract", { instruction: "读取页面" }),
+        tool("act", { instruction: "打开登录页" }),
+        tool("extract", { instruction: "核对当前页面" }),
+        tool("act", { instruction: "处理当前页面" }),
+      ],
+      {
+        afterActionUrl: longUrl,
+        original,
+        extraction: "页面事实".repeat(150),
+        networkFacts: true,
+        changingNetworkFacts,
+        actionFeedback: "页面已返回实际观察结果。".repeat(15),
+        summaryText: "事实摘要".repeat(80),
+      },
+    );
+    assert.equal(result.finish.status, "succeeded");
+    assert.equal(result.clicks, 2);
+    assert.equal(result.navigations, 1);
+    assert.ok(result.browserUrls.includes(longUrl));
+    const decisions = result.calls.filter(
+      (c) => c.path.endsWith("/model") && c.body.purpose === "decision",
+    );
+    assert.equal(decisions.length, 5);
+    const messages: import("../packages/model/src/index").Message[] =
+      decisions.at(-1)!.body.messages;
+    const payload = JSON.parse(messages[1].content);
+    assert.equal(payload.untrustedPage.source, "tool-result");
+    const full = JSON.parse(
+      messages.find((m) => m.tool_call_id === payload.untrustedPage.toolCallId)!.content,
+    ).observation;
+    assert.equal(full.url, longUrl);
+    assert.deepEqual(full.tabs, [{ index: 0, urlRef: "current" }]);
+    assert.equal(full.network.length, 8);
+    const restored = { ...full, ...payload.untrustedPage.overrides };
+    assert.deepEqual(restored.network, result.networkSnapshots.at(-1));
+    if (changingNetworkFacts) {
+      assert.ok(payload.untrustedPage.overrides.network);
+      assert.equal(payload.untrustedPage.overrides.url, undefined);
+    }
+    assert.equal(payload.userMessages[0].content, original);
+    assert.equal(JSON.stringify(messages).split(longUrl).length - 1, 1);
+    const timing = executionTimingSchema.parse(result.checkpoints.at(-1).payload.timing);
+    assert.ok(timing.contextSizes!.every((x) => x.report.phase !== "error"));
+    assert.equal(result.sessionCloses, 1);
+    assert.equal(result.closed, true);
+  });
 
 test("navigate 仍把全部查询参数和片段原样交给实际 page.goto", async () => {
   const url = "https://example.com/next?token=" + "x%2Fy".repeat(520) + "#完整片段";
@@ -373,6 +382,7 @@ async function scenario(
     extraction?: string;
     afterActionUrl?: string;
     networkFacts?: boolean;
+    changingNetworkFacts?: boolean;
     actionFeedback?: string;
     summaryText?: string;
     navigationError?: boolean;
@@ -416,6 +426,7 @@ async function scenario(
     helpRequests = 0,
     finalReply = false,
     captures = 0;
+  const networkSnapshots: Array<Array<{ host: string; code: string; at: string }>> = [];
   const metadata = {
     actionId: "sdk_action_test",
     cache: { status: "DISABLED" },
@@ -669,12 +680,18 @@ async function scenario(
         port: 1,
         ...(options.networkFacts
           ? {
-              diagnostics: () =>
-                Array.from({ length: 8 }, () => ({
+              diagnostics: () => {
+                const facts = Array.from({ length: 8 }, () => ({
                   host: "example.com",
                   code: "ERR_CONNECTION_RESET",
-                  at: "2026-11-08T00:00:00Z",
-                })),
+                  at: new Date(
+                    Date.UTC(2026, 10, 8) +
+                      (options.changingNetworkFacts ? networkSnapshots.length * 1000 : 0),
+                  ).toISOString(),
+                }));
+                networkSnapshots.push(facts);
+                return facts;
+              },
             }
           : {}),
         close: async () => {
@@ -685,6 +702,7 @@ async function scenario(
     },
   );
   return {
+    networkSnapshots,
     calls,
     checkpoints,
     clicks,

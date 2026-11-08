@@ -86,14 +86,60 @@ for (const name of ["act", "navigate", "wait", "switchPage"] as const)
     );
   });
 
-test("同网址的页面状态发生变化、观察失败及非页面工具均不合并", () => {
+test("同网址的状态、网络与标题变化完整覆盖，未变化字段引用原结果", () => {
+  const base = snapshot();
+  for (const changed of [
+    { loading: { readyState: "loading", busy: true } },
+    { network: [] },
+    { title: "新页面" },
+    { title: "", loading: null, network: null },
+  ]) {
+    const page = { ...base, ...changed };
+    const payload = {
+      userMessages: ["用户原文"],
+      accounts: [{ value: "原凭据" }],
+      untrustedPage: page,
+    };
+    const protectedMessages = [
+      new HumanMessage({ content: JSON.stringify(payload), id: "current" }),
+    ];
+    const history = [
+      new AIMessage({ content: "", tool_calls: [{ id: "call", name: "act", args: {} }] }),
+      new ToolMessage({
+        tool_call_id: "call",
+        content: JSON.stringify({ observation: base, error: "SENT_RESULT_UNKNOWN" }),
+      }),
+    ];
+    const originalHistory = history.map((m) => m.content);
+    const projected = referencePageContext(protectedMessages, history);
+    const view = JSON.parse(projected[0].content as string);
+    assert.equal(view.untrustedPage.source, "tool-result");
+    assert.deepEqual(view.untrustedPage.overrides, changed);
+    assert.deepEqual({ ...base, ...view.untrustedPage.overrides }, page);
+    assert.deepEqual(view.userMessages, payload.userMessages);
+    assert.deepEqual(view.accounts, payload.accounts);
+    assert.equal(projected[0].id, "current");
+    assert.deepEqual(
+      history.map((m) => m.content),
+      originalHistory,
+    );
+    assert.equal(protectedMessages[0].content, JSON.stringify(payload));
+    assert.ok(
+      Buffer.byteLength(JSON.stringify(projected[0].content)) <
+        Buffer.byteLength(JSON.stringify(protectedMessages[0].content)) - 2000,
+    );
+    assert.equal(referencePageContext(protectedMessages, []), protectedMessages);
+  }
+});
+
+test("网址或字段集合变化、观察失败及非页面工具保留完整当前现场", () => {
   const page = snapshot(),
     protectedMessages = [new HumanMessage(JSON.stringify({ untrustedPage: page }))];
   const call = new AIMessage({ content: "", tool_calls: [{ id: "call", name: "act", args: {} }] });
   for (const observation of [
-    { ...page, loading: { readyState: "loading", busy: true } },
-    { ...page, network: [] },
-    { ...page, title: "新页面" },
+    { ...page, url: currentUrl + "&changed=1" },
+    { ...page, extra: "旧字段" },
+    { url: page.url, title: page.title, tabs: page.tabs, loading: page.loading },
     { error: "OBSERVATION_FAILED", actionResultPending: true },
   ]) {
     const history: BaseMessage[] = [
@@ -113,4 +159,50 @@ test("同网址的页面状态发生变化、观察失败及非页面工具均�
     ]),
     protectedMessages,
   );
+});
+
+test("选择实际待发送历史中最省空间的来源，移除后重新选择且不会产生引用链", () => {
+  const page = snapshot();
+  const protectedMessages = [new HumanMessage(JSON.stringify({ untrustedPage: page }))];
+  const pair = (id: string, observation: unknown) => [
+    new AIMessage({ content: "", tool_calls: [{ id, name: "act", args: {} }] }),
+    new ToolMessage({ tool_call_id: id, content: JSON.stringify({ observation }) }),
+  ];
+  const recent = pair("recent", { ...page, network: [] });
+  const history = [...pair("old", page), ...recent];
+  const full = JSON.parse(referencePageContext(protectedMessages, history)[0].content as string);
+  assert.equal(full.untrustedPage.toolCallId, "old");
+  assert.equal(full.untrustedPage.overrides, undefined);
+  const partial = JSON.parse(referencePageContext(protectedMessages, recent)[0].content as string);
+  assert.equal(partial.untrustedPage.toolCallId, "recent");
+  assert.deepEqual(partial.untrustedPage.overrides, { network: page.network });
+  assert.equal(referencePageContext(protectedMessages, []), protectedMessages);
+});
+
+test("引用比完整页面更大时保留原消息，避免小页面因引用反而膨胀", () => {
+  const page = { url: "https://a.co", title: "", tabs: [], loading: null };
+  const protectedMessages = [new HumanMessage(JSON.stringify({ untrustedPage: page }))];
+  const history = [
+    new AIMessage({
+      content: "",
+      tool_calls: [{ id: "long".repeat(100), name: "wait", args: {} }],
+    }),
+    new ToolMessage({ tool_call_id: "long".repeat(100), content: JSON.stringify(page) }),
+  ];
+  assert.equal(referencePageContext(protectedMessages, history), protectedMessages);
+});
+
+test("重复工具调用或结果 ID 不产生指向不明确的页面引用", () => {
+  const page = snapshot();
+  const protectedMessages = [new HumanMessage(JSON.stringify({ untrustedPage: page }))];
+  const call = () =>
+    new AIMessage({ content: "", tool_calls: [{ id: "reused", name: "act", args: {} }] });
+  const result = () =>
+    new ToolMessage({ tool_call_id: "reused", content: JSON.stringify({ observation: page }) });
+  for (const history of [
+    [call(), result(), call(), result()],
+    [call(), result(), result()],
+  ]) {
+    assert.equal(referencePageContext(protectedMessages, history), protectedMessages);
+  }
 });

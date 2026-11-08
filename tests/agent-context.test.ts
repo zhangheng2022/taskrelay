@@ -21,6 +21,61 @@ const history = () => [
   new HumanMessage("最近执行事实"),
 ];
 
+test("实际摘要请求聚焦进展但保留完整旧历史，未知写入与必要完整网址进入后续决策", async () => {
+  const url = "https://example.com/result?request=" + "a%2Fb".repeat(90) + "#完整片段";
+  const oldResult = JSON.stringify({
+    error: "SENT_RESULT_UNKNOWN",
+    sent: true,
+    requestId: "keep-request-identity",
+    url,
+    facts: "x".repeat(12000),
+  });
+  let summaries = 0,
+    decisions = 0;
+  const summaryText = `请求 keep-request-identity 已送出，结果未知，禁止重放。后续用户纠正：只核对，不再提交。必要网址：${url}`;
+  const summary = new CallbackChatModel(async (messages) => {
+    summaries++;
+    const prompt = messages.map((m) => m.content).join("\n");
+    assert.match(prompt, /旧摘要与新进展合并/);
+    assert.match(prompt, /历史独有的约束及纠正/);
+    assert.match(prompt, /操作是否送出及结果未知/);
+    assert.ok(prompt.includes(oldResult));
+    assert.ok(prompt.includes("只核对，不再提交"));
+    assert.doesNotMatch(prompt, /完整用户原话 0012Ab/);
+    return reply(summaryText);
+  });
+  const model = new CallbackChatModel(async (messages) => {
+    decisions++;
+    assert.ok(messages.some((m) => m.content.includes(summaryText)));
+    return reply("等待核对未知结果");
+  });
+  const agent = createAgent({
+    model,
+    tools: [],
+    middleware: [
+      protectedSummary({
+        model: summary,
+        budget: () => ({ contextTokens: 10000, outputTokens: 1024 }),
+        protectedMessages: () => [new HumanMessage("完整用户原话 0012Ab")],
+        guard: () => {},
+      }),
+    ],
+  });
+  await agent.invoke(
+    {
+      messages: [
+        new HumanMessage("只核对，不再提交"),
+        new AIMessage({ content: "", tool_calls: [{ id: "sent", name: "act", args: {} }] }),
+        new ToolMessage({ tool_call_id: "sent", content: oldResult }),
+        new HumanMessage("最新执行事实"),
+      ],
+    },
+    { callbacks: [] },
+  );
+  assert.equal(summaries, 1);
+  assert.equal(decisions, 1);
+});
+
 for (const mode of ["failure", "empty", "stopped", "lease", "oversize"] as const)
   test(`官方摘要 ${mode} 不提交历史替换、不继续决策`, async () => {
     const sizes: ContextSizeReport[] = [];
