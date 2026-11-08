@@ -367,6 +367,147 @@ test("SSO跳回业务域后可保存已访问的登录域；未访问建议域�
   ]);
 });
 
+test("跨域登录落点可生成卡片；本人确认仅增加状态来源，不授予密码投递或业务匹配", async (t) => {
+  const s = await fixture(t);
+  const landing = "https://member.example.net";
+  const offer = (requestId: string) =>
+    s.request(`/api/runner/runs/${s.run.id}/account-card`, {
+      epoch: s.run.leaseEpoch,
+      requestId,
+      kind: "save",
+      ...input,
+      verified: true,
+      evidence: "提交凭据后跳转到当前已登录页面",
+      observedOrigin: landing + "/home?token=fixture-not-persisted",
+      observedOrigins: [
+        input.origin,
+        ...input.loginOrigins,
+        landing,
+        "https://unrelated.example.org",
+      ],
+    });
+  const offered = await offer("cross_origin");
+  assert.equal(offered.status, 200, JSON.stringify(offered.data));
+  assert.deepEqual(await pendingCardOrigins(s.env, s.run.id), [
+    input.origin,
+    landing,
+    ...input.loginOrigins,
+  ]);
+  assert.equal((await offer("cross_origin_retry")).data.cardId, offered.data.cardId);
+  assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM account_cards").get()!.n, 1);
+  assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM ai_messages").get()!.n, 1);
+  const detail = (await s.request(`/api/user/account-cards/${offered.data.cardId}`)).data;
+  assert.deepEqual(detail.loginOrigins, input.loginOrigins);
+  assert.deepEqual(detail.businessDomains, input.businessDomains);
+  const saved = await s.request(`/api/user/account-cards/${offered.data.cardId}/confirm`, input);
+  assert.equal(saved.status, 200, JSON.stringify(saved.data));
+  const account = s.sql
+    .prepare("SELECT * FROM account_details WHERE id=?")
+    .get(saved.data.accountId)!;
+  assert.deepEqual(JSON.parse(String(account.state_origins)), [landing]);
+  assert.deepEqual(JSON.parse(String(account.login_origins)), input.loginOrigins);
+  assert.deepEqual(JSON.parse(String(account.business_domains)), input.businessDomains);
+  assert.equal(account.credential_status, "valid");
+  const current = await getRun(s.db, s.run.id);
+  for (const origin of [
+    landing,
+    "https://unrelated.example.org",
+    "https://login.example.com.attacker.org",
+  ])
+    await assert.rejects(readRunCredentials(s.env, current, origin), /CREDENTIAL_ORIGIN_MISMATCH/);
+  assert.equal(
+    (await readRunCredentials(s.env, current, input.loginOrigins[0])).account.password,
+    input.password,
+  );
+  const rename = await s.request(
+    `/api/user/accounts/${saved.data.accountId}`,
+    {
+      expectedCredentialVersion: 1,
+      name: "仅修改名称",
+    },
+    "PATCH",
+  );
+  assert.equal(rename.status, 200);
+  assert.equal(
+    s.sql.prepare("SELECT state_origins FROM accounts WHERE id=?").get(saved.data.accountId)!
+      .state_origins,
+    JSON.stringify([landing]),
+  );
+  const edit = await s.request(
+    `/api/user/accounts/${saved.data.accountId}`,
+    {
+      expectedCredentialVersion: 1,
+      password: "new-fixture-password",
+    },
+    "PATCH",
+  );
+  assert.equal(edit.status, 200);
+  assert.equal(
+    s.sql.prepare("SELECT state_origins FROM accounts WHERE id=?").get(saved.data.accountId)!
+      .state_origins,
+    "[]",
+  );
+});
+
+test("跨域卡片仍拒绝不符的任务入口、私网地址和过期租约", async (t) => {
+  const s = await fixture(t);
+  const base = {
+    epoch: s.run.leaseEpoch,
+    kind: "save",
+    ...input,
+    verified: true,
+    evidence: "登录成功",
+    observedOrigin: "https://member.example.net",
+    observedOrigins: [input.origin, "https://member.example.net"],
+  };
+  const cases = [
+    {
+      values: { origin: "https://other.example.org", businessDomains: ["other.example.org"] },
+      error: "ACCOUNT_ORIGIN_MISMATCH",
+    },
+    {
+      values: { observedOrigin: "https://127.0.0.1", observedOrigins: ["https://127.0.0.1"] },
+      error: "PRIVATE_ADDRESS_BLOCKED",
+    },
+    { values: { epoch: s.run.leaseEpoch + 1 }, error: "LEASE_EXPIRED" },
+  ];
+  for (const [index, item] of cases.entries()) {
+    const response = await s.request(`/api/runner/runs/${s.run.id}/account-card`, {
+      ...base,
+      requestId: `invalid_cross_origin_${index}`,
+      ...item.values,
+    });
+    assert.notEqual(response.status, 200);
+    assert.equal(response.data.error, item.error);
+  }
+  assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM account_cards").get()!.n, 0);
+  assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM ai_messages").get()!.n, 0);
+});
+
+test("访问列表未及时包含跨域落点也可生成卡片；修改凭据不继承落点状态", async (t) => {
+  const s = await fixture(t);
+  const offered = await s.request(`/api/runner/runs/${s.run.id}/account-card`, {
+    epoch: s.run.leaseEpoch,
+    requestId: "edited_cross_origin",
+    kind: "save",
+    ...input,
+    verified: true,
+    evidence: "登录后停留在会员页",
+    observedOrigin: "https://member.example.net",
+    observedOrigins: [input.origin],
+  });
+  assert.equal(offered.status, 200);
+  const saved = await s.request(`/api/user/account-cards/${offered.data.cardId}/confirm`, {
+    ...input,
+    password: "edited-fixture-password",
+  });
+  assert.equal(saved.status, 200);
+  const account = s.sql.prepare("SELECT * FROM accounts WHERE id=?").get(saved.data.accountId)!;
+  assert.equal(account.state_origins, "[]");
+  assert.equal(account.credential_status, "unverified");
+  assert.notEqual(account.profile_id, s.run.profileId);
+});
+
 test("同一卡片并发确认只创建一个账号，两个响应返回同一个已提交身份", async (t) => {
   const s = await fixture(t),
     offered = await s.offer(),

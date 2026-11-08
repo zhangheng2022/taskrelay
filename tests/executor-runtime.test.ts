@@ -255,6 +255,73 @@ test("正式 execute 保存账号工具只发布私有卡片请求，不把凭�
     /private-password|private-user/,
   );
 });
+
+test("正式 execute 上传跨域登录落点，不把它添加到密码投递来源", async () => {
+  const s = await scenario(
+    [
+      tool("act", { instruction: "提交当前登录表单" }),
+      tool("offerAccountSave", {
+        name: "跨域测试账号",
+        username: "private-user",
+        password: "private-password",
+        loginOrigins: ["https://example.com"],
+        evidence: "登录后跳转到会员页面",
+      }),
+    ],
+    { afterActionUrl: "https://member.example.net/home?session=private-url-token" },
+  );
+  const card = s.calls.find((call) => call.path.endsWith("/account-card"))!.body;
+  assert.equal(card.origin, "https://example.com");
+  assert.equal(card.observedOrigin, "https://member.example.net");
+  assert.ok(card.observedOrigins.includes(card.observedOrigin));
+  assert.deepEqual(card.loginOrigins, ["https://example.com"]);
+  assert.doesNotMatch(
+    JSON.stringify(s.checkpoints),
+    /private-password|private-user|private-url-token/,
+  );
+  assert.equal(s.finish.status, "succeeded");
+});
+
+test("保存卡片失败在原聊天明确提示，诊断仅含固定分类和脱敏 origin，仍可结束任务", async () => {
+  for (const error of [
+    "ACCOUNT_ORIGIN_MISMATCH",
+    "upstream failure private-password private-user",
+  ]) {
+    const s = await scenario(
+      [
+        tool("act", { instruction: "提交登录表单" }),
+        tool("offerAccountSave", {
+          name: "测试账号",
+          username: "private-user",
+          password: "private-password",
+          loginOrigins: ["https://example.com"],
+          evidence: "登录成功",
+        }),
+      ],
+      {
+        afterActionUrl: "https://private-user.example.net/home?token=private-password",
+        accountCardError: error,
+      },
+    );
+    const message = s.calls.find(
+      (call) =>
+        call.path.endsWith("/messages") &&
+        call.body.parts?.some((part: { name: string }) => part.name === "offerAccountSave"),
+    )!.body;
+    assert.match(message.content, /账号保存卡片未能生成，本次保存尚未确认/);
+    const diagnostic = JSON.parse(message.parts[0].result);
+    assert.equal(diagnostic.code, error === "ACCOUNT_ORIGIN_MISMATCH" ? error : "OTHER");
+    assert.equal(diagnostic.entryOrigin, "https://example.com");
+    assert.match(diagnostic.observedOrigin, /已隐藏/);
+    const timing = executionTimingSchema.parse(s.checkpoints.at(-1)!.payload.timing);
+    assert.deepEqual(timing.accountSaveFailures, [diagnostic]);
+    assert.doesNotMatch(
+      JSON.stringify([message, timing]),
+      /private-password|private-user|upstream failure|\/home|\?token/,
+    );
+    assert.equal(s.finish.status, "succeeded");
+  }
+});
 test("正式执行图修改账号卡片 interrupt 同代恢复，重新取本次版本凭据后才继续操作", async () => {
   const s = await scenario(
     [
@@ -412,6 +479,7 @@ async function scenario(
     unbound?: boolean;
     cardWait?: boolean;
     cancelCard?: boolean;
+    accountCardError?: string;
     originalAccountId?: string;
   } = {},
 ) {
@@ -517,7 +585,10 @@ async function scenario(
             : {}),
         } as T;
       if (path === "local:state-capture") return { key: "candidate_" + ++stateCaptures } as T;
-      if (path.endsWith("/account-card")) return { cardId: "card_test" } as T;
+      if (path.endsWith("/account-card")) {
+        if (options.accountCardError) throw Error(options.accountCardError);
+        return { cardId: "card_test" } as T;
+      }
       if (path.endsWith("/account-card-status")) {
         cardPolls++;
         if (options.cancelCard) cancelled = true;

@@ -1,5 +1,11 @@
 # 部署与恢复
 
+## 2026-11-08 跨域账号保存修复（0.19.4，准备发布）
+
+用户已授权提交并正式发布。桌面源码提升为 0.19.4，同步根及 runtime 锁文件；依赖和协议 18、本地 SQLite 4 保持不变。按下文 Production release 流程在 master 质量门禁通过后，由托管 Windows 构建同一份安装包并完成包内/实际安装 smoke，再由 production 作业应用 `0002_account_state_origins.sql`、部署匹配云端并更新下载目录。迁移只给 accounts 增加默认空数组的 state_origins，不改写既有账号、凭据密文、版本、设备或 MASTER_KEY；不重跑基线或初始化数据。
+
+跨域落点只用于本人确认后的登录状态采集和恢复，不扩展 loginOrigins 或 businessDomains。卡片生成不新增访问列表硬匹配；已结束运行不会因修复自动重放。源码验证及真实网站尚未复测的范围见 [ACCEPTANCE](ACCEPTANCE.md#2026-11-08-跨域账号保存修复源码验证)。本节为发布准备记录，生产结果在完成后补充。
+
 ## 2026-11-08 0.19.3 已上线（领取已恢复）
 
 用户授权提交并部署，PR #19 合并后的固定源提交 `9bebe3d5e4effb5598535fd4f65568b290a0d60d` 通过主分支 Quality 42487677936 和 [正式发布 42488175891](https://github.com/zhangheng2022/taskrelay/actions/runs/42488175891)。[0.19.3 Release](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.19.3) 已公开，正式包内、实际安装及系统入口 smoke 通过；Cloudflare 完整下载哈希核验后启用更新目录。主域健康、源码 SHA、协议 18、页面资源及匿名权限核验正常，Worker 接收 100% 流量。没有待应用迁移，没有清空业务数据或更换平台 Secret；证据及验证限制见 ACCEPTANCE。

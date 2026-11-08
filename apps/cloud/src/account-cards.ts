@@ -1,7 +1,8 @@
 import { dbTime } from "./database";
 /**
  * 登录成功后的账号保存与失效后的修改卡片。草稿加密，聊天只含引用；用户确认在同一事务内
- * 比较账号版本、原聊天和执行代次。卡片不能恢复已结束的执行，也不能把旧目录归给新一轮任务。
+ * 比较账号版本、原聊天和执行代次。登录落点仅关联状态范围，不扩大凭据投递权限；
+ * 卡片不能恢复已结束的执行，也不能把旧目录归给新一轮任务。
  */
 import { validator } from "hono/validator";
 import { z } from "zod";
@@ -133,7 +134,7 @@ export async function pendingCardOrigins(env: AppEnv, runId: string): Promise<st
   const origins = new Set<string>();
   for (const row of rows.results) {
     const draft = await unseal<Draft>(row.secret, env.MASTER_KEY, `account-card:${row.id}`);
-    // 未确认前仅采集本次真实业务和登录来源，不把模型提出的其他域名预先视为已授权。
+    // 未确认前只采集业务、实际登录来源和本次认定已登录的落点，不采集全部访问历史或未访问建议域。
     origins.add(draft.origin);
     origins.add(draft.observedOrigin);
     for (const origin of draft.observedOrigins ?? [])
@@ -185,21 +186,22 @@ export async function offerAccountCard(env: AppEnv, run: TaskRun, input: unknown
       observedOrigin = publicUrl(body.observedOrigin).origin;
     if (
       !normalized.businessDomains.includes(publicUrl(run.task.entryUrl).hostname) ||
-      normalized.origin !== publicUrl(run.task.entryUrl).origin ||
-      (!normalized.loginOrigins.includes(observedOrigin) &&
-        !normalized.businessDomains.includes(new URL(observedOrigin).hostname))
+      normalized.origin !== publicUrl(run.task.entryUrl).origin
     )
       throw Error("ACCOUNT_ORIGIN_MISMATCH");
+    const observedOrigins = [
+      ...new Set(
+        (body.observedOrigins ?? [observedOrigin]).map((origin) => publicUrl(origin).origin),
+      ),
+    ];
+    // 执行器根据本次真实登录结果提出保存；落点无需接收过密码，访问列表也不是额外准入门槛。
+    // 只把当前落点关联到状态范围，不将全部访问页面当作账号或凭据授权。
     draft = {
       ...normalized,
       verified: true,
       evidence: body.evidence,
       observedOrigin,
-      observedOrigins: [
-        ...new Set(
-          (body.observedOrigins ?? [observedOrigin]).map((origin) => publicUrl(origin).origin),
-        ),
-      ],
+      observedOrigins,
       waitForUpdate: false,
     };
     // 已有同域同用户名时更新该账号，而不是悄悄创建第二份身份。确认仍受锁与版本约束。
@@ -385,7 +387,7 @@ async function confirmCard(env: AppEnv, userId: string, id: string, input: Accou
   const accountWrite = previous
     ? env.DB.prepare(
         `UPDATE accounts SET name=?,origin=?,username_hint=?,business_domains=?,
-    credential_version=?,state_epoch=?,credential_status=?,profile_id=?,state_object_key=NULL,previous_state_object_key=NULL,sync_status='none',sync_error=NULL,login_reset=?,
+    credential_version=?,state_epoch=?,credential_status=?,profile_id=?,state_origins=?,state_object_key=NULL,previous_state_object_key=NULL,sync_status='none',sync_error=NULL,login_reset=?,
     state_owner_run_id=CASE WHEN EXISTS(SELECT 1 FROM account_locks WHERE account_key=accounts.id AND run_id=?) THEN ? ELSE state_owner_run_id END
     WHERE id=? AND user_id=? AND credential_version=? AND state_epoch=? AND ${fence}`,
       ).bind(
@@ -397,6 +399,7 @@ async function confirmCard(env: AppEnv, userId: string, id: string, input: Accou
         nextEpoch,
         verified ? "valid" : "unverified",
         profileId,
+        JSON.stringify(verified ? [draft.observedOrigin] : []),
         verified ? 0 : 1,
         row.run_id,
         row.run_id,
@@ -407,8 +410,8 @@ async function confirmCard(env: AppEnv, userId: string, id: string, input: Accou
         ...fenceArgs,
       )
     : env.DB.prepare(
-        `INSERT INTO accounts(id,name,origin,username_hint,created_at,user_id,profile_id,business_domains,credential_status,login_reset,state_owner_run_id)
-      SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE ${fence}`,
+        `INSERT INTO accounts(id,name,origin,username_hint,created_at,user_id,profile_id,business_domains,credential_status,state_origins,login_reset,state_owner_run_id)
+      SELECT ?,?,?,?,?,?,?,?,?,?,?,? WHERE ${fence}`,
       ).bind(
         accountId,
         body.name,
@@ -419,6 +422,7 @@ async function confirmCard(env: AppEnv, userId: string, id: string, input: Accou
         profileId,
         JSON.stringify(body.businessDomains),
         verified ? "valid" : "unverified",
+        JSON.stringify(verified ? [draft.observedOrigin] : []),
         verified ? 0 : 1,
         row.run_id,
         ...fenceArgs,

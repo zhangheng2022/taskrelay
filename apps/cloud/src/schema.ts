@@ -249,6 +249,8 @@ export const accounts = sqliteTable(
     loginReset: integer("login_reset").notNull().default(0),
     /** 账号业务域名 JSON 数组，格式 1；normalizeAccount 校验，账号匹配范围权威 */
     businessDomains: text("business_domains").notNull().default("[]"),
+    /** 已确认登录落点的精确 origin JSON 数组，仅用于状态同步，不授权密码投递或任务账号匹配 */
+    stateOrigins: text("state_origins").notNull().default("[]"),
     /** 固定凭据版本；修改不覆盖已领取运行 */
     credentialVersion: integer("credential_version").notNull().default(1),
     /** 浏览器状态撤销代次 */

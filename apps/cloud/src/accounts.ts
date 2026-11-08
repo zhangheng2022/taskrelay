@@ -219,7 +219,8 @@ export const accountRoutes = accountRoutesBase
         state_epoch=state_epoch+?,credential_status=CASE WHEN ? THEN 'unverified' ELSE credential_status END,
         login_reset=CASE WHEN ? THEN 1 ELSE login_reset END,state_object_key=CASE WHEN ? THEN NULL ELSE state_object_key END,
         previous_state_object_key=CASE WHEN ? THEN NULL ELSE previous_state_object_key END,sync_status=CASE WHEN ? THEN 'none' ELSE sync_status END,
-        sync_error=CASE WHEN ? THEN NULL ELSE sync_error END
+        sync_error=CASE WHEN ? THEN NULL ELSE sync_error END,
+        state_origins=CASE WHEN ? THEN '[]' ELSE state_origins END
         WHERE id=? AND user_id=? AND credential_version=?`,
         ).bind(
           value.name,
@@ -227,6 +228,7 @@ export const accountRoutes = accountRoutesBase
           value.username ? value.username.slice(0, 2) + "***" : "未设置",
           JSON.stringify(value.businessDomains),
           next,
+          Number(changed),
           Number(changed),
           Number(changed),
           Number(changed),
@@ -257,7 +259,7 @@ export const accountRoutes = accountRoutesBase
       const row = await ownAccount(c.env, c.get("userId"), c.req.param("id"));
       const saved = await c.env.DB.prepare(
         `UPDATE accounts SET state_epoch=state_epoch+1,state_object_key=NULL,previous_state_object_key=NULL,
-      sync_status='none',sync_error=NULL,login_reset=1 WHERE id=? AND user_id=? AND state_epoch=?`,
+      state_origins='[]',sync_status='none',sync_error=NULL,login_reset=1 WHERE id=? AND user_id=? AND state_epoch=?`,
       )
         .bind(row.id, c.get("userId"), expectedStateEpoch)
         .run();

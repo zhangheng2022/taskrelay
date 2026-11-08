@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { getTableConfig, SQLiteSyncDialect } from "drizzle-orm/sqlite-core";
 import { SQL } from "drizzle-orm";
@@ -15,10 +15,15 @@ const baseline = readFileSync(
   new URL("../apps/cloud/migrations/0001_storage_v2.sql", import.meta.url),
   "utf8",
 );
-test("新基线的全部表/列/主键/外键与 Drizzle 对齐，并完整声明中文表字段及索引注释", () => {
+const migrations = readdirSync(new URL("../apps/cloud/migrations/", import.meta.url))
+  .filter((name) => name.endsWith(".sql") && name !== "0001_storage_v2.sql")
+  .sort()
+  .map((name) => readFileSync(new URL("../apps/cloud/migrations/" + name, import.meta.url), "utf8"))
+  .join("\n");
+test("当前迁移的全部表/列/主键/外键与 Drizzle 对齐，并完整声明中文表字段及索引注释", () => {
   const db = new DatabaseSync(":memory:");
   try {
-    db.exec(baseline);
+    db.exec(baseline + "\n" + migrations);
     const configs = Object.values(mappings).map(getTableConfig),
       names = db
         .prepare(
@@ -132,7 +137,7 @@ test("新基线的全部表/列/主键/外键与 Drizzle 对齐，并完整声�
       assert.ok(table && /[\u4e00-\u9fff]/.test(table[1]), config.name + " 表注释");
       for (const c of cols)
         assert.match(
-          table![2],
+          table![2] + "\n" + migrations.replaceAll(`ALTER TABLE ${config.name} ADD COLUMN `, ""),
           new RegExp(
             `-- [^\\n]*[\\u4e00-\\u9fff][^\\n]*\\n\\s*${c.name as string} (?:TEXT|INTEGER)`,
           ),
@@ -157,6 +162,52 @@ test("新基线的全部表/列/主键/外键与 Drizzle 对齐，并完整声�
       assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE name=?").get(name), undefined);
   } finally {
     db.close();
+  }
+});
+
+test("状态来源增量迁移保留既有账号、凭据密文和版本，不扩大旧账号范围", () => {
+  const sql = new DatabaseSync(":memory:");
+  try {
+    sql.exec(baseline);
+    sql.exec("BEGIN;PRAGMA defer_foreign_keys=ON");
+    sql.prepare("INSERT INTO members(id) VALUES('migration_owner')").run();
+    sql
+      .prepare(
+        "INSERT INTO accounts(id,name,origin,username_hint,created_at,user_id,credential_version,state_epoch) VALUES(?,?,?,?,?,?,?,?)",
+      )
+      .run(
+        "legacy_account",
+        "原有账号",
+        "https://example.com",
+        "us***",
+        1,
+        "migration_owner",
+        3,
+        7,
+      );
+    sql
+      .prepare(
+        "INSERT INTO account_credential_versions(account_id,version,secret,login_origins,created_at) VALUES(?,?,?,?,?)",
+      )
+      .run(
+        "legacy_account",
+        3,
+        "existing-encrypted-credentials",
+        '["https://login.example.com"]',
+        1,
+      );
+    sql.exec("COMMIT");
+    sql.exec(migrations);
+    const row = sql.prepare("SELECT * FROM account_details WHERE id='legacy_account'").get()!;
+    assert.equal(row.name, "原有账号");
+    assert.equal(row.secret, "existing-encrypted-credentials");
+    assert.equal(row.credential_version, 3);
+    assert.equal(row.state_epoch, 7);
+    assert.equal(row.state_origins, "[]");
+    assert.equal(row.login_origins, '["https://login.example.com"]');
+    assert.deepEqual(sql.prepare("PRAGMA foreign_key_check").all(), []);
+  } finally {
+    sql.close();
   }
 });
 
@@ -205,6 +256,7 @@ test(
     t.after(() => mf.dispose());
     const raw = await mf.getD1Database("DB");
     await raw.exec(baseline.replace(/--[^\n]*/g, "").replace(/\r?\n/g, " "));
+    if (migrations) await raw.exec(migrations.replace(/--[^\n]*/g, "").replace(/\r?\n/g, " "));
     await raw
       .prepare(
         "INSERT INTO members(id,email,role) VALUES('fixture_owner','fixture@example.com','admin')",
