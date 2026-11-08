@@ -211,6 +211,116 @@ test("清除状态或改凭据后旧执行不可上传或发布，旧候选不�
   assert.equal(s.account().state_object_key, null);
 });
 
+for (const late of [false, true]) {
+  test(`跨域落点${late ? "晚确认" : "执行中确认"}保存后可恢复登录状态，其他访问域不随之同步`, async (t) => {
+    const s = await fixture(t, false);
+    const landing = "https://member.example.net";
+    const offered = await s.call(s.run, "account-card", {
+      kind: "save",
+      requestId: "cross_origin_state",
+      ...accountInput,
+      verified: true,
+      observedOrigin: landing,
+      observedOrigins: [
+        accountInput.origin,
+        ...accountInput.loginOrigins,
+        "https://unrelated.example.org",
+      ],
+      evidence: "实际提交凭据后已在跨域会员页登录",
+    });
+    assert.equal(offered.status, 200, JSON.stringify(offered.data));
+    const confirm = () =>
+      s.request(`/api/user/account-cards/${offered.data.cardId}/confirm`, accountInput);
+    const savedEarly = late ? null : await confirm();
+    if (savedEarly) assert.equal(savedEarly.status, 200, JSON.stringify(savedEarly.data));
+    const metadata = await s.call(s.run, "browser-state", { metadataOnly: true });
+    assert.equal(metadata.status, 200);
+    assert.deepEqual(
+      [...metadata.data.origins].sort((a: string, b: string) => a.localeCompare(b)),
+      [accountInput.origin, ...accountInput.loginOrigins, landing].sort(),
+    );
+    const snapshot = state();
+    snapshot.cookies.push({
+      name: "landing-session",
+      value: "fixture-landing-session",
+      domain: "member.example.net",
+      path: "/",
+      secure: true,
+    });
+    snapshot.origins.push({
+      origin: landing,
+      localStorage: [["session", "fixture-landing-token"]],
+    });
+    const uploaded = await s.upload(s.run, snapshot);
+    assert.equal(uploaded.status, 200, JSON.stringify(uploaded.data));
+    const candidate = JSON.parse(new TextDecoder().decode(s.objects.get(uploaded.data.key)));
+    assert.deepEqual(
+      candidate.origins.map((entry: { origin: string }) => entry.origin),
+      [accountInput.origin, landing],
+    );
+    assert.ok(
+      candidate.cookies.some((cookie: { name: string }) => cookie.name === "landing-session"),
+    );
+    assert.ok(!candidate.cookies.some((cookie: { name: string }) => cookie.name === "other-site"));
+    assert.equal((await s.finish(s.run, uploaded.data.key)).status, 200);
+    assert.equal((await s.close(s.run)).status, 200);
+    const saved = savedEarly ?? (await confirm());
+    assert.equal(saved.status, 200, JSON.stringify(saved.data));
+    assert.equal(saved.data.resumed, false);
+    const account = s.sql
+      .prepare("SELECT * FROM account_details WHERE id=?")
+      .get(saved.data.accountId)!;
+    assert.equal(account.state_object_key, uploaded.data.key);
+    assert.equal(account.sync_status, "synced");
+    assert.deepEqual(JSON.parse(String(account.state_origins)), [landing]);
+    assert.deepEqual(JSON.parse(String(account.login_origins)), accountInput.loginOrigins);
+    const definition = await insertTask(
+      s.db,
+      task({
+        id: "task_cross_origin_restore",
+        accountId: saved.data.accountId,
+        entryUrl: accountInput.origin,
+      }),
+    );
+    await enqueue(s.db, definition, "cross_origin_restore");
+    const next = (await claim(s.db, "device_state", "cross_origin_restore_claim"))!;
+    assert.ok(next);
+    const access = await s.call(next, "browser-state");
+    assert.equal(access.status, 200);
+    assert.equal(
+      access.data.state.cookies.find(
+        (cookie: { name: string }) => cookie.name === "landing-session",
+      ).value,
+      "fixture-landing-session",
+    );
+    assert.deepEqual(
+      access.data.state.origins.find((entry: { origin: string }) => entry.origin === landing)
+        .localStorage,
+      [["session", "fixture-landing-token"]],
+    );
+    assert.equal(
+      (await s.call(next, "credentials", { url: landing })).data.error,
+      "CREDENTIAL_ORIGIN_MISMATCH",
+    );
+    assert.equal(
+      (await s.call(next, "credentials", { url: accountInput.loginOrigins[0] })).data.account
+        .password,
+      accountInput.password,
+    );
+    await s.finish(next, null);
+    await s.close(next);
+    const clear = await s.request(`/api/user/accounts/${saved.data.accountId}/clear-state`, {
+      expectedStateEpoch: 1,
+    });
+    assert.equal(clear.status, 200);
+    assert.equal(
+      s.sql.prepare("SELECT state_origins FROM accounts WHERE id=?").get(saved.data.accountId)!
+        .state_origins,
+      "[]",
+    );
+  });
+}
+
 test("空快照清除上一份有效状态，损坏时也不能重新登录旧会话", async (t) => {
   const s = await fixture(t),
     first = await s.upload(s.run);

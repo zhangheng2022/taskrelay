@@ -1,14 +1,16 @@
 import { applicationDb } from "../apps/cloud/src/database";
 import { dbTime } from "../apps/cloud/src/database";
 import { DatabaseSync } from "node:sqlite";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import type { TaskDefinition } from "../packages/contracts/src/index";
 import { seal } from "../apps/cloud/src/crypto";
 export function testDb() {
   const sql = new DatabaseSync(":memory:");
-  sql.exec(
-    readFileSync(new URL("../apps/cloud/migrations/0001_storage_v2.sql", import.meta.url), "utf8"),
-  );
+  const migrations = new URL("../apps/cloud/migrations/", import.meta.url);
+  for (const file of readdirSync(migrations)
+    .filter((name) => name.endsWith(".sql"))
+    .sort())
+    sql.exec(readFileSync(new URL(file, migrations), "utf8"));
   sql.exec(
     "INSERT INTO members(id,email,role) VALUES('fixture_owner','fixture@example.com','admin')",
   );

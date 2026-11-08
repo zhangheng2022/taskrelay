@@ -6,6 +6,8 @@ import {
 } from "../../../../packages/contracts/src/context-diagnostics";
 import {
   recentSpanLimit,
+  accountSaveFailureSchema,
+  type AccountSaveFailure,
   type ExecutionTiming,
   type TimingPhase,
 } from "../shared/execution-timing";
@@ -17,6 +19,7 @@ export class ExecutionClock {
   private readonly phases: ExecutionTiming["phases"] = {};
   private readonly recent: ExecutionTiming["recent"] = [];
   private readonly contextSizes: NonNullable<ExecutionTiming["contextSizes"]> = [];
+  private readonly accountSaveFailures: AccountSaveFailure[] = [];
   private sequence = 0;
   round = 0;
   emptyExtractions = 0;
@@ -36,6 +39,13 @@ export class ExecutionClock {
     if (!parsed.success) return;
     if (this.contextSizes.length === contextSizeLimit) this.contextSizes.shift();
     this.contextSizes.push({ round: this.round, elapsedMs: this.elapsed(), report: parsed.data });
+  }
+
+  accountSaveFailure(failure: AccountSaveFailure) {
+    const parsed = accountSaveFailureSchema.safeParse(failure);
+    if (!parsed.success) return;
+    if (this.accountSaveFailures.length === 8) this.accountSaveFailures.shift();
+    this.accountSaveFailures.push(parsed.data);
   }
 
   private elapsed() {
@@ -84,6 +94,9 @@ export class ExecutionClock {
       phases: structuredClone(this.phases),
       recent: [...this.recent],
       ...(this.contextSizes.length ? { contextSizes: structuredClone(this.contextSizes) } : {}),
+      ...(this.accountSaveFailures.length
+        ? { accountSaveFailures: structuredClone(this.accountSaveFailures) }
+        : {}),
     };
   }
 }

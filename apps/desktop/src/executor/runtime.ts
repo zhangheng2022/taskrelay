@@ -1,6 +1,7 @@
 import { imageUploader } from "./image-upload";
 import { ExecutionClock } from "./timing";
 import type { TimingPhase } from "../shared/execution-timing";
+import { accountSaveFailureSchema } from "../shared/execution-timing";
 import type { Page, ClientLLM } from "@browserbasehq/stagehand";
 import type { TaskRun } from "../../../../packages/contracts/src/index";
 import type { Message, ModelResponse } from "../../../../packages/model/src/index";
@@ -525,6 +526,26 @@ export async function execute(
         );
       },
       error: async (call, error) => {
+        if (call.name === "offerAccountSave") {
+          // 错误可能来自网络或参数校验，只导出固定分类和脱敏 origin；不把密码、URL 参数或上游正文写入诊断。
+          const code = accountSaveFailureSchema.shape.code.safeParse(error.message);
+          let observedOrigin: string | null = null;
+          try {
+            observedOrigin = redactSnapshot(publicUrl(await page!.url()).origin, secrets);
+          } catch {
+            // 页面已关闭或地址不可公开时，诊断保留空值，不影响原工具失败反馈。
+          }
+          const failure = {
+            code: code.success ? code.data : ("OTHER" as const),
+            entryOrigin: redactSnapshot(publicUrl(run.task.entryUrl).origin, secrets),
+            observedOrigin,
+          };
+          clock.accountSaveFailure(failure);
+          await say(`tool:${call.id}`, "账号保存卡片未能生成，本次保存尚未确认。", [
+            { type: "tool", name: call.name, result: JSON.stringify(failure) },
+          ]);
+          return;
+        }
         await say(`tool:${call.id}`, "这一步没有完成，继续根据实际反馈处理。", [
           { type: "tool", name: call.name, result: redactSnapshot(error.message, secrets) },
           ...(await errorShot(error.message)),
@@ -545,12 +566,14 @@ export async function execute(
         if (call.name === "offerAccountSave") {
           for (const value of [args.username, args.password])
             if (typeof value === "string" && value) secrets.add(value);
+          const observedOrigin = publicUrl(await page!.url()).origin;
+          visitedOrigins.add(observedOrigin);
           return api("account-card", {
             ...args,
             requestId: call.id,
             kind: "save",
             origin: new URL(run.task.entryUrl).origin,
-            observedOrigin: new URL(await page!.url()).origin,
+            observedOrigin,
             observedOrigins: [...visitedOrigins],
             verified: true,
           });

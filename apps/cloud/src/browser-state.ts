@@ -14,7 +14,9 @@ import { now, type Row } from "./store";
  * 凭据代次/租约/基准版本及最后领取者均在 D1 条件更新中复核；DO 只存不可变加密内容。 */
 export function stateOrigins(account: Row): string[] {
   const login = JSON.parse(account.login_origins || "[]") as string[];
-  const origins = [account.origin, ...login];
+  // 登录落点可以不同于业务入口和密码投递站点；只有本人确认过的状态来源能持久恢复。
+  const landing = JSON.parse(account.state_origins || "[]") as string[];
+  const origins = [account.origin, ...login, ...landing];
   for (const host of JSON.parse(account.business_domains || "[]") as string[])
     origins.push(`${new URL(account.origin).protocol}//${host}`);
   return [...new Set(origins.map((value) => publicUrl(value).origin))];
