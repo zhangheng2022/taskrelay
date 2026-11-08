@@ -1,5 +1,24 @@
 # TaskRelay 验收记录
 
+## 2026-11-08 0.19.4 跨域账号保存正式发布
+
+用户授权提交修复、应用迁移、部署云端并更新安装包。[PR #21](https://github.com/zhangheng2022/taskrelay/pull/21) 已合并，正式源提交为 `6ba82cab7495feb1d79f55c189fd9fe1297de2e6`；[主分支 Quality 42492540003](https://github.com/zhangheng2022/taskrelay/actions/runs/42492540003) 通过。提交范围为 20 个文件，全部完成 OCR preview/rule 及宿主审查，补审默认排除的测试、锁文件和文档，无未解决发现；既有 `.codex/config.toml` 留在本地，未提交。
+
+PR 首轮 Ubuntu 覆盖率作业中的既有聊天通知测试等待新结果超过一秒；本机隔离复测通过，重跑失败作业后全部门禁通过。主分支双平台测试各 482 项，481 通过、1 项因普通 Runner 未准备 Chromium 而跳过；正式 Windows 作业在 prepare:browser 后补跑真实 Chromium 状态传输入口 2/2 通过。Ubuntu 覆盖率为行 73.73%、分支 81.73%、函数 81.10%，PR 新增可执行行覆盖 76/78。静态、格式、类型、仓库、工作流、故障探针、安全及 Web 构建门禁通过；构建保留既有大分块和混合导入提示。
+
+[首次正式发布 42493069395](https://github.com/zhangheng2022/taskrelay/actions/runs/42493069395) 的托管 Windows 包内与实际安装 smoke 均 passed=true，系统快捷方式启动安装进程为 `C:\Users\runneradmin\AppData\Local\TaskRelay\app-0.19.4\TaskRelay.exe`。构建与安装 ASAR SHA-256 均为 `96d5f4bbfc7ac548750920848ac2c5ba99e5bb584c827102e2a4c5935a33bf5a`，release-manifest 通过。此证据来自托管 Windows，不代表用户另一台电脑已更新或真实 Microsoft 登录闭环通过。
+
+| 正式产物                    |    字节数 | SHA-256                                                            |
+| --------------------------- | --------: | ------------------------------------------------------------------ |
+| TaskRelay.Setup.exe         | 388403712 | `a31d24c8aa2517d80bbea995a967360ed60afcfa5b83f5861badfd343e3a671f` |
+| TaskRelay-0.19.4-full.nupkg | 387868110 | `d307c9481fc8c82affbbdd01b4826d4c6eb89093c9db945b81726b0c6ccebf64` |
+
+首次 production 作业排空运行、保留 D1 Time Travel bookmark，成功应用 `0002_account_state_origins.sql`；只读核对 accounts.state_origins 为 TEXT、默认 `'[]'`，storage_meta 保持 2，未清空数据或读取/替换 MASTER_KEY。Worker `4397dc2f-52ba-4e73-b2a4-a372720e2092` 已部署并承接 100% 流量，但流程在切换后的即时核验返回 DEPLOYMENT_HEALTH_MISMATCH 后停止于 deploying；随后两域 health 均确认正确源 SHA。[恢复发布 42493872442](https://github.com/zhangheng2022/taskrelay/actions/runs/42493872442) 以同一源 SHA 和首次产物运行继续，构建作业跳过，未重打包或重复部署；已公开 [0.19.4 Release](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.19.4)，经 Cloudflare 完整下载核对大小和 SHA-256 后启用 latest。
+
+主域和 workers.dev 的 health、首页及实际 JS 资源均 200，源 SHA 与协议 18 正确，匿名本人/管理员接口均 401，最新目录均为 0.19.4。首次恢复因设备就绪检查暂落 awaiting-device，maintenance=0、claimsEnabled=0；随后观察到协议 18 的有效设备重新在线就绪，通过 [恢复发布 42494204028](https://github.com/zhangheng2022/taskrelay/actions/runs/42494204028) 成功继续同一源提交和首次产物。最终回读 phase=complete、maintenance=0、claimsEnabled=1、storageFrozen=0，1 台未吊销、协议 18 的设备最近 90 秒内在线就绪；没有手改开关或伪造心跳。
+
+本机仅执行源码检查和公开入口核验，未覆盖本机或用户另一台电脑的安装；执行器需通过“检查更新”或下载安装包完成升级。未代用户执行真实模型和 Microsoft 站点任务，不自动重放此前失败的保存请求。Graphify CLI 不可用，新增 SQL 没有图解析证据。公开核验摘要位于忽略目录 `.cache/db-refactor/0.19.4-public-verification.json`，不提交诊断、产物或秘密。
+
 ## 2026-11-08 跨域账号保存修复源码验证
 
 修复保存卡片把登录成功落点误当作凭据投递站点的校验：跨域落点可生成保存卡片，访问列表未包含当前页也不额外阻止；由执行器依据实际登录结果提出保存。账号入口归属、用户/设备隔离、租约、公网 HTTPS 与凭据精确投递范围继续生效。新增 `0002_account_state_origins.sql`，本人确认未修改的已验证卡片后只把当前落点写入状态来源，不将全部访问域、落点或其他子域自动加入密码投递和业务匹配范围。执行中确认与晚确认均可关联原候选并在下一轮恢复落点 Cookie/Local Storage；认证修改及清除状态不继承落点范围，重命名保留。

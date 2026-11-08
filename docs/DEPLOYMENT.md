@@ -1,5 +1,13 @@
 # 部署与恢复
 
+## 2026-11-08 0.19.4 已上线（领取已恢复）
+
+跨域账号保存修复经 [PR #21](https://github.com/zhangheng2022/taskrelay/pull/21) 合并，固定源提交 `6ba82cab7495feb1d79f55c189fd9fe1297de2e6` 通过主分支 Quality 42492540003。托管 Windows 正式产物的包内、实际安装、系统快捷方式和安装 ASAR 一致性验收均通过；[0.19.4 安装包及更新包](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.19.4) 已公开，Cloudflare 完整下载哈希核验后启用更新目录。协议保持 18，本地 schema 保持 4；用户设备仍需“检查更新”后才能使用新增桌面提示与诊断。
+
+[首次发布 42493069395](https://github.com/zhangheng2022/taskrelay/actions/runs/42493069395) 在排空运行、保留 D1 恢复点后成功应用 `0002_account_state_origins.sql`，Worker `4397dc2f-52ba-4e73-b2a4-a372720e2092` 已部署并承接 100% 流量；即时健康核验失败后没有盲目再次部署，确认两域源 SHA 后通过 [恢复发布 42493872442](https://github.com/zhangheng2022/taskrelay/actions/runs/42493872442) 继续原产物的发布和下载核验。未清空业务数据、重新初始化数据库、读取或更换 MASTER_KEY。两域健康、页面资源、匿名权限与 0.19.4 更新目录核验正常，详细产物哈希和限制见 [ACCEPTANCE](ACCEPTANCE.md#2026-11-08-0194-跨域账号保存正式发布)。
+
+首次恢复最终为 awaiting-device、maintenance=0、claimsEnabled=0。有效设备再次在线就绪后，用同一源 SHA、mode=resume、recovery-run=42493069395 触发的 [42494204028](https://github.com/zhangheng2022/taskrelay/actions/runs/42494204028) 已成功完成；最终 phase=complete、maintenance=0、claimsEnabled=1、storageFrozen=0，1 台未吊销、协议 18 的设备在线就绪。未重新打包、重复部署或手改发布开关。下节准备记录为发布前历史时点，不代表当前尚未部署。
+
 ## 2026-11-08 跨域账号保存修复（0.19.4，准备发布）
 
 用户已授权提交并正式发布。桌面源码提升为 0.19.4，同步根及 runtime 锁文件；依赖和协议 18、本地 SQLite 4 保持不变。按下文 Production release 流程在 master 质量门禁通过后，由托管 Windows 构建同一份安装包并完成包内/实际安装 smoke，再由 production 作业应用 `0002_account_state_origins.sql`、部署匹配云端并更新下载目录。迁移只给 accounts 增加默认空数组的 state_origins，不改写既有账号、凭据密文、版本、设备或 MASTER_KEY；不重跑基线或初始化数据。
