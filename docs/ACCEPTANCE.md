@@ -1,5 +1,24 @@
 # TaskRelay 验收记录
 
+## 2026-11-08 0.19.3 正式生产发布（领取已恢复）
+
+用户随后授权提交全部项目代码并部署，覆盖下节本地验证时的暂不部署要求。项目代码、测试、版本及发布说明经 [PR #19](https://github.com/zhangheng2022/taskrelay/pull/19) 合并，固定源提交为 `9bebe3d5e4effb5598535fd4f65568b290a0d60d`；[主分支 Quality 42487677936](https://github.com/zhangheng2022/taskrelay/actions/runs/42487677936) 和 [正式发布 42488175891](https://github.com/zhangheng2022/taskrelay/actions/runs/42488175891) 均成功。用户原有机器配置 `.codex/config.toml` 保留在本地，未提交；没有将缓存、诊断、密钥或产物纳入版本库。
+
+两套系统完整测试各 474 项，473 通过，1 项因普通测试 Runner 尚未准备原生浏览器资源而跳过；托管 Windows 打包作业在 prepare:browser 后单独运行该浏览器状态入口并通过。PR Quality 的 Ubuntu 覆盖率为行 73.67%、分支 81.67%、函数 81.07%，差异可执行行 49/49；类型、格式、lint、仓库、工作流、故障探针及安全门禁通过。最终提交 14 个文件全部完成 OCR preview/rule 与宿主审查（14/14、100%，无未解决发现），包含测试、锁文件、配置和发布说明；未调用 OCR 外部模型。下节本地工作区审查统计是提交前的独立范围记录。
+
+正式 Windows 产物重新构建，包内及实际安装 smoke 均 passed=true。系统入口创建的安装进程位于 `C:\Users\runneradmin\AppData\Local\TaskRelay\app-0.19.3\TaskRelay.exe`；构建和安装 ASAR SHA-256 均为 `93800ede1c7bfa2e786b8716a5e8a6803c62fbae167f9724bf81739be00470a0`，release-manifest 核验通过。该验收来自托管 Runner，没有声称安装或验证用户另一台电脑。
+
+| 正式产物                    |    字节数 | SHA-256                                                            |
+| --------------------------- | --------: | ------------------------------------------------------------------ |
+| TaskRelay.Setup.exe         | 388403200 | `43e138858843ed25bf7dc6d05757f299eca79dbec416dd1fc4bf549caea76244` |
+| TaskRelay-0.19.3-full.nupkg | 387867917 | `6d4df8c829d6706a3cd33b2f3c40e7b2266a16488b21a07e845cd556c4e2ad28` |
+
+[0.19.3 Release](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.19.3) 已公开，Cloudflare 入口完整下载核对大小和 SHA-256 后启用 latest。Worker `e4e93d92-8f6e-43e7-9003-08febcd78508` 承接 100% 流量；主域 health、主页及实际 JS 资源均 200，源码 SHA 正确、协议 18，匿名用户及管理员接口均 401，最新目录为 0.19.3。保留 D1 恢复点，没有待应用迁移，没有清空业务数据、读取或替换 MASTER_KEY。
+
+首次切换后 phase=awaiting-device、maintenance=0、claimsEnabled=0；设备就绪状态在只读检查间发生变化，未凭单次在线结果认定已恢复领取。[恢复发布 42489088082](https://github.com/zhangheng2022/taskrelay/actions/runs/42489088082) 按原源提交及产物运行 42488175891 成功完成，构建作业按恢复模式跳过，没有重新打包、部署或手改领取开关。最终回读 phase=complete、maintenance=0、claimsEnabled=1，1 台未吊销、协议 18 的设备最近 90 秒内在线且就绪。云端就绪核验不能证明另一台电脑已升级到 0.19.3，桌面字段去重需升级后才生效；本次没有代用户运行真实模型或业务网站任务，实际摘要次数、耗时及任务效果仍待复测。
+
+公开核验、正式 smoke 摘要及发布元数据保存在忽略目录 `.cache/db-refactor/0.19.3-*`；本节为正式发布证据，下节保留此前本机调试包的独立记录。
+
 ## 2026-11-08 0.19.3 字段去重与摘要提示优化（本地验证完成，未部署）
 
 用户要求按两步方案优化并测试，暂不部署。保留本轮开始前的 `.codex/config.toml` 及两份部署恢复记录改动。源码版本升至 0.19.3 并同步两个锁文件，仅版本变化，协议 18／本地 schema 4 不变。新增引用仍只用于模型输入表示，浏览器导航、工具反馈、原始用户消息、账号、停止、租约及 unknown 保护保持原处理路径。
