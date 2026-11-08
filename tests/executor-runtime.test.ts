@@ -16,6 +16,88 @@ const tool = (name: string, args: Record<string, unknown> = {}): ModelResponse =
   calls: [{ id: crypto.randomUUID(), name, arguments: JSON.stringify(args) }],
 });
 
+test("正式 execute 在短摘要仍无法容纳近期工具结果时保留大小诊断，不额外决策或重试", async () => {
+  const result = await scenario([tool("extract", { instruction: "读取当前页面" })], {
+    extraction: "private-diagnostic-content".repeat(1200),
+  });
+  assert.equal(result.finish.status, "failed");
+  assert.match(result.finish.result.summary, /CONTEXT_SUMMARY_NOT_REDUCED/);
+  const checkpoint = result.checkpoints.at(-1);
+  assert.equal(checkpoint.state, "finished");
+  const timing = executionTimingSchema.parse(checkpoint.payload.timing);
+  const report = timing.contextSizes!.at(-1)!.report;
+  assert.equal(report.failure, "CONTEXT_SUMMARY_NOT_REDUCED");
+  assert.ok(report.summaryMessage!.estimatedTokens < report.budget.historyAllowanceTokens);
+  assert.ok(report.preserved!.estimatedTokens > report.budget.historyAllowanceTokens);
+  const largest = report.preserved!.largest[0];
+  assert.equal(largest.tool, "extract");
+  assert.ok(largest.sections.find((s) => s.section === "data")!.bytes > 20000);
+  assert.doesNotMatch(JSON.stringify(timing), /private-diagnostic-content/);
+  assert.equal(timing.phases.extract?.calls, 1);
+  assert.equal(
+    result.calls.filter((c) => c.path.endsWith("/model") && c.body.purpose === "summary").length,
+    1,
+  );
+  assert.equal(
+    result.calls.filter((c) => c.path.endsWith("/model") && c.body.purpose === "decision").length,
+    1,
+  );
+  assert.equal(result.sessionCloses, 1);
+  assert.equal(result.closed, true);
+});
+
+test("正式 execute 保留完整长网址给浏览器，模型对重复网址和相同现场使用可解析引用", async () => {
+  const longUrl = "https://example.com/login?state=" + "a%2Fb".repeat(510) + "#fragment";
+  const original = "用户补充要求".repeat(100);
+  const result = await scenario(
+    [
+      tool("extract", { instruction: "读取页面" }),
+      tool("act", { instruction: "打开登录页" }),
+      tool("extract", { instruction: "核对当前页面" }),
+      tool("act", { instruction: "处理当前页面" }),
+    ],
+    {
+      afterActionUrl: longUrl,
+      original,
+      extraction: "页面事实".repeat(150),
+      networkFacts: true,
+      actionFeedback: "页面已返回实际观察结果。".repeat(15),
+      summaryText: "事实摘要".repeat(80),
+    },
+  );
+  assert.equal(result.finish.status, "succeeded");
+  assert.equal(result.clicks, 2);
+  assert.equal(result.navigations, 1);
+  assert.ok(result.browserUrls.includes(longUrl));
+  const decisions = result.calls.filter(
+    (c) => c.path.endsWith("/model") && c.body.purpose === "decision",
+  );
+  assert.equal(decisions.length, 5);
+  const messages: import("../packages/model/src/index").Message[] = decisions.at(-1)!.body.messages;
+  const payload = JSON.parse(messages[1].content);
+  assert.equal(payload.untrustedPage.source, "tool-result");
+  const full = JSON.parse(
+    messages.find((m) => m.tool_call_id === payload.untrustedPage.toolCallId)!.content,
+  ).observation;
+  assert.equal(full.url, longUrl);
+  assert.deepEqual(full.tabs, [{ index: 0, urlRef: "current" }]);
+  assert.equal(full.network.length, 8);
+  assert.equal(payload.userMessages[0].content, original);
+  assert.equal(JSON.stringify(messages).split(longUrl).length - 1, 1);
+  const timing = executionTimingSchema.parse(result.checkpoints.at(-1).payload.timing);
+  assert.ok(timing.contextSizes!.every((x) => x.report.phase !== "error"));
+  assert.equal(result.sessionCloses, 1);
+  assert.equal(result.closed, true);
+});
+
+test("navigate 仍把全部查询参数和片段原样交给实际 page.goto", async () => {
+  const url = "https://example.com/next?token=" + "x%2Fy".repeat(520) + "#完整片段";
+  const result = await scenario([tool("navigate", { url })]);
+  assert.equal(result.finish.status, "succeeded");
+  assert.deepEqual(result.navigatedUrls, ["https://example.com/", url]);
+  assert.equal(result.clicks, 0);
+});
+
 // 固定决策和页面反馈，只比较生产 execute 编排成本。每个样本先核对结果，再纳入分位数。
 test("跨任务执行基线", async (t) => {
   const samples = Number(process.env.TASKRELAY_BASELINE_SAMPLES ?? 1);
@@ -289,6 +371,10 @@ async function scenario(
     actionRejected?: boolean;
     emptyObserve?: boolean;
     extraction?: string;
+    afterActionUrl?: string;
+    networkFacts?: boolean;
+    actionFeedback?: string;
+    summaryText?: string;
     navigationError?: boolean;
     cancelConnect?: boolean;
     createError?: boolean;
@@ -338,6 +424,8 @@ async function scenario(
   let llm: ClientLLM,
     currentUrl = "https://example.com/",
     stagehandCalls = 0;
+  const browserUrls: string[] = [],
+    navigatedUrls: string[] = [];
   const calls: Array<{ path: string; body: any }> = [],
     checkpoints: any[] = [];
   let cardPolls = 0,
@@ -367,9 +455,13 @@ async function scenario(
     .toBuffer();
   const page = {
     title: async () => "测试页面",
-    url: async () => currentUrl,
+    url: async () => {
+      browserUrls.push(currentUrl);
+      return currentUrl;
+    },
     goto: async (url: string) => {
       navigations++;
+      navigatedUrls.push(url);
       if (options.navigationError) throw Error("NAVIGATION_FAILED");
       currentUrl = url;
     },
@@ -430,7 +522,9 @@ async function scenario(
         return { messages: chat.filter((m) => m.seq > body.after) } as T;
       if (path.endsWith("/model")) {
         if (body.purpose === "summary")
-          return { response: answer("已读取页面并尝试操作，保留最近工具反馈继续。") } as T;
+          return {
+            response: answer(options.summaryText ?? "已读取页面并尝试操作，保留最近工具反馈继续。"),
+          } as T;
         if (options.cancel) cancelled = true;
         const response = turns.shift() ?? answer("已处理当前页面，结果如上。");
         if (options.correctionAfterDecision && response.calls.length) changeInstructions();
@@ -510,13 +604,16 @@ async function scenario(
     act: async (instruction: string) => {
       await infer(instruction);
       clicks++;
+      if (options.afterActionUrl) currentUrl = options.afterActionUrl;
       if (options.navigationObservationFailure) snapshotFailures = 1;
       if (options.unknownActionResult) snapshotFailures = Infinity;
       if (options.actionError && clicks === 1) throw Error("TARGET_NOT_FOUND");
       return {
         data: {
           success: !options.actionRejected,
-          message: options.actionRejected ? "TARGET_NOT_FOUND" : "已执行",
+          message: options.actionRejected
+            ? "TARGET_NOT_FOUND"
+            : (options.actionFeedback ?? "已执行"),
           actions: [],
         },
         metadata,
@@ -570,6 +667,16 @@ async function scenario(
         }) as any,
       startProxy: async () => ({
         port: 1,
+        ...(options.networkFacts
+          ? {
+              diagnostics: () =>
+                Array.from({ length: 8 }, () => ({
+                  host: "example.com",
+                  code: "ERR_CONNECTION_RESET",
+                  at: "2026-11-08T00:00:00Z",
+                })),
+            }
+          : {}),
         close: async () => {
           closed = true;
         },
@@ -585,6 +692,8 @@ async function scenario(
     sessionCloses,
     navigations,
     captures,
+    browserUrls,
+    navigatedUrls,
     finish: calls.filter((c) => c.path.endsWith("/finish")).at(-1)?.body,
   };
 }

@@ -12,6 +12,7 @@ import { stagehandModel } from "./stagehand-model";
 import { runExecutionGraph } from "./execution-graph";
 import type { ContextBudget } from "../../../../packages/model/src/agent-context";
 import { chatSnapshots } from "./chat-snapshots";
+import { compactPageUrls, pageContextGuide } from "./page-context";
 import type { BrowserStateAccess } from "../../../../packages/contracts/src/accounts";
 export interface RuntimePort {
   rpc<T>(path: string, body?: unknown, binary?: Uint8Array): Promise<T>;
@@ -206,6 +207,7 @@ export async function execute(
       userMessages: originals(),
       accounts,
       history,
+      pageContextFormat: pageContextGuide,
     });
   const pause = async (ms: number) => {
     for (let left = ms; left > 0; left -= 200) {
@@ -283,13 +285,13 @@ export async function execute(
     // 成功读取原生页面结构才算后续观察返回；结构仅供 Stagehand，不能灌入主决策历史。
     await clock.measure("pageSnapshot", () => page!.snapshot({ includeIframes: true }));
     const tabs = await browserContext!.pages();
-    return {
+    return compactPageUrls({
       url,
       title: await page!.title(),
       tabs: await Promise.all(tabs.map(async (p, index) => ({ index, url: await p.url() }))),
       loading: await loadingFacts(page!),
       network: proxy?.diagnostics?.(),
-    };
+    });
   };
   const settle = async () => {
     const observation = await observe();
@@ -450,7 +452,8 @@ export async function execute(
             role: "system",
             content:
               executionPrompt +
-              " 已绑定账号时仅使用该账号，不能在同一环境换成其他账号；未绑定时可按当前任务授权使用用户提供的登录信息。账号保存、修改和验证按对应工具说明处理。",
+              " 已绑定账号时仅使用该账号，不能在同一环境换成其他账号；未绑定时可按当前任务授权使用用户提供的登录信息。账号保存、修改和验证按对应工具说明处理。" +
+              pageContextGuide,
           },
           {
             role: "user",
@@ -473,6 +476,7 @@ export async function execute(
         };
       },
       budget: () => modelContext,
+      contextSize: (report) => clock.contextSize(report),
       history: (messages) => {
         history.splice(0, history.length, ...messages);
       },
