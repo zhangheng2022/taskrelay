@@ -1,6 +1,11 @@
 import { z } from "zod";
+import {
+  contextSizeLimit,
+  contextSizeReportSchema,
+} from "../../../../packages/contracts/src/context-diagnostics";
 
-/** 诊断导出仅接受固定阶段、数值、布尔值和模型请求 UUID。旧检查点可以没有计时字段。 */
+/** 诊断导出仅接受固定分类、数值、布尔值和模型请求 UUID；上下文统计不含原文。
+ * 旧检查点可以没有计时或体积字段；这些统计不参与执行决策。 */
 export const timingPhase = z.enum([
   "context",
   "decision",
@@ -46,5 +51,10 @@ export const executionTimingSchema = z.strictObject({
       }),
     )
     .max(recentSpanLimit),
+  // 可选以读取旧诊断。仅本机导出使用，不发送给模型或新增云端请求。
+  contextSizes: z
+    .array(z.strictObject({ round: count, elapsedMs: count, report: contextSizeReportSchema }))
+    .max(contextSizeLimit)
+    .optional(),
 });
 export type ExecutionTiming = z.infer<typeof executionTimingSchema>;

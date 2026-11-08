@@ -8,6 +8,7 @@ import { createAgent, createMiddleware } from "langchain";
 import pLimit from "p-limit";
 import type { z } from "zod";
 import type { Message, ModelResponse } from "../../../../packages/model/src/index";
+import type { ContextSizeReport } from "../../../../packages/contracts/src/context-diagnostics";
 import {
   fromLangChainMessages,
   toLangChainMessages,
@@ -25,6 +26,7 @@ import {
   type HelpResponse,
 } from "../../../../packages/contracts/src/execution";
 import { SessionCheckpointer } from "./session-checkpointer";
+import { referencePageContext } from "./page-context";
 
 export type ExecutorCall = ModelResponse["calls"][number];
 export interface ExecutionGraphPort {
@@ -35,6 +37,7 @@ export interface ExecutionGraphPort {
     purpose: "decision" | "summary",
   ): Promise<{ response: ModelResponse }>;
   budget?(): ContextBudget;
+  contextSize?(report: ContextSizeReport): void;
   history?(messages: Message[]): void;
   changed(userSeq: number): Promise<boolean>;
   perform(call: ExecutorCall, args: Record<string, unknown>, userSeq: number): Promise<unknown>;
@@ -137,7 +140,13 @@ export async function runExecutionGraph(port: ExecutionGraphPort) {
     wrapModelCall: async (request, handler) => {
       port.guard();
       port.history?.(fromLangChainMessages(request.messages));
-      return handler({ ...request, messages: [...protectedMessages, ...request.messages] });
+      return handler({
+        ...request,
+        messages: [
+          ...referencePageContext(protectedMessages, request.messages),
+          ...request.messages,
+        ],
+      });
     },
     afterModel: async (state) => {
       port.guard();
@@ -234,9 +243,10 @@ export async function runExecutionGraph(port: ExecutionGraphPort) {
   const summary = protectedSummary({
     model: summaryModel,
     budget: () => port.budget?.() ?? { contextTokens: 16000, outputTokens: 4096 },
-    protectedMessages: () => protectedMessages,
+    protectedMessages: (history) => referencePageContext(protectedMessages, history),
     tools: () => executorTools,
     guard: () => port.guard(),
+    onContextSize: port.contextSize ? (report) => port.contextSize?.(report) : undefined,
   });
   const agent = createAgent({
     model,

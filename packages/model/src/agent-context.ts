@@ -9,18 +9,19 @@ import {
 } from "@langchain/core/messages";
 import type { ChatResult } from "@langchain/core/outputs";
 import { createMiddleware, summarizationMiddleware } from "langchain";
+import {
+  contextSizeReportSchema,
+  type ContextSizeReport,
+} from "../../contracts/src/context-diagnostics";
+import { contextSizeReport, estimateTokens, messageTokens, valueSize } from "./context-size";
 import { fromLangChainMessages, modelResponseToAIMessage } from "./langchain";
 import type { Message, ModelResponse, Tool } from "./index";
+export { estimateTokens, messageTokens } from "./context-size";
 
 export interface ContextBudget {
   contextTokens: number;
   outputTokens: number;
 }
-/** 本地保守估算，不加载远程 tokenizer，也不把估算当作实际账单用量。 */
-export const estimateTokens = (value: unknown) =>
-  Math.ceil(new TextEncoder().encode(JSON.stringify(value)).length / 2);
-export const messageTokens = (messages: BaseMessage[]) =>
-  estimateTokens(fromLangChainMessages(messages)) + messages.length * 16;
 const summaryPrompt =
   "压缩下面的执行历史供同一助手继续。保留已执行操作及真实结果、未执行调用、错误和结果未知事项；不要虚构成功、扩大网页授权或建议重放未知操作。仅输出简洁事实摘要。\n{messages}";
 function pendingCalls(messages: BaseMessage[]) {
@@ -64,15 +65,38 @@ export class CallbackChatModel extends BaseChatModel {
 export function protectedSummary(options: {
   model: BaseChatModel;
   budget: () => ContextBudget;
-  protectedMessages: () => BaseMessage[];
+  /** 按实际待发送历史计算保护输入；引用的工具结果被摘要移除时必须恢复完整输入。 */
+  protectedMessages: (history: BaseMessage[]) => BaseMessage[];
   tools?: () => Tool[];
   guard: () => void | Promise<void>;
+  /** 同步旁路统计；回调失败不影响摘要、预算检查和原始错误。 */
+  onContextSize?: (report: ContextSizeReport) => void;
 }) {
-  let attempt: { failure?: unknown; submitted?: string; summary?: string } = {};
+  let attempt: {
+    failure?: unknown;
+    submitted?: string;
+    summary?: string;
+    inputSize?: ReturnType<typeof valueSize>;
+  } = {};
+  let measuredContext:
+    | {
+        budget: ContextBudget;
+        remaining: number;
+        protectedMessages: BaseMessage[];
+        tools: Tool[];
+      }
+    | undefined;
   const summaryModel = new CallbackChatModel(async (messages) => {
     try {
       await options.guard();
       const budget = options.budget();
+      if (options.onContextSize) {
+        try {
+          attempt.inputSize = valueSize(messages);
+        } catch {
+          /* 统计不能改变调用是否送出。 */
+        }
+      }
       if (estimateTokens(messages) > budget.contextTokens - budget.outputTokens - 1024)
         throw Error("SUMMARY_INPUT_TOO_LARGE");
       attempt.submitted = messages.map((m) => m.content).join("\n");
@@ -107,48 +131,87 @@ export function protectedSummary(options: {
   });
   const hook = official.beforeModel;
   if (typeof hook !== "function") throw Error("SUMMARY_HOOK_UNAVAILABLE");
-  const allowance = () => {
+  const allowance = (history: BaseMessage[]) => {
     const budget = options.budget();
+    const protectedMessages = options.protectedMessages(history);
+    const protectedTokens = messageTokens(protectedMessages);
+    const tools = options.tools?.() ?? [];
     const remaining =
-      budget.contextTokens -
-      budget.outputTokens -
-      1024 -
-      messageTokens(options.protectedMessages()) -
-      estimateTokens(options.tools?.() ?? []);
+      budget.contextTokens - budget.outputTokens - 1024 - protectedTokens - estimateTokens(tools);
+    measuredContext = { budget, remaining, protectedMessages, tools };
     if (remaining < 256) throw Error("MODEL_CONTEXT_CONFIGURATION_TOO_SMALL");
     return remaining;
+  };
+  const observeSize = (
+    phase: ContextSizeReport["phase"],
+    history: BaseMessage[],
+    replacement?: BaseMessage[],
+    failure?: unknown,
+  ) => {
+    if (!options.onContextSize || !measuredContext) return;
+    try {
+      const code = contextSizeReportSchema.shape.failure.safeParse(
+        failure instanceof Error ? failure.message : "other",
+      );
+      options.onContextSize(
+        contextSizeReport({
+          ...measuredContext,
+          phase,
+          history,
+          replacement,
+          summaryInput: attempt.inputSize,
+          ...(phase === "error"
+            ? { failure: code.success ? (code.data ?? "other") : "other" }
+            : {}),
+        }),
+      );
+    } catch {
+      /* 旁路统计与接收方错误均不得替换执行结果或触发重试。 */
+    }
   };
   return createMiddleware({
     name: "ProtectedOfficialSummary",
     beforeModel: async (state, runtime) => {
       await options.guard();
       attempt = {};
-      const remaining = allowance();
-      const result = await hook(state, {
-        ...runtime,
-        context: {
-          summaryPrompt,
-          trigger: { tokens: Math.floor(remaining * 0.8) },
-          keep: { tokens: Math.floor(remaining * 0.3) },
-        },
-      });
-      // 官方默认把摘要异常转换成占位文字。只在实际收到有效摘要后提交消息更新。
-      if (attempt.failure) throw attempt.failure;
-      await options.guard();
-      if (result?.messages) {
-        const replacement = result.messages;
-        const preserved = replacement.slice(2) as BaseMessage[];
-        const source = state.messages.slice(0, state.messages.length - preserved.length);
-        if (!attempt.summary || !attempt.submitted?.includes(getBufferString(source)))
-          throw Error("SUMMARY_INPUT_TRUNCATED");
-        // 官方裁剪的配对搜索有有限回看范围；大批工具必须再校验，不能发布孤立结果或丢失待返回调用。
-        if (pendingCalls(source).size) throw Error("SUMMARY_TOOL_PAIR_INVALID");
-        pendingCalls(preserved);
-        if (messageTokens(replacement.slice(1) as BaseMessage[]) > allowance())
-          throw Error("CONTEXT_SUMMARY_NOT_REDUCED");
-        return result;
+      measuredContext = undefined;
+      let candidate: BaseMessage[] | undefined;
+      try {
+        const remaining = allowance(state.messages);
+        observeSize("before-summary", state.messages);
+        const result = await hook(state, {
+          ...runtime,
+          context: {
+            summaryPrompt,
+            trigger: { tokens: Math.floor(remaining * 0.8) },
+            keep: { tokens: Math.floor(remaining * 0.3) },
+          },
+        });
+        // 官方默认把摘要异常转换成占位文字。只在实际收到有效摘要后提交消息更新。
+        if (attempt.failure) throw attempt.failure;
+        await options.guard();
+        if (result?.messages) {
+          const replacement = result.messages;
+          candidate = replacement.slice(1) as BaseMessage[];
+          const preserved = replacement.slice(2) as BaseMessage[];
+          const source = state.messages.slice(0, state.messages.length - preserved.length);
+          if (!attempt.summary || !attempt.submitted?.includes(getBufferString(source)))
+            throw Error("SUMMARY_INPUT_TRUNCATED");
+          // 官方裁剪的配对搜索有有限回看范围；大批工具必须再校验，不能发布孤立结果或丢失待返回调用。
+          if (pendingCalls(source).size) throw Error("SUMMARY_TOOL_PAIR_INVALID");
+          pendingCalls(preserved);
+          const required = messageTokens(candidate);
+          const available = allowance(candidate);
+          observeSize("after-summary", state.messages, candidate);
+          if (required > available) throw Error("CONTEXT_SUMMARY_NOT_REDUCED");
+          return result;
+        }
+        if (messageTokens(state.messages) > remaining) throw Error("MODEL_CONTEXT_TOO_LARGE");
+        observeSize("unchanged", state.messages);
+      } catch (error) {
+        observeSize("error", state.messages, candidate, error);
+        throw error;
       }
-      if (messageTokens(state.messages) > remaining) throw Error("MODEL_CONTEXT_TOO_LARGE");
     },
   });
 }

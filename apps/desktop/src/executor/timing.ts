@@ -1,5 +1,10 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
+  contextSizeLimit,
+  contextSizeReportSchema,
+  type ContextSizeReport,
+} from "../../../../packages/contracts/src/context-diagnostics";
+import {
   recentSpanLimit,
   type ExecutionTiming,
   type TimingPhase,
@@ -11,6 +16,7 @@ export class ExecutionClock {
   private readonly parent = new AsyncLocalStorage<number>();
   private readonly phases: ExecutionTiming["phases"] = {};
   private readonly recent: ExecutionTiming["recent"] = [];
+  private readonly contextSizes: NonNullable<ExecutionTiming["contextSizes"]> = [];
   private sequence = 0;
   round = 0;
   emptyExtractions = 0;
@@ -22,6 +28,14 @@ export class ExecutionClock {
 
   close() {
     this.parent.disable();
+  }
+
+  /** 只接收严格白名单，不能把消息引用、任意字段或异常正文带入本机诊断。 */
+  contextSize(report: ContextSizeReport) {
+    const parsed = contextSizeReportSchema.safeParse(report);
+    if (!parsed.success) return;
+    if (this.contextSizes.length === contextSizeLimit) this.contextSizes.shift();
+    this.contextSizes.push({ round: this.round, elapsedMs: this.elapsed(), report: parsed.data });
   }
 
   private elapsed() {
@@ -69,6 +83,7 @@ export class ExecutionClock {
       firstNarrativeMs: this.firstNarrativeMs,
       phases: structuredClone(this.phases),
       recent: [...this.recent],
+      ...(this.contextSizes.length ? { contextSizes: structuredClone(this.contextSizes) } : {}),
     };
   }
 }
