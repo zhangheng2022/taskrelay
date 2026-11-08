@@ -117,3 +117,64 @@ test("下载进程退出后重试复用合法部分与完整分段，不重新�
   assert.deepEqual(retry.ranges, ["1024-4194303"]);
   assert.deepEqual(await readFile(archive), source);
 });
+
+test("分段临时 HTTP 错误重试同一范围，错误页不污染合法前缀或最终归档", async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "taskrelay-browser-transient-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const archive = path.join(dir, "browser.zip"),
+    adapter = provider({ interrupt: true });
+  const attempts = new Map<string, number>();
+  await downloadBrowserArchive({
+    url,
+    archive,
+    sha256,
+    runCurl: async (args: string[]) => {
+      if (args.includes("--head")) return adapter.runCurl(args);
+      const range = args[args.indexOf("--range") + 1];
+      const tried = attempts.get(range) ?? 0;
+      attempts.set(range, tried + 1);
+      if (range.startsWith("1024-") && tried < 2) {
+        const status = tried === 0 ? 504 : 429;
+        await writeFile(
+          args[args.indexOf("--dump-header") + 1],
+          `HTTP/1.1 ${status} Error\r\nContent-Length: 12\r\n\r\n`,
+        );
+        await writeFile(args[args.indexOf("--output") + 1], "gateway page");
+        return 22;
+      }
+      return adapter.runCurl(args);
+    },
+  });
+  assert.equal(attempts.get("1024-4194303"), 3);
+  assert.deepEqual(await readFile(archive), source);
+});
+
+test("持续临时 HTTP 错误受既有六次上限约束，不覆盖原缓存", async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "taskrelay-browser-retry-limit-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const archive = path.join(dir, "browser.zip"),
+    adapter = provider();
+  await writeFile(archive, "preserve-original");
+  const attempts = new Map<string, number>();
+  await assert.rejects(
+    downloadBrowserArchive({
+      url,
+      archive,
+      sha256,
+      runCurl: async (args: string[]) => {
+        if (args.includes("--head")) return adapter.runCurl(args);
+        const range = args[args.indexOf("--range") + 1];
+        attempts.set(range, (attempts.get(range) ?? 0) + 1);
+        await writeFile(
+          args[args.indexOf("--dump-header") + 1],
+          "HTTP/1.1 503 Unavailable\r\n\r\n",
+        );
+        return 22;
+      },
+    }),
+    /BROWSER_DOWNLOAD_INCOMPLETE/,
+  );
+  assert.deepEqual([...attempts.values()], [6, 6]);
+  assert.equal(await readFile(archive, "utf8"), "preserve-original");
+  assert.equal(await stat(`${archive}.parts/0.part`).catch(() => null), null);
+});

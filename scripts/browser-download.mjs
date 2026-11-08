@@ -124,12 +124,19 @@ export async function downloadBrowserArchive({ url, archive, sha256, runCurl = c
         const reply = headers(await readFile(header, "utf8").catch(() => ""));
         const received = await sizeOf(incoming);
         if (!reply.status && code !== 0) continue;
+        // 网关/限流错误页不能写入分段；仅在既有六次上限内重试临时状态，保留此前合法前缀。
+        if ([408, 429, 500, 502, 503, 504].includes(reply.status)) {
+          console.log(
+            `Build resource temporary HTTP ${reply.status}; retry segment ${index + 1}/${count}.`,
+          );
+          continue;
+        }
         if (
           reply.status !== 206 ||
           reply.values.get("content-range") !== `bytes ${first}-${end}/${size}` ||
           received > end - first + 1
         )
-          throw Error("BROWSER_DOWNLOAD_RANGE_INVALID");
+          throw Error(`BROWSER_DOWNLOAD_RANGE_INVALID:HTTP_${reply.status}`);
         // curl 28（超时）/18（连接提前关闭）已接收的合法范围前缀可继续使用；其他错误不发布分段。
         if (code !== 0 && code !== 28 && code !== 18) continue;
         if (received) await appendFile(part, await readFile(incoming));
