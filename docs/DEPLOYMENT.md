@@ -1,5 +1,11 @@
 # 部署与恢复
 
+## 2026-11-08 0.19.2 已上线（等待另一台执行器授权）
+
+固定源提交 `d5ec76dbe6d657457e6e37580f89fd410f8c7ee8` 已通过主分支 Quality 和 [正式发布 42476649285](https://github.com/zhangheng2022/taskrelay/actions/runs/42476649285)。云端已切换，主域健康及源码 SHA、匿名权限、页面资源核验正常；[0.19.2 Release](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.19.2) 已公开，更新目录已在完整下载哈希核验后启用。正式包内、系统安装及入口验收证据见 ACCEPTANCE。本次不清空数据，没有待应用迁移，保留现有平台 Secret。
+
+当前原两个设备均已吊销，maintenance=0、claimsEnabled=0，发布为 awaiting-device。用户选择使用另一台电脑：先确认该执行器版本 0.19.2，通过主域网站重新授权设备。取得真实在线且 claim_ready 后，在 master 以 mode=resume、source-sha=`d5ec76dbe6d657457e6e37580f89fd410f8c7ee8`、recovery-run=`42476649285` 继续原发布，保留其原产物及恢复点，再由流程恢复领取。不得手改吊销标志、伪造心跳或跳过设备核验。本机原调试安装及此前未部署记录是历史状态。
+
 ## 2026-11-08 本机页面去重版 0.19.2（未部署云端）
 
 按用户要求本地打包并安装 0.19.2，仅调整桌面模型输入中逐字相同的网址和完整相同的页面现场表示，浏览器仍使用完整网址。协议 18、本地 schema 4 不变；源码回归、包内 smoke、实际安装 smoke、桌面快捷方式启动及安装 ASAR 哈希核验通过，详细证据和验证限制见 ACCEPTANCE。

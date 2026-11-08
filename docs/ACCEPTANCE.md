@@ -1,5 +1,22 @@
 # TaskRelay 验收记录
 
+## 2026-11-08 0.19.2 正式生产发布（等待执行器授权）
+
+用户授权提交并部署，功能、发布说明及交付修复分别经 PR #15、#16、#17 合并。固定源提交 `d5ec76dbe6d657457e6e37580f89fd410f8c7ee8` 的 [主分支 Quality 42476060096](https://github.com/zhangheng2022/taskrelay/actions/runs/42476060096) 全部通过，[Production release 42476649285](https://github.com/zhangheng2022/taskrelay/actions/runs/42476649285) 成功，正式 [0.19.2 Release](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.19.2) 已公开。Worker `f07bf2af-9c4e-4d90-bb7c-7e03c26a458a` 承接 100% 流量，主域 health=200、源码 SHA 正确、协议 18。当前更新目录为 0.19.2；主页与实际 JS 资源均 200，匿名用户及管理员接口均 401。
+
+两套系统的完整测试各 467 项：466 通过，1 项因普通测试 Runner 未准备浏览器资源而跳过；托管 Windows 打包作业在 prepare:browser 后单独运行浏览器状态生产入口并通过。Ubuntu 覆盖率为行 73.64%、分支 81.62%、函数 81.07%；PR #17 差异可执行行覆盖 84/85。格式、lint、类型、仓库、工作流、故障探针、CodeQL 和依赖安全门槛通过。CodeQL 的 js/file-access-to-http 中等级提示指向固定公开工具清单中的 URL，经核对没有发送用户文件或密钥文件，API 令牌只发往固定 GitHub API；解决该已审查讨论，未关闭扫描、撤销警告或改变门槛。
+
+正式发布重新构建并验收同一份产物，包内和实际安装 smoke 均 passed=true。系统快捷方式创建的实际安装进程位于 `C:\Users\runneradmin\AppData\Local\TaskRelay\app-0.19.2\TaskRelay.exe`，安装及构建 ASAR SHA-256 同为 `1a110974161030986a4b5f93d05abd1282d2d0d685d52b57334ff6995cf74496`；release-manifest 核验通过，没有复用本机调试包作为发布附件。
+
+| 正式产物                    |    字节数 | SHA-256                                                            |
+| --------------------------- | --------: | ------------------------------------------------------------------ |
+| TaskRelay.Setup.exe         | 388407296 | `0530261d680291f26212d49c6a56692157d03f33ad828de9cc4e16aceecbb2a5` |
+| TaskRelay-0.19.2-full.nupkg | 387869438 | `458995de52ff0a04ef68bb89ef78c0c0535447a91ba4afa1e88602be143564b8` |
+
+生产流程保留 D1 恢复点，报告没有待应用迁移，没有清空业务数据或更换 MASTER_KEY。更新目录先登记候选，经 Cloudflare 入口完整下载核对大小和 SHA-256 后才激活 latest；GitHub 资产与主域更新目录的版本、大小和哈希一致。原两个设备均已吊销，未擅自恢复旧身份，发布阶段为 awaiting-device、maintenance=0、claimsEnabled=0。用户选择在另一台电脑使用执行器，待确认 0.19.2 并重新授权、取得真实在线和 claim_ready 后，通过同一源 SHA、原产物运行 42476649285 的 resume 流程恢复领取，不手改开关。
+
+本机真实 Electron 归档下载及有限重试证据、最终 PR 的 9 文件 OCR 宿主审查记录、公开发布元数据和主域核验保存在忽略目录 `.cache/db-refactor/`；用户原有 `.codex/config.toml` 未提交。最终源码图为 6754 节点、11652 边、585 社区，保留既有无支持扩展及未调用 LLM 更新社区标签的限制。独立 smoke 不调用完整 runtime.execute/ExecutorHost，源码执行入口使用隔离夹具验证；本次没有在用户另一台电脑、真实模型或业务网站复跑任务，实际任务效果仍待用户验证。
+
 ## 2026-11-08 正式发布准备与质量工具下载恢复
 
 用户进一步授权提交并部署。上下文修复经 PR #15 合并，功能合并提交 d96b934 的主分支 Quality 42463728649 全部通过，含托管 Windows 打包、系统安装及 smoke；发布说明经 PR #16 修正为 0.19.2。最终文档合并提交 b77ed13 的 Quality 42464232763 遇到官方工具下载故障：CodeQL 工具包返回 HTTP 504，重试后通过；工作流检查下载连续三次失败，本机对 ShellCheck 和 actionlint 原入口同样收到 504，官方资产 API 可用。
