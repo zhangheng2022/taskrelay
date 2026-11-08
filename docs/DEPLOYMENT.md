@@ -217,6 +217,10 @@ Windows 浏览器程序资源必须允许 Chromium LPAC 子进程读取／执行
 
 所有 Actions 固定提交 SHA，PR 不接触生产 Environment，默认 contents:read，CodeQL 仅额外获得 security-events:write。统一命令为 `lint`、`format:check`、`format`、`test:coverage`、`check:workflows`、`quality`。Ubuntu 覆盖率下限由 `scripts/coverage-baseline.json` 固定，后续不可降低；后续 PR 修改的可执行行至少 80%，纯格式差异归一化后排除。报告保留七天，不自动发评论或调用外部审查模型。质量检查只保存 Windows 验收报告，正式发布才保存完整安装包附件。
 
+质量工具的固定 GitHub 网页下载入口出现网络错误或非成功状态时，可通过官方 API 核对原仓库、tag、文件名和原下载地址，再下载同一资产；仍按原 SHA-256 校验，成功响应但哈希不符直接拒绝。CI 仅向相关检查步骤提供只读 github.token，令牌只用于 api.github.com，资产跨域下载不携带令牌并限制官方主机。此路径不使用镜像、不降低质量门槛；CodeQL 自身下载失败通过重试作业处理。
+
+浏览器及 Electron 的分段下载在原六次上限内重试临时 HTTP 408／429／500／502／503／504，以及 curl 跟随跳转后连接失败而只留下 3xx 头的未完成传输；错误正文不会追加到合法分段。成功退出却仍返回 3xx、其他非临时状态、Content-Range 或长度错误仍中断，错误分类附 HTTP 状态码和 curl 退出码；只有完整固定 SHA-256 通过才发布缓存，不能用重试代替完整性校验。
+
 README 负责使用入口与状态，CHANGELOG 记录客户端版本的变更，ACCEPTANCE 保留逐项证据。需要发布时从明确、干净的源码提交构建，先完成 make，再取得本次打包/实际安装 smoke 和系统入口证明，整理脱敏附件后发布预览版。不得将含本机绝对路径的原始清单、Profile 或诊断数据库上传为公开附件，也不得复用另一版本的报告。自动更新通道的实际发布状态见验收台账。
 
 ### 自动更新通道（0.4.7 起）
