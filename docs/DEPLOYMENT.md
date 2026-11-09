@@ -165,7 +165,7 @@
 
 生产使用 **Release · 生产发布** 手动工作流；合并不自动发布。本机构建只用于开发，生产迁移、云端部署及正式 Windows 包由 GitHub 托管 Runner 完成。
 
-1. PR 通过 `CI Gate · 合并检查` 后合并 master，等待合并提交自己的 **CI · 持续集成** 通过。名称迁移期间 `quality-gate` 依赖新门槛，仓库规则切换后才移除。
+1. PR 通过 `CI Gate · 合并检查` 后合并 master，等待合并提交自己的 **CI · 持续集成** 通过。仓库规则绑定该检查，不再生成旧的 quality-gate。
 2. 在 master 运行 Release · 生产发布，通常选择 `scope=auto`、`mode=publish`；可指定完整 `source-sha`。预检核验同 SHA 的 master push，不接受 PR、其他提交或旧门槛；遗漏必要范围、桌面修改未提升版本、已公开版本均拒绝发布。CI 编排修改需要验收，但不会单独要求产品发版。
 3. 优先复用 master 的 Web/Windows 候选；缺失、已过期或当时未生成的产品在生产写入前补建。Windows 始终完成真实 Chromium 状态测试、make、包内 smoke、实际安装、系统快捷方式启动和 ASAR 校验。PR 仍执行完整验收，只是不保存安装包。
 4. Artifacts 作业核验来源、文件哈希和验收后，将选定文件和 release-plan 归档到本次运行。发布前审计一次根依赖和桌面 runtime 锁。production 作业重新校验清单与来源，D1 productionRelease 保存 bundleId、planHash、源 SHA、原开关、恢复点和阶段；恢复禁止重新构建替换。
@@ -179,7 +179,7 @@ production Environment 仅允许 master。Cloudflare 凭据和 Release 写权限
 
 ### 合并门槛名称切换
 
-先让同一 PR 同时产生 `CI Gate · 合并检查` 和依赖它的 `quality-gate`，验证 PR 与 master 成功后，将 ruleset 的 required check 改为新名称，保留 GitHub App 绑定、严格检查及其余规则，再通过第二个 PR 移除旧检查。不得临时关闭保护；历史验收记录保留原工作流名称。
+名称切换已按以下顺序执行：先让第一阶段 PR 同时产生 `CI Gate · 合并检查` 和依赖它的 `quality-gate`，验证 PR 与 master 成功后，将 ruleset 的 required check 改为新名称，保留 GitHub App 绑定、严格检查及其余规则，第二阶段移除旧检查。切换保持 GitHub App 15368、严格检查和全部其他保护规则，未关闭保护；历史验收记录保留原工作流名称。
 
 GitHub [上传接口会改写特殊文件名](https://docs.github.com/en/rest/releases/assets#upload-a-release-asset)。Squirrel 磁盘文件 `TaskRelay Setup.exe` 固定以 `TaskRelay.Setup.exe` 发布并核对返回名称；中断恢复也按公开名匹配，再比较大小和哈希。不能因本地名有空格而误判资产缺失，更不能删除重传已公开文件。
 
@@ -249,7 +249,7 @@ Windows 浏览器程序资源必须允许 Chromium LPAC 子进程读取／执行
 
 发布自动化的健康与下载校验使用现有 `https://taskrelay.zhangheng.workers.dev`，固定目标、禁止重定向、不携带用户会话。主站 `tr.zhangheng.eu.org` 的 Bot Fight Mode 会向部分托管 Runner 发出人机挑战；免费版不能按路径豁免（[官方限制](https://developers.cloudflare.com/bots/get-started/bot-fight-mode/)）。保留全域防护、主站及客户端更新地址；不要以关闭防护或放行全部 Actions IP 解决发布检查。站点实际访问和权限检查另在正常客户端核验。
 
-`.github/workflows/ci.yml` 在 PR、master 推送、手动触发及每周一北京时间 09:00 执行。检查格式、Oxlint 类型规则、TypeScript、仓库一致性、Windows/Ubuntu 测试、Ubuntu c8 覆盖率、CodeQL security-extended 实际结果、Gitleaks、High/Critical 依赖漏洞、actionlint/ShellCheck/PSScriptAnalyzer 和 Web 构建。执行器相关改动追加托管 Windows 打包及实际安装 smoke。总门槛 CI Gate · 合并检查对失败、取消、缺少报告均关闭；纯文档按白名单走轻量检查，未知范围全量。迁移阶段保留依赖它的 quality-gate。
+`.github/workflows/ci.yml` 在 PR、master 推送、手动触发及每周一北京时间 09:00 执行。检查格式、Oxlint 类型规则、TypeScript、仓库一致性、Windows/Ubuntu 测试、Ubuntu c8 覆盖率、CodeQL security-extended 实际结果、Gitleaks、High/Critical 依赖漏洞、actionlint/ShellCheck/PSScriptAnalyzer 和 Web 构建。执行器相关改动追加托管 Windows 打包及实际安装 smoke。总门槛 CI Gate · 合并检查对失败、取消、缺少报告均关闭；纯文档按白名单走轻量检查，未知范围全量。旧 quality-gate 仅用于已存在发布记录的恢复校验。
 
 所有 Actions 固定提交 SHA，PR 不接触生产 Environment，默认 contents:read，CodeQL 仅额外获得 security-events:write。统一命令为 `lint`、`format:check`、`format`、`test:coverage`、`check:workflows`、`quality`。Ubuntu 覆盖率下限由 `scripts/coverage-baseline.json` 固定，后续不可降低；后续 PR 修改的可执行行至少 80%，纯格式差异归一化后排除。报告保留七天，不自动发评论或调用外部审查模型。PR 只保存 Windows 验收报告，master 保存完整候选，正式发布归档选定的同一份文件。
 

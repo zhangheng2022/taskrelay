@@ -1,6 +1,6 @@
 # TaskRelay 当前架构
 
-交付由 GitHub Actions 拥有：CI · 持续集成在 PR 与 master 汇总 `CI Gate · 合并检查`；迁移期间旧 `quality-gate` 依赖新门槛。手动 Release · 生产发布只接受同一 SHA 的主分支成功报告。发布状态机以 D1 settings 的 `productionRelease` 做条件更新，保存原开关、恢复点及不可变产物引用；失败不自动恢复领取或回滚数据库。新基线的 release_claim_barrier 触发器在领取事务中检查暂停状态，管理员设置入口拒绝与进行中的发布竞争。更新目录由 RequestCoordinator 从 D1 `desktopReleaseCatalog` 读取；Worker 只路由，旧编译目录仅作首次初始化。
+交付由 GitHub Actions 拥有：CI · 持续集成在 PR 与 master 汇总 `CI Gate · 合并检查`，仓库 ruleset 直接绑定该检查。手动 Release · 生产发布只接受同一 SHA 的主分支成功报告。发布状态机以 D1 settings 的 `productionRelease` 做条件更新，保存原开关、恢复点及不可变产物引用；失败不自动恢复领取或回滚数据库。新基线的 release_claim_barrier 触发器在领取事务中检查暂停状态，管理员设置入口拒绝与进行中的发布竞争。更新目录由 RequestCoordinator 从 D1 `desktopReleaseCatalog` 读取；Worker 只路由，旧编译目录仅作首次初始化。
 
 ```mermaid
 flowchart TD
