@@ -66,13 +66,30 @@ try {
       await delay(50);
     }
   };
+  // 参数独立交给 CDP，文字及选择器不参与拼接页面代码。
+  const callPage = async (functionDeclaration, values) => {
+    const { result: target } = await client.Runtime.evaluate({ expression: "globalThis" });
+    try {
+      const result = await client.Runtime.callFunctionOn({
+        objectId: target.objectId,
+        functionDeclaration,
+        arguments: values.map((value) => ({ value })),
+        returnByValue: true,
+      });
+      if (result.exceptionDetails) throw Error(JSON.stringify(result.exceptionDetails));
+    } finally {
+      await client.Runtime.releaseObject({ objectId: target.objectId });
+    }
+  };
   const click = async (text) =>
-    evaluate(
-      `Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()===${JSON.stringify(text)} && b.getBoundingClientRect().width>0).click()`,
+    callPage(
+      "function(text){Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()===text && b.getBoundingClientRect().width>0).click()}",
+      [text],
     );
   const select = async (selector, value) =>
-    evaluate(
-      `(()=>{const e=document.querySelector(${JSON.stringify(selector)});e.value=${JSON.stringify(value)};e.dispatchEvent(new Event('change',{bubbles:true}));})()`,
+    callPage(
+      "function(selector,value){const e=document.querySelector(selector);e.value=value;e.dispatchEvent(new Event('change',{bubbles:true}))}",
+      [selector, value],
     );
   const shot = async (name) => {
     await delay(200);
