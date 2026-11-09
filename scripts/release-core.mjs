@@ -12,7 +12,7 @@ export const phases = [
   "registered",
   "download-verified",
   "activated",
-  "awaiting-device",
+  "awaiting-device", // 只兼容旧记录；新发布不再进入设备等待阶段。
   "complete",
 ];
 
@@ -68,10 +68,10 @@ export async function runRelease(io, record) {
     await save("activated");
   }
   await io.assertQuiescent(state);
-  const ready = await io.compatibleDevice(state);
-  // 网页可先恢复；无兼容设备时保持领取暂停，并保留原开关供之后恢复。
-  await io.restore(state, ready);
-  await save(ready ? "complete" : "awaiting-device");
+  // 发布完成不依赖设备在线；实际领取仍由调度器核对设备授权、协议与就绪状态。
+  // 恢复原开关而非强制开启，兼容旧 awaiting-device 记录且不重放前面的发布步骤。
+  await io.restore(state);
+  await save("complete");
   return state;
 }
 

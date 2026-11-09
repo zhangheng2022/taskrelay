@@ -368,22 +368,9 @@ const io = {
       throw Error("CLOUDFLARE_DOWNLOAD_HASH_MISMATCH");
   },
   activate: async () => updateCatalog(true),
-  compatibleDevice: async () => {
-    const { PROTOCOL_VERSION } = await import(
-      pathToFileURL(path.resolve("packages/contracts/src/index.ts")).href
-    );
-    return (
-      (
-        await query(
-          "SELECT COUNT(*) n FROM devices WHERE revoked=0 AND claim_ready=1 AND protocol_version=? AND last_seen>?",
-          [PROTOCOL_VERSION, Date.now() - 90_000],
-        )
-      )[0].results[0].n > 0
-    );
-  },
-  restore: async (state, ready) => {
+  restore: async (state) => {
     await settings("maintenance", state.oldMaintenance);
-    if (ready) await settings("claimsEnabled", state.oldClaims);
+    await settings("claimsEnabled", state.oldClaims);
   },
 };
 let result;
@@ -399,5 +386,5 @@ try {
 if (process.env.GITHUB_STEP_SUMMARY)
   appendFileSync(
     process.env.GITHUB_STEP_SUMMARY,
-    `生产发布：${result.phase === "complete" ? "已完成" : "部署完成，等待兼容设备；领取仍暂停"}（${result.phase}）\n\n提交：${sha}\n\nD1 恢复点已保存在 productionRelease 配置中。\n`,
+    `生产发布：已完成（${result.phase}）\n\n提交：${sha}\n\nD1 恢复点已保存在 productionRelease 配置中。\n`,
   );

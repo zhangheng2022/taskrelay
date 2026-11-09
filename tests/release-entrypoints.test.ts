@@ -70,7 +70,8 @@ test("真实生产发布入口核对 SQL、安装包和恢复结果，异常保�
     "deploy-fails": { phase: "deploying", error: "FIXTURE_DEPLOY_FAILED" },
     desktop: { phase: "complete" },
     "bad-download": { phase: "registered", error: "CLOUDFLARE_DOWNLOAD_HASH_MISMATCH" },
-    "no-device": { phase: "awaiting-device" },
+    "no-device": { phase: "complete" },
+    "original-paused": { phase: "complete" },
     "resume-published": { phase: "complete" },
     "resume-bundle-published": { phase: "complete" },
     "resume-bundle-ready": { phase: "complete" },
@@ -146,8 +147,8 @@ test("真实生产发布入口核对 SQL、安装包和恢复结果，异常保�
     const success = expected.phase === "complete";
     assert.equal(state.phase, expected.phase);
     assert.equal(state.bookmark, "fixture-bookmark");
-    assert.equal(output.state.claimsEnabled, success ? "1" : "0");
-    assert.equal(output.state.maintenance, success || mode === "no-device" ? "0" : "1");
+    assert.equal(output.state.claimsEnabled, success && mode !== "original-paused" ? "1" : "0");
+    assert.equal(output.state.maintenance, success && mode !== "original-paused" ? "0" : "1");
     if (["desktop", "no-device", "bad-download", "resume-published"].includes(mode))
       assert.equal(
         JSON.parse(output.state.desktopReleaseCatalog).latest,

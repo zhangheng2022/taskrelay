@@ -51,9 +51,8 @@ function fixture() {
     activate: async () => {
       calls.push("activate");
     },
-    compatibleDevice: async () => true,
-    restore: async (_record, ready) => {
-      calls.push(`restore:${ready}`);
+    restore: async () => {
+      calls.push("restore");
     },
   };
   return { io, calls, state: () => state };
@@ -83,7 +82,7 @@ test("发布按排空、备份、迁移、部署、公开、下载验证、启�
       "register",
       "verifyDownload",
       "activate",
-      "restore:true",
+      "restore",
     ],
   );
   await assert.rejects(runRelease(s.io, result), /ALREADY_COMPLETE/);
@@ -120,18 +119,13 @@ test("部署未知仅核验，不重发；错误下载哈希不切换通道", as
   };
   await assert.rejects(runRelease(h.io, h.state()));
   assert.equal(h.calls.includes("activate"), false);
-  assert.equal(h.calls.includes("restore:true"), false);
+  assert.equal(h.calls.includes("restore"), false);
 });
-test("没有兼容设备时网页恢复但领取保持暂停，恢复入口不再次迁移或发布", async () => {
+test("旧等待设备记录直接恢复原开关，不再次迁移、部署或发布", async () => {
   const s = fixture();
-  s.io.compatibleDevice = async () => false;
-  await runRelease(s.io, s.state());
-  assert.equal(s.state().phase, "awaiting-device");
-  s.io.compatibleDevice = async () => true;
-  await runRelease(s.io, s.state());
-  assert.equal(s.calls.filter((v) => v === "publish").length, 1);
-  assert.equal(s.calls.filter((v) => v === "migrate").length, 1);
-  assert.equal(s.state().phase, "complete");
+  const result = await runRelease(s.io, { ...s.state(), phase: "awaiting-device" });
+  assert.equal(result.phase, "complete");
+  assert.deepEqual(s.calls, ["ownership", "pause", "quiescent", "restore", "save:complete"]);
 });
 test("排空失败、并发所有权冲突及遗漏范围均阻止后续操作", async () => {
   const s = fixture();
