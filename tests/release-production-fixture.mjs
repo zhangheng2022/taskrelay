@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
 import fs from "node:fs";
+import fsp from "node:fs/promises";
 import { Readable } from "node:stream";
 import { createHash } from "node:crypto";
 import { dbPath } from "../scripts/release-api.mjs";
@@ -18,6 +19,9 @@ if (
     "bad-download",
     "no-device",
     "resume-published",
+    "resume-bundle-published",
+    "resume-bundle-changed",
+    "resume-bundle-ready",
     "resume-unknown",
     "resume-ready",
     "wrong-manifest",
@@ -34,6 +38,9 @@ const desktop = [
   "bad-download",
   "no-device",
   "resume-published",
+  "resume-bundle-published",
+  "resume-bundle-changed",
+  "resume-bundle-ready",
   "resume-ready",
   "wrong-manifest",
   "bad-artifact",
@@ -97,6 +104,7 @@ const manifest = {
   installedAsarMatches: true,
   systemEntry: { runner: "github-hosted" },
   actionsRunId: "11",
+  actionsRunAttempt: "1",
   reports: Object.fromEntries(
     ["packaged-smoke", "installed-smoke"].map((key) => [
       key,
@@ -119,6 +127,9 @@ if (resume || mode === "duplicate") {
   );
   const phase = {
     "resume-published": "publishing",
+    "resume-bundle-published": "publishing",
+    "resume-bundle-changed": "publishing",
+    "resume-bundle-ready": "awaiting-device",
     "resume-unknown": "deploying",
     "resume-ready": "awaiting-device",
     duplicate: "deploying",
@@ -140,9 +151,117 @@ if (resume || mode === "duplicate") {
     }),
   );
 }
+// Artifact 文件树只存在于夹具内存，发布入口仍执行真实清单与来源验证。
+process.env.RELEASE_BUNDLE_ID = "90";
+process.env.GITHUB_RUN_ATTEMPT = "1";
+const virtual = new Map();
+const add = (name, value) =>
+  virtual.set(name, Buffer.isBuffer(value) ? value : Buffer.from(JSON.stringify(value)));
+add("artifacts/web/index.html", Buffer.from("fixture web"));
+if (desktop) {
+  add("artifacts/windows/out/release-manifest.json", manifest);
+  add("artifacts/windows/out/desktop-release.json", candidate);
+  for (const [name, report] of Object.entries(manifest.reports))
+    add(`artifacts/windows/out/${name}.json`, report);
+  for (const name of artifactNames) add(`${packageRoot}/${name}`, bytes);
+}
+const hash = (value) => createHash("sha256").update(value).digest("hex");
+const sources = {};
+for (const kind of ["web", ...(desktop ? ["windows"] : [])]) {
+  const prefix = `artifacts/${kind}/`;
+  const files = Object.fromEntries(
+    [...virtual.entries()]
+      .filter(([name]) => name.startsWith(prefix))
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([name, data]) => [
+        name.slice(prefix.length),
+        { bytes: data.length, sha256: hash(data) },
+      ]),
+  );
+  const built = {
+    schema: 1,
+    kind,
+    sourceCommit: process.env.RELEASE_SHA,
+    version: candidate.version,
+    repository: "zhangheng2022/taskrelay",
+    runId: "11",
+    runAttempt: "1",
+    files,
+  };
+  add(`${prefix}artifact-manifest.json`, built);
+  sources[kind] = {
+    artifactId: kind === "web" ? "91" : "92",
+    runId: "11",
+    runAttempt: "1",
+    manifestHash: hash(JSON.stringify(built)),
+  };
+}
+add("artifacts/release-plan.json", {
+  schema: 1,
+  sha: process.env.RELEASE_SHA,
+  qualityRunId: 1,
+  releaseRunId: "11",
+  sources,
+});
+if (mode.startsWith("resume-bundle-")) {
+  const record = JSON.parse(state().productionRelease);
+  record.bundleId = "90";
+  record.planHash =
+    mode === "resume-bundle-changed"
+      ? "b".repeat(64)
+      : hash(virtual.get("artifacts/release-plan.json"));
+  sql
+    .prepare("UPDATE settings SET value=? WHERE key='productionRelease'")
+    .run(JSON.stringify(record));
+}
+const normalize = (file) => String(file).replaceAll("\\", "/");
+const originalPromises = {
+  readFile: fsp.readFile,
+  readdir: fsp.readdir,
+  lstat: fsp.lstat,
+  cp: fsp.cp,
+  rm: fsp.rm,
+};
+fsp.readFile = async (file, options) =>
+  virtual.has(normalize(file))
+    ? typeof options === "string"
+      ? virtual.get(normalize(file)).toString(options)
+      : virtual.get(normalize(file))
+    : originalPromises.readFile(file, options);
+fsp.readdir = async (file, ...args) => {
+  const prefix = normalize(file) + "/";
+  if (!prefix.startsWith("artifacts/")) return originalPromises.readdir(file, ...args);
+  return [
+    ...new Set(
+      [...virtual.keys()]
+        .filter((name) => name.startsWith(prefix))
+        .map((name) => name.slice(prefix.length).split("/")[0]),
+    ),
+  ];
+};
+fsp.lstat = async (file, ...args) => {
+  const name = normalize(file);
+  if (!name.startsWith("artifacts/")) return originalPromises.lstat(file, ...args);
+  return {
+    isSymbolicLink: () => false,
+    isDirectory: () => !virtual.has(name),
+    isFile: () => virtual.has(name),
+    size: virtual.get(name)?.length,
+  };
+};
+fsp.cp = async (from, to, ...args) =>
+  normalize(from) === "artifacts/web" ? undefined : originalPromises.cp(from, to, ...args);
+fsp.rm = async (file, ...args) =>
+  normalize(file) === "apps/web/dist/artifact-manifest.json"
+    ? undefined
+    : originalPromises.rm(file, ...args);
 const readOriginal = fs.readFileSync;
 fs.readFileSync = (file, ...args) => {
   const normalized = String(file).replaceAll("\\", "/");
+  if (virtual.has(normalized))
+    return normalized.endsWith(".json")
+      ? virtual.get(normalized).toString()
+      : virtual.get(normalized);
   if (normalized === "artifacts/windows/out/release-manifest.json") return JSON.stringify(manifest);
   if (normalized === "artifacts/windows/out/desktop-release.json") return JSON.stringify(candidate);
   if (artifactNames.some((name) => normalized === packageRoot + "/" + name)) return bytes;
@@ -155,7 +274,7 @@ fs.createReadStream = (file) => {
   return Readable.from([bytes]);
 };
 let release;
-if (mode === "resume-published")
+if (["resume-published", "resume-bundle-published"].includes(mode))
   release = {
     id: 2,
     draft: false,
@@ -216,7 +335,42 @@ globalThis.fetch = async (input, options) => {
   )
     return Response.json({
       total_count: 1,
-      jobs: [{ name: "quality-gate", conclusion: "success" }],
+      jobs: [
+        {
+          name:
+            resume && !mode.startsWith("resume-bundle-") ? "quality-gate" : "CI Gate · 合并检查",
+          conclusion: "success",
+        },
+      ],
+    });
+  if (url.includes("/actions/runs/11/artifacts?"))
+    return Response.json({
+      total_count: 2,
+      artifacts: [
+        { id: 91, name: "production-web", expired: false },
+        { id: 92, name: "windows-release", expired: false },
+      ],
+    });
+  const artifactMatch = url.match(/\/actions\/artifacts\/(90|91|92)$/);
+  if (artifactMatch)
+    return Response.json({
+      id: Number(artifactMatch[1]),
+      expired: false,
+      name:
+        artifactMatch[1] === "90"
+          ? "release-bundle-1"
+          : artifactMatch[1] === "91"
+            ? "build-web-1"
+            : "build-windows-1",
+      workflow_run: { id: 11 },
+    });
+  if (url === "https://api.github.com/repos/zhangheng2022/taskrelay/actions/runs/11")
+    return Response.json({
+      head_branch: "master",
+      repository: { full_name: "zhangheng2022/taskrelay" },
+      run_attempt: 1,
+      path: ".github/workflows/release.yml",
+      event: "workflow_dispatch",
     });
   if (url === "https://taskrelay.zhangheng.workers.dev/api/health") {
     assert.equal(deployed, true);

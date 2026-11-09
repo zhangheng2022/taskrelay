@@ -92,6 +92,7 @@ const manifest = {
   installedAsarMatches: true,
   systemEntry,
   actionsRunId: process.env.GITHUB_RUN_ID ?? null,
+  actionsRunAttempt: process.env.GITHUB_RUN_ATTEMPT ?? null,
 };
 if (manifest.sourceDirty) throw Error("RELEASE_SOURCE_DIRTY");
 await writeFile(

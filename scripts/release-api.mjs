@@ -1,8 +1,9 @@
 /** Actions 发布 API 边界：固定服务地址，关闭重定向和自动重试，错误不透传响应正文或凭据。 */
+import { ciGateName } from "./workflow-policy.mjs";
 import { readFileSync } from "node:fs";
 export const repository = "zhangheng2022/taskrelay";
 // 单业务 D1 的标识只由 Wrangler 配置维护，离线换库后发布/备份不能再访问旧库。
-const config = readFileSync(new URL("../apps/web/wrangler.jsonc", import.meta.url), "utf8");
+const config = readFileSync("apps/web/wrangler.jsonc", "utf8");
 const accounts = [...config.matchAll(/"account_id"\s*:\s*"([a-f0-9]{32})"/g)],
   databases = [...config.matchAll(/"database_id"\s*:\s*"([a-f0-9-]{36})"/g)];
 if (accounts.length !== 1 || databases.length !== 1) throw Error("RELEASE_DATABASE_CONFIG_INVALID");
@@ -69,7 +70,7 @@ export async function query(sql, params = []) {
     throw Error("D1_QUERY_FAILED");
   return rows;
 }
-export async function verifyQuality(sha) {
+export async function verifyQuality(sha, legacy = false) {
   if (!/^[a-f0-9]{40}$/.test(sha)) throw Error("RELEASE_SHA_INVALID");
   const runs = await github(
     `/actions/workflows/ci.yml/runs?head_sha=${sha}&event=push&per_page=100`,
@@ -81,7 +82,7 @@ export async function verifyQuality(sha) {
     throw Error("RELEASE_QUALITY_NOT_GREEN");
   const jobs = await github(`/actions/runs/${run.id}/jobs?filter=latest&per_page=100`);
   if (jobs?.total_count !== jobs?.jobs?.length) throw Error("QUALITY_JOBS_INCOMPLETE");
-  const gate = jobs.jobs.filter((item) => item.name === "quality-gate");
+  const gate = jobs.jobs.filter((item) => item.name === (legacy ? "quality-gate" : ciGateName));
   if (gate.length !== 1 || gate[0].conclusion !== "success")
     throw Error("RELEASE_QUALITY_GATE_MISSING");
   return run.id;

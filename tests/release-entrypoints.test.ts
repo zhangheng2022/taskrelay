@@ -27,7 +27,7 @@ test("真实发布脚本在非主分支或健康异常时阻止所有生产写�
       if (url.startsWith("https://api.github.com/repos/zhangheng2022/taskrelay/actions/workflows/ci.yml/runs?"))
         return Response.json({workflow_runs:[{id:1,head_sha:process.env.RELEASE_SHA,head_branch:"master",event:"push",status:"completed",conclusion:"success"}]});
       if (url === "https://api.github.com/repos/zhangheng2022/taskrelay/actions/runs/1/jobs?filter=latest&per_page=100")
-        return Response.json({total_count:1,jobs:[{name:"quality-gate",conclusion:"success"}]});
+        return Response.json({total_count:1,jobs:[{name:"CI Gate · 合并检查",conclusion:"success"}]});
       if (url === "https://taskrelay.zhangheng.workers.dev/api/health")
         return new Response("fixture upstream private body", {status:503});
       throw Error("UNEXPECTED_NETWORK");
@@ -72,12 +72,15 @@ test("真实生产发布入口核对 SQL、安装包和恢复结果，异常保�
     "bad-download": { phase: "registered", error: "CLOUDFLARE_DOWNLOAD_HASH_MISMATCH" },
     "no-device": { phase: "awaiting-device" },
     "resume-published": { phase: "complete" },
+    "resume-bundle-published": { phase: "complete" },
+    "resume-bundle-ready": { phase: "complete" },
+    "resume-bundle-changed": { phase: "publishing", error: "RESUME_PLAN_CHANGED" },
     "resume-unknown": { phase: "deploying", error: "DEPLOYMENT_OUTCOME_UNCONFIRMED" },
     "resume-ready": { phase: "complete" },
-    "wrong-manifest": { error: "RELEASE_ACCEPTANCE_INVALID" },
+    "wrong-manifest": { error: "ARTIFACT_ACCEPTANCE_MISMATCH" },
     duplicate: { phase: "deploying", error: "RELEASE_RECOVERY_REQUIRED" },
     "bad-artifact": { error: "ARTIFACT_HASH_MISMATCH" },
-    "bad-smoke": { error: "SMOKE_REPORT_INVALID" },
+    "bad-smoke": { error: "ARTIFACT_ACCEPTANCE_MISMATCH" },
     "resume-active": { phase: "deploying", error: "PREVIOUS_RELEASE_STILL_RUNNING" },
     "resume-artifact-changed": { phase: "publishing", error: "RESUME_ARTIFACT_CHANGED" },
   };

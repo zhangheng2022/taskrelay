@@ -1,5 +1,11 @@
 # TaskRelay 验收记录
 
+## 2026-11-09 GitHub Actions 重构（验证中）
+
+- 工作流使用 CI · 持续集成、Release · 生产发布、Build · Windows 构建验收；新门槛 CI Gate · 合并检查与过渡 quality-gate 同时存在。
+- 范围分类、跨平台门槛、候选来源/哈希、发布归档及新旧恢复入口已有本地针对性测试。工作流静态检查、代码规则及类型检查已通过；全量和实际 Actions 待本轮核验。
+- 本批未触发生产发布；本地夹具不证明真实 D1、Windows 安装或线上恢复通过。仓库 ruleset 尚未切换，旧检查尚未移除。
+
 ## 2026-11-08 0.19.4 跨域账号保存正式发布
 
 用户授权提交修复、应用迁移、部署云端并更新安装包。[PR #21](https://github.com/zhangheng2022/taskrelay/pull/21) 已合并，正式源提交为 `6ba82cab7495feb1d79f55c189fd9fe1297de2e6`；[主分支 Quality 42492540003](https://github.com/zhangheng2022/taskrelay/actions/runs/42492540003) 通过。提交范围为 20 个文件，全部完成 OCR preview/rule 及宿主审查，补审默认排除的测试、锁文件和文档，无未解决发现；既有 `.codex/config.toml` 留在本地，未提交。

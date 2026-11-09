@@ -163,17 +163,23 @@
 
 ## 发布
 
-生产使用 GitHub 的 **Production release** 手动工作流；合并不自动发布。本机构建只用于开发，生产迁移、云端部署及正式 Windows 包由 GitHub 托管 Runner 完成。
+生产使用 **Release · 生产发布** 手动工作流；合并不自动发布。本机构建只用于开发，生产迁移、云端部署及正式 Windows 包由 GitHub 托管 Runner 完成。
 
-1. PR 通过固定名称 `quality-gate` 后合并 master，等待合并提交自己的 Quality 检查通过。
-2. 在 master 运行 Production release，通常选择 `scope=auto`、`mode=publish`；可指定完整 `source-sha`。预检重新核验该 SHA 的 master 推送检查，不接受 PR 报告或旧的绿色报告；遗漏必要范围、桌面修改未提升版本、已公开版本均拒绝发布。
-3. Linux 构建网站；Windows 固定 Chrome for Testing 版本与压缩包哈希，完成 make、包内 smoke、实际安装、系统快捷方式启动和安装 ASAR 校验。验收后的同一份产物进入 production 作业，不再次构建替换。
-4. D1 `productionRelease` 保存提交、Actions run、产物哈希、原开关及发布阶段。先暂停领取，最多等待十分钟正常清理；未知结果、未关闭浏览器、推理未结束或不兼容待执行任务阻止发布。保存 Time Travel bookmark 后应用迁移，再部署云端和网页。
-5. GitHub Release 资产按哈希校验且不可覆盖；登记 D1 更新目录后，经 Cloudflare 下载并校验完整大小和哈希，才切换 latest。最后核验兼容设备并恢复原开关；无就绪设备时恢复网页，领取继续暂停。
+1. PR 通过 `CI Gate · 合并检查` 后合并 master，等待合并提交自己的 **CI · 持续集成** 通过。名称迁移期间 `quality-gate` 依赖新门槛，仓库规则切换后才移除。
+2. 在 master 运行 Release · 生产发布，通常选择 `scope=auto`、`mode=publish`；可指定完整 `source-sha`。预检核验同 SHA 的 master push，不接受 PR、其他提交或旧门槛；遗漏必要范围、桌面修改未提升版本、已公开版本均拒绝发布。CI 编排修改需要验收，但不会单独要求产品发版。
+3. 优先复用 master 的 Web/Windows 候选；缺失、已过期或当时未生成的产品在生产写入前补建。Windows 始终完成真实 Chromium 状态测试、make、包内 smoke、实际安装、系统快捷方式启动和 ASAR 校验。PR 仍执行完整验收，只是不保存安装包。
+4. Artifacts 作业核验来源、文件哈希和验收后，将选定文件和 release-plan 归档到本次运行。发布前审计一次根依赖和桌面 runtime 锁。production 作业重新校验清单与来源，D1 productionRelease 保存 bundleId、planHash、源 SHA、原开关、恢复点和阶段；恢复禁止重新构建替换。
+5. 先暂停领取并等待清理，保存 Time Travel bookmark，再迁移和部署。GitHub Release 文件不可覆盖；更新目录登记后经 Cloudflare 下载验证大小/哈希才切换 latest。没有兼容设备时恢复网页，领取保持暂停。
 
-仓库 `production` Environment 仅允许 master。已配置 `CLOUDFLARE_API_TOKEN`，仅 production 作业可读：当前账号的 Workers Editor、D1 Write，以及 `zhangheng.eu.org` 的 Workers Routes Write、Zone Read。现有 MASTER_KEY、模型密钥留在 Cloudflare；工作流不读取或覆盖。Release 写权限也只在 production 作业授予。
+production Environment 仅允许 master。Cloudflare 凭据和 Release 写权限仅授予 production 作业，不读取或覆盖 MASTER_KEY。控制脚本固定本次工作流提交，业务源码和依赖固定 source-sha；两者身份分别核对。
 
-失败后保持现场，不能直接打开领取或回滚数据库。确认原运行已结束后，在同一源 SHA 以 `mode=resume`、`recovery-run=首次产物运行 ID` 继续核验；恢复使用原附件，不重新打包。迁移按已提交记录继续；部署结果未知时只核对 health 的 `sourceCommit`，未确认则报错并等待人工诊断。附件保留七天，缺失且阶段仍需要附件时拒绝恢复。若停在 `awaiting-device`，升级设备后同样通过 resume 核验。已完成发布和公开版本不能重新 publish。
+失败后保持现场，不能直接打开领取或回滚数据库。确认原运行结束后，以 `mode=resume`、原 `source-sha`、`recovery-run=首次发布运行 ID` 恢复。D1 阶段决定所需附件：迁移/部署前需要 Web 文件，桌面启用前需要安装包；等待设备不下载附件。部署结果未知只核对 health，不再次部署。旧发布记录仍读取原附件和旧门槛；新发布必须使用新门槛和发布清单。
+
+普通报告保留 7 天，master 候选及发布恢复归档保留 30 天。新发布可对缺失候选补建；恢复所需的原附件缺失则明确失败。运行摘要包含源提交、范围及恢复参数，`awaiting-device` 不表示领取已恢复。
+
+### 合并门槛名称切换
+
+先让同一 PR 同时产生 `CI Gate · 合并检查` 和依赖它的 `quality-gate`，验证 PR 与 master 成功后，将 ruleset 的 required check 改为新名称，保留 GitHub App 绑定、严格检查及其余规则，再通过第二个 PR 移除旧检查。不得临时关闭保护；历史验收记录保留原工作流名称。
 
 GitHub [上传接口会改写特殊文件名](https://docs.github.com/en/rest/releases/assets#upload-a-release-asset)。Squirrel 磁盘文件 `TaskRelay Setup.exe` 固定以 `TaskRelay.Setup.exe` 发布并核对返回名称；中断恢复也按公开名匹配，再比较大小和哈希。不能因本地名有空格而误判资产缺失，更不能删除重传已公开文件。
 
@@ -243,9 +249,9 @@ Windows 浏览器程序资源必须允许 Chromium LPAC 子进程读取／执行
 
 发布自动化的健康与下载校验使用现有 `https://taskrelay.zhangheng.workers.dev`，固定目标、禁止重定向、不携带用户会话。主站 `tr.zhangheng.eu.org` 的 Bot Fight Mode 会向部分托管 Runner 发出人机挑战；免费版不能按路径豁免（[官方限制](https://developers.cloudflare.com/bots/get-started/bot-fight-mode/)）。保留全域防护、主站及客户端更新地址；不要以关闭防护或放行全部 Actions IP 解决发布检查。站点实际访问和权限检查另在正常客户端核验。
 
-`.github/workflows/ci.yml` 在 PR、master 推送、手动触发及每周一北京时间 09:00 执行。检查格式、Oxlint 类型规则、TypeScript、仓库一致性、Windows/Ubuntu 测试、Ubuntu c8 覆盖率、CodeQL security-extended 实际结果、Gitleaks、High/Critical 依赖漏洞、actionlint/ShellCheck/PSScriptAnalyzer 和 Web 构建。执行器相关改动追加托管 Windows 打包及实际安装 smoke。固定名称 quality-gate 对失败、取消、缺少报告均关闭；仅明确无关的安装作业可跳过。
+`.github/workflows/ci.yml` 在 PR、master 推送、手动触发及每周一北京时间 09:00 执行。检查格式、Oxlint 类型规则、TypeScript、仓库一致性、Windows/Ubuntu 测试、Ubuntu c8 覆盖率、CodeQL security-extended 实际结果、Gitleaks、High/Critical 依赖漏洞、actionlint/ShellCheck/PSScriptAnalyzer 和 Web 构建。执行器相关改动追加托管 Windows 打包及实际安装 smoke。总门槛 CI Gate · 合并检查对失败、取消、缺少报告均关闭；纯文档按白名单走轻量检查，未知范围全量。迁移阶段保留依赖它的 quality-gate。
 
-所有 Actions 固定提交 SHA，PR 不接触生产 Environment，默认 contents:read，CodeQL 仅额外获得 security-events:write。统一命令为 `lint`、`format:check`、`format`、`test:coverage`、`check:workflows`、`quality`。Ubuntu 覆盖率下限由 `scripts/coverage-baseline.json` 固定，后续不可降低；后续 PR 修改的可执行行至少 80%，纯格式差异归一化后排除。报告保留七天，不自动发评论或调用外部审查模型。质量检查只保存 Windows 验收报告，正式发布才保存完整安装包附件。
+所有 Actions 固定提交 SHA，PR 不接触生产 Environment，默认 contents:read，CodeQL 仅额外获得 security-events:write。统一命令为 `lint`、`format:check`、`format`、`test:coverage`、`check:workflows`、`quality`。Ubuntu 覆盖率下限由 `scripts/coverage-baseline.json` 固定，后续不可降低；后续 PR 修改的可执行行至少 80%，纯格式差异归一化后排除。报告保留七天，不自动发评论或调用外部审查模型。PR 只保存 Windows 验收报告，master 保存完整候选，正式发布归档选定的同一份文件。
 
 质量工具的固定 GitHub 网页下载入口出现网络错误或非成功状态时，可通过官方 API 核对原仓库、tag、文件名和原下载地址，再下载同一资产；仍按原 SHA-256 校验，成功响应但哈希不符直接拒绝。CI 仅向相关检查步骤提供只读 github.token，令牌只用于 api.github.com，资产跨域下载不携带令牌并限制官方主机。此路径不使用镜像、不降低质量门槛；CodeQL 自身下载失败通过重试作业处理。
 
@@ -264,7 +270,7 @@ README 负责使用入口与状态，CHANGELOG 记录客户端版本的变更，
 
 更新通道的发布与验收步骤：
 
-1. 提交桌面版本、锁文件和 `docs/RELEASE-NOTES.md`，在合并提交的 quality-gate 通过后手动启动 [生产发布](#发布)。
+1. 提交桌面版本、锁文件和 `docs/RELEASE-NOTES.md`，在合并提交的 CI Gate · 合并检查通过后手动启动 [生产发布](#发布)。
 2. Windows Runner 构建并安装同一份产物，核验系统入口和 ASAR 后运行 `release-manifest`、`prepare-update`，将产物与验收报告关联到固定 SHA 和 Actions run。
 3. 生产作业发布 `TaskRelay-<版本>-full.nupkg` 与 Setup 到可公开下载的 `v<版本>` Release；仅使用已验收附件，不重建或覆盖公开资产。不得把 GitHub token 配到客户端。
 4. 生产作业先登记 D1 `desktopReleaseCatalog`，从 Cloudflare 下载核对完整大小和 SHA-256，再切换 `latest`，保留历史条目供已确认的下载继续使用。不要再修改编译时 JSON 来切换公开版本；`latest:null` 表示尚未发布。
