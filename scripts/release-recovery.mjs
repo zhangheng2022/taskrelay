@@ -1,5 +1,5 @@
 /** 只读 D1 恢复计划：先核对原发布身份与阶段，再决定需要下载哪些原始附件。
- * 无附件不等于没有发布范围；已激活后的设备核验不再依赖过期的构建文件。 */
+ * 无附件不等于没有发布范围；已激活后的开关恢复不再依赖过期的构建文件。 */
 import { appendFileSync } from "node:fs";
 import { query, github } from "./release-api.mjs";
 import { phases } from "./release-core.mjs";

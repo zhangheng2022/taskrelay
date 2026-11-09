@@ -18,6 +18,7 @@ if (
     "desktop",
     "bad-download",
     "no-device",
+    "original-paused",
     "resume-published",
     "resume-bundle-published",
     "resume-bundle-changed",
@@ -71,7 +72,12 @@ sql
     "INSERT INTO devices(id,name,token_hash,last_seen,protocol_version) VALUES('fixture','fixture','fixture',?,18)",
   )
   .run(Date.now());
-if (mode === "no-device") sql.exec("UPDATE devices SET claim_ready=0");
+if (["no-device", "resume-ready", "resume-bundle-ready"].includes(mode))
+  sql.exec("DELETE FROM devices");
+if (mode === "original-paused")
+  sql.exec(
+    "UPDATE settings SET value='0' WHERE key='claimsEnabled'; UPDATE settings SET value='1' WHERE key='maintenance'",
+  );
 const state = () =>
   Object.fromEntries(
     sql
@@ -426,6 +432,7 @@ globalThis.fetch = async (input, options) => {
   if (url === db + "/query") {
     assert.equal(options.method, "POST");
     const body = JSON.parse(options.body);
+    assert.doesNotMatch(body.sql, /\bFROM\s+devices\b/i, "发布入口不再查询设备状态");
     const statement = sql.prepare(body.sql);
     const read = /^SELECT/.test(body.sql);
     const results = read ? statement.all(...body.params) : [];

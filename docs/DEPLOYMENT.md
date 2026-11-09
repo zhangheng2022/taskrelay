@@ -1,10 +1,12 @@
 # 部署与恢复
 
-## 2026-11-09 0.19.5 发布准备
+## 2026-11-09 0.19.5 已上线（等待设备，领取暂停）
 
-用户已授权发布 Web 图片 Loading 与预览优化。桌面版本提升为 0.19.5，同步根与 runtime 锁文件；协议 18、SQLite schema 4 和依赖版本保持不变，不新增迁移或清空数据。版本提交经 PR 与 master 检查后，通过 Release · 生产发布手动工作流按固定 SHA、scope=auto 发布云端和 Windows，优先复用同一提交、同一构建尝试的候选。保持生产状态机的排空、恢复点、迁移核对、下载哈希、通道切换及设备就绪检查；不更换 MASTER_KEY。
+图片 Loading 与预览优化经 [PR #25](https://github.com/zhangheng2022/taskrelay/pull/25) 和版本准备 [PR #26](https://github.com/zhangheng2022/taskrelay/pull/26) 合并。固定源提交 `1a5daed979406d6e09b7c2e395034b97e71ad437` 的 [master CI 42571799226](https://github.com/zhangheng2022/taskrelay/actions/runs/42571799226) 全部通过。[生产发布 42572476103](https://github.com/zhangheng2022/taskrelay/actions/runs/42572476103) 直接复用同次 CI 的 Web 和 Windows 候选，两个补建作业均跳过，哈希核验后归档 `release-bundle-1`（Artifact ID `13654106269`，保留 30 天）。
 
-本节记录发布准备；实际发布结果以对应 Actions 运行和后续验收记录为准。
+Worker `6ba596bb-3d7e-41b1-a181-447b95630864` 已部署，双域健康返回上述源 SHA；[0.19.5 安装包与更新包](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.19.5) 已公开，Cloudflare 完整下载哈希通过，更新目录已切换到 0.19.5。没有待应用的数据库迁移；协议 18、SQLite schema 4 和依赖保持不变，未清空数据或更换 MASTER_KEY。
+
+首次运行最终阶段为 `awaiting-device`：网站已恢复，但发布时没有检测到在线就绪的兼容执行器，任务领取保持暂停。用户随后要求本次及后续发布均不校验执行器状态；控制脚本移除该门槛后，使用 `mode=resume`、`scope=auto`、`source-sha=1a5daed979406d6e09b7c2e395034b97e71ad437`、`recovery-run=42572476103` 继续原发布记录；此阶段直接恢复原开关，不重建、重新部署或替换产物。实际验收和限制见 [ACCEPTANCE](ACCEPTANCE.md#2026-11-09-0195-正式发布等待设备)。
 
 ## 2026-11-08 0.19.4 已上线（领取已恢复）
 
@@ -175,13 +177,13 @@
 2. 在 master 运行 Release · 生产发布，通常选择 `scope=auto`、`mode=publish`；可指定完整 `source-sha`。预检核验同 SHA 的 master push，不接受 PR、其他提交或旧门槛；遗漏必要范围、桌面修改未提升版本、已公开版本均拒绝发布。CI 编排修改需要验收，但不会单独要求产品发版。
 3. 优先复用 master 的 Web/Windows 候选；缺失、已过期或当时未生成的产品在生产写入前补建。Windows 始终完成真实 Chromium 状态测试、make、包内 smoke、实际安装、系统快捷方式启动和 ASAR 校验。PR 仍执行完整验收，只是不保存安装包。
 4. Artifacts 作业核验来源、文件哈希和验收后，将选定文件和 release-plan 归档到本次运行。发布前审计一次根依赖和桌面 runtime 锁。production 作业重新校验清单与来源，D1 productionRelease 保存 bundleId、planHash、源 SHA、原开关、恢复点和阶段；恢复禁止重新构建替换。
-5. 先暂停领取并等待清理，保存 Time Travel bookmark，再迁移和部署。GitHub Release 文件不可覆盖；更新目录登记后经 Cloudflare 下载验证大小/哈希才切换 latest。没有兼容设备时恢复网页，领取保持暂停。
+5. 先暂停领取并等待清理，保存 Time Travel bookmark，再迁移和部署。GitHub Release 文件不可覆盖；更新目录登记后经 Cloudflare 下载验证大小/哈希才切换 latest。校验完成后恢复发布前的网页维护和领取开关，不等待或查询执行器在线就绪状态。没有可用执行器时任务仍须等待正常调度；设备授权、协议和领取校验保持不变。
 
 production Environment 仅允许 master。Cloudflare 凭据和 Release 写权限仅授予 production 作业，不读取或覆盖 MASTER_KEY。控制脚本固定本次工作流提交，业务源码和依赖固定 source-sha；两者身份分别核对。
 
-失败后保持现场，不能直接打开领取或回滚数据库。确认原运行结束后，以 `mode=resume`、原 `source-sha`、`recovery-run=首次发布运行 ID` 恢复。D1 阶段决定所需附件：迁移/部署前需要 Web 文件，桌面启用前需要安装包；等待设备不下载附件。部署结果未知只核对 health，不再次部署。旧发布记录仍读取原附件和旧门槛；新发布必须使用新门槛和发布清单。
+失败后保持现场，不能直接打开领取或回滚数据库。确认原运行结束后，以 `mode=resume`、原 `source-sha`、`recovery-run=首次发布运行 ID` 恢复。D1 阶段决定所需附件：迁移/部署前需要 Web 文件，桌面启用前需要安装包；旧 awaiting-device 记录只恢复原开关，不下载附件或查询设备。部署结果未知只核对 health，不再次部署。旧发布记录仍读取原附件和旧门槛；新发布必须使用新门槛和发布清单。
 
-普通报告保留 7 天，master 候选及发布恢复归档保留 30 天。新发布可对缺失候选补建；恢复所需的原附件缺失则明确失败。运行摘要包含源提交、范围及恢复参数，`awaiting-device` 不表示领取已恢复。
+普通报告保留 7 天，master 候选及发布恢复归档保留 30 天。新发布可对缺失候选补建；恢复所需的原附件缺失则明确失败。运行摘要包含源提交、范围及恢复参数，`awaiting-device` 仅用于兼容旧记录，新发布不再进入此阶段。
 
 ### 合并门槛名称切换
 

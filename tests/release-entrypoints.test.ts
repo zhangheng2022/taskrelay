@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile, execFileSync, type ExecFileException } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtemp, writeFile, rm, readdir } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, rm, readdir } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
@@ -61,7 +61,13 @@ test("真实发布脚本在非主分支或健康异常时阻止所有生产写�
   }
 });
 
-test("真实生产发布入口核对 SQL、安装包和恢复结果，异常保留暂停与恢复点", async () => {
+test("真实生产发布入口核对 SQL、安装包和恢复结果，异常保留暂停与恢复点", async (t) => {
+  const summaryPrefix = path.join(tmpdir(), "relay-release-summary-");
+  const summaryDirectory = await mkdtemp(summaryPrefix);
+  t.after(async () => {
+    assert.ok(path.resolve(summaryDirectory).startsWith(summaryPrefix));
+    await rm(summaryDirectory, { recursive: true, force: true });
+  });
   const migrationCount = (await readdir("apps/cloud/migrations")).filter((name) =>
     name.endsWith(".sql"),
   ).length;
@@ -70,7 +76,8 @@ test("真实生产发布入口核对 SQL、安装包和恢复结果，异常保�
     "deploy-fails": { phase: "deploying", error: "FIXTURE_DEPLOY_FAILED" },
     desktop: { phase: "complete" },
     "bad-download": { phase: "registered", error: "CLOUDFLARE_DOWNLOAD_HASH_MISMATCH" },
-    "no-device": { phase: "awaiting-device" },
+    "no-device": { phase: "complete" },
+    "original-paused": { phase: "complete" },
     "resume-published": { phase: "complete" },
     "resume-bundle-published": { phase: "complete" },
     "resume-bundle-ready": { phase: "complete" },
@@ -110,7 +117,7 @@ test("真实生产发布入口核对 SQL、安装包和恢复结果，异常保�
             RELEASE_MODE: "publish",
             RELEASE_CLOUD: "true",
             RELEASE_DESKTOP: "false",
-            GITHUB_STEP_SUMMARY: "",
+            GITHUB_STEP_SUMMARY: path.join(summaryDirectory, `${mode}.md`),
           },
           windowsHide: true,
         },
@@ -145,9 +152,16 @@ test("真实生产发布入口核对 SQL、安装包和恢复结果，异常保�
     const state = JSON.parse(output.state.productionRelease);
     const success = expected.phase === "complete";
     assert.equal(state.phase, expected.phase);
+    if (success || ["deploy-fails", "bad-download", "resume-unknown"].includes(mode)) {
+      const summary = await readFile(path.join(summaryDirectory, `${mode}.md`), "utf8");
+      assert.ok(summary.includes(`source-sha=${"a".repeat(40)}`));
+      assert.ok(summary.includes("recovery-run=11"));
+      assert.equal(summary.includes("生产发布：已完成（complete）"), success);
+      assert.equal(summary.includes("等待兼容设备"), false);
+    }
     assert.equal(state.bookmark, "fixture-bookmark");
-    assert.equal(output.state.claimsEnabled, success ? "1" : "0");
-    assert.equal(output.state.maintenance, success || mode === "no-device" ? "0" : "1");
+    assert.equal(output.state.claimsEnabled, success && mode !== "original-paused" ? "1" : "0");
+    assert.equal(output.state.maintenance, success && mode !== "original-paused" ? "0" : "1");
     if (["desktop", "no-device", "bad-download", "resume-published"].includes(mode))
       assert.equal(
         JSON.parse(output.state.desktopReleaseCatalog).latest,

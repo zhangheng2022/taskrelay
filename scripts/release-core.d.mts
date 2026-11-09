@@ -20,8 +20,7 @@ export interface ReleaseIO {
   register(record: ReleaseRecord): Promise<void>;
   verifyDownload(record: ReleaseRecord): Promise<void>;
   activate(record: ReleaseRecord): Promise<void>;
-  compatibleDevice(record: ReleaseRecord): Promise<boolean>;
-  restore(record: ReleaseRecord, ready: boolean): Promise<void>;
+  restore(record: ReleaseRecord): Promise<void>;
 }
 export function runRelease(io: ReleaseIO, record: ReleaseRecord): Promise<ReleaseRecord>;
 export function releaseScope(
