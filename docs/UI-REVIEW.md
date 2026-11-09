@@ -1,5 +1,7 @@
 # UI 实现与检查
 
+2026-11-09 / 图片 Loading 与渐进预览：沿用 shadcn Attachment、Dialog，新增官方 Spinner 并复用 Skeleton；已通过 CLI 核对配置、组件文档和 Dialog 上游差异，保留本地原语。缩略图固定占位，原图独立 Loading/失败重试，每个会话只保留当前原图资源。真实 Chromium 合成夹具验证桌面浅色、390×844 深色、动画、Enter/Esc、焦点返回、错误重试、历史懒加载和会话清理；结果以本轮 `out/web-images/report.json` 为准。未触发生产发布，未进行真实 iPhone/WebKit 或线上图片时延验收。
+
 2026-11-08 / 存储 v2 上线检查：真实 Edge 打开生产主域 health，确认协议 18 与源提交 8f0009b；打开主站后呈现登录、管理员首次注册、忘记密码和验证邮箱入口，未注册或发送邮件。旧会话未继续呈现原工作空间。命令行访问主域被 Cloudflare 防护返回 403，未调整防护；同 Worker 的 workers.dev 健康、资源、匿名权限和更新目录检查通过。托管 Windows 0.19.0 系统入口安装和两轮 smoke 通过，详见 ACCEPTANCE；本次未新增手机、主题、输入法、聊天历史交互或用户本机布局验收。
 
 2026-11-07 / 存储 v2 分页：网站任务、运行与聊天读取 50 条键集分页，侧栏和运行记录沿用现有 SidebarMenuButton/Button 加载更多；选中较旧任务时按归属接口补读详情。聊天仅使用 seq 消息游标，协助回复已进入同一消息流，不再传 nextReplyCursor。翻页数据与加载状态绑定当前 Transport，切换用户忽略旧请求，清理成功清除已加载历史。shadcn CLI 已核对当前 Radix 配置及 button/sidebar 文档，未替换原语。新增分页/隔离与现有共享 UI 测试属于 JSDOM/接口验证；本批未新增真实窄屏、手机、主题、输入法或系统 Electron 布局验收。

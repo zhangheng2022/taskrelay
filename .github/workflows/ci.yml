@@ -97,6 +97,17 @@ jobs:
           fetch-depth: 0
       - uses: ./.github/actions/setup-node
       - run: npm test
+      - name: Browser · 准备已校验 Chromium
+        run: npm run prepare:browser
+      - name: Web Images · 图片加载与预览验收
+        run: npm run test:web-images
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-images-${{ github.run_attempt }}
+          path: out/web-images
+          if-no-files-found: error
+          retention-days: 7
       - id: verified
         name: Verify · 记录完成
         shell: bash
