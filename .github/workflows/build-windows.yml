@@ -1,6 +1,11 @@
 name: Build · Windows 构建验收
 on:
   workflow_call:
+    secrets:
+      TASKRELAY_SIGNING_PFX_BASE64:
+        required: false
+      TASKRELAY_SIGNING_PASSWORD:
+        required: false
     inputs:
       source-sha:
         required: true

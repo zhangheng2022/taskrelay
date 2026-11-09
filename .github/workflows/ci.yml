@@ -254,6 +254,9 @@ jobs:
     needs: scope
     if: needs.scope.outputs.desktop == 'true'
     uses: ./.github/workflows/build-windows.yml
+    secrets:
+      TASKRELAY_SIGNING_PFX_BASE64: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && secrets.TASKRELAY_SIGNING_PFX_BASE64 || '' }}
+      TASKRELAY_SIGNING_PASSWORD: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && secrets.TASKRELAY_SIGNING_PASSWORD || '' }}
     with:
       source-sha: ${{ github.sha }}
       archive-package: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}

@@ -87,6 +87,9 @@ jobs:
     needs: preflight
     if: needs.preflight.outputs.buildWindows == 'true'
     uses: ./.github/workflows/build-windows.yml
+    secrets:
+      TASKRELAY_SIGNING_PFX_BASE64: ${{ secrets.TASKRELAY_SIGNING_PFX_BASE64 }}
+      TASKRELAY_SIGNING_PASSWORD: ${{ secrets.TASKRELAY_SIGNING_PASSWORD }}
     with:
       source-sha: ${{ needs.preflight.outputs.sha }}
       archive-package: true
