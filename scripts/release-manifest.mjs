@@ -3,6 +3,7 @@ import { createReadStream, realpathSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { readFile, writeFile, stat } from "node:fs/promises";
 import path from "node:path";
+import { validateSigning } from "./signing-policy.mjs";
 const root = path.resolve(import.meta.dirname, "..");
 const desktop = JSON.parse(await readFile(path.join(root, "apps/desktop/package.json"), "utf8"));
 const files = [
@@ -84,7 +85,8 @@ const manifest = {
   }).trim(),
   generatedAt: new Date().toISOString(),
   platform: "Windows x64",
-  signed: false,
+  signed: true,
+  signing: JSON.parse(await readFile(path.join(root, "out/signatures.json"), "utf8")),
   stagehand: desktop.dependencies["@browserbasehq/stagehand"],
   artifacts,
   reports,
@@ -95,6 +97,11 @@ const manifest = {
   actionsRunAttempt: process.env.GITHUB_RUN_ATTEMPT ?? null,
 };
 if (manifest.sourceDirty) throw Error("RELEASE_SOURCE_DIRTY");
+validateSigning(manifest, { allowTest: process.env.TASKRELAY_RELEASE_SIGNING !== "true" });
+for (const artifact of artifacts) {
+  if (Date.parse(manifest.signing.checkedAt) < (await stat(path.join(root, artifact.file))).mtimeMs)
+    throw Error("STALE_SIGNATURE_REPORT");
+}
 await writeFile(
   path.join(root, "out/release-manifest.json"),
   JSON.stringify(manifest, null, 2) + "\n",

@@ -8,6 +8,8 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { setTimeout as delay } from "node:timers/promises";
+import { qualityToolBytes } from "./quality-tools.mjs";
 
 const segmentBytes = 4 * 1024 * 1024;
 const sizeOf = async (file) => (await stat(file).catch(() => ({ size: 0 }))).size;
@@ -65,26 +67,72 @@ export async function downloadBrowserArchive({ url, archive, sha256, runCurl = c
     "60",
   ];
   const headPath = `${directory}/head.headers`;
-  let head;
+  let head, size, code;
   for (let attempt = 0; attempt < 3; attempt++) {
+    // 每次清除旧响应，避免网络失败后误用前次 HEAD；只接受最终资源的有效大小。
+    await unlink(headPath).catch(() => {});
+    code = await runCurl([
+      ...common,
+      "--head",
+      "--dump-header",
+      headPath,
+      "--output",
+      process.platform === "win32" ? "NUL" : "/dev/null",
+      url,
+    ]);
+    head = headers(await readFile(headPath, "utf8").catch(() => ""));
+    size = Number(head.values.get("content-length"));
     if (
-      (await runCurl([
-        ...common,
-        "--head",
-        "--dump-header",
-        headPath,
-        "--output",
-        process.platform === "win32" ? "NUL" : "/dev/null",
-        url,
-      ])) === 0
-    ) {
-      head = headers(await readFile(headPath, "utf8"));
+      code === 0 &&
+      head.status === 200 &&
+      Number.isSafeInteger(size) &&
+      size > 0 &&
+      size <= 1024 ** 3
+    )
       break;
+    // 部分代理不提供 HEAD 长度或不支持 HEAD；仅用严格的一字节 Range 获取总长。
+    // 忽略 Range 的整包响应受 max-filesize 限制，并且不能通过下面的 206/长度校验。
+    if (
+      (code === 0 && head.status === 200) ||
+      [405, 408, 429, 500, 501, 502, 503, 504].includes(head.status)
+    ) {
+      const probe = `${directory}/probe.byte`;
+      await unlink(headPath).catch(() => {});
+      await unlink(probe).catch(() => {});
+      try {
+        code = await runCurl([
+          ...common,
+          "--range",
+          "0-0",
+          "--max-filesize",
+          "1",
+          "--dump-header",
+          headPath,
+          "--output",
+          probe,
+          url,
+        ]);
+        head = headers(await readFile(headPath, "utf8").catch(() => ""));
+        size = Number(/^bytes 0-0\/(\d+)$/.exec(head.values.get("content-range") ?? "")?.[1]);
+        if (
+          code === 0 &&
+          head.status === 206 &&
+          Number.isSafeInteger(size) &&
+          size > 0 &&
+          size <= 1024 ** 3 &&
+          (await sizeOf(probe)) === 1
+        )
+          break;
+      } finally {
+        await unlink(probe).catch(() => {});
+      }
     }
+    const diagnostic = `HTTP_${head.status || 0}:CURL_${code}:SIZE_${Number.isSafeInteger(size) ? size : "missing"}`;
+    if (attempt === 2 || [400, 401, 403, 404, 410].includes(head.status))
+      throw Error(`BROWSER_DOWNLOAD_METADATA_INVALID:${diagnostic}`);
+    console.log(`Build resource metadata retry ${attempt + 1}/3: ${diagnostic}`);
+    await delay(500 * 2 ** attempt);
   }
-  const size = Number(head?.values.get("content-length"));
-  if (head?.status !== 200 || !Number.isSafeInteger(size) || size <= 0 || size > 1024 ** 3)
-    throw Error("BROWSER_DOWNLOAD_METADATA_INVALID");
   const etag = head.values.get("etag"),
     count = Math.ceil(size / segmentBytes);
   const metadata = JSON.stringify({ url, sha256, size, etag });
@@ -174,4 +222,22 @@ export async function downloadBrowserArchive({ url, archive, sha256, runCurl = c
   }
   await rename(assembled, archive);
   return { cached: false };
+}
+
+/** Electron 网页入口持续网关错误时复用官方资产适配器，核对同一版本、文件和固定哈希。
+ * API 令牌由适配器限制在 api.github.com；只有全部验证成功才替换本地缓存。 */
+export async function downloadElectronArchive({ url, archive, sha256, runCurl, fetcher, token }) {
+  try {
+    return await downloadBrowserArchive({ url, archive, sha256, runCurl });
+  } catch (error) {
+    if (!/^BROWSER_DOWNLOAD_(?:METADATA_INVALID|INCOMPLETE)/.test(error.message)) throw error;
+    console.log(
+      "Electron download: verifying the same official release asset through GitHub API fallback.",
+    );
+    const bytes = await qualityToolBytes({ url, sha256 }, fetcher, token);
+    const temporary = `${archive}.download`;
+    await writeFile(temporary, bytes);
+    await rename(temporary, archive);
+    return { cached: false };
+  }
 }

@@ -241,6 +241,31 @@ Main 在产生浏览器副作用前记录 SQLite 检查点。云端也先记录�
 
 ## Windows 更新交付
 
+### 自签名与设备信任
+
+证书使用 `CN=TaskRelay`、RSA 3072、SHA-256、代码签名用途、三年有效期。公开证书及 SHA-256 指纹位于 `resources/signing/`；PFX、密码和备份元数据仅保存在管理员指定的 OneDrive `TaskRelay/signing/<SHA-256>/` 目录。PFX 与密码同目录属于同一个私密存储边界，禁止提交、日志输出或上传构建附件。已有备份不覆盖；现有 MASTER_KEY 不参与签名。
+
+首次生成只执行一次：`pwsh -NoProfile -File scripts/signing-certificate.ps1 -Action Create`。默认私密根目录为当前开发机约定的 OneDrive TaskRelay 目录；其他管理员必须显式传 `-PrivateRoot`。仅把生成的 `TaskRelay.cer` 和 `certificate-info.json` 复制到 `resources/signing/`。GitHub `windows-signing` 环境限制 `master` 分支，分别保存 `TASKRELAY_SIGNING_PFX_BASE64`、`TASKRELAY_SIGNING_PASSWORD`；不在命令行参数中填写密码。到期前 90 天构建发出提醒，正式签名前拒绝过期证书。轮换时先分发新证书再切换构建；泄漏时停止签名、移除旧信任并部署新证书，不依赖在线吊销。
+
+设备管理员先从独立可信渠道核对公开证书 SHA-256 指纹，再以管理员 PowerShell 执行以下独立命令。安装器不自动安装根信任；本机 `Prepare` 也不修改根信任。
+
+```powershell
+pwsh -NoProfile -File scripts/signing-certificate.ps1 -Action Trust
+pwsh -NoProfile -File scripts/signing-certificate.ps1 -Action Check
+# 仅移除该公开证书，不删除其他根证书：
+pwsh -NoProfile -File scripts/signing-certificate.ps1 -Action Untrust
+```
+
+脚本将公开证书放入 `LocalMachine/Root` 和 `LocalMachine/TrustedPublisher`，重复执行不重复导入；指纹不匹配则停止。自签名只提供持有该私钥的签名来源与文件完整性，不提供公开 CA 身份背书，不保证消除 SmartScreen 提示。
+
+Actions 正式构建只接受主分支 push 或手动发布及 master 上的源码提交；PR 使用无秘密的 `windows-signing-test` 环境与一次性测试证书。`Prepare -TrustBuildMachine` 仅允许 GitHub 托管 Runner，在隔离机器建立测试信任。签名使用 SHA-256 与 `http://timestamp.digicert.com` RFC 3161 时间戳，最多尝试三次，失败停止。make 结束立即执行 `Seal` 删除临时私钥，完成验签后再执行 `Cleanup` 移除本次导入的信任及临时文件；失败也执行清理。测试证书不能归档或发布。
+
+显式轮换使用 `Create -Rotate`，在新指纹目录写备份，不覆盖旧文件。切换仓库公开证书和 Actions secrets 前先完成进行中的发布及恢复，再向设备分发新公开证书。旧未签名版本只有在恢复路径提供原 D1 固定 planHash 时才可继续；新的归档或发布不能使用此兼容例外。
+
+顺序为 make 内签名、外层及包内签名验证、打包 smoke、实际安装 smoke、安装入口签名验证、release-manifest、prepare-update、归档。`signed` 来自实际签名证据，不是固定布尔声明；完整报告同时记录受控验收机上的信任状态。发布拒绝未签名、证书不匹配、缺少时间戳、陈旧或不一致的证据。nupkg 本身沿用现有哈希校验，签名对象是其中的 PE 入口。验收后的文件不得再次签名、重建或覆盖公开版本。
+
+### 构建与安装验证
+
 依赖清单固定经过验证的解析版本；Dependabot 每周一北京时间 09:00 创建更新 PR，不自动合并或部署。框架与桌面依赖升级须重新运行生产入口回归、浏览器资源准备、打包及实际安装验证。`prepare:browser`、资源校验和发布清单共同读取桌面清单的 Stagehand 版本；不在脚本中另外固定旧版本。Cloudflare 工具链现有 Miniflare beta、Hono CLI next 通道保持显式版本，其他直接依赖使用正式 release。
 
 桌面生产依赖另由 `scripts/runtime-package-lock.json` 锁定；依赖更新后执行 `node scripts/stage-runtime.mjs --update-lock` 并审查该锁文件，普通打包只执行 `npm ci`。每个 Stagehand release 的公开扩展标识保存在 `resources/stagehand-<版本>-public-key.txt`，新增版本须一同提交；它只固定 Chromium 扩展身份，不是账号加密密钥。启动时仅启用当前版本扩展，避免旧 Profile 的扩展运行缓存与新 SDK 混用，保留站点存储。
@@ -263,7 +288,7 @@ Windows 浏览器程序资源必须允许 Chromium LPAC 子进程读取／执行
 
 质量工具的固定 GitHub 网页下载入口出现网络错误或非成功状态时，可通过官方 API 核对原仓库、tag、文件名和原下载地址，再下载同一资产；仍按原 SHA-256 校验，成功响应但哈希不符直接拒绝。CI 仅向相关检查步骤提供只读 github.token，令牌只用于 api.github.com，资产跨域下载不携带令牌并限制官方主机。此路径不使用镜像、不降低质量门槛；CodeQL 自身下载失败通过重试作业处理。
 
-浏览器及 Electron 的分段下载在原六次上限内重试临时 HTTP 408／429／500／502／503／504，以及 curl 跟随跳转后连接失败而只留下 3xx 头的未完成传输；错误正文不会追加到合法分段。成功退出却仍返回 3xx、其他非临时状态、Content-Range 或长度错误仍中断，错误分类附 HTTP 状态码和 curl 退出码；只有完整固定 SHA-256 通过才发布缓存，不能用重试代替完整性校验。
+浏览器及 Electron 元数据获取最多尝试三次，失败间隔为 0.5／1 秒；400／401／403／404／410 直接拒绝。HEAD 缺少有效大小、返回 405／501 或临时网关/限流错误时，使用受大小限制的一字节 Range 探测，必须满足 206、精确范围、合法总长及实际一字节正文；日志仅记录状态码、curl 退出码和解析后的大小，不输出跳转地址。分段下载在原六次上限内重试临时 HTTP 408／429／500／502／503／504，以及 curl 跟随跳转后连接失败而只留下 3xx 头的未完成传输；错误正文不会追加到合法分段。成功退出却仍返回 3xx、其他非临时状态、Content-Range 或长度错误仍中断，错误分类附 HTTP 状态码和 curl 退出码；只有完整固定 SHA-256 通过才发布缓存，不能用重试代替完整性校验。Electron 元数据或分段下载持续失败时，复用质量工具的官方资产备用适配器，逐项核对原仓库、tag、文件名、下载地址与固定哈希；只有 api.github.com 请求携带只读令牌，跨域下载不携带令牌。成功响应却哈希错误时不尝试备用入口。
 
 README 负责使用入口与状态，CHANGELOG 记录客户端版本的变更，ACCEPTANCE 保留逐项证据。需要发布时从明确、干净的源码提交构建，先完成 make，再取得本次打包/实际安装 smoke 和系统入口证明，整理脱敏附件后发布预览版。不得将含本机绝对路径的原始清单、Profile 或诊断数据库上传为公开附件，也不得复用另一版本的报告。自动更新通道的实际发布状态见验收台账。
 

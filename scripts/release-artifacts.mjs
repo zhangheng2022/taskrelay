@@ -6,6 +6,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
 import { github, repository, verifyQuality } from "./release-api.mjs";
+import { validateSigning } from "./signing-policy.mjs";
 
 const manifestName = "artifact-manifest.json";
 export const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -41,7 +42,7 @@ export async function stamp(kind, root) {
   await writeFile(path.join(root, manifestName), JSON.stringify(manifest, null, 2) + "\n");
   return manifest;
 }
-export async function verifyFiles(kind, root, sha) {
+export async function verifyFiles(kind, root, sha, { legacyResume = false } = {}) {
   const manifest = JSON.parse(await readFile(path.join(root, manifestName), "utf8"));
   if (
     manifest.schema !== 1 ||
@@ -59,6 +60,20 @@ export async function verifyFiles(kind, root, sha) {
     const acceptance = JSON.parse(
       await readFile(path.join(root, "out/release-manifest.json"), "utf8"),
     );
+    // 只有持有原 D1 固定 planHash 的恢复路径可继续旧未签名发布；新候选始终要求签名。
+    const version = /^0\.(\d+)\.(\d+)$/.exec(acceptance.version ?? "");
+    const oldUnsigned =
+      legacyResume &&
+      acceptance.signed === false &&
+      version &&
+      (Number(version[1]) < 19 || (Number(version[1]) === 19 && Number(version[2]) < 6));
+    if (!oldUnsigned) validateSigning(acceptance);
+    for (const artifact of acceptance.artifacts ?? []) {
+      if (!artifact.file.startsWith("apps/desktop/out/make/")) continue;
+      const file = actual[artifact.file];
+      if (!file || file.sha256 !== artifact.sha256 || file.bytes !== artifact.bytes)
+        throw Error("ARTIFACT_ACCEPTANCE_HASH_MISMATCH");
+    }
     if (
       acceptance.sourceCommit !== sha ||
       acceptance.version !== manifest.version ||
@@ -162,13 +177,16 @@ export async function verifyBundle(root, sha, expectedHash, required = ["web", "
   if (plan.schema !== 1 || plan.sha !== sha || !plan.sources) throw Error("RELEASE_PLAN_INVALID");
   for (const kind of required) {
     if (!plan.sources[kind]) throw Error("RELEASE_ARTIFACT_MISSING");
-    const manifest = await verifyFiles(kind, path.join(root, kind), sha);
+    const manifest = await verifyFiles(kind, path.join(root, kind), sha, {
+      legacyResume: !!expectedHash,
+    });
     if (sha256(JSON.stringify(manifest)) !== plan.sources[kind].manifestHash)
       throw Error("RELEASE_SOURCE_CHANGED");
   }
   return { plan, hash: sha256(bytes) };
 }
 async function stageWindows() {
+  validateSigning(JSON.parse(await readFile("out/release-manifest.json", "utf8")));
   const root = "out/candidate-windows";
   await mkdir(root, { recursive: true });
   for (const file of [

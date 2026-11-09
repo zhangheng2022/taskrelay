@@ -1,5 +1,18 @@
 # TaskRelay 验收记录
 
+## 2026-11-09 0.19.6 自签名接入（本地候选，未发布）
+
+- 已生成 `CN=TaskRelay`、RSA 3072、仅代码签名用途的自签名证书，有效期截至 2029-11-09。SHA-256 指纹为 `1753493e77dd48d9ce8b0e2f8c1b39c369514aaa8b020535f9b8851fe966f165`；私钥、密码和备份按用户指定保存在 OneDrive TaskRelay 目录，仓库只包含公开证书与元数据。GitHub `windows-signing` 环境及两项 secrets 已配置并读回确认，仅允许 master 分支；没有修改 MASTER_KEY。
+- 本机 `npm run make` 生成 0.19.6 候选；Setup、打包主程序、nupkg 内主程序、启动 stub、更新器共 5 个入口均通过 Authenticode、同一证书与 RFC 3161 时间戳验证。记录为 `out/packaged-signatures.json`。Setup SHA-256 为 `b92482f289aa4197080bca7150353e2bd8ab1b4bdc5de58cef670507cb151953`，nupkg 为 `a9d3e85e7aef8e024b90d60b606ee4e083fa89abf8171534e48690943831d0b2`。这是本地脏工作区验证产物，不是正式发布候选。
+- 首次打包被包内 stub 未签名检查拦截；使用仓库真实缓存作为 Squirrel 临时目录后，小型复现包和完整包均通过，避免本机 MSIX/AppData 路径副本差异。未降低签名或资源完整性门槛。
+- 全新隔离目录的包内 smoke 通过，报告为 `out/signing-0.19.6/packaged-smoke.json`。旧 `out/` 测试目录首次返回 `LOCAL_STORAGE_CONVERSION_REQUIRED`，未转换或删除旧数据，改用全新目录复验。smoke 使用确定性模型及本地虚构站点，不证明实际安装、完整执行器调度或真实模型/网站。
+- 真实已签名测试文件修改后返回 `HashMismatch`；移除临时根信任后返回不受信任状态。证据为 `out/signing-0.19.6/negative-signature-checks.json`。本次曾触发本机证书信任窗口，验证结束已删除该临时根信任和临时私钥；后续本机 Prepare 不建立根信任，仅显式管理员 Trust 或隔离 Runner 使用对应入口。
+- 最终 `test:coverage` 运行全量测试 500/500 通过，行覆盖率 74.85%、分支 82.23%、函数 82.39%，通过现有本地基线；本地未设置 COVERAGE_BASE，因此不能把该结果称为 PR 差异覆盖率通过。类型、lint、仓库及工作流/PowerShell 检查通过。OCR preview/rule 已执行，宿主补审默认排除的 Forge 配置、声明、测试、锁文件与公开证书；最终含本条文档共 33/33 个变更文件完成检查，skipped=0、coverage_rate=100%，无未解决发现，逐文件记录为 `.cache/signing-review.json`。未调用 OCR 外部模型。
+- graphify 已更新。工具报告 33 个 SQL 因缺少 tree_sitter_sql 未提取，部分声明/文档无符号，13 个非支持文件跳过；不将图覆盖当作源码审查覆盖。
+- 尚未运行本次远端 Actions、安装器及系统入口验收、干净 Windows、未签名版本到签名版本/签名版本间升级、设备数据保留实测、真实网站或模型验收；未推送、合并、发布或切换更新目录。生产仍以此前 0.19.5 发布记录为准。
+
+补充发布前验证：501 项全量测试通过，行覆盖率 74.92%、分支 82.25%、函数 82.47%，差异可执行行 137/147。PR #29 首次 Windows 构建在 Electron 下载元数据阶段失败，未进入签名；临时密钥清理成功，其他作业通过。旧错误未携带 HTTP 状态，无法确认远端根因；同一官方 URL 本机 HEAD 返回 200 和有效大小。补充元数据退避重试、严格一字节探测和脱敏错误分类，下载生产入口回归 9/9、类型和 lint 通过，远端新增诊断确认连续 HTTP 504（curl 22），随后扩展严格探测及官方 API 备用下载；等待最终远端复验。
+
 ## 2026-11-09 0.19.5 正式发布（已完成）
 
 - 用户随后授权发布，覆盖下方图片优化实施时的暂不发布要求。正式源 SHA 为 `1a5daed979406d6e09b7c2e395034b97e71ad437`；[PR #26](https://github.com/zhangheng2022/taskrelay/pull/26) 的 [CI 42570691536](https://github.com/zhangheng2022/taskrelay/actions/runs/42570691536) 第 2 次尝试、[master CI 42571799226](https://github.com/zhangheng2022/taskrelay/actions/runs/42571799226) 第 1 次尝试全部通过，包含双平台测试、Linux 覆盖率、真实 Chromium 图片验收、完整 Windows 打包与实际安装。PR 首次在 Electron 下载信息校验处失败，原提交重跑通过；未降低下载哈希或验收要求。
