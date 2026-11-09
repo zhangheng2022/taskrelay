@@ -241,6 +241,31 @@ Main 在产生浏览器副作用前记录 SQLite 检查点。云端也先记录�
 
 ## Windows 更新交付
 
+### 自签名与设备信任
+
+证书使用 `CN=TaskRelay`、RSA 3072、SHA-256、代码签名用途、三年有效期。公开证书及 SHA-256 指纹位于 `resources/signing/`；PFX、密码和备份元数据仅保存在管理员指定的 OneDrive `TaskRelay/signing/<SHA-256>/` 目录。PFX 与密码同目录属于同一个私密存储边界，禁止提交、日志输出或上传构建附件。已有备份不覆盖；现有 MASTER_KEY 不参与签名。
+
+首次生成只执行一次：`pwsh -NoProfile -File scripts/signing-certificate.ps1 -Action Create`。默认私密根目录为当前开发机约定的 OneDrive TaskRelay 目录；其他管理员必须显式传 `-PrivateRoot`。仅把生成的 `TaskRelay.cer` 和 `certificate-info.json` 复制到 `resources/signing/`。GitHub `windows-signing` 环境限制 `master` 分支，分别保存 `TASKRELAY_SIGNING_PFX_BASE64`、`TASKRELAY_SIGNING_PASSWORD`；不在命令行参数中填写密码。到期前 90 天构建发出提醒，正式签名前拒绝过期证书。轮换时先分发新证书再切换构建；泄漏时停止签名、移除旧信任并部署新证书，不依赖在线吊销。
+
+设备管理员先从独立可信渠道核对公开证书 SHA-256 指纹，再以管理员 PowerShell 执行以下独立命令。安装器不自动安装根信任；本机 `Prepare` 也不修改根信任。
+
+```powershell
+pwsh -NoProfile -File scripts/signing-certificate.ps1 -Action Trust
+pwsh -NoProfile -File scripts/signing-certificate.ps1 -Action Check
+# 仅移除该公开证书，不删除其他根证书：
+pwsh -NoProfile -File scripts/signing-certificate.ps1 -Action Untrust
+```
+
+脚本将公开证书放入 `LocalMachine/Root` 和 `LocalMachine/TrustedPublisher`，重复执行不重复导入；指纹不匹配则停止。自签名只提供持有该私钥的签名来源与文件完整性，不提供公开 CA 身份背书，不保证消除 SmartScreen 提示。
+
+Actions 正式构建只接受主分支 push 或手动发布及 master 上的源码提交；PR 使用无秘密的 `windows-signing-test` 环境与一次性测试证书。`Prepare -TrustBuildMachine` 仅允许 GitHub 托管 Runner，在隔离机器建立测试信任。签名使用 SHA-256 与 `http://timestamp.digicert.com` RFC 3161 时间戳，最多尝试三次，失败停止。make 结束立即执行 `Seal` 删除临时私钥，完成验签后再执行 `Cleanup` 移除本次导入的信任及临时文件；失败也执行清理。测试证书不能归档或发布。
+
+显式轮换使用 `Create -Rotate`，在新指纹目录写备份，不覆盖旧文件。切换仓库公开证书和 Actions secrets 前先完成进行中的发布及恢复，再向设备分发新公开证书。旧未签名版本只有在恢复路径提供原 D1 固定 planHash 时才可继续；新的归档或发布不能使用此兼容例外。
+
+顺序为 make 内签名、外层及包内签名验证、打包 smoke、实际安装 smoke、安装入口签名验证、release-manifest、prepare-update、归档。`signed` 来自实际签名证据，不是固定布尔声明；完整报告同时记录受控验收机上的信任状态。发布拒绝未签名、证书不匹配、缺少时间戳、陈旧或不一致的证据。nupkg 本身沿用现有哈希校验，签名对象是其中的 PE 入口。验收后的文件不得再次签名、重建或覆盖公开版本。
+
+### 构建与安装验证
+
 依赖清单固定经过验证的解析版本；Dependabot 每周一北京时间 09:00 创建更新 PR，不自动合并或部署。框架与桌面依赖升级须重新运行生产入口回归、浏览器资源准备、打包及实际安装验证。`prepare:browser`、资源校验和发布清单共同读取桌面清单的 Stagehand 版本；不在脚本中另外固定旧版本。Cloudflare 工具链现有 Miniflare beta、Hono CLI next 通道保持显式版本，其他直接依赖使用正式 release。
 
 桌面生产依赖另由 `scripts/runtime-package-lock.json` 锁定；依赖更新后执行 `node scripts/stage-runtime.mjs --update-lock` 并审查该锁文件，普通打包只执行 `npm ci`。每个 Stagehand release 的公开扩展标识保存在 `resources/stagehand-<版本>-public-key.txt`，新增版本须一同提交；它只固定 Chromium 扩展身份，不是账号加密密钥。启动时仅启用当前版本扩展，避免旧 Profile 的扩展运行缓存与新 SDK 混用，保留站点存储。

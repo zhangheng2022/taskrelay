@@ -3,6 +3,7 @@ import { createReadStream } from "node:fs";
 import { readFile, writeFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { validateSigning } from "./signing-policy.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const notesFile = process.argv[2];
@@ -13,6 +14,7 @@ if (!notesFile)
 const desktop = JSON.parse(await readFile(path.join(root, "apps/desktop/package.json"), "utf8"));
 const manifestFile = path.join(root, "out/release-manifest.json");
 const manifest = JSON.parse(await readFile(manifestFile, "utf8"));
+validateSigning(manifest, { allowTest: process.env.TASKRELAY_RELEASE_SIGNING !== "true" });
 const notes = (await readFile(path.resolve(notesFile), "utf8")).trim();
 if (
   !/^(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})$/.test(desktop.version) ||

@@ -14,6 +14,7 @@ import {
 } from "../scripts/release-artifacts.mjs";
 import { workspaceFixture } from "./workspace-fixture";
 import { requestUrl } from "./http-fixture";
+import { signedFixture } from "./signing-fixture.mjs";
 
 const sha = "a".repeat(40);
 test("Web 文件清单检测替换、额外文件、错误 SHA，恢复清单不能被替换", async (t) => {
@@ -121,12 +122,14 @@ test("真实构建与归档入口保留 Windows 路径和验收来源，并复�
   await mkdir(path.join(root, "apps/desktop/out/make/squirrel.windows/x64"), { recursive: true });
   await mkdir(path.join(root, "out"));
   await mkdir(path.join(root, "artifacts/web"), { recursive: true });
-  await writeFile(
-    path.join(root, "apps/desktop/out/make/squirrel.windows/x64/Setup.exe"),
-    "accepted package",
-  );
+  for (const name of ["TaskRelay Setup.exe", "TaskRelay-0.19.4-full.nupkg"])
+    await writeFile(
+      path.join(root, "apps/desktop/out/make/squirrel.windows/x64", name),
+      "accepted package",
+    );
   const report = { passed: true, version: "0.19.4" };
   const acceptance = {
+    ...signedFixture("0.19.4", sha256("accepted package")),
     sourceCommit,
     version: "0.19.4",
     actionsRunId: "12",

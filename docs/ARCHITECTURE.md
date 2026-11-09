@@ -1,5 +1,7 @@
 # TaskRelay 当前架构
 
+Windows 签名由 Forge 与 Squirrel 共用固定 hook 执行，只覆盖 TaskRelay 主程序、安装器、更新器和启动 stub，不改第三方浏览器与原生依赖的字节。私钥只在构建期间进入临时用户证书库，配置及签名命令不携带 PFX 密码。PR 使用独立临时测试证书；正式候选使用 windows-signing 环境中的固定自签名证书。签名报告绑定同版 Setup、nupkg、包内入口与实际安装入口；发布验证拒绝测试证书、缺少时间戳、错误指纹和不一致的文件哈希。客户端更新协议仍为既有哈希校验，不宣称新增了客户端证书固定校验。
+
 交付由 GitHub Actions 拥有：CI · 持续集成在 PR 与 master 汇总 `CI Gate · 合并检查`，仓库 ruleset 直接绑定该检查。手动 Release · 生产发布只接受同一 SHA 的主分支成功报告。发布状态机以 D1 settings 的 `productionRelease` 做条件更新，保存原开关、恢复点及不可变产物引用；失败不自动恢复领取或回滚数据库。新基线的 release_claim_barrier 触发器在领取事务中检查暂停状态，管理员设置入口拒绝与进行中的发布竞争。更新目录由 RequestCoordinator 从 D1 `desktopReleaseCatalog` 读取；Worker 只路由，旧编译目录仅作首次初始化。
 
 ```mermaid

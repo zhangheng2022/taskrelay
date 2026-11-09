@@ -24,6 +24,10 @@ jobs:
     name: Windows · 打包与安装验收
     runs-on: windows-2025
     timeout-minutes: 35
+    # PR 只进入不含 secrets 的测试环境；正式签名环境另以 master 分支规则限制访问。
+    environment: ${{ inputs.archive-package && 'windows-signing' || 'windows-signing-test' }}
+    env:
+      TASKRELAY_RELEASE_SIGNING: ${{ inputs.archive-package && 'true' || 'false' }}
     outputs:
       verified: ${{ steps.verified.outputs.verified }}
       artifact-id: ${{ steps.archive.outputs.artifact-id }}
@@ -32,15 +36,48 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ inputs.source-sha }}
+          fetch-depth: 0
+      - if: inputs.archive-package
+        name: Signing · 验证可信来源
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -ne 'refs/heads/master' -or $env:GITHUB_EVENT_NAME -notin @('push', 'workflow_dispatch')) { throw 'SIGNING_TRUSTED_MASTER_REQUIRED' }
+          git merge-base --is-ancestor HEAD origin/master
+          if ($LASTEXITCODE -ne 0) { throw 'SIGNING_SOURCE_NOT_ON_MASTER' }
       - uses: ./.github/actions/setup-node
         with:
           electron: "true"
       - run: npm run prepare:browser
       - run: node --import tsx --test tests/browser-state-desktop.test.ts
+      - if: inputs.archive-package
+        name: Signing · 准备发布证书
+        shell: pwsh
+        run: ./scripts/signing-certificate.ps1 -Action Prepare -TrustBuildMachine
+        env:
+          TASKRELAY_SIGNING_PFX_BASE64: ${{ secrets.TASKRELAY_SIGNING_PFX_BASE64 }}
+          TASKRELAY_SIGNING_PASSWORD: ${{ secrets.TASKRELAY_SIGNING_PASSWORD }}
+      - if: ${{ !inputs.archive-package }}
+        name: Signing · 准备临时测试证书
+        shell: pwsh
+        run: ./scripts/signing-certificate.ps1 -Action Prepare -TestCertificate -TrustBuildMachine
       - run: npm run make
+      - if: always()
+        name: Signing · 结束私钥使用
+        shell: pwsh
+        run: ./scripts/signing-certificate.ps1 -Action Seal
+      - name: Signing · 核验安装包
+        shell: pwsh
+        run: ./scripts/windows-signature.ps1 -Action Report -Output out/packaged-signatures.json
       - run: npm run test:smoke
       - run: ./scripts/install-smoke.ps1
         shell: pwsh
+      - name: Signing · 核验实际安装
+        shell: pwsh
+        run: ./scripts/windows-signature.ps1 -Action Report -Installed
+      - if: always()
+        name: Signing · 清理临时密钥
+        shell: pwsh
+        run: ./scripts/signing-certificate.ps1 -Action Cleanup
       - run: node scripts/release-manifest.mjs
       - run: node scripts/prepare-update.mjs docs/RELEASE-NOTES.md
       - if: inputs.archive-package
@@ -62,6 +99,7 @@ jobs:
             out/desktop-release.json
             out/system-entry.json
             out/*-smoke.json
+            out/*signatures.json
           if-no-files-found: error
           retention-days: 7
       - id: verified

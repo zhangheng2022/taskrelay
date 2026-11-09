@@ -10,6 +10,7 @@ import { dbPath } from "../scripts/release-api.mjs";
 import childProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import { requestUrl } from "./http-fixture.ts";
+import { signedFixture } from "./signing-fixture.mjs";
 const mode = process.env.RELEASE_FIXTURE;
 if (
   ![
@@ -104,6 +105,7 @@ const publishedInstallerName = "TaskRelay.Setup.exe";
 const artifactNames = [packageName, installerName];
 const packageRoot = "artifacts/windows/apps/desktop/out/make/squirrel.windows/x64";
 const manifest = {
+  ...signedFixture(candidate.version, candidate.sha256),
   sourceCommit: process.env.RELEASE_SHA,
   sourceDirty: false,
   version: candidate.version,
@@ -123,6 +125,11 @@ const manifest = {
     sha256: candidate.sha256,
   })),
 };
+manifest.artifacts.push({
+  file: "apps/desktop/out/TaskRelay-win32-x64/TaskRelay.exe",
+  bytes: bytes.length,
+  sha256: candidate.sha256,
+});
 if (mode === "wrong-manifest") manifest.sourceCommit = "b".repeat(40);
 if (mode === "bad-artifact") manifest.artifacts[0].sha256 = "b".repeat(64);
 if (mode === "bad-smoke") manifest.reports["installed-smoke"].passed = false;

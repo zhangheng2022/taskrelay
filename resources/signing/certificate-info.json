@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "type": "self-signed",
+  "subject": "CN=TaskRelay",
+  "sha256": "1753493e77dd48d9ce8b0e2f8c1b39c369514aaa8b020535f9b8851fe966f165",
+  "thumbprint": "75ACE93B25BD3EC56AA6E3E07A4BD36316DEAA2F",
+  "notBefore": "2026-11-09T07:07:54.0000000Z",
+  "notAfter": "2029-11-09T07:17:53.0000000Z",
+  "purpose": "code-signing",
+  "testOnly": false
+}

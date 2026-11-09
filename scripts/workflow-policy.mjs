@@ -60,7 +60,7 @@ export function impact(files) {
       continue;
     }
     if (
-      /^scripts\/(prepare-browser|browser-download|verify-browser|stage-runtime|cdp-policy|smoke|install-smoke|release-manifest|prepare-update|icon|runtime-package-lock)/.test(
+      /^scripts\/(signing-|windows-sign|prepare-browser|browser-download|verify-browser|stage-runtime|cdp-policy|smoke|install-smoke|release-manifest|prepare-update|icon|runtime-package-lock)/.test(
         file,
       )
     ) {

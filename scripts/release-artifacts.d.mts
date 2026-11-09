@@ -11,7 +11,12 @@ export interface BuildManifest {
 export function sha256(bytes: string | Uint8Array): string;
 export function fileTree(root: string, relative?: string): Promise<BuildManifest["files"]>;
 export function stamp(kind: string, root: string): Promise<BuildManifest>;
-export function verifyFiles(kind: string, root: string, sha: string): Promise<BuildManifest>;
+export function verifyFiles(
+  kind: string,
+  root: string,
+  sha: string,
+  options?: { legacyResume?: boolean },
+): Promise<BuildManifest>;
 export function sourceArtifact(
   id: string,
   manifest: BuildManifest,

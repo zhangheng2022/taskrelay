@@ -7,13 +7,22 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createRequire } from "node:module";
-import { copyFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, rmdir } from "node:fs/promises";
 import { downloadBrowserArchive } from "../../scripts/browser-download.mjs";
 const root = path.resolve(import.meta.dirname, "../..");
 const require = createRequire(import.meta.url);
 const electronChecksums = require("electron/checksums.json") as Record<string, string>;
+// 两阶段复用固定 hook；私钥不进入 Forge 配置、Squirrel 参数或日志。
+const windowsSign = process.env.TASKRELAY_SIGNING_DIRECTORY
+  ? { hookModulePath: path.join(root, "scripts/windows-sign-hook.mjs") }
+  : undefined;
+if (process.env.TASKRELAY_RELEASE_SIGNING === "true" && !windowsSign)
+  throw Error("RELEASE_SIGNING_REQUIRED");
+let signingTemporaryDirectory: string | undefined;
+const previousSquirrelTemp = process.env.SQUIRREL_TEMP;
 const config: ForgeConfig = {
   packagerConfig: {
+    windowsSign,
     // Keep checksum validation, using the manifest shipped with this installed Electron version.
     download: {
       checksums: electronChecksums,
@@ -47,6 +56,23 @@ const config: ForgeConfig = {
         file !== "/package.json"),
   },
   hooks: {
+    preMake: async () => {
+      if (!windowsSign) return;
+      // MSIX 宿主的 AppData 重定向可能让 Squirrel 与签名进程看到不同副本；
+      // 使用仓库外层的真实缓存路径，使打包和签名操作同一文件。
+      await mkdir(path.join(root, ".cache"), { recursive: true });
+      signingTemporaryDirectory = await mkdtemp(path.join(root, ".cache/squirrel-signing-"));
+      process.env.SQUIRREL_TEMP = signingTemporaryDirectory;
+    },
+    postMake: async (_config, results) => {
+      if (signingTemporaryDirectory) {
+        // Squirrel 已回收子目录，只移除本次创建的空目录；失败时保留忽略目录供排查。
+        await rmdir(signingTemporaryDirectory);
+        if (previousSquirrelTemp === undefined) delete process.env.SQUIRREL_TEMP;
+        else process.env.SQUIRREL_TEMP = previousSquirrelTemp;
+      }
+      return results;
+    },
     prePackage: async () => {
       await promisify(execFile)(process.execPath, [path.join(root, "scripts/stage-runtime.mjs")], {
         cwd: root,
@@ -62,6 +88,8 @@ const config: ForgeConfig = {
   },
   makers: [
     new MakerSquirrel({
+      windowsSign,
+      noMsi: true,
       name: "TaskRelay",
       setupExe: "TaskRelay Setup.exe",
       setupIcon: path.join(root, "resources/icon.ico"),

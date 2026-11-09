@@ -5,6 +5,7 @@ import path from "node:path";
 import { cp, rm } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { verifyBundle, sourceArtifact } from "./release-artifacts.mjs";
+import { validateSigning } from "./signing-policy.mjs";
 import { createHash } from "node:crypto";
 import { runRelease, phases } from "./release-core.mjs";
 import {
@@ -57,6 +58,7 @@ let manifest, candidate, releasePlan, planHash;
 const packageRoot = "artifacts/windows/apps/desktop/out/make/squirrel.windows/x64";
 const loadDesktop = async () => {
   manifest = JSON.parse(readFileSync("artifacts/windows/out/release-manifest.json", "utf8"));
+  if (mode !== "resume") validateSigning(manifest);
   candidate = JSON.parse(readFileSync("artifacts/windows/out/desktop-release.json", "utf8"));
   if (
     manifest.sourceCommit !== sha ||

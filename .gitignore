@@ -13,6 +13,8 @@ resources/stagehand-extension/
 *.sqlite*
 *.log
 *.pfx
+*.p12
+pfx-password.txt
 *.pem
 *.key
 graphify-out/

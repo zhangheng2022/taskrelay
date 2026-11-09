@@ -86,7 +86,7 @@ test("真实生产发布入口核对 SQL、安装包和恢复结果，异常保�
     "resume-ready": { phase: "complete" },
     "wrong-manifest": { error: "ARTIFACT_ACCEPTANCE_MISMATCH" },
     duplicate: { phase: "deploying", error: "RELEASE_RECOVERY_REQUIRED" },
-    "bad-artifact": { error: "ARTIFACT_HASH_MISMATCH" },
+    "bad-artifact": { error: "RELEASE_SIGNATURE_INVALID" },
     "bad-smoke": { error: "ARTIFACT_ACCEPTANCE_MISMATCH" },
     "resume-active": { phase: "deploying", error: "PREVIOUS_RELEASE_STILL_RUNNING" },
     "resume-artifact-changed": { phase: "publishing", error: "RESUME_ARTIFACT_CHANGED" },
