@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readFile, writeFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { downloadBrowserArchive } from "../scripts/browser-download.mjs";
+import { downloadBrowserArchive, downloadElectronArchive } from "../scripts/browser-download.mjs";
 
 const source = Buffer.alloc(5 * 1024 * 1024, 37),
   sha256 = createHash("sha256").update(source).digest("hex"),
@@ -82,9 +82,9 @@ test("元数据临时失败会退避重试，旧响应不会掩盖网络错误",
         if (attempts === 1)
           await writeFile(
             args[args.indexOf("--dump-header") + 1],
-            "HTTP/1.1 503 Unavailable\r\nContent-Length: 12\r\n\r\n",
+            "HTTP/1.1 302 Found\r\nContent-Length: 12\r\n\r\n",
           );
-        return attempts === 1 ? 22 : 7;
+        return attempts === 1 ? 28 : 7;
       }
       return adapter.runCurl(args);
     },
@@ -96,7 +96,7 @@ test("元数据临时失败会退避重试，旧响应不会掩盖网络错误",
 test("HEAD 缺少长度或不受支持时只读一字节 Range，并按整体哈希验证下载", async (t) => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "taskrelay-metadata-probe-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
-  for (const status of [200, 405, 501]) {
+  for (const status of [200, 405, 501, 504]) {
     const archive = path.join(dir, `browser-${status}.zip`),
       adapter = provider();
     let probes = 0;
@@ -150,6 +150,10 @@ test("元数据重试有界，永久错误直接拒绝，非法一字节响应�
         sha256,
         runCurl: async (args: string[]) => {
           const header = args[args.indexOf("--dump-header") + 1];
+          if (mode === "unavailable" && !args.includes("--head")) {
+            await writeFile(header, "HTTP/1.1 503 Unavailable\r\n\r\n");
+            return 22;
+          }
           if (args.includes("--head")) {
             attempts++;
             const status = mode === "unavailable" ? 503 : mode === "missing" ? 404 : 200;
@@ -199,6 +203,86 @@ test("错误整体哈希或服务器忽略 Range 时不替换原缓存；坏分�
   assert.equal(await readFile(archive, "utf8"), "preserve-original");
   await downloadBrowserArchive({ url, archive, sha256, runCurl: provider().runCurl });
   assert.deepEqual(await readFile(archive), source);
+});
+
+test("Electron 网关故障改走同一官方资产，令牌不跨域且错误哈希不替换缓存", async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "taskrelay-electron-fallback-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const official = "https://github.com/electron/electron/releases/download/v45.2.3/electron.zip";
+  const asset = "https://release-assets.githubusercontent.com/fixture/electron.zip";
+  for (const invalidHash of [false, true]) {
+    const archive = path.join(dir, `electron-${invalidHash}.zip`);
+    await writeFile(archive, "preserve-original");
+    const requests: string[] = [];
+    const pending = downloadElectronArchive({
+      url: official,
+      archive,
+      sha256,
+      token: "test-only-api-token",
+      runCurl: async (args: string[]) => {
+        await writeFile(
+          args[args.indexOf("--dump-header") + 1],
+          "HTTP/1.1 504 Gateway Timeout\r\n\r\n",
+        );
+        return 22;
+      },
+      fetcher: async (input, init) => {
+        const target =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        requests.push(target);
+        const headers = new Headers(init?.headers);
+        if (target.startsWith("https://api.github.com/")) {
+          assert.equal(headers.get("authorization"), "Bearer test-only-api-token");
+          if (target.endsWith("/tags/v45.2.3"))
+            return Response.json({
+              tag_name: "v45.2.3",
+              assets: [{ id: 123, name: "electron.zip", browser_download_url: official }],
+            });
+          assert.equal(init?.redirect, "manual");
+          return new Response(null, { status: 302, headers: { location: asset } });
+        }
+        assert.equal(headers.has("authorization"), false);
+        if (target === official) return new Response(null, { status: 504 });
+        assert.equal(target, asset);
+        return new Response(invalidHash ? Buffer.from("modified archive") : source);
+      },
+    });
+    if (invalidHash) {
+      await assert.rejects(pending, /QUALITY_TOOL_HASH_MISMATCH/);
+      assert.equal(await readFile(archive, "utf8"), "preserve-original");
+    } else {
+      await pending;
+      assert.deepEqual(await readFile(archive), source);
+    }
+    assert.equal(requests.length, 4);
+  }
+  const archive = path.join(dir, "no-fallback.zip");
+  await assert.rejects(
+    downloadElectronArchive({
+      url,
+      archive,
+      sha256: "0".repeat(64),
+      runCurl: provider().runCurl,
+      fetcher: async () => {
+        throw Error("MUST_NOT_FALLBACK_ON_HASH_FAILURE");
+      },
+    }),
+    /BROWSER_ARCHIVE_HASH_MISMATCH/,
+  );
+  await downloadElectronArchive({ url, archive, sha256, runCurl: provider().runCurl });
+  assert.equal(
+    (
+      await downloadElectronArchive({
+        url,
+        archive,
+        sha256,
+        runCurl: async () => {
+          throw Error("CACHE_MUST_NOT_DOWNLOAD");
+        },
+      })
+    ).cached,
+    true,
+  );
 });
 
 test("下载进程退出后重试复用合法部分与完整分段，不重新下载已经接收的数据", async (t) => {

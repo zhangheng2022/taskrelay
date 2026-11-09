@@ -8,7 +8,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createRequire } from "node:module";
 import { copyFile, mkdir, mkdtemp, rmdir } from "node:fs/promises";
-import { downloadBrowserArchive } from "../../scripts/browser-download.mjs";
+import { downloadElectronArchive } from "../../scripts/browser-download.mjs";
 const root = path.resolve(import.meta.dirname, "../..");
 const require = createRequire(import.meta.url);
 const electronChecksums = require("electron/checksums.json") as Record<string, string>;
@@ -34,7 +34,7 @@ const config: ForgeConfig = {
             sha256 = electronChecksums[filename];
           if (!sha256) throw Error("ELECTRON_ARCHIVE_CHECKSUM_MISSING");
           const archive = path.join(root, ".cache", filename);
-          await downloadBrowserArchive({ url, archive, sha256 });
+          await downloadElectronArchive({ url, archive, sha256 });
           await copyFile(archive, target);
         },
       },

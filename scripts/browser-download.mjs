@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { setTimeout as delay } from "node:timers/promises";
+import { qualityToolBytes } from "./quality-tools.mjs";
 
 const segmentBytes = 4 * 1024 * 1024;
 const sizeOf = async (file) => (await stat(file).catch(() => ({ size: 0 }))).size;
@@ -91,7 +92,10 @@ export async function downloadBrowserArchive({ url, archive, sha256, runCurl = c
       break;
     // 部分代理不提供 HEAD 长度或不支持 HEAD；仅用严格的一字节 Range 获取总长。
     // 忽略 Range 的整包响应受 max-filesize 限制，并且不能通过下面的 206/长度校验。
-    if ((code === 0 && head.status === 200) || [405, 501].includes(head.status)) {
+    if (
+      (code === 0 && head.status === 200) ||
+      [405, 408, 429, 500, 501, 502, 503, 504].includes(head.status)
+    ) {
       const probe = `${directory}/probe.byte`;
       await unlink(headPath).catch(() => {});
       await unlink(probe).catch(() => {});
@@ -218,4 +222,22 @@ export async function downloadBrowserArchive({ url, archive, sha256, runCurl = c
   }
   await rename(assembled, archive);
   return { cached: false };
+}
+
+/** Electron 网页入口持续网关错误时复用官方资产适配器，核对同一版本、文件和固定哈希。
+ * API 令牌由适配器限制在 api.github.com；只有全部验证成功才替换本地缓存。 */
+export async function downloadElectronArchive({ url, archive, sha256, runCurl, fetcher, token }) {
+  try {
+    return await downloadBrowserArchive({ url, archive, sha256, runCurl });
+  } catch (error) {
+    if (!/^BROWSER_DOWNLOAD_(?:METADATA_INVALID|INCOMPLETE)/.test(error.message)) throw error;
+    console.log(
+      "Electron download: verifying the same official release asset through GitHub API fallback.",
+    );
+    const bytes = await qualityToolBytes({ url, sha256 }, fetcher, token);
+    const temporary = `${archive}.download`;
+    await writeFile(temporary, bytes);
+    await rename(temporary, archive);
+    return { cached: false };
+  }
 }

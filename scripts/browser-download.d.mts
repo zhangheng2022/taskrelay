@@ -5,3 +5,12 @@ export function downloadBrowserArchive(options: {
   sha256: string;
   runCurl?: (args: string[]) => Promise<number>;
 }): Promise<{ cached: boolean }>;
+/** Electron 固定归档的官方 API 备用入口；不接受错误哈希或改变资产身份。 */
+export function downloadElectronArchive(options: {
+  url: string;
+  archive: string;
+  sha256: string;
+  runCurl?: (args: string[]) => Promise<number>;
+  fetcher?: typeof fetch;
+  token?: string;
+}): Promise<{ cached: boolean }>;
