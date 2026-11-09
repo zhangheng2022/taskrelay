@@ -1,6 +1,21 @@
 # TaskRelay 验收记录
 
-## 2026-11-09 0.20.0 设置页与任务记忆（本地实现，未发布）
+## 2026-11-09 0.20.0 设置管理正式发布（已完成）
+
+- 用户授权部署后，[PR #32](https://github.com/zhangheng2022/taskrelay/pull/32) 合并为 `a6bbe5dbf06c6a5991090bb837e04ede996cc5b2`。最终 [PR CI 42604506706](https://github.com/zhangheng2022/taskrelay/actions/runs/42604506706) 与 [master CI 42605599011](https://github.com/zhangheng2022/taskrelay/actions/runs/42605599011) 全部通过，包含双平台完整测试、覆盖率、源码/安全/秘密扫描、Web 构建及 Windows 签名、包内/实际安装、系统入口与 ASAR 一致性验收。
+- master 首次构建在独立 Chromium 的 Storage.clearCookies 遇到 CDP_TIMEOUT，未进入正式签名。原提交重试失败作业后通过，最终为第 2 次尝试；没有修改超时、断言或安全门槛。PR 首次差异覆盖率不足后补充四项真实组件交互测试，本地最终 523/523、差异行 2326/2711；两个 CodeQL 浏览器夹具参数拼接提示改为独立 CDP 参数后标记 fixed，讨论已解决。
+- [生产发布 42607998308](https://github.com/zhangheng2022/taskrelay/actions/runs/42607998308) 于 11:23:22 UTC 完成。复用 master `ci-windows-2`（`13669255134`），按预检补建 `build-web-1`（`13669061443`），归档 `release-bundle-1`（`13668219228`）。流程排空、保留恢复点后成功应用 `0003_settings_management.sql`，部署 Worker `62df19bd-6100-4685-b2f1-bfc7cb7e4a1d`，公开 0.20.0 产物，完成 Cloudflare 下载完整大小/哈希核验并激活更新目录，最后恢复发布前的维护和领取设置。未覆盖 MASTER_KEY、清空历史或改动设备吊销状态。
+- 本机独立核验主域与 workers.dev 均返回 HTTP 200、协议 19 和上述源 SHA；网页引用的 JS/CSS 与本次 Web 发布产物逐字节 SHA-256 相同；匿名用户和管理入口均为 401。两个域名 latest.json 均为 0.20.0，更新包大小与哈希和 GitHub Release 一致。证据保存于忽略目录 `.cache/settings-production-verification.json`，发布日志为 `.cache/settings-production-release.log`。
+
+| 正式产物                    |    字节数 | SHA-256                                                          |
+| --------------------------- | --------: | ---------------------------------------------------------------- |
+| TaskRelay.Setup.exe         | 388438648 | e3d9c149e2bb184ab40cc2a137a693782bac7d56e073184ec466a764663ed4ed |
+| TaskRelay-0.20.0-full.nupkg | 387886719 | 7868a9fd0924ce35ace89da1a085b26e04efc120a343e925362179000e851c0a |
+| RELEASES                    |        81 | 34c1fd9e9ade22d8a8a6264d544b93a630003128eaf1c2aedcf9eb681b7e8f58 |
+
+托管 Runner 的安装验收不代表用户设备已升级；旧协议执行器需通过现有更新入口安装 0.20.0。未在用户实际设备验收升级后的配对/Profile 保留、真实模型/网站任务、生产会话撤销或多设备停止时延。公开注册和个人次数限制仍维持既有关闭策略。本机 GitHub 代理连接曾中断，确认未创建发布运行后才重新提交，未重复触发生产发布；未修改系统代理设置。下方保留发布前各阶段记录。
+
+## 2026-11-09 0.20.0 设置页与任务记忆（发布前本地记录）
 
 发布准备补充：用户随后授权部署，[PR #32](https://github.com/zhangheng2022/taskrelay/pull/32) 首轮远端双平台测试、Web 构建、秘密/安全检查及 Windows 打包实际安装均通过，差异覆盖率 1943/2711 未达 80%。新增模型管理、成员状态、设备迁移/吊销及会话撤销四项真实组件交互测试后，本地完整覆盖率运行 523/523 通过，行/分支/函数为 76.79%/82.50%/82.30%，差异行 2326/2711；没有降低门槛或修改业务。首次本机覆盖率运行曾有 Chromium 状态恢复超时，最终受控并发复验通过。新增测试及本条文档完成差异审查，正式部署结果另记。
 
