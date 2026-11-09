@@ -2,9 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { copyFile, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import childProcess, { execFileSync } from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
 import { validateSigning } from "../scripts/signing-policy.mjs";
-import { shouldSign } from "../scripts/windows-sign-hook.mjs";
+import signFile, { shouldSign } from "../scripts/windows-sign-hook.mjs";
 import { verifyFiles, fileTree, verifyBundle, sha256 } from "../scripts/release-artifacts.mjs";
 import { signedFixture } from "./signing-fixture.mjs";
 import { workspaceFixture } from "./workspace-fixture";
@@ -28,6 +29,41 @@ test("签名只覆盖产品入口，不重签浏览器与原生依赖", () => {
     "Setup.msi",
   ])
     assert.equal(shouldSign(`C:/build/${name}`), false, name);
+});
+
+test("Forge 签名入口拒绝缺失证书，隔离子进程输出并传播签名失败", (t) => {
+  const previous = process.env.TASKRELAY_SIGNING_DIRECTORY;
+  const calls: unknown[][] = [];
+  let fail = false;
+  const mocked = t.mock.method(childProcess, "execFileSync", (...args: unknown[]) => {
+    calls.push(args);
+    if (fail) throw Error("private diagnostic must not escape");
+    return Buffer.alloc(0);
+  });
+  syncBuiltinESMExports();
+  try {
+    delete process.env.TASKRELAY_SIGNING_DIRECTORY;
+    signFile("resources/browser/TaskRelay.exe");
+    assert.throws(() => signFile("TaskRelay.exe"), /SIGNING_CERTIFICATE_REQUIRED/);
+    assert.equal(calls.length, 0);
+    process.env.TASKRELAY_SIGNING_DIRECTORY = "isolated-test-state";
+    const file = path.resolve("out/TaskRelay Setup.exe");
+    signFile(file);
+    const [command, args, options] = calls[0] as [string, string[], Record<string, unknown>];
+    assert.equal(command, "pwsh");
+    assert.equal(args.at(-1), file);
+    assert.equal(args[args.indexOf("-Action") + 1], "Sign");
+    assert.equal(options.stdio, "pipe");
+    assert.equal(options.windowsHide, true);
+    assert.equal(options.timeout, 120_000);
+    fail = true;
+    assert.throws(() => signFile(file), { message: "WINDOWS_SIGNING_FAILED" });
+  } finally {
+    mocked.mock.restore();
+    syncBuiltinESMExports();
+    if (previous === undefined) delete process.env.TASKRELAY_SIGNING_DIRECTORY;
+    else process.env.TASKRELAY_SIGNING_DIRECTORY = previous;
+  }
 });
 
 test("发布签名门槛拒绝未签名、测试证书、错证书、缺时间戳、过期证据和包内不一致", () => {
