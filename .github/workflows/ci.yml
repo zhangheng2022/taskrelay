@@ -272,14 +272,3 @@ jobs:
       - env:
           QUALITY_NEEDS: ${{ toJSON(needs) }}
         run: node scripts/quality-gate.mjs
-  quality-gate:
-    # 迁移期间维持当前 ruleset；新门槛通过后才允许旧检查通过。
-    name: quality-gate
-    if: always()
-    needs: ci-gate
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - env:
-          GATE_RESULT: ${{ needs.ci-gate.result }}
-        run: test "$GATE_RESULT" = success

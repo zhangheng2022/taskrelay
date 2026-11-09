@@ -96,7 +96,7 @@ npm run check:repo
 
 ### GitHub 自动检查
 
-[CI · 持续集成](.github/workflows/ci.yml) 在 PR、master 推送、手动触发及每周一执行。纯文档只检查格式、仓库约束与秘密；代码改动执行静态检查、双平台测试、覆盖率、安全与 Web 构建，执行器相关改动追加 [Build · Windows 构建验收](.github/workflows/build-windows.yml)。总门槛为 `CI Gate · 合并检查`，迁移期间保留依赖它的 `quality-gate`，仓库规则切换后移除旧检查。[Release · 生产发布](.github/workflows/release.yml) 手动发布固定提交，优先复用该提交通过主分支 CI 的完整产物；合并不自动部署。
+[CI · 持续集成](.github/workflows/ci.yml) 在 PR、master 推送、手动触发及每周一执行。纯文档只检查格式、仓库约束与秘密；代码改动执行静态检查、双平台测试、覆盖率、安全与 Web 构建，执行器相关改动追加 [Build · Windows 构建验收](.github/workflows/build-windows.yml)。总门槛为 `CI Gate · 合并检查`，仓库规则直接绑定此检查。[Release · 生产发布](.github/workflows/release.yml) 手动发布固定提交，优先复用该提交通过主分支 CI 的完整产物；合并不自动部署。
 
 本地用 `npm run quality` 执行同一配置；也可运行 `lint`、`format:check`、`test:coverage`、`check:workflows`。需要整理格式时运行 `npm run format`，CI 不自动修复。纯格式提交已登记到 `.git-blame-ignore-revs`，可配置 `git config blame.ignoreRevsFile .git-blame-ignore-revs`。
 
