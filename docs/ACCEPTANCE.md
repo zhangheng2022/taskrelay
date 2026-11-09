@@ -1,5 +1,21 @@
 # TaskRelay 验收记录
 
+## 2026-11-09 0.19.6 正式发布（已完成）
+
+- 用户授权提交、推送和部署。自签名实现与下载修复经 [PR #29](https://github.com/zhangheng2022/taskrelay/pull/29) 合并，正式签名秘密上下文修正与发布说明经 [PR #30](https://github.com/zhangheng2022/taskrelay/pull/30) 合并；最终发布源 SHA 为 `4bc8211344b7ea29704facac767518156cd8ed94`。最终 [PR CI 42587086193](https://github.com/zhangheng2022/taskrelay/actions/runs/42587086193) 与 [master CI 42587952409](https://github.com/zhangheng2022/taskrelay/actions/runs/42587952409) 全部通过，包含双平台完整测试、覆盖率、工作流、秘密扫描、安全检查、Web 构建和 Windows 实际安装。
+- master 使用固定正式证书 `1753493e77dd48d9ce8b0e2f8c1b39c369514aaa8b020535f9b8851fe966f165`，包内 5 个签名入口和安装后共 8 个入口均通过签名、证书及时间戳检查；系统入口、安装/构建 ASAR 一致性、打包与安装 smoke 均通过。正式签名环境仍只允许 master；PR 使用临时证书。私钥与密码只保存在指定 OneDrive 备份和 GitHub 环境秘密，Runner 的 Seal/Cleanup 均成功；没有修改 MASTER_KEY。
+- [生产发布 42588920575](https://github.com/zhangheng2022/taskrelay/actions/runs/42588920575) 成功，复用 master 的 `ci-web-1` 与 `ci-windows-1`，Web/Windows 补建均跳过。[v0.19.6](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.19.6) 已于 08:54:27 UTC 公开，未覆盖旧版本安装包。发布后独立读取主域与 workers.dev 的 `/api/health`，均为 HTTP 200、协议 18、上述源 SHA；更新目录返回 0.19.6，nupkg 大小和 SHA-256 与 GitHub Release 完全一致。
+- Electron 下载故障已由新增诊断确认是连续 HTTP 504 网关超时。加入有限退避、严格的一字节探测及同一官方资产的 API 备用下载，保留固定哈希和令牌不跨域约束；相关生产入口回归 17/17 通过，随后 PR/master 打包均成功。正式证书首次准备失败源于空秘密上下文，重新写入后仍复现；补充可复用工作流显式秘密声明和逐项映射后，master 导入原证书成功。没有启用 secrets: inherit 或扩大 PR 的正式密钥访问。
+- 本地最后一轮 505 项测试有一项 Chromium 状态恢复超时，其余 504 项通过；该文件独立重跑 2/2 通过，差异覆盖率 218/228。最终远端双平台完整检查通过。OCR preview/rule 与宿主审查覆盖主实现 36/36 文件、后续工作流修正 5/5 文件，无未解决发现；CodeQL 对固定下载落盘的提示已核对资产身份、固定路径及写入前哈希校验后解决讨论。graphify 已更新，保留此前 SQL 解析及不支持文件的范围限制。
+
+| 正式产物                    |    字节数 | SHA-256                                                          |
+| --------------------------- | --------: | ---------------------------------------------------------------- |
+| TaskRelay.Setup.exe         | 388445304 | 33f61b1cf3231247e48b8ee1866d453423edecc7b1af9b5575f9cd345b3dbb95 |
+| TaskRelay-0.19.6-full.nupkg | 387889929 | 7b29dca6db30ec9e05213d221d6becb35b79a27049274352b6cdc098e454c7b8 |
+| RELEASES                    |        81 | f0bfdf34f2b66553bab05b3117d23aa7011e99b1deca18dff97cc4b56f8069da |
+
+托管 Runner 安装验收不代表用户设备已升级。本次未在用户实际设备完成未签名版本到签名版本、签名版本间升级、配对/Profile/用户数据保留及真实模型网站复测；管理员信任脚本的完整隔离设备导入、重复导入与精确移除矩阵也仍待独立设备验证。下面保留实施过程中各时点的记录，不将这些未完成项记为通过。
+
 ## 2026-11-09 0.19.6 自签名接入（本地候选，未发布）
 
 - 已生成 `CN=TaskRelay`、RSA 3072、仅代码签名用途的自签名证书，有效期截至 2029-11-09。SHA-256 指纹为 `1753493e77dd48d9ce8b0e2f8c1b39c369514aaa8b020535f9b8851fe966f165`；私钥、密码和备份按用户指定保存在 OneDrive TaskRelay 目录，仓库只包含公开证书与元数据。GitHub `windows-signing` 环境及两项 secrets 已配置并读回确认，仅允许 master 分支；没有修改 MASTER_KEY。
