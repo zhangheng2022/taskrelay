@@ -1,5 +1,11 @@
 # 部署与恢复
 
+## 2026-11-09 0.19.5 发布准备
+
+用户已授权发布 Web 图片 Loading 与预览优化。桌面版本提升为 0.19.5，同步根与 runtime 锁文件；协议 18、SQLite schema 4 和依赖版本保持不变，不新增迁移或清空数据。版本提交经 PR 与 master 检查后，通过 Release · 生产发布手动工作流按固定 SHA、scope=auto 发布云端和 Windows，优先复用同一提交、同一构建尝试的候选。保持生产状态机的排空、恢复点、迁移核对、下载哈希、通道切换及设备就绪检查；不更换 MASTER_KEY。
+
+本节记录发布准备；实际发布结果以对应 Actions 运行和后续验收记录为准。
+
 ## 2026-11-08 0.19.4 已上线（领取已恢复）
 
 跨域账号保存修复经 [PR #21](https://github.com/zhangheng2022/taskrelay/pull/21) 合并，固定源提交 `6ba82cab7495feb1d79f55c189fd9fe1297de2e6` 通过主分支 Quality 42492540003。托管 Windows 正式产物的包内、实际安装、系统快捷方式和安装 ASAR 一致性验收均通过；[0.19.4 安装包及更新包](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.19.4) 已公开，Cloudflare 完整下载哈希核验后启用更新目录。协议保持 18，本地 schema 保持 4；用户设备仍需“检查更新”后才能使用新增桌面提示与诊断。
