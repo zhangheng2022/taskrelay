@@ -1,3 +1,4 @@
+import { readPreferences } from "./ai/preferences";
 import { dbTime } from "./database";
 /** 设备执行协议：用租约约束上下文、模型转发、协助与动作登记；终态独立提交后回填原聊天。 */
 import { Buffer } from "node:buffer";
@@ -97,6 +98,15 @@ runner.post("/runs/:id/context", async (c) => {
       : null;
   return c.json({
     messages,
+    ...(b.after === 0
+      ? {
+          preferenceSnapshot: await readPreferences(
+            c.env,
+            run.userId,
+            run.task.preferenceSnapshotId,
+          ),
+        }
+      : {}),
     ...(profile
       ? {
           modelContext: {
@@ -339,7 +349,7 @@ runner.post("/runs/:id/browser-closed", async (c) => {
       "UPDATE runs SET cleanup_pending=0 WHERE id=? AND device_id=? AND lease_epoch=? AND cleanup_confirmed=1",
     ).bind(run.id, run.deviceId, b.epoch),
     c.env.DB.prepare(
-      "DELETE FROM account_locks WHERE run_id=? AND EXISTS(SELECT 1 FROM runs WHERE id=? AND cleanup_confirmed=1 AND cleanup_pending=0 AND status IN ('succeeded','failed','cancelled','expired'))",
+      "DELETE FROM account_locks WHERE run_id=? AND EXISTS(SELECT 1 FROM runs WHERE id=? AND cleanup_confirmed=1 AND cleanup_pending=0 AND write_pending=0 AND may_have_written=0 AND status IN ('succeeded','failed','cancelled','expired'))",
     ).bind(run.id, run.id),
   ]);
   await advanceDispatchGroups(c.env.DB);
@@ -487,7 +497,7 @@ runner.post("/runs/:id/finish", async (c) => {
         `UPDATE runs SET state_candidate_key=? WHERE id=? AND lease_epoch=? AND status IN ('succeeded','failed') AND EXISTS(SELECT 1 FROM browser_state_candidates WHERE object_key=? AND run_id=runs.id AND device_id=runs.device_id AND lease_epoch=runs.lease_epoch AND retired=0)`,
       ).bind(b.stateCandidateKey ?? null, run.id, b.epoch, b.stateCandidateKey ?? null),
       c.env.DB.prepare(
-        "DELETE FROM account_locks WHERE run_id=? AND EXISTS(SELECT 1 FROM runs WHERE id=? AND lease_epoch=? AND cleanup_pending=0 AND status IN ('succeeded','failed','cancelled','expired'))",
+        "DELETE FROM account_locks WHERE run_id=? AND EXISTS(SELECT 1 FROM runs WHERE id=? AND lease_epoch=? AND cleanup_pending=0 AND write_pending=0 AND may_have_written=0 AND status IN ('succeeded','failed','cancelled','expired'))",
       ).bind(run.id, run.id, b.epoch),
     ]);
     if (!saved.meta.changes) {

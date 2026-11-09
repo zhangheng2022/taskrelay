@@ -1,3 +1,5 @@
+import { modelManagement, accountManagement } from "./resource-management";
+import { capturePreferences, checkPreferenceBudget } from "./ai/preferences";
 import { pageQuery, pageKey, pageCursor } from "./pagination";
 import { dbTime } from "./database";
 /** 用户工作空间接口：先核对资源归属，再读取任务/运行/图片或提交账号与控制请求；管理员配置单独挂载。 */
@@ -58,8 +60,12 @@ const taskConditionsInput = z
   .strict();
 const taskStateInput = z.object({ enabled: z.boolean() });
 const runRequestInput = z.object({ requestId: idSchema });
+const modelEditInput = modelInputSchema.extend({
+  expectedVersion: z.number().int().positive().optional(),
+});
 const retentionInput = z.object({ retentionDays: z.number().int().min(1).max(365) });
 export const user = userBase
+  .route("/accounts", accountManagement)
   .get("/me", async (c) =>
     c.json({
       id: c.get("userId"),
@@ -87,11 +93,11 @@ export const user = userBase
         )
         .bind(c.get("userId")),
       db.prepare(
-        "SELECT v.id,v.version,v.config,v.capabilities FROM models m JOIN model_profile_versions v ON v.id=m.id AND v.version=m.current_version ORDER BY m.created_at DESC",
+        "SELECT v.id,v.version,v.config,v.capabilities,m.enabled,m.management_version FROM models m JOIN model_profile_versions v ON v.id=m.id AND v.version=m.current_version ORDER BY m.created_at DESC",
       ),
       db
         .prepare(
-          `SELECT a.id,a.name,a.origin,a.username_hint,a.created_at,a.assigned_device_id,a.login_reset,a.business_domains,
+          `SELECT a.enabled,a.management_version,a.id,a.name,a.origin,a.username_hint,a.created_at,a.assigned_device_id,a.login_reset,a.business_domains,
         a.credential_version,a.state_epoch,a.credential_status,a.state_revision,a.sync_status,a.sync_error,a.last_device_id,v.login_origins
         FROM accounts a JOIN account_credential_versions v ON v.account_id=a.id AND v.version=a.credential_version WHERE a.user_id=?`,
         )
@@ -345,7 +351,32 @@ export const user = userBase
       if (!model.profile.capabilities.tools || model.profile.capabilities.structured === "none")
         throw new Error("MODEL_CAPABILITIES_REQUIRED");
       // A manual invocation does not enable periodic scheduling. It is eligible even if paused.
-      return c.json(await enqueueTaskDispatch(c.env.DB, task, `manual:${task.id}:${requestId}`));
+      const thread = await c.env.DB.prepare(
+        "SELECT id FROM ai_threads WHERE task_id=? AND user_id=? AND closed=0 ORDER BY created_at DESC LIMIT 1",
+      )
+        .bind(task.id, c.get("userId"))
+        .first<{ id: string }>();
+      if (!thread) throw Error("TASK_CONTEXT_WITHDRAWN");
+      const preferenceSnapshotId = `manual:${task.id}:${requestId}`;
+      const taskPreferences = await capturePreferences(
+        c.env,
+        c.get("userId"),
+        thread.id,
+        preferenceSnapshotId,
+      );
+      checkPreferenceBudget(
+        taskPreferences,
+        model.profile.contextTokens ?? 16000,
+        model.profile.outputTokens ?? 4096,
+        task,
+      );
+      return c.json(
+        await enqueueTaskDispatch(
+          c.env.DB,
+          { ...task, preferenceSnapshotId },
+          `manual:${task.id}:${requestId}`,
+        ),
+      );
     },
   )
   .get(
@@ -434,6 +465,7 @@ export const user = userBase
     },
   );
 export const admin = adminBase
+  .route("/models", modelManagement)
   .post(
     "/models",
     validator("json", (value: z.input<typeof modelInputSchema>) => modelInputSchema.parse(value)),
@@ -441,9 +473,13 @@ export const admin = adminBase
   )
   .put(
     "/models/:id",
-    validator("json", (value: z.input<typeof modelInputSchema>) => modelInputSchema.parse(value)),
-    async (c) =>
-      c.json(await storeModel(c.env, c.req.valid("json"), idSchema.parse(c.req.param("id")))),
+    validator("json", (value: z.input<typeof modelEditInput>) => modelEditInput.parse(value)),
+    async (c) => {
+      const { expectedVersion, ...input } = c.req.valid("json");
+      return c.json(
+        await storeModel(c.env, input, idSchema.parse(c.req.param("id")), expectedVersion),
+      );
+    },
   )
   .post("/models/:id/test", async (c) => {
     const { profile } = await getModel(c.env, c.req.param("id"));

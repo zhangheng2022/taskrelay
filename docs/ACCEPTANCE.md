@@ -1,5 +1,17 @@
 # TaskRelay 验收记录
 
+## 2026-11-09 0.20.0 设置页与任务记忆（本地实现，未发布）
+
+- 设置完成个人四类、管理员五类管理入口、主题同步、分类地址与手机返回；会话管理使用 Better Auth，其余请求继续经 Transport。账号/模型按最新要求停用即停止关联任务并置失败，恢复只用于新交办。删除在事务内复核引用、锁与管理版本，不级联删除历史；用户状态可单独提交，配额编辑已移除。
+- 迁移 `0003_settings_management.sql` 增加资源状态、管理版本和加密偏好快照。旧记忆默认停用，完整分页覆盖 105 条；启用记忆固定于新交办，规划、实际执行入口与云端协助读取同一快照。测试核对用户更正优先、跨用户隔离、正文不进入任务定义/页面/执行检查点、预算超限不截断和历史清理。协议提升为 19，桌面版本为 0.20.0；未修改 MASTER_KEY，未应用生产迁移。
+- 类型、lint、格式、仓库检查、UI 71/71 和 Web 构建通过。完整回归一轮 519/519 通过；追加记忆分页性能修正后，默认并发复测中既有聊天通知测试超出 1 秒等待，其余 518 项通过。最终以 `node --import tsx --test --test-concurrency=4 tests/*.test.ts tests/*.test.tsx` 复验 519/519 通过，未放宽断言或延长超时。Web 构建保留大于 500 kB 的主包提示。
+- `tests/settings-management.test.ts` 包含真实 workerd D1 删除/创建竞争、账号/模型停用拦截和旧运行失败、动态账号绑定、管理版本冲突、105 条记忆分页/搜索/状态筛选与整条偏好链路；`executor-runtime` 验证真实 execute 入口，`auth-login` 验证真实认证路由。`ui-settings` 验证草稿冲突恢复、慢请求输入冻结、保存后刷新失败不重放及改密部分成功反馈。这些测试不等于生产多设备停止时延验收。
+- 隔离 Chromium 在 1280×900 和 390×900 检查三种主题、手机主侧栏进入分类列表、分类直链、前进后退/刷新、105 条长列表、IME 组合输入、草稿放弃/保留及角色入口。17 张截图与报告保存于忽略目录 `.impeccable/review/settings/`，无浏览器异常或横向溢出。独立界面审查提出六项问题，修复后局部复审为 `ship`；边界见 [UI-REVIEW](UI-REVIEW.md)。不等同真人输入法、读屏或 iPhone Safari 验收。
+- OCR delegate preview/rule 成功执行，宿主按变更及上下文审查，补审默认排除的 19 个测试、文档和锁文件，合计 63/63、skipped=0、coverage_rate=100%，无未解决发现；逐文件结果与修复记录保存在 `.cache/settings-ocr-report.json`。未调用 OCR 外部模型。图已更新为 5,723 个节点、10,747 条边；34 个 SQL 因缺少 tree_sitter_sql 未提取，13 个不支持扩展名跳过，部分测试无符号；迁移已另外进行源码及数据库验证，不将图解析范围当作审查覆盖率。
+- 0.20.0 最终 `npm run package` 及新目录包内 smoke 通过，报告 `out/settings-020-final-smoke/report.json` 绑定 ASAR SHA-256 `1ea53d92b7fc9faa2db5340e393fe4f53b8cc36843b3f62f77124400420d20eb`。旧默认 smoke 目录因 `LOCAL_STORAGE_CONVERSION_REQUIRED` 被拒绝，保留旧数据并改用新目录，没有绕过转换保护。smoke 使用本地合成网站和确定性模型，不证明系统安装、完整调度或真实模型闭环。
+
+本批未提交、推送、运行远端 CI、部署生产、生成正式安装发布候选、安装系统入口或验收干净 Windows；未实测生产会话、真实模型/网站或连续设备运行。公开注册与个人次数限制维持原有关闭策略；生产仍以此前已发布记录为准。
+
 ## 2026-11-09 0.19.6 正式发布（已完成）
 
 - 用户授权提交、推送和部署。自签名实现与下载修复经 [PR #29](https://github.com/zhangheng2022/taskrelay/pull/29) 合并，正式签名秘密上下文修正与发布说明经 [PR #30](https://github.com/zhangheng2022/taskrelay/pull/30) 合并；最终发布源 SHA 为 `4bc8211344b7ea29704facac767518156cd8ed94`。最终 [PR CI 42587086193](https://github.com/zhangheng2022/taskrelay/actions/runs/42587086193) 与 [master CI 42587952409](https://github.com/zhangheng2022/taskrelay/actions/runs/42587952409) 全部通过，包含双平台完整测试、覆盖率、工作流、秘密扫描、安全检查、Web 构建和 Windows 实际安装。

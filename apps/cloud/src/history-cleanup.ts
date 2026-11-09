@@ -101,6 +101,7 @@ export async function beginCleanup(
     env.DB.prepare(
       `UPDATE runs SET history_deleted=1,context_withdrawn=1,cancel_requested=1,status=CASE WHEN status='queued' THEN 'cancelled' ELSE status END,updated_at=? WHERE id IN(${runs})`,
     ).bind(dbTime(at), id),
+    env.DB.prepare(`DELETE FROM preference_snapshots WHERE thread_id IN(${threads})`).bind(id),
     env.DB.prepare(`DELETE FROM run_results WHERE run_id IN(${runs})`).bind(id),
     env.DB.prepare(`DELETE FROM run_snapshots WHERE run_id IN(${runs})`).bind(id),
     // 新版本是清空后的空入口；旧版本正文由固定目标分批回收，安全身份继续保留。

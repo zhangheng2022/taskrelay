@@ -81,6 +81,16 @@ export function Status({ value, outcome }: { value: string; outcome?: string }) 
 }
 export function ErrorText({ error }: { error: string }) {
   const friendly: Record<string, string> = {
+    RESOURCE_VERSION_CONFLICT: "设置已被其他操作更新，请刷新列表后重新操作。",
+    RESOURCE_IN_USE:
+      "仍有任务、历史、登录状态或其他数据引用，不能删除。请先停用；登录状态可单独清除。",
+    MEMORY_VERSION_CONFLICT: "这条记忆已被修改或删除，草稿已保留，请刷新后核对。",
+    MODEL_DISABLED: "模型已停用，相关任务已失败。请选择可用模型重新交办。",
+    ACCOUNT_DISABLED: "站点账号已停用，相关任务已失败。恢复账号后可重新交办。",
+    PREFERENCES_TOO_LARGE:
+      "启用的记忆与本次内容超过模型上下文预算，请精简记忆或更换更大上下文的模型。",
+    PREFERENCE_SNAPSHOT_UNAVAILABLE: "任务偏好快照已清理或不可用，请重新交办。",
+    NETWORK_OFFLINE: "当前离线，请恢复连接后再保存。",
     PUBLIC_HTTPS_REQUIRED: "请填写公网 HTTPS 网站地址，不要包含用户名、密码或非标准端口。",
     PRIVATE_ADDRESS_BLOCKED: "不能访问本机或私有网络地址，请改用公网网站。",
     ENTRY_ORIGIN_NOT_ALLOWED: "网站不在允许访问的站点中，请核对地址和授权范围。",
@@ -92,6 +102,9 @@ export function ErrorText({ error }: { error: string }) {
     TASK_CONTEXT_OR_VERSION_CHANGED: "任务内容已变更，请刷新后重新交办。",
     TURN_OUTCOME_UNKNOWN: "本轮结果无法确认，系统不会自动重复请求。",
     MEMORY_CHANGED: "记忆已更新，请重新发送本轮问题。",
+    MODEL_CONTEXT_CONFIGURATION_TOO_SMALL:
+      "记忆、当前要求及必要上下文超过模型预算，请精简记忆或调整模型预算；内容未被截断。",
+    MODEL_CONTEXT_TOO_LARGE: "内容超过模型上下文预算，请精简记忆或当前输入。",
     CONTEXT_BUDGET_EXCEEDED: "这轮内容超过模型上下文预算，请缩短输入或调整模型预算。",
     MEMORY_LIMIT: "记忆已达100条，请先删除不再需要的内容。",
     MAINTENANCE: "服务维护中，请稍后再试。",

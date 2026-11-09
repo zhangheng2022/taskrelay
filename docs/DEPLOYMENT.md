@@ -1,5 +1,11 @@
 # 部署与恢复
 
+## 0.20.0 设置管理升级准备（未部署）
+
+本次源码将执行协议升级至 19，桌面版本为 0.20.0。通过既有发布维护流程应用 D1 增量迁移 `0003_settings_management.sql`，保留全部既有账号、模型、密钥和历史；旧记忆默认停用。不得覆盖 MASTER_KEY。数据库结构版本仍为 storage v2，桌面 SQLite schema 不变。云端、网站和执行器需要配套发布；旧协议请求返回升级提示，已授权设备通过原维护/本地就绪升级入口登记协议，不能手工改写为兼容。
+
+本机已经构建 Windows 解包程序并使用全新隔离目录执行包内 smoke；这不是系统安装或正式签名发布产物。默认 smoke 目录存在旧本地结构时会拒绝启动；保留该目录，使用独立新报告路径验证新包，不能删除用户库绕过转换。正式发布、实际系统入口安装、干净 Windows 与真实模型/网站须分别验收；本轮未部署、未安装、未推送，也未调整生产注册、领取或限额策略。
+
 ## 2026-11-09 0.19.5 已上线（发布完成，领取已恢复）
 
 图片 Loading 与预览优化经 [PR #25](https://github.com/zhangheng2022/taskrelay/pull/25) 和版本准备 [PR #26](https://github.com/zhangheng2022/taskrelay/pull/26) 合并。固定源提交 `1a5daed979406d6e09b7c2e395034b97e71ad437` 的 [master CI 42571799226](https://github.com/zhangheng2022/taskrelay/actions/runs/42571799226) 全部通过。[生产发布 42572476103](https://github.com/zhangheng2022/taskrelay/actions/runs/42572476103) 直接复用同次 CI 的 Web 和 Windows 候选，两个补建作业均跳过，哈希核验后归档 `release-bundle-1`（Artifact ID `13654106269`，保留 30 天）。

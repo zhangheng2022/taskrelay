@@ -154,39 +154,35 @@ test("模型表单保留编辑草稿、Zod 阻止无效预算、请求失败清�
   assert.equal(calls, 1);
 });
 
-test("管理员表单刷新更新未编辑字段，保留已编辑字段", async () => {
+test("公共池刷新保留草稿，用户管理不再显示未启用的配额编辑", async () => {
   let notify = () => {};
-  let user = {
-    id: "member",
-    email: "test@example.com",
-    role: "user",
-    disabled: 0,
-    daily_runs: 10,
-    scheduled_tasks: 20,
-    queued_runs: 30,
-    daily_chat: 40,
-    daily_models: 50,
-  };
+  let claims = "1";
   const transport = transportWith(async () => ({
-    users: [user],
+    users: [{ id: "member", email: "test@example.com", role: "user", disabled: 0 }],
     devices: [],
     runs: [],
     accounts: [],
-    settings: { claimsEnabled: "1" },
+    settings: { claimsEnabled: claims },
   }));
   transport.subscribe = (fn) => {
     notify = fn;
     return () => {};
   };
   const view = render(<AdminPanel transport={transport} />);
-  await view.findByLabelText("每日启动");
-  fireEvent.change(view.getByLabelText("每日启动"), { target: { value: "11" } });
-  user = { ...user, daily_runs: 12, scheduled_tasks: 21 };
+  await view.findByLabelText("领取任务");
+  fireEvent.change(view.getByLabelText("领取任务"), { target: { value: "0" } });
+  await act(async () => notify());
+  assert.equal((view.getByLabelText("领取任务") as unknown as HTMLSelectElement).value, "0");
+  fireEvent.click(view.getByRole("button", { name: "撤销修改" }));
+  assert.equal((view.getByLabelText("领取任务") as unknown as HTMLSelectElement).value, "1");
+  claims = "0";
   await act(async () => notify());
   await waitFor(() =>
-    assert.equal((view.getByLabelText("周期任务") as HTMLInputElement).value, "21"),
+    assert.equal((view.getByLabelText("领取任务") as unknown as HTMLSelectElement).value, "0"),
   );
-  assert.equal((view.getByLabelText("每日启动") as HTMLInputElement).value, "11");
+  view.rerender(<AdminPanel transport={transport} section="users" />);
+  await view.findByText("test@example.com");
+  assert.equal(view.queryByLabelText("每日启动"), null);
 });
 
 test("官方认证方法保留 Turnstile，失败不重试；认证成功仍需通过成员校验", async (t) => {

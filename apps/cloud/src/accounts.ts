@@ -74,6 +74,8 @@ export function accountSummary(row: Row) {
     name: row.name,
     origin: row.origin,
     usernameHint: row.username_hint,
+    enabled: row.enabled !== 0,
+    managementVersion: row.management_version ?? 1,
     createdAt: row.created_at,
     assignedDeviceId: row.assigned_device_id,
     loginReset: !!row.login_reset,
@@ -156,7 +158,10 @@ const accountRoutesBase = new Hono<{ Bindings: AppEnv; Variables: Variables }>()
 
 const accountUpdateInput = accountInputSchema
   .partial()
-  .extend({ expectedCredentialVersion: z.number().int().positive() })
+  .extend({
+    expectedCredentialVersion: z.number().int().positive(),
+    expectedManagementVersion: z.number().int().positive().optional(),
+  })
   .strict();
 const accountStateClearInput = z
   .object({ expectedStateEpoch: z.number().int().positive() })
@@ -221,7 +226,7 @@ export const accountRoutes = accountRoutesBase
         previous_state_object_key=CASE WHEN ? THEN NULL ELSE previous_state_object_key END,sync_status=CASE WHEN ? THEN 'none' ELSE sync_status END,
         sync_error=CASE WHEN ? THEN NULL ELSE sync_error END,
         state_origins=CASE WHEN ? THEN '[]' ELSE state_origins END
-        WHERE id=? AND user_id=? AND credential_version=?`,
+        WHERE id=? AND user_id=? AND credential_version=? AND management_version=?`,
         ).bind(
           value.name,
           value.origin,
@@ -239,10 +244,11 @@ export const accountRoutes = accountRoutesBase
           row.id,
           c.get("userId"),
           body.expectedCredentialVersion,
+          body.expectedManagementVersion ?? row.management_version,
         ),
         c.env.DB.prepare(
           `INSERT OR IGNORE INTO account_credential_versions(account_id,version,secret,login_origins,created_at)
-        SELECT id,credential_version,?,?,? FROM accounts WHERE id=? AND credential_version=?`,
+        SELECT id,credential_version,?,?,? FROM accounts WHERE id=? AND credential_version=? AND changes()=1`,
         ).bind(secret, JSON.stringify(value.loginOrigins), dbTime(at), row.id, next),
       ]);
       if (!writes[0].meta.changes) throw Error("ACCOUNT_VERSION_CONFLICT");

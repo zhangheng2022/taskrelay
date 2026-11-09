@@ -49,6 +49,9 @@ export async function retainHistory(env: AppEnv, cutoff: string) {
       "UPDATE ai_dispatch SET state='retired',message_id=NULL,error='HISTORY_EXPIRED' WHERE thread_id IN(SELECT id FROM ai_threads WHERE deleted=1 AND id NOT IN(SELECT resource_id FROM history_cleanup_targets WHERE kind='thread'))",
     ),
   ]);
+  await env.DB.prepare(
+    "DELETE FROM preference_snapshots WHERE thread_id IN(SELECT id FROM ai_threads WHERE deleted=1)",
+  ).run();
   const images = await env.DB.prepare(
     "SELECT a.id,a.object_key FROM artifacts a JOIN ai_threads t ON t.id=a.thread_id WHERE t.deleted=1 AND t.id NOT IN(SELECT resource_id FROM history_cleanup_targets WHERE kind='thread') LIMIT 100",
   ).all<{ id: string; object_key: string }>();

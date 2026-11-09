@@ -73,7 +73,7 @@ test("正式 Cloud.connect 允许转换后的终态回执等待确认，仍拒�
     calls++;
     if (input.endsWith("/upgrade")) {
       upgraded = true;
-      return Response.json({ protocolVersion: 18 });
+      return Response.json({ protocolVersion: 19 });
     }
     return upgraded
       ? Response.json({ maintenance: true })

@@ -30,7 +30,10 @@ export async function commitDecision(
   t: Row,
   turnId: string,
   input: Omit<TaskInput, "modelId">,
-  plan: Pick<TaskDefinition, "executionOutline" | "graphVersion" | "accountIds"> = {},
+  plan: Pick<
+    TaskDefinition,
+    "executionOutline" | "graphVersion" | "accountIds" | "preferenceSnapshotId"
+  > = {},
 ) {
   if (
     await env.DB.prepare("SELECT id FROM conversation_commands WHERE id=?").bind(turnId).first()
@@ -70,7 +73,7 @@ export async function commitDecision(
   ];
   for (const accountId of accountIds) {
     const account = await env.DB.prepare(
-      "SELECT origin,business_domains FROM accounts WHERE id=? AND user_id=?",
+      "SELECT origin,business_domains FROM accounts WHERE id=? AND user_id=? AND enabled=1",
     )
       .bind(accountId, t.user_id)
       .first<{ origin: string; business_domains: string }>();

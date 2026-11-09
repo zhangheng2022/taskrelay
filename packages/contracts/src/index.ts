@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { batchVerificationSchema, batchReportSchema } from "./batch";
 
-export const PROTOCOL_VERSION = 18;
+export const PROTOCOL_VERSION = 19;
 export const EXECUTION_GRAPH_VERSION = "relay-graph-4";
 export const limits = {
   leaseMs: 90_000,
@@ -43,6 +43,8 @@ export const taskInputSchema = z
   .strict();
 export type TaskInput = z.infer<typeof taskInputSchema>;
 export interface TaskDefinition extends TaskInput {
+  /** 加密偏好快照身份；正文经租约保护的 context 单独读取。 */
+  preferenceSnapshotId?: string;
   /** 本轮固定的有序账号选择；每个执行仍只绑定一个账号。 */
   accountIds?: string[];
   /** Cloud-generated guidance; original user instructions and live observations take precedence. */
@@ -190,12 +192,16 @@ export interface ModelCapabilities {
   error?: string;
 }
 export interface ModelProfile extends Omit<ModelInput, "apiKey"> {
+  enabled?: boolean;
+  managementVersion?: number;
   id: string;
   version: number;
   hasKey: boolean;
   capabilities: ModelCapabilities;
 }
 export interface SiteAccount {
+  enabled?: boolean;
+  managementVersion?: number;
   businessDomains?: string[];
   loginOrigins?: string[];
   credentialVersion?: number;

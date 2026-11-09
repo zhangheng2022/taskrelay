@@ -52,6 +52,7 @@ test("账号同步失败原因只展示固定中文映射，不透传任意响�
     syncStatus: SiteAccount["syncStatus"] = "failed",
   ) => (
     <Settings
+      section="accounts"
       transport={transport}
       refresh={refresh}
       snapshot={{ ...snapshot, accounts: [{ ...account, syncStatus, syncError }] }}
@@ -86,6 +87,7 @@ test("账号设置按精确域名分组，不合并同域的两个账号；编�
   });
   const view = render(
     <Settings
+      section="accounts"
       transport={transport}
       snapshot={{
         ...snapshot,
@@ -139,12 +141,15 @@ test("新增账号只填域名即可生成精确关联，清除状态绑定当�
   });
   const view = render(
     <Settings
+      section="accounts"
       transport={transport}
       snapshot={{ ...snapshot, accounts: [account] }}
       refresh={async () => {}}
     />,
   );
   fireEvent.click(view.getByRole("button", { name: "清除工作账号的登录状态" }));
+  await view.findByRole("alertdialog");
+  fireEvent.click(view.getAllByRole("button", { name: "清除登录状态" }).at(-1)!);
   await view.findByText("已清除“工作账号”的登录状态，下次使用时重新登录。");
   assert.deepEqual(writes[0], {
     path: "/api/user/accounts/account_one/clear-state",
@@ -453,6 +458,7 @@ test("修改账号域名不沿用旧登录关联，未改域名时保留原协�
   );
   const view = render(
     <Settings
+      section="accounts"
       transport={transport}
       snapshot={{ ...snapshot, accounts: [original] }}
       refresh={async () => {}}

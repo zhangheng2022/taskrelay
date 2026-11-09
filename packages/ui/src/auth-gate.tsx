@@ -1,6 +1,5 @@
 import { createApi, rpcData } from "./api";
-import { useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { QueryClientContext } from "@tanstack/react-query";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Transport } from "../../contracts/src/index";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
@@ -327,81 +326,4 @@ export function AuthGate({ transport, children }: { transport: Transport; childr
     </main>
   );
 }
-export function AccountSecurity() {
-  const queryClient = useContext(QueryClientContext);
-  const resetSession = () => {
-    void queryClient?.cancelQueries().catch(() => {
-      /* 退出仍清空缓存并重载，不保留旧会话。 */
-    });
-    queryClient?.clear();
-    location.reload();
-  };
-  const [busy, setBusy] = useState(false),
-    [error, setError] = useState("");
-  return (
-    <form
-      onSubmit={(e) => {
-        void (async () => {
-          e.preventDefault();
-          const element = e.currentTarget,
-            f = new FormData(element);
-          setBusy(true);
-          setError("");
-          try {
-            await authResult(
-              authClient.changePassword({
-                currentPassword: formText(f, "current"),
-                newPassword: formText(f, "next"),
-                revokeOtherSessions: true,
-              }),
-            );
-            resetSession();
-          } catch (e) {
-            setError((e as Error).message);
-          } finally {
-            element.reset();
-            setBusy(false);
-          }
-        })().catch((error: Error) => setError(error.message));
-      }}
-    >
-      <FieldGroup>
-        <Field>
-          <FieldLabel htmlFor="current-password">当前密码</FieldLabel>
-          <Input
-            id="current-password"
-            name="current"
-            type="password"
-            autoComplete="current-password"
-            required
-          />
-        </Field>
-        <Field>
-          <FieldLabel htmlFor="next-password">新密码（至少 12 位）</FieldLabel>
-          <Input
-            id="next-password"
-            name="next"
-            type="password"
-            autoComplete="new-password"
-            minLength={12}
-            maxLength={128}
-            required
-          />
-        </Field>
-        {error && <ErrorText error={error} />}
-        <Button disabled={busy}>修改密码并重新登录</Button>
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() =>
-            void authResult(authClient.signOut())
-              .then(resetSession)
-              .catch((e) => setError(e.message))
-          }
-        >
-          退出登录
-        </Button>
-      </FieldGroup>
-    </form>
-  );
-}
+export { AccountSecurity } from "./account-security";

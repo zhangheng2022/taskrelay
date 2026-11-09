@@ -456,6 +456,7 @@ async function scenario(
     cancelConnect?: boolean;
     createError?: boolean;
     closeError?: boolean;
+    preferences?: import("../packages/contracts/src/preferences").TaskPreference[];
     original?: string;
     origin?: string;
     fill?: string;
@@ -601,7 +602,10 @@ async function scenario(
         } as T;
       }
       if (path.endsWith("/context"))
-        return { messages: chat.filter((m) => m.seq > body.after) } as T;
+        return {
+          messages: chat.filter((m) => m.seq > body.after),
+          ...(body.after === 0 ? { preferenceSnapshot: options.preferences ?? [] } : {}),
+        } as T;
       if (path.endsWith("/model")) {
         if (body.purpose === "summary")
           return {
@@ -1186,3 +1190,21 @@ for (const arrival of [
     );
   });
 }
+
+test("正式 execute 单独传递固定偏好，保留用户纠正且不把偏好注入页面工具或日志", async () => {
+  const preference = "我的独有偏好：优先使用中文";
+  const result = await scenario(
+    [tool("act", { instruction: "打开当前页面的公告" }), answer("完成")],
+    { preferences: [{ id: "style", text: preference, version: 1 }], original: "这次使用英文" },
+  );
+  const decisions = result.calls.filter(
+    (c) => c.path.endsWith("/model") && c.body.purpose === "decision",
+  );
+  assert.ok(decisions.length > 0);
+  assert.ok(JSON.stringify(decisions).includes(preference));
+  assert.ok(JSON.stringify(decisions).includes("这次使用英文"));
+  assert.ok(!JSON.stringify(result.checkpoints).includes(preference));
+  assert.ok(
+    !JSON.stringify(result.calls.filter((c) => c.path.endsWith("/stagehand"))).includes(preference),
+  );
+});
