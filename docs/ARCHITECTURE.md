@@ -17,14 +17,14 @@ flowchart TD
     D --> C[云端和网页部署]
     C --> A[不可变 Release 与下载哈希校验]
     A --> U[D1 更新目录切换]
-    U --> E[核验兼容设备并恢复原开关]
+    U --> E[恢复原维护与领取开关，完成发布]
     R --> H[已有 workers.dev 入口健康检查]
     A --> H
 ```
 
 CI 影响范围与产品发布范围由 workflow-policy 共同维护，未知路径全量；删除和重命名同时保留前后路径。CI 配置改动触发构建验收但不自动要求应用发版。源码静态检查与工作流工具自检分开，两个平台的测试独立报告，汇总门槛校验范围、成功状态与完成标记。
 
-主分支 CI 保存同次构建的 Web 与 Windows 候选，PR 只保存报告。artifact-manifest 固定源提交、构建 run/attempt、版本和完整文件树哈希；Windows 同时绑定包内/安装 smoke。发布先验证 GitHub Artifact ID、所属工作流/事件/仓库/提交，再将文件和 release-plan 归档到本次发布运行。D1 保存 bundleId 与 planHash，区别于原始构建 run；恢复不依赖 CI 候选仍存在，且按阶段读取必要附件。等待设备阶段不再下载构建附件。旧记录无 bundleId 时沿用原报告和旧门槛恢复，新发布不能用旧门槛。
+主分支 CI 保存同次构建的 Web 与 Windows 候选，PR 只保存报告。artifact-manifest 固定源提交、构建 run/attempt、版本和完整文件树哈希；Windows 同时绑定包内/安装 smoke。发布先验证 GitHub Artifact ID、所属工作流/事件/仓库/提交，再将文件和 release-plan 归档到本次发布运行。D1 保存 bundleId 与 planHash，区别于原始构建 run；恢复不依赖 CI 候选仍存在，且按阶段读取必要附件。旧 awaiting-device 阶段仅恢复原开关，不下载构建附件。发布不查询或等待执行器在线就绪；实际任务领取仍由调度器核对设备授权、协议、就绪和并发条件。旧记录无 bundleId 时沿用原报告和旧门槛恢复，新发布不能用旧门槛。
 
 生产作业的业务源码固定 source-sha，控制脚本来自本次工作流提交的独立 automation checkout，避免恢复旧发布时退回旧恢复逻辑。依赖安装与 Wrangler 操作仍针对业务源码；生产状态机及协议检查使用所选源码的 contracts。
 

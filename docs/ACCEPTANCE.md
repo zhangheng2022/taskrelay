@@ -1,11 +1,13 @@
 # TaskRelay 验收记录
 
-## 2026-11-09 0.19.5 正式发布（等待设备）
+## 2026-11-09 0.19.5 正式发布（已完成）
 
 - 用户随后授权发布，覆盖下方图片优化实施时的暂不发布要求。正式源 SHA 为 `1a5daed979406d6e09b7c2e395034b97e71ad437`；[PR #26](https://github.com/zhangheng2022/taskrelay/pull/26) 的 [CI 42570691536](https://github.com/zhangheng2022/taskrelay/actions/runs/42570691536) 第 2 次尝试、[master CI 42571799226](https://github.com/zhangheng2022/taskrelay/actions/runs/42571799226) 第 1 次尝试全部通过，包含双平台测试、Linux 覆盖率、真实 Chromium 图片验收、完整 Windows 打包与实际安装。PR 首次在 Electron 下载信息校验处失败，原提交重跑通过；未降低下载哈希或验收要求。
 - [生产发布 42572476103](https://github.com/zhangheng2022/taskrelay/actions/runs/42572476103) 第 1 次尝试成功执行至 `awaiting-device`。复用主分支 `ci-web-1`（`13653398301`）与 `ci-windows-1`（`13653945851`），无重复 Web/Windows 构建；发布恢复附件 `release-bundle-1`（`13654106269`）显式文件哈希校验通过。首次发布从 06:20:52 到 06:26:27 UTC 共 5 分 35 秒，候选 Windows 构建验收用时 5 分 56 秒；此为单次观测，不能推定长期平均提速。
 - 最新依赖审计通过既定 high 门槛；开发工具链有 17 项 moderate 报告，runtime 审计为 0 漏洞，本次未做跨版本依赖升级。生产排空、D1 恢复点、迁移核对、云端部署、GitHub Release、Cloudflare 完整下载哈希及更新通道切换顺序完成，没有待应用迁移。Worker 版本 `6ba596bb-3d7e-41b1-a181-447b95630864`，两域 health 返回正式 SHA，主域 HTML 引用 `index-C3b2ULhF.js` 与 `index-CaC_MnEe.css`，这两个静态文件与 master Web 候选逐文件 SHA-256 一致，更新目录为 0.19.5。
-- 发布时兼容设备检查未通过，最终为 `awaiting-device`，领取仍暂停；Actions 成功不表示业务发布已到 complete。用户随后要求本次及后续发布不再校验执行器状态；移除门槛后按 DEPLOYMENT 的原运行参数恢复。未伪造设备心跳、解除吊销、强制恢复领取，未重新生成 MASTER_KEY 或清空数据。
+- 首次发布因设备条件停在 `awaiting-device`。用户明确要求取消本次及后续发布的执行器状态校验后，[PR #27](https://github.com/zhangheng2022/taskrelay/pull/27) 删除该条件，按原记录恢复原维护与领取开关，保留旧阶段兼容。控制提交 `72e17bfbf11f9fb41c71af915d3c20ced160a039` 的 [PR CI 42574925247](https://github.com/zhangheng2022/taskrelay/actions/runs/42574925247) 和 [master CI 42575733771](https://github.com/zhangheng2022/taskrelay/actions/runs/42575733771) 全部通过。
+- [恢复发布 42576417676](https://github.com/zhangheng2022/taskrelay/actions/runs/42576417676) 在 07:00:16 UTC 写入 `complete`，按原记录恢复领取。Web/Windows 补建和归档作业均跳过，没有下载产物、再次迁移或部署、查询执行器状态；主域 health 仍返回原 0.19.5 业务 SHA。没有修改设备、吊销状态、MASTER_KEY 或业务数据。
+- 发布条件调整的本地全量测试 494/494 通过；13 项发布相关测试覆盖无设备完成发布、原本暂停时不强制开启、旧阶段无附件恢复，以及故障不恢复领取和不误报完成。首次 PR 因差异覆盖率 7/9 失败，补充真实入口摘要验证后达到 8/9；未降低门槛。OCR preview/rule 与宿主审查覆盖 9/9 文件，追加测试变更复审 1/1，无未解决发现；图已更新。CodeQL 对固定 GitHub 摘要文件的网络数据落盘提醒已按源 SHA、合法阶段与固定目标路径核实为预期写入，解决审查讨论，未关闭规则。
 
 | 正式产物                    |    字节数 | SHA-256                                                          |
 | --------------------------- | --------: | ---------------------------------------------------------------- |

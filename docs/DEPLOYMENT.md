@@ -1,12 +1,12 @@
 # 部署与恢复
 
-## 2026-11-09 0.19.5 已上线（等待设备，领取暂停）
+## 2026-11-09 0.19.5 已上线（发布完成，领取已恢复）
 
 图片 Loading 与预览优化经 [PR #25](https://github.com/zhangheng2022/taskrelay/pull/25) 和版本准备 [PR #26](https://github.com/zhangheng2022/taskrelay/pull/26) 合并。固定源提交 `1a5daed979406d6e09b7c2e395034b97e71ad437` 的 [master CI 42571799226](https://github.com/zhangheng2022/taskrelay/actions/runs/42571799226) 全部通过。[生产发布 42572476103](https://github.com/zhangheng2022/taskrelay/actions/runs/42572476103) 直接复用同次 CI 的 Web 和 Windows 候选，两个补建作业均跳过，哈希核验后归档 `release-bundle-1`（Artifact ID `13654106269`，保留 30 天）。
 
 Worker `6ba596bb-3d7e-41b1-a181-447b95630864` 已部署，双域健康返回上述源 SHA；[0.19.5 安装包与更新包](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.19.5) 已公开，Cloudflare 完整下载哈希通过，更新目录已切换到 0.19.5。没有待应用的数据库迁移；协议 18、SQLite schema 4 和依赖保持不变，未清空数据或更换 MASTER_KEY。
 
-首次运行最终阶段为 `awaiting-device`：网站已恢复，但发布时没有检测到在线就绪的兼容执行器，任务领取保持暂停。用户随后要求本次及后续发布均不校验执行器状态；控制脚本移除该门槛后，使用 `mode=resume`、`scope=auto`、`source-sha=1a5daed979406d6e09b7c2e395034b97e71ad437`、`recovery-run=42572476103` 继续原发布记录；此阶段直接恢复原开关，不重建、重新部署或替换产物。实际验收和限制见 [ACCEPTANCE](ACCEPTANCE.md#2026-11-09-0195-正式发布等待设备)。
+首次运行停在 `awaiting-device` 后，用户明确要求本次及后续发布均不校验执行器状态。[PR #27](https://github.com/zhangheng2022/taskrelay/pull/27) 移除了该门槛，控制提交 `72e17bfbf11f9fb41c71af915d3c20ced160a039` 的 PR/master 检查全部通过。[恢复发布 42576417676](https://github.com/zhangheng2022/taskrelay/actions/runs/42576417676) 使用原 `source-sha=1a5daed979406d6e09b7c2e395034b97e71ad437` 与 `recovery-run=42572476103` 成功推进 `complete`，恢复发布前维护和领取开关。该阶段没有查询执行器状态、下载归档、重新构建或部署；线上仍为原 0.19.5 业务 SHA。后续发布校验完成后直接恢复原开关，实际任务继续遵循调度器的正常领取条件。实际验收和限制见 [ACCEPTANCE](ACCEPTANCE.md#2026-11-09-0195-正式发布已完成)。
 
 ## 2026-11-08 0.19.4 已上线（领取已恢复）
 
