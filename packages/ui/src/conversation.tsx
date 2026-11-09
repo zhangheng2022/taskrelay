@@ -86,7 +86,7 @@ export function Conversation({
   }
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <Thread followRequest={thread.sending?.id}>
+      <Thread key={thread.page?.id ?? "loading"} followRequest={thread.sending?.id}>
         {(thread.loading || thread.error) && (
           <MessageScrollerItem messageId="loading">
             <LoadFeedback

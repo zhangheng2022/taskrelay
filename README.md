@@ -98,6 +98,8 @@ npm run check:repo
 
 [CI · 持续集成](.github/workflows/ci.yml) 在 PR、master 推送、手动触发及每周一执行。纯文档只检查格式、仓库约束与秘密；代码改动执行静态检查、双平台测试、覆盖率、安全与 Web 构建，执行器相关改动追加 [Build · Windows 构建验收](.github/workflows/build-windows.yml)。总门槛为 `CI Gate · 合并检查`，仓库规则直接绑定此检查。[Release · 生产发布](.github/workflows/release.yml) 手动发布固定提交，优先复用该提交通过主分支 CI 的完整产物；合并不自动部署。
 
+Web 图片真实浏览器验收在 Windows 执行 `npm run prepare:browser` 后运行 `npm run test:web-images`，使用合成图片和正式共享组件，报告与截图写入 `out/web-images`；CI 的 Windows 测试作业执行相同命令，验收失败或报告缺失阻止门槛通过。
+
 本地用 `npm run quality` 执行同一配置；也可运行 `lint`、`format:check`、`test:coverage`、`check:workflows`。需要整理格式时运行 `npm run format`，CI 不自动修复。纯格式提交已登记到 `.git-blame-ignore-revs`，可配置 `git config blame.ignoreRevsFile .git-blame-ignore-revs`。
 
 `npm test` 已包含 UI 测试；只检查界面时可运行 `npm run test:ui`。`npm run build` 仅构建 Web。CI 的隔离测试不等于真实模型、Windows 安装或完整调度恢复验收。

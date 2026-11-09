@@ -1,3 +1,4 @@
+import { ImagePreviewProvider } from "./chat-image";
 import { useLayoutEffect, type ReactNode } from "react";
 import { ArrowUp, Loader2, CirclePause } from "lucide-react";
 import {
@@ -36,17 +37,19 @@ export function Thread({
   followRequest?: string;
 }) {
   return (
-    <MessageScrollerProvider autoScroll>
-      <MessageScroller>
-        <MessageScrollerViewport>
-          <MessageScrollerContent className="mx-auto max-w-3xl px-4 py-8 md:px-8">
-            {children}
-          </MessageScrollerContent>
-        </MessageScrollerViewport>
-        <MessageScrollerButton aria-label="回到最新消息" />
-      </MessageScroller>
-      <FollowSend request={followRequest} />
-    </MessageScrollerProvider>
+    <ImagePreviewProvider>
+      <MessageScrollerProvider autoScroll>
+        <MessageScroller>
+          <MessageScrollerViewport>
+            <MessageScrollerContent className="mx-auto max-w-3xl px-4 py-8 md:px-8">
+              {children}
+            </MessageScrollerContent>
+          </MessageScrollerViewport>
+          <MessageScrollerButton aria-label="回到最新消息" />
+        </MessageScroller>
+        <FollowSend request={followRequest} />
+      </MessageScrollerProvider>
+    </ImagePreviewProvider>
   );
 }
 export function ChatMessage({ speaker: role, children }: { speaker: string; children: ReactNode }) {

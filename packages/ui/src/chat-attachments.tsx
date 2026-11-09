@@ -1,89 +1,21 @@
-import { useState } from "react";
+import { useContext } from "react";
 import type { ChatPart } from "../../contracts/src/execution";
 import type { Transport } from "../../contracts/src/index";
-import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "./components/ui/dialog";
-import { Button } from "./components/ui/button";
-import { Attachment, AttachmentMedia } from "./components/ui/attachment";
 import { AccountCard } from "./account-card";
+import { ChatImage, ImagePreviewContext, ImagePreviewProvider } from "./chat-image";
 
-// 地址由宿主提供，浏览器负责鉴权请求、懒加载和图片解码；组件只维护显示状态。
-// 图片地址变化时由父级 key 重置，避免旧图片的加载结果污染新附件。
-function ChatImage({ src, thumbnail, alt }: { src?: string; thumbnail?: string; alt: string }) {
-  const [attempt, setAttempt] = useState(0);
-  const [state, setState] = useState<"processing" | "done" | "error">(src ? "processing" : "error");
-  const [previewState, setPreviewState] = useState<"processing" | "done" | "error">("processing");
-  return (
-    <Attachment
-      orientation="vertical"
-      state={state}
-      aria-busy={state === "processing"}
-      className="max-w-full"
-    >
-      {state === "error" ? (
-        <div className="flex flex-col gap-2">
-          <p>图片加载失败或已不可用。</p>
-          {src && (
-            <Button
-              variant="outline"
-              onClick={() => {
-                setAttempt((value) => value + 1);
-                setState("processing");
-              }}
-            >
-              重新加载图片
-            </Button>
-          )}
-        </div>
-      ) : (
-        <>
-          {state === "processing" && <p role="status">正在加载图片…</p>}
-          <Dialog onOpenChange={() => setPreviewState("processing")}>
-            <DialogTrigger asChild>
-              <Button
-                variant="ghost"
-                disabled={state !== "done"}
-                className="h-auto max-w-full p-0"
-                aria-label="查看完整截图"
-              >
-                <AttachmentMedia variant="image">
-                  <img
-                    key={attempt}
-                    src={thumbnail ?? src}
-                    alt={alt}
-                    loading="lazy"
-                    decoding="async"
-                    onLoad={() => setState("done")}
-                    onError={() => setState("error")}
-                    className="max-h-72 max-w-full object-contain"
-                  />
-                </AttachmentMedia>
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-[95vw]">
-              <DialogTitle>{alt}</DialogTitle>
-              {previewState === "error" ? (
-                <p>图片加载失败或已不可用。</p>
-              ) : (
-                <>
-                  {previewState === "processing" && <p role="status">正在加载图片…</p>}
-                  <img
-                    src={src}
-                    alt={alt}
-                    decoding="async"
-                    onLoad={() => setPreviewState("done")}
-                    onError={() => setPreviewState("error")}
-                    className="max-h-[80vh] w-full object-contain"
-                  />
-                </>
-              )}
-            </DialogContent>
-          </Dialog>
-        </>
-      )}
-    </Attachment>
+// 正常聊天共用 Thread 的单图预览；独立附件宿主也具备相同的资源生命周期。
+export function ChatAttachments(props: Parameters<typeof Attachments>[0]) {
+  const preview = useContext(ImagePreviewContext);
+  return preview ? (
+    <Attachments {...props} />
+  ) : (
+    <ImagePreviewProvider>
+      <Attachments {...props} />
+    </ImagePreviewProvider>
   );
 }
-export function ChatAttachments({
+function Attachments({
   parts,
   transport,
   offline,

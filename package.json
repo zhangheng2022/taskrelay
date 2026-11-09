@@ -17,6 +17,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts tests/*.test.tsx",
     "test:ui": "node --import tsx --test tests/*.test.tsx",
+    "test:web-images": "node --import tsx tests/browser-images.mjs",
     "build": "npm run build -w @taskrelay/web",
     "db:migrate": "npm run db:migrate -w @taskrelay/web",
     "db:convert": "node --import tsx scripts/db/convert.mjs",
