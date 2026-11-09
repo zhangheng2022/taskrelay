@@ -92,7 +92,7 @@ test("旧设备原 token 升级须维护和本地就绪；旧协议请求继续�
     (await s.request("/api/device/status", undefined, "GET")).data.error,
     "DEVICE_UPGRADE_REQUIRED",
   );
-  const body = { protocolVersion: 18, localReady: true };
+  const body = { protocolVersion: 19, localReady: true };
   assert.equal((await s.request("/api/device/upgrade", body)).data.error, "CUTOVER_NOT_READY");
   s.sql.exec(
     "UPDATE runs SET status='succeeded',cleanup_pending=0,cleanup_confirmed=1;DELETE FROM account_locks;UPDATE settings SET value='1' WHERE key='maintenance';UPDATE settings SET value='0' WHERE key='claimsEnabled'",
@@ -102,7 +102,7 @@ test("旧设备原 token 升级须维护和本地就绪；旧协议请求继续�
     400,
   );
   assert.equal((await s.request("/api/device/upgrade", body)).status, 200);
-  assert.equal((await s.request("/api/device/status", undefined, "GET")).data.protocolVersion, 18);
+  assert.equal((await s.request("/api/device/status", undefined, "GET")).data.protocolVersion, 19);
   assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM devices").get()!.n, 1);
 });
 

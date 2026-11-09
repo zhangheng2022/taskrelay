@@ -180,3 +180,46 @@
     animation: none !important;
   }
 }
+
+/* 设置页的次级导航不占据聊天侧栏；窄屏按分类与详情逐层浏览。 */
+@layer components {
+  .settings-layout {
+    @apply mx-auto grid w-full max-w-6xl min-w-0 grid-cols-[190px_minmax(0,1fr)] gap-10 px-4 py-6;
+  }
+  .settings-navigation {
+    @apply flex flex-col gap-8 self-start;
+  }
+  .settings-detail {
+    @apply flex min-w-0 flex-col gap-6;
+  }
+  .settings-details {
+    @apply flex flex-col gap-4;
+  }
+  .settings-details > div {
+    @apply flex flex-wrap justify-between gap-2;
+  }
+  .settings-details dt {
+    @apply text-sm text-muted-foreground;
+  }
+  .settings-details dd {
+    @apply break-all text-sm;
+  }
+  .settings-detail .settings-row {
+    @apply flex-wrap items-start gap-4;
+  }
+  .settings-detail .row-actions {
+    @apply flex-wrap;
+  }
+  .settings-detail .section-heading {
+    @apply flex-wrap gap-3;
+  }
+  @media (max-width: 767px) {
+    .settings-layout {
+      @apply grid-cols-1 gap-5 px-2 py-3;
+    }
+    .settings-navigation-desktop,
+    .settings-detail-desktop {
+      @apply hidden;
+    }
+  }
+}

@@ -363,7 +363,7 @@ export async function tick(db: D1Database) {
       "UPDATE account_locks SET run_id=(SELECT reconciliation_of FROM runs WHERE id=account_locks.run_id) WHERE run_id IN (SELECT id FROM runs WHERE reconciliation_of IS NOT NULL AND cleanup_pending=0 AND status IN ('failed','cancelled','expired','unknown'))",
     ),
     db.prepare(
-      "DELETE FROM account_locks WHERE run_id IN (SELECT id FROM runs WHERE cleanup_pending=0 AND status IN ('failed','cancelled','expired','succeeded'))",
+      "DELETE FROM account_locks WHERE run_id IN (SELECT id FROM runs WHERE cleanup_pending=0 AND write_pending=0 AND may_have_written=0 AND status IN ('failed','cancelled','expired','succeeded'))",
     ),
     db.prepare("DELETE FROM pairings WHERE expires_at<=?").bind(dbTime(at)),
   ]);

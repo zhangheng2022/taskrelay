@@ -1,30 +1,38 @@
-import { useForm } from "react-hook-form";
-import type { InferResponseType } from "hono/client";
-import { createApi, rpcData } from "./api";
+/** 管理员运维按设备、成员和执行池拆分视图，写操作共享确认及结果反馈。 */
 import { useState } from "react";
+import type { InferResponseType } from "hono/client";
 import { PROTOCOL_VERSION, type Transport } from "../../contracts/src/index";
+import { createApi, rpcData } from "./api";
+import { QueryBoundary, useTransportQuery } from "./queries";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { NativeSelect } from "./components/ui/native-select";
-import { Field, FieldLabel, FieldGroup } from "./components/ui/field";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "./components/ui/card";
-import { ErrorText, Status, formatDate } from "./feedback";
-import { QueryBoundary, useTransportQuery } from "./queries";
-const fields = [
-  ["daily_runs", "每日启动"],
-  ["scheduled_tasks", "周期任务"],
-  ["queued_runs", "排队上限"],
-  ["daily_chat", "每日对话"],
-  ["daily_models", "每日模型调用"],
-] as const;
-export function AdminPanel({ transport }: { transport: Transport }) {
+import { Field, FieldGroup, FieldLabel } from "./components/ui/field";
+import { Badge } from "./components/ui/badge";
+import { LoadFeedback, Status, formatDate } from "./feedback";
+import {
+  SettingsSearch,
+  SettingsEmpty,
+  useSettingsAction,
+  useConfirmation,
+  useSettingsDirty,
+} from "./settings-support";
+type Operations = InferResponseType<
+  ReturnType<typeof createApi>["api"]["admin"]["operations"]["$get"]
+>;
+type Props = {
+  transport: Transport;
+  section?: "devices" | "users" | "operations";
+  currentUserId?: string;
+};
+export function AdminPanel(props: Props) {
   return (
-    <QueryBoundary owner={transport}>
-      <OperationsPanel transport={transport} />
+    <QueryBoundary owner={props.transport}>
+      <OperationsPanel {...props} />
     </QueryBoundary>
   );
 }
-function OperationsPanel({ transport }: { transport: Transport }) {
+function OperationsPanel({ transport, section = "operations", currentUserId }: Props) {
   const operations = useTransportQuery(
     transport,
     ["operations"],
@@ -32,181 +40,256 @@ function OperationsPanel({ transport }: { transport: Transport }) {
     60000,
   );
   const data = operations.data,
-    load = operations.refresh;
-  const [error, setError] = useState(""),
-    [busy, setBusy] = useState(false),
-    [note, setNote] = useState("");
-  async function action(fn: () => Promise<unknown>) {
-    setBusy(true);
-    setError("");
-    setNote("");
-    try {
-      await fn();
-      await load();
-      setNote("已保存");
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
+    action = useSettingsAction(),
+    { ask, confirmation } = useConfirmation();
+  const [search, setSearch] = useState(""),
+    [filter, setFilter] = useState("all"),
+    [role, setRole] = useState("all");
+  const act = (id: string, fn: () => Promise<unknown>) => action.act(id, fn, operations.refresh);
+  const users =
+    data?.users.filter(
+      (u) =>
+        u.email.toLowerCase().includes(search.toLowerCase()) &&
+        (filter === "all" || !!u.disabled === (filter === "disabled")) &&
+        (role === "all" || u.role === role),
+    ) ?? [];
   return (
     <div className="flex flex-col gap-5">
-      {(error || operations.error) && <ErrorText error={error || operations.error!.message} />}
-      {note && <p role="status">{note}</p>}
-      <Button variant="outline" disabled={busy} onClick={() => void action(load)}>
-        刷新运行状态
-      </Button>
-      {data && (
+      {confirmation}
+      {action.feedback}
+      <div className="section-heading">
+        <div>
+          <h2>
+            {section === "devices" ? "执行设备" : section === "users" ? "用户管理" : "运行维护"}
+          </h2>
+          <p>
+            {section === "devices"
+              ? "在 Windows 执行器中发起连接，通过系统浏览器完成管理员授权。"
+              : section === "users"
+                ? "管理成员状态；个人次数限制保持关闭。"
+                : "暂停领取不会停止已开始的任务。"}
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          disabled={operations.isFetching || !!action.busy}
+          onClick={() => void operations.refresh().catch(() => {})}
+        >
+          刷新状态
+        </Button>
+      </div>
+      <LoadFeedback
+        loading={operations.isPending}
+        error={operations.error?.message ?? ""}
+        label="正在读取管理信息…"
+        onRetry={() => void operations.refresh().catch(() => {})}
+      />
+      {data && section === "users" && (
         <>
-          <Card>
-            <CardHeader>
-              <CardTitle>公共执行池</CardTitle>
-              <CardDescription>暂停领取不会停止已经开始的任务。</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <PoolSettings
-                claims={data.settings.claimsEnabled}
-                busy={busy}
-                save={(claimsEnabled) =>
-                  action(() =>
-                    rpcData(createApi(transport).api.admin.pool.$put({ json: { claimsEnabled } })),
-                  )
-                }
-              />
-            </CardContent>
-          </Card>
-          {data.users.map((u) => (
-            <Card key={u.id}>
-              <CardHeader>
-                <CardTitle>{u.email || "原管理员"}</CardTitle>
-                <CardDescription>
-                  {u.role === "admin" ? "管理员" : "用户"} · {u.disabled ? "已停用" : "正常"}
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <MemberSettings
-                  user={u}
-                  busy={busy}
-                  save={(input) =>
-                    action(() =>
-                      rpcData(
+          <SettingsSearch
+            value={search}
+            onChange={setSearch}
+            state={filter}
+            onState={setFilter}
+            label="搜索用户邮箱"
+          />
+          <Field>
+            <FieldLabel htmlFor="member-role">角色</FieldLabel>
+            <NativeSelect id="member-role" value={role} onChange={(e) => setRole(e.target.value)}>
+              <option value="all">全部角色</option>
+              <option value="user">普通用户</option>
+              <option value="admin">管理员</option>
+            </NativeSelect>
+          </Field>
+          {!users.length && <SettingsEmpty />}
+          {users.map((u) => (
+            <article className="settings-row" key={u.id}>
+              <div>
+                <h3>{u.email || "原管理员"}</h3>
+                <p>
+                  {u.role === "admin" ? "管理员" : "普通用户"} · {u.disabled ? "已停用" : "正常"}
+                </p>
+                <MemberUsage transport={transport} id={u.id} />
+              </div>
+              <Button
+                variant="outline"
+                disabled={!!action.busy || u.id === currentUserId}
+                onClick={() =>
+                  void (async () => {
+                    if (
+                      await ask(
+                        `${u.disabled ? "恢复" : "停用"} ${u.email}`,
+                        u.disabled
+                          ? "恢复后可重新登录，旧任务不会自动重试。"
+                          : "将退出该用户的登录会话，并请求停止其任务。",
+                        u.disabled ? "恢复用户" : "停用用户",
+                      )
+                    )
+                      await act(u.id, () =>
                         createApi(transport).api.admin.users[":id"].$put({
                           param: { id: u.id },
-                          json: input,
+                          json: { disabled: !u.disabled },
                         }),
-                      ),
-                    )
-                  }
-                />
-              </CardContent>
-            </Card>
+                      );
+                  })()
+                }
+              >
+                {u.id === currentUserId ? "当前用户" : u.disabled ? "恢复用户" : "停用用户"}
+              </Button>
+            </article>
           ))}
-          <Card>
-            <CardHeader>
-              <CardTitle>账号优先执行设备</CardTitle>
-              <CardDescription>
-                保留已保存的登录状态，在新设备尽量恢复；网站仍可能要求重新验证。先确认旧设备已经停止执行，操作结果待核查的账号不能迁移。
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-5">
-              {data.accounts.map((a) => (
-                <form
-                  key={a.id}
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const f = new FormData(e.currentTarget);
-                    if (f.get("stopped") !== "on") return;
-                    const device = f.get("device");
-                    if (typeof device !== "string") {
-                      setError("DEVICE_REQUIRED");
-                      return;
-                    }
-                    void action(() =>
-                      rpcData(
-                        createApi(transport).api.admin.accounts[":id"].migrate.$post({
-                          param: { id: a.id },
-                          json: {
-                            deviceId: device,
-                            oldExecutionStopped: true,
-                          },
-                        }),
-                      ),
-                    ).catch((error: Error) => setError(error.message));
-                  }}
+        </>
+      )}
+      {data && section === "operations" && (
+        <>
+          <PoolSettings
+            claims={data.settings.claimsEnabled}
+            busy={!!action.busy}
+            save={(enabled) =>
+              act("pool", () =>
+                createApi(transport).api.admin.pool.$put({ json: { claimsEnabled: enabled } }),
+              )
+            }
+          />
+          <h3 className="text-base font-semibold">最近运行</h3>
+          <p className="text-sm text-muted-foreground">
+            最近 50 次运行，仅展示运维状态，不展示其他用户的任务内容。
+          </p>
+          {!data.runs.length && (
+            <SettingsEmpty title="暂无运行记录" description="任务开始运行后可在这里查看状态。" />
+          )}
+          {data.runs.map((r) => (
+            <div className="settings-row" key={r.id}>
+              <div>
+                <Status value={r.status} />
+                <p className="break-all">{r.id}</p>
+                <p>
+                  {formatDate(r.created_at)} · {r.error_code || "无错误"}
+                </p>
+              </div>
+            </div>
+          ))}
+        </>
+      )}
+      {data && section === "devices" && (
+        <>
+          {!data.devices.length && (
+            <SettingsEmpty
+              title="尚未连接设备"
+              description="安装 Windows 执行器，在状态窗口发起连接并完成授权。"
+            />
+          )}
+          {data.devices.map((d) => (
+            <article className="settings-row" key={d.id}>
+              <div>
+                <h3>{d.name}</h3>
+                <p>最近连接：{d.last_seen ? formatDate(d.last_seen) : "尚未连接"}</p>
+                <Badge
+                  variant={
+                    d.revoked || d.protocol_version !== PROTOCOL_VERSION
+                      ? "destructive"
+                      : "secondary"
+                  }
                 >
-                  <FieldGroup>
-                    <p className="break-all text-sm">
-                      账号 {a.id} · 用户{" "}
-                      {data.users.find((u) => u.id === a.user_id)?.email || a.user_id} · 当前设备{" "}
-                      {data.devices.find((d) => d.id === a.assigned_device_id)?.name || "未分配"}
-                    </p>
-                    <Field>
-                      <FieldLabel htmlFor={a.id + "device"}>优先设备</FieldLabel>
-                      <NativeSelect id={a.id + "device"} name="device" required defaultValue="">
-                        <option value="" disabled>
-                          选择设备
-                        </option>
-                        {data.devices
-                          .filter((d) => !d.revoked && d.protocol_version === PROTOCOL_VERSION)
-                          .map((d) => (
-                            <option key={d.id} value={d.id}>
-                              {d.name}
-                            </option>
-                          ))}
-                      </NativeSelect>
-                    </Field>
-                    <Field orientation="horizontal">
-                      <Input
-                        className="size-4"
-                        id={a.id + "stopped"}
-                        name="stopped"
-                        type="checkbox"
-                        required
-                      />
-                      <FieldLabel htmlFor={a.id + "stopped"}>
-                        已确认旧设备停止该账号的执行
-                      </FieldLabel>
-                    </Field>
-                    <Button variant="outline" disabled={busy}>
-                      设置优先设备
-                    </Button>
-                  </FieldGroup>
-                </form>
-              ))}
-              {!data.accounts.length && <p>暂无账号。</p>}
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>运行状态</CardTitle>
-              <CardDescription>仅展示运维信息，不展示用户任务内容。</CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-3">
-              {data.runs.map((r) => (
-                <div className="flex flex-wrap items-center gap-2 border-b pb-3" key={r.id}>
-                  <Status value={r.status} />
-                  <span className="break-all text-xs">
-                    {r.id} · {formatDate(r.created_at)} · {r.error_code || "—"}
-                  </span>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
+                  {d.revoked
+                    ? "已吊销"
+                    : d.protocol_version !== PROTOCOL_VERSION
+                      ? "需要升级客户端"
+                      : "协议兼容"}
+                </Badge>
+                <p>{d.activeRunIds?.join("、") || "没有执行中或待清理的关联运行"}</p>
+              </div>
+              <Button
+                variant="outline"
+                disabled={!!action.busy || !!d.revoked}
+                onClick={() =>
+                  void (async () => {
+                    if (
+                      await ask(
+                        `吊销“${d.name}”的授权？`,
+                        "设备将失去访问权限，正在执行的任务无法继续；重新连接需要再次授权。",
+                        "吊销授权",
+                      )
+                    )
+                      await act(d.id, () =>
+                        createApi(transport).api.admin.devices[":id"].revoke.$post({
+                          param: { id: d.id },
+                        }),
+                      );
+                  })()
+                }
+              >
+                吊销授权
+              </Button>
+            </article>
+          ))}
+          <h3 className="text-base font-semibold">账号优先执行设备</h3>
+          <p className="text-sm text-muted-foreground">
+            先确认旧设备已停止。结果未知或持有清理锁的账号不能迁移；网站可能要求重新登录。
+          </p>
+          {!data.accounts.length && (
+            <SettingsEmpty title="暂无站点账号" description="用户保存账号后可分配优先设备。" />
+          )}
+          {data.accounts.map((a) => (
+            <Migration
+              key={a.id}
+              account={a}
+              data={data}
+              busy={!!action.busy}
+              save={(deviceId) =>
+                act(a.id, () =>
+                  createApi(transport).api.admin.accounts[":id"].migrate.$post({
+                    param: { id: a.id },
+                    json: { deviceId, oldExecutionStopped: true },
+                  }),
+                )
+              }
+            />
+          ))}
         </>
       )}
     </div>
   );
 }
-
-type Member = InferResponseType<
-  ReturnType<typeof createApi>["api"]["admin"]["operations"]["$get"]
->["users"][number];
-type MemberInput = Pick<
-  Member,
-  "daily_runs" | "scheduled_tasks" | "queued_runs" | "daily_chat" | "daily_models"
-> & { disabled: boolean };
-// 后台刷新仅更新未编辑字段；库持有脏值，避免通知重挂载表单而丢失管理员输入。
+function MemberUsage({ transport, id }: { transport: Transport; id: string }) {
+  const [open, setOpen] = useState(false);
+  const usage = useTransportQuery(
+    transport,
+    ["member-usage", id],
+    (signal) =>
+      rpcData(
+        createApi(transport).api.admin.users[":id"].usage.$get(
+          { param: { id } },
+          { init: { signal } },
+        ),
+      ),
+    60000,
+    open,
+  );
+  return (
+    <>
+      <Button variant="ghost" onClick={() => setOpen((v) => !v)}>
+        {open ? "收起使用量" : "查看今日使用量"}
+      </Button>
+      {open && (
+        <>
+          <LoadFeedback
+            loading={usage.isPending}
+            error={usage.error?.message ?? ""}
+            label="正在读取使用量…"
+            onRetry={() => void usage.refresh().catch(() => {})}
+          />
+          {usage.data && (
+            <p>
+              运行 {usage.data.used.runs} · 对话 {usage.data.used.chat} · 模型调用{" "}
+              {usage.data.used.models}
+            </p>
+          )}
+        </>
+      )}
+    </>
+  );
+}
 function PoolSettings({
   claims,
   busy,
@@ -214,88 +297,131 @@ function PoolSettings({
 }: {
   claims: string;
   busy: boolean;
-  save: (enabled: boolean) => Promise<void>;
+  save: (v: boolean) => Promise<boolean>;
 }) {
-  const form = useForm({ values: { claims }, resetOptions: { keepDirtyValues: true } });
-  void form.formState.dirtyFields;
+  const [draft, setDraft] = useState<string | null>(null),
+    { ask, confirmation } = useConfirmation();
+  useSettingsDirty(draft !== null && draft !== claims);
   return (
     <form
-      onSubmit={(event) => {
-        void form
-          .handleSubmit((values) => save(values.claims === "1"))(event)
-          .catch((error: Error) => form.setError("root", { message: error.message }));
+      onSubmit={(e) => {
+        e.preventDefault();
+        void (async () => {
+          if (
+            await ask(
+              "修改公共执行池？",
+              draft === "1"
+                ? "允许设备领取等待中的任务。"
+                : "暂停领取新任务，已开始的任务继续执行。",
+            )
+          ) {
+            if (await save((draft ?? claims) === "1")) setDraft(null);
+          }
+        })().catch(() => {});
       }}
     >
-      {form.formState.errors.root?.message && (
-        <ErrorText error={form.formState.errors.root.message} />
-      )}
+      {confirmation}
       <FieldGroup>
         <Field>
           <FieldLabel htmlFor="pool-claims">领取任务</FieldLabel>
-          <NativeSelect id="pool-claims" {...form.register("claims")}>
-            <option value="1">允许</option>
-            <option value="0">暂停</option>
+          <NativeSelect
+            id="pool-claims"
+            disabled={busy}
+            value={draft ?? claims}
+            onChange={(e) => setDraft(e.target.value)}
+          >
+            <option value="1">允许领取</option>
+            <option value="0">暂停领取</option>
           </NativeSelect>
         </Field>
-        <Button disabled={busy}>保存公共池设置</Button>
+        <div className="flex gap-2">
+          <Button disabled={busy || draft === null}>保存公共池设置</Button>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={busy || draft === null}
+            onClick={() => setDraft(null)}
+          >
+            撤销修改
+          </Button>
+        </div>
       </FieldGroup>
     </form>
   );
 }
-function MemberSettings({
-  user,
+function Migration({
+  account: a,
+  data,
   busy,
   save,
 }: {
-  user: Member;
+  account: Operations["accounts"][number];
+  data: Operations;
   busy: boolean;
-  save: (input: MemberInput) => Promise<void>;
+  save: (id: string) => Promise<boolean>;
 }) {
-  const form = useForm({
-    values: {
-      daily_runs: user.daily_runs,
-      scheduled_tasks: user.scheduled_tasks,
-      queued_runs: user.queued_runs,
-      daily_chat: user.daily_chat,
-      daily_models: user.daily_models,
-      disabled: String(user.disabled),
-    },
-    resetOptions: { keepDirtyValues: true },
-  });
-  void form.formState.dirtyFields;
+  const [device, setDevice] = useState(""),
+    [stopped, setStopped] = useState(false);
+  useSettingsDirty(!!device || stopped);
   return (
     <form
-      onSubmit={(event) => {
-        void form
-          .handleSubmit((values) => save({ ...values, disabled: values.disabled === "1" }))(event)
-          .catch((error: Error) => form.setError("root", { message: error.message }));
+      className="settings-row"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (stopped)
+          void save(device)
+            .then((ok) => {
+              if (ok) {
+                setDevice("");
+                setStopped(false);
+              }
+            })
+            .catch(() => {});
       }}
     >
-      {form.formState.errors.root?.message && (
-        <ErrorText error={form.formState.errors.root.message} />
-      )}
       <FieldGroup>
-        {fields.map(([key, label]) => (
-          <Field key={key}>
-            <FieldLabel htmlFor={user.id + key}>{label}</FieldLabel>
-            <Input
-              id={user.id + key}
-              type="number"
-              min={0}
-              max={100000}
-              required
-              {...form.register(key, { valueAsNumber: true, min: 0, max: 100000 })}
-            />
-          </Field>
-        ))}
+        <p>
+          {a.name} · {a.origin} · {data.users.find((u) => u.id === a.user_id)?.email || a.user_id}
+        </p>
+        <p className="text-sm text-muted-foreground">
+          当前：{data.devices.find((d) => d.id === a.assigned_device_id)?.name || "未分配"}
+        </p>
         <Field>
-          <FieldLabel htmlFor={user.id + "status"}>用户状态</FieldLabel>
-          <NativeSelect id={user.id + "status"} {...form.register("disabled")}>
-            <option value="0">正常</option>
-            <option value="1">停用并停止任务</option>
+          <FieldLabel htmlFor={a.id + "device"}>优先设备</FieldLabel>
+          <NativeSelect
+            id={a.id + "device"}
+            disabled={busy}
+            required
+            value={device}
+            onChange={(e) => setDevice(e.target.value)}
+          >
+            <option value="" disabled>
+              选择设备
+            </option>
+            {data.devices
+              .filter((d) => !d.revoked && d.protocol_version === PROTOCOL_VERSION)
+              .map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
           </NativeSelect>
         </Field>
-        <Button disabled={busy}>保存用户设置</Button>
+        <Field orientation="horizontal">
+          <Input
+            className="size-4"
+            id={a.id + "stopped"}
+            disabled={busy}
+            type="checkbox"
+            required
+            checked={stopped}
+            onChange={(e) => setStopped(e.target.checked)}
+          />
+          <FieldLabel htmlFor={a.id + "stopped"}>已确认旧设备停止该账号的执行</FieldLabel>
+        </Field>
+        <Button variant="outline" disabled={busy || !device || !stopped}>
+          设置优先设备
+        </Button>
       </FieldGroup>
     </form>
   );

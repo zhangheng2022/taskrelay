@@ -1,3 +1,4 @@
+import { useConfirmation, useSettingsDirty } from "./settings-support";
 /** 模型表单由 RHF 持有编辑草稿，Zod 校验与服务端保持一致；后台刷新不能覆盖正在编辑的值。 */
 import { useState } from "react";
 import { useForm } from "react-hook-form";
@@ -42,6 +43,7 @@ export function ModelDialog({
   onSaved: () => Promise<void>;
 }) {
   const [error, setError] = useState("");
+  const [expectedVersion] = useState(value?.managementVersion ?? 1);
   const form = useForm<z.input<typeof modelInputSchema>, unknown, ModelInput>({
     resolver: zodResolver(modelInputSchema),
     defaultValues: {
@@ -56,10 +58,19 @@ export function ModelDialog({
       outputPrice: value?.outputPrice ?? null,
     },
   });
-  const { errors, isSubmitting: busy } = form.formState;
+  const { errors, isSubmitting: busy, isDirty } = form.formState;
+  useSettingsDirty(isDirty);
+  const { ask, confirmation } = useConfirmation();
+  async function close() {
+    if (!isDirty || (await ask("放弃模型修改？", "未保存的内容会丢失。", "放弃修改"))) {
+      form.reset();
+      onClose();
+    }
+  }
   const submit = form.handleSubmit(async (input) => {
     setError("");
     try {
+      if (!navigator.onLine) throw Error("NETWORK_OFFLINE");
       if (!value && !input.apiKey) {
         form.setError("apiKey", { message: "请填写 API Key" });
         return;
@@ -67,7 +78,7 @@ export function ModelDialog({
       const models = createApi(transport).api.admin.models;
       await rpcData(
         value
-          ? models[":id"].$put({ param: { id: value.id }, json: input })
+          ? models[":id"].$put({ param: { id: value.id }, json: { ...input, expectedVersion } })
           : models.$post({ json: input }),
       );
       form.setValue("apiKey", "");
@@ -84,11 +95,11 @@ export function ModelDialog({
       open
       onOpenChange={(open) => {
         if (!open && !busy) {
-          form.reset();
-          onClose();
+          void close().catch(() => {});
         }
       }}
     >
+      {confirmation}
       <DialogContent className="max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{value ? "编辑模型服务" : "添加模型服务"}</DialogTitle>
@@ -107,6 +118,7 @@ export function ModelDialog({
           <FieldGroup>
             <Field label="服务商">
               <NativeSelect
+                disabled={busy}
                 defaultValue="custom"
                 onChange={(event) => {
                   const preset = presets[event.target.value as keyof typeof presets];
@@ -123,10 +135,10 @@ export function ModelDialog({
             </Field>
             <FieldGroup className="grid grid-cols-1 gap-5 sm:grid-cols-2">
               <Field label="配置名称" error={errors.name?.message}>
-                <Input required {...form.register("name")} />
+                <Input disabled={busy} required {...form.register("name")} />
               </Field>
               <Field label="API 协议" error={errors.protocol?.message}>
-                <NativeSelect {...form.register("protocol")}>
+                <NativeSelect disabled={busy} {...form.register("protocol")}>
                   <option value="chat">Chat Completions</option>
                   <option value="responses">Responses</option>
                 </NativeSelect>
@@ -138,6 +150,7 @@ export function ModelDialog({
               error={errors.baseUrl?.message}
             >
               <Input
+                disabled={busy}
                 required
                 type="url"
                 placeholder="https://api.example.com/v1"
@@ -146,6 +159,7 @@ export function ModelDialog({
             </Field>
             <Field label="上下文预算（token，保守估计）" error={errors.contextTokens?.message}>
               <Input
+                disabled={busy}
                 type="number"
                 min={8192}
                 max={200000}
@@ -154,6 +168,7 @@ export function ModelDialog({
             </Field>
             <Field label="输出预留（token）" error={errors.outputTokens?.message}>
               <Input
+                disabled={busy}
                 type="number"
                 min={512}
                 max={8192}
@@ -161,7 +176,12 @@ export function ModelDialog({
               />
             </Field>
             <Field label="模型名称" error={errors.model?.message}>
-              <Input required placeholder="填写服务商提供的模型标识" {...form.register("model")} />
+              <Input
+                disabled={busy}
+                required
+                placeholder="填写服务商提供的模型标识"
+                {...form.register("model")}
+              />
             </Field>
             <Field
               label="API Key"
@@ -173,6 +193,7 @@ export function ModelDialog({
               error={errors.apiKey?.message}
             >
               <Input
+                disabled={busy}
                 type="password"
                 autoComplete="new-password"
                 required={!value}
@@ -181,10 +202,22 @@ export function ModelDialog({
             </Field>
             <FieldGroup className="grid grid-cols-1 gap-5 sm:grid-cols-2">
               <Field label="输入单价 / 百万 tokens（可选）" error={errors.inputPrice?.message}>
-                <Input type="number" min="0" step="any" {...form.register("inputPrice", price)} />
+                <Input
+                  disabled={busy}
+                  type="number"
+                  min="0"
+                  step="any"
+                  {...form.register("inputPrice", price)}
+                />
               </Field>
               <Field label="输出单价 / 百万 tokens（可选）" error={errors.outputPrice?.message}>
-                <Input type="number" min="0" step="any" {...form.register("outputPrice", price)} />
+                <Input
+                  disabled={busy}
+                  type="number"
+                  min="0"
+                  step="any"
+                  {...form.register("outputPrice", price)}
+                />
               </Field>
             </FieldGroup>
             {errors.root?.message && <p role="alert">{errors.root.message}</p>}
@@ -196,8 +229,7 @@ export function ModelDialog({
               type="button"
               disabled={busy}
               onClick={() => {
-                form.reset();
-                onClose();
+                void close().catch(() => {});
               }}
             >
               取消

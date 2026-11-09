@@ -47,13 +47,15 @@ export function modelFrom(row: Row): ModelProfile {
     ...JSON.parse(row.config),
     id: row.id,
     version: row.version,
+    enabled: row.enabled !== 0,
+    managementVersion: row.management_version ?? 1,
     hasKey: true,
     capabilities: JSON.parse(row.capabilities),
   };
 }
 export async function getModel(env: AppEnv, id: string, version?: number) {
   const row = await env.DB.prepare(
-    `SELECT v.* FROM model_profile_versions v JOIN models m ON m.id=v.id WHERE v.id=? AND v.version=${version ? "?" : "m.current_version"}`,
+    `SELECT v.*,m.enabled,m.management_version FROM model_profile_versions v JOIN models m ON m.id=v.id WHERE v.id=? AND v.version=${version ? "?" : "m.current_version"}`,
   )
     .bind(...(version ? [id, version] : [id]))
     .first<Row>();
@@ -66,7 +68,7 @@ export async function getModel(env: AppEnv, id: string, version?: number) {
 /** Configuration checks do not need to read or decrypt provider credentials. */
 export async function getModelProfile(env: AppEnv, id: string, version?: number) {
   const row = await env.DB.prepare(
-    `SELECT v.id,v.version,v.config,v.capabilities FROM model_profile_versions v JOIN models m ON m.id=v.id WHERE v.id=? AND v.version=${version ? "?" : "m.current_version"}`,
+    `SELECT v.id,v.version,v.config,v.capabilities,m.enabled,m.management_version FROM model_profile_versions v JOIN models m ON m.id=v.id WHERE v.id=? AND v.version=${version ? "?" : "m.current_version"}`,
   )
     .bind(...(version ? [id, version] : [id]))
     .first<Row>();
@@ -467,7 +469,12 @@ export async function probe(env: AppEnv, id: string, version: number): Promise<M
     .run();
   return caps;
 }
-export async function storeModel(env: AppEnv, input: Record<string, unknown>, id = uid("model")) {
+export async function storeModel(
+  env: AppEnv,
+  input: Record<string, unknown>,
+  id = uid("model"),
+  expectedVersion?: number,
+) {
   const { modelInputSchema } = await import("../../../packages/contracts/src/index");
   const parsed = modelInputSchema.parse(input);
   // Accept a pasted endpoint, but store a base URL and never append it twice.
@@ -491,6 +498,7 @@ export async function storeModel(env: AppEnv, input: Record<string, unknown>, id
   )
     .bind(id)
     .first<{ version: number }>();
+  if (expectedVersion && !prior) throw Error("RESOURCE_VERSION_CONFLICT");
   const version = (prior?.version ?? 0) + 1;
   let key = parsed.apiKey;
   if (!key && prior) key = (await getModel(env, id, prior.version)).key;
@@ -503,13 +511,23 @@ export async function storeModel(env: AppEnv, input: Record<string, unknown>, id
     vision: false,
     testedAt: null,
   };
-  await env.DB.batch([
+  const writes = await env.DB.batch([
     env.DB.prepare(
-      `INSERT INTO models(id,current_version,created_at) VALUES(?,?,?)
-    ON CONFLICT(id) DO UPDATE SET current_version=excluded.current_version`,
-    ).bind(id, version, dbTime(now())),
+      `INSERT INTO models(id,current_version,created_at) SELECT ?,?,? WHERE ?=0 OR EXISTS(SELECT 1 FROM models WHERE id=? AND current_version=?)
+    ON CONFLICT(id) DO UPDATE SET current_version=excluded.current_version WHERE models.current_version=? AND (? IS NULL OR models.management_version=?)`,
+    ).bind(
+      id,
+      version,
+      dbTime(now()),
+      prior?.version ?? 0,
+      id,
+      prior?.version ?? 0,
+      prior?.version ?? 0,
+      expectedVersion ?? null,
+      expectedVersion ?? null,
+    ),
     env.DB.prepare(
-      "INSERT INTO model_profile_versions(id,version,config,secret,capabilities,created_at) VALUES(?,?,?,?,?,?)",
+      "INSERT INTO model_profile_versions(id,version,config,secret,capabilities,created_at) SELECT ?,?,?,?,?,? WHERE changes()=1",
     ).bind(
       id,
       version,
@@ -519,6 +537,7 @@ export async function storeModel(env: AppEnv, input: Record<string, unknown>, id
       dbTime(now()),
     ),
   ]);
+  if (!writes[0].meta.changes) throw Error("RESOURCE_VERSION_CONFLICT");
   return { id, version, ...config, hasKey: true, capabilities };
 }
 export async function probeVision(env: AppEnv, id: string) {

@@ -37,7 +37,7 @@ for (const protocol of ["chat", "responses"] as const)
     assert.equal(
       s.sql.prepare("SELECT execution_protocol FROM runs WHERE task_id=?").get(r.data.taskId)!
         .execution_protocol,
-      18,
+      19,
     );
   });
 test("意图不明只追问，不创建运行", async (t) => {

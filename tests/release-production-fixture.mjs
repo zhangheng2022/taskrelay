@@ -70,7 +70,7 @@ sql.exec(
 );
 sql
   .prepare(
-    "INSERT INTO devices(id,name,token_hash,last_seen,protocol_version) VALUES('fixture','fixture','fixture',?,18)",
+    "INSERT INTO devices(id,name,token_hash,last_seen,protocol_version) VALUES('fixture','fixture','fixture',?,19)",
   )
   .run(Date.now());
 if (["no-device", "resume-ready", "resume-bundle-ready"].includes(mode))
@@ -389,7 +389,7 @@ globalThis.fetch = async (input, options) => {
     assert.equal(deployed, true);
     return Response.json({
       service: "TaskRelay",
-      protocolVersion: 18,
+      protocolVersion: 19,
       sourceCommit: mode === "resume-unknown" ? "b".repeat(40) : process.env.RELEASE_SHA,
     });
   }

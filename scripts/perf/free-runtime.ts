@@ -57,7 +57,7 @@ export default {
         "INSERT INTO members(id,email,role) VALUES('fixture_owner','fixture@example.com','admin')",
       ).run();
       await env.DB.prepare(
-        "INSERT INTO devices(id,name,token_hash,protocol_version) VALUES('fixture','fixture',?,18)",
+        "INSERT INTO devices(id,name,token_hash,protocol_version) VALUES('fixture','fixture',?,19)",
       )
         .bind(await hash("d".repeat(64)))
         .run();

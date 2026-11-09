@@ -32,7 +32,7 @@ test("发布预检真实入口选择 CI 附件、只补建缺失范围，恢复�
         return Response.json({ total_count: artifacts.length, artifacts });
       }
       if (url.endsWith("/actions/runs/9")) return Response.json({ head_branch: "master", event: "workflow_dispatch", path: ".github/workflows/release.yml", status: "completed" });
-      if (url.endsWith("/api/health")) return Response.json({ service: "TaskRelay", protocolVersion: 18, sourceCommit: sha });
+      if (url.endsWith("/api/health")) return Response.json({ service: "TaskRelay", protocolVersion: 19, sourceCommit: sha });
       if (url.endsWith("/releases/latest")) return Response.json({ tag_name: "v0.1.0" });
       if (url.includes("/releases/tags/")) return new Response(null, { status: 404 });
       throw Error("UNEXPECTED_NETWORK:" + url);

@@ -88,6 +88,7 @@ export async function planConversation(
           executionOutline: d.executionOutline,
           graphVersion: GRAPH_VERSION,
           accountIds: d.accountIds,
+          preferenceSnapshotId: id,
         },
       );
       return {};

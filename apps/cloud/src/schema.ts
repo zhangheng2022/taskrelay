@@ -229,6 +229,12 @@ export const accountLocks = sqliteTable(
 export const accounts = sqliteTable(
   "accounts",
   {
+    /** 是否启用；停用会失败关联排队与执行任务 */
+    enabled: integer("enabled").notNull().default(1),
+    /** 管理操作代次 */
+    managementVersion: integer("management_version").notNull().default(1),
+    /** 本次状态修改的事务身份 */
+    managementToken: text("management_token"),
     /** 稳定标识；保留存量身份 */
     id: text("id").primaryKey(),
     /** 界面显示名称 */
@@ -273,6 +279,8 @@ export const accounts = sqliteTable(
     stateOwnerRunId: text("state_owner_run_id"),
   },
   (t): SQLiteTableExtraConfigValue[] => [
+    check("accounts_enabled_check", sql.raw("enabled IN (0,1)")),
+
     /** 与 SQL 基线同源的校验约束；不得在 ORM 迁移中放宽。 */
     check("accounts_check_0", sql.raw("created_at IS NULL OR typeof(created_at)='integer'")),
 
@@ -523,6 +531,10 @@ export const aiGraphInputs = sqliteTable(
 export const aiMemories = sqliteTable(
   "ai_memories",
   {
+    /** 是否启用；旧记忆默认停用 */
+    enabled: integer("enabled").notNull().default(0),
+    /** 编辑冲突版本 */
+    version: integer("version").notNull().default(1),
     /** 所属业务成员 ID；与图及上下游记录一致 */
     owner: text("owner").notNull(),
     /** 偏好命名空间 */
@@ -537,6 +549,11 @@ export const aiMemories = sqliteTable(
     updatedAt: integer("updated_at").notNull(),
   },
   (t): SQLiteTableExtraConfigValue[] => [
+    // 按创建时点稳定翻页。
+    index("memory_page").on(t.owner, t.namespace, desc(t.createdAt), desc(t.key)),
+
+    check("ai_memories_enabled_check", sql.raw("enabled IN (0,1)")),
+
     /** 与 SQL 基线同源的校验约束；不得在 ORM 迁移中放宽。 */
     check("ai_memories_check_0", sql.raw("created_at IS NULL OR typeof(created_at)='integer'")),
     /** 与 SQL 基线同源的校验约束；不得在 ORM 迁移中放宽。 */
@@ -1141,7 +1158,7 @@ export const devices = sqliteTable(
     lastSeen: integer("last_seen"),
     /** 设备令牌是否吊销：0/1 */
     revoked: integer("revoked").notNull().default(0),
-    /** 设备已确认支持的执行协议版本；本版为 18，旧版须经维护窗口升级 */
+    /** 设备已确认支持的执行协议版本；本版为 19，旧版须经维护窗口升级 */
     protocolVersion: integer("protocol_version").notNull(),
     /** 设备是否可领取：0/1 */
     claimReady: integer("claim_ready").notNull().default(1),
@@ -1453,6 +1470,12 @@ export const modelUsage = sqliteTable(
 export const models = sqliteTable(
   "models",
   {
+    /** 是否启用；停用会失败关联排队与执行任务 */
+    enabled: integer("enabled").notNull().default(1),
+    /** 管理操作代次 */
+    managementVersion: integer("management_version").notNull().default(1),
+    /** 本次状态修改的事务身份 */
+    managementToken: text("management_token"),
     /** 稳定标识；保留存量身份 */
     id: text("id").primaryKey(),
     /** 当前版本指针；版本正文独立存储 */
@@ -1461,6 +1484,8 @@ export const models = sqliteTable(
     createdAt: integer("created_at").notNull(),
   },
   (t): SQLiteTableExtraConfigValue[] => [
+    check("models_enabled_check", sql.raw("enabled IN (0,1)")),
+
     /** 与 SQL 基线同源的校验约束；不得在 ORM 迁移中放宽。 */
     check("models_check_0", sql.raw("created_at IS NULL OR typeof(created_at)='integer'")),
 
@@ -1933,5 +1958,28 @@ export const tasks = sqliteTable(
       foreignColumns: [taskVersions.userId, taskVersions.taskId, taskVersions.version],
     }),
     foreignKey({ columns: [t.userId], foreignColumns: [members.id] }),
+  ],
+);
+
+/** 本人交办时固定的偏好快照，正文加密，随原聊天清理。 */
+export const preferenceSnapshots = sqliteTable(
+  "preference_snapshots",
+  {
+    /** 原交办身份 */
+    id: text("id").primaryKey(),
+    /** 所属成员 */
+    owner: text("owner").notNull(),
+    /** 原聊天身份 */
+    threadId: text("thread_id").notNull(),
+    /** 偏好密文，AAD preferences:<owner>:<id> */
+    value: text("value").notNull(),
+    /** 创建时点，UTC 毫秒 */
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.owner], foreignColumns: [members.id] }),
+    foreignKey({ columns: [table.threadId], foreignColumns: [aiThreads.id] }),
+    // 按原聊天清理快照。
+    index("preference_snapshots_thread").on(table.threadId),
   ],
 );

@@ -12,6 +12,7 @@ import {
 
 export function canUseModel(model: ModelProfile) {
   return (
+    model.enabled !== false &&
     model.capabilities.connection &&
     model.capabilities.tools &&
     model.capabilities.structured !== "none"

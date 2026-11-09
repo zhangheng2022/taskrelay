@@ -186,7 +186,7 @@ export async function publishBrowserState(env: AppEnv, runId: string) {
       `UPDATE accounts SET previous_state_object_key=CASE WHEN (SELECT c.clear_previous FROM browser_state_candidates c JOIN runs r ON r.state_candidate_key=c.object_key WHERE r.id=?)=1 THEN NULL ELSE state_object_key END,
       state_object_key=(SELECT state_candidate_key FROM runs WHERE id=?),state_revision=state_revision+1,sync_status='synced',sync_error=NULL,last_device_id=(SELECT device_id FROM runs WHERE id=?)
       WHERE EXISTS(SELECT 1 FROM browser_state_candidates c JOIN runs r ON r.state_candidate_key=c.object_key
-        WHERE r.id=? AND r.cleanup_confirmed=1 AND r.status IN ('succeeded','failed') AND r.history_deleted=0 AND r.context_withdrawn=0
+        WHERE r.id=? AND r.cleanup_confirmed=1 AND r.cancel_requested=0 AND r.status IN ('succeeded','failed') AND r.history_deleted=0 AND r.context_withdrawn=0
         AND EXISTS(SELECT 1 FROM ai_threads WHERE id=r.thread_id AND closed=0)
         AND c.account_id=accounts.id AND c.user_id=accounts.user_id AND c.credential_version=accounts.credential_version
         AND c.state_epoch=accounts.state_epoch AND c.base_revision=accounts.state_revision AND c.retired=0 AND c.expires_at>?

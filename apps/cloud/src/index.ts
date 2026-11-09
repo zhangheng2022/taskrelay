@@ -196,7 +196,7 @@ app.onError((error, c) => {
       ? "INVALID_INPUT"
       : /^[A-Z][A-Z0-9_]+$/.test(error.message)
         ? error.message
-        : (/(?:MEMORY_LIMIT|QUEUE_LIMIT|CLAIM_BUSY|RUN_QUOTA_EXCEEDED|SCHEDULE_QUOTA_EXCEEDED|USER_DISABLED|ACCOUNT_DEVICE_MISMATCH)/.exec(
+        : (/(?:MODEL_DISABLED|ACCOUNT_DISABLED|MEMORY_LIMIT|QUEUE_LIMIT|CLAIM_BUSY|RUN_QUOTA_EXCEEDED|SCHEDULE_QUOTA_EXCEEDED|USER_DISABLED|ACCOUNT_DEVICE_MISMATCH)/.exec(
             error.message,
           )?.[0] ?? "INTERNAL_ERROR");
   return c.json(

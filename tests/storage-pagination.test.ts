@@ -44,7 +44,7 @@ test("已确认周期任务启用及 tick 使用毫秒写入，配对接口仍�
     s.sql.prepare("SELECT typeof(next_run_at) type FROM tasks WHERE id='scheduled'").get()!.type,
     "integer",
   );
-  const pairing = await s.request("/api/pair/start", { name: "fixture", protocolVersion: 18 });
+  const pairing = await s.request("/api/pair/start", { name: "fixture", protocolVersion: 19 });
   assert.equal(pairing.status, 200);
   const read = await s.request("/api/admin/pairings/" + pairing.data.code, undefined, "GET");
   assert.equal(read.status, 200);
@@ -161,7 +161,7 @@ test("冻结转换只开放管理员核验，未核验对象阻止激活，激�
   );
   const device = await app.request(
     "http://localhost/api/admin/storage/status",
-    { headers: { Authorization: "Bearer " + "c".repeat(64), "x-taskrelay-protocol": "18" } },
+    { headers: { Authorization: "Bearer " + "c".repeat(64), "x-taskrelay-protocol": "19" } },
     s.env,
   );
   assert.equal(device.status, 403);

@@ -344,6 +344,7 @@ async function confirmCard(env: AppEnv, userId: string, id: string, input: Accou
   const verified = draft.verified && unchanged,
     accountId = row.account_id ?? uid("account");
   const previous = row.account_id ? await ownAccount(env, userId, row.account_id) : null;
+  if (previous?.enabled === 0) throw Error("ACCOUNT_DISABLED");
   if (
     previous &&
     (previous.credential_version !== row.credential_version ||
@@ -371,7 +372,7 @@ async function confirmCard(env: AppEnv, userId: string, id: string, input: Accou
   const fence = `EXISTS(SELECT 1 FROM account_cards c JOIN ai_threads t ON t.id=c.thread_id JOIN run_details r ON r.id=c.run_id
     WHERE c.id=? AND c.user_id=? AND c.status='pending' AND c.expires_at>? AND t.closed=0 AND r.context_withdrawn=0 AND r.history_deleted=0
     AND (c.wait_for_update=0 OR (SELECT COALESCE(MAX(seq),0) FROM ai_messages WHERE thread_id=c.thread_id AND role='user')=c.user_seq)
-    AND (c.account_id IS NULL OR EXISTS(SELECT 1 FROM accounts a WHERE a.id=c.account_id AND a.user_id=c.user_id AND a.credential_version=c.credential_version AND a.state_epoch=c.state_epoch)))
+    AND (c.account_id IS NULL OR EXISTS(SELECT 1 FROM accounts a WHERE a.id=c.account_id AND a.user_id=c.user_id AND a.credential_version=c.credential_version AND a.state_epoch=c.state_epoch AND a.enabled=1)))
     ${
       adopt
         ? `AND EXISTS(SELECT 1 FROM runs r JOIN account_locks l ON l.run_id=r.id WHERE r.id=? AND r.lease_epoch=?

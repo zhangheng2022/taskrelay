@@ -58,3 +58,71 @@ test("网站邮箱登录发送单一 JSON 媒体类型并签发可用会话", as
   assert.equal(session.status, 200);
   assert.equal(((await session.json()) as { user: { email: string } }).user.email, email);
 });
+
+test("Better Auth 会话列表、指定撤销及改密撤销其他会话经过真实路由", async (t) => {
+  const { db, sql } = testDb();
+  t.after(() => sql.close());
+  const origin = "http://localhost",
+    at = dbTime(Date.now()),
+    password = "fixture-session-password";
+  const env = {
+    DB: db,
+    AUTH_BASE_URL: origin,
+    AUTH_SECRET: "session-fixture-secret-longer-than-thirty-two",
+  } as AppEnv;
+  sql
+    .prepare(
+      "INSERT INTO auth_user(id,name,email,emailVerified,createdAt,updatedAt) VALUES('session-user','Test','session@example.com',1,?,?)",
+    )
+    .run(at, at);
+  sql
+    .prepare(
+      "INSERT INTO auth_account(id,accountId,providerId,userId,password,createdAt,updatedAt) VALUES('session-account','session-user','credential','session-user',?,?,?)",
+    )
+    .run(await hashPassword(password), at, at);
+  const request = async (path: string, body?: unknown, cookie = "") =>
+    app.request(
+      origin + "/api/auth/" + path,
+      {
+        method: body === undefined ? "GET" : "POST",
+        headers: { origin, cookie, "content-type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      },
+      env,
+    );
+  const login = async () => {
+    const r = await request("sign-in/email", { email: "session@example.com", password });
+    assert.equal(r.status, 200);
+    return r.headers
+      .getSetCookie()
+      .map((v) => v.split(";")[0])
+      .join("; ");
+  };
+  const first = await login(),
+    second = await login();
+  const sessions = (await (await request("list-sessions", undefined, first)).json()) as {
+    token: string;
+    id: string;
+  }[];
+  assert.equal(sessions.length, 2);
+  const me = (await (await request("get-session", undefined, first)).json()) as {
+    session: { id: string };
+  };
+  const other = sessions.find((s) => s.id !== me.session.id)!;
+  assert.equal((await request("revoke-session", { token: other.token }, first)).status, 200);
+  assert.equal(await (await request("get-session", undefined, second)).json(), null);
+  const third = await login();
+  const changed = await request(
+    "change-password",
+    {
+      currentPassword: password,
+      newPassword: "changed-fixture-password",
+      revokeOtherSessions: true,
+    },
+    first,
+  );
+  assert.equal(changed.status, 200);
+  assert.equal(await (await request("get-session", undefined, third)).json(), null);
+  assert.equal((await request("sign-out", {}, first)).status, 200);
+  assert.equal(await (await request("get-session", undefined, first)).json(), null);
+});

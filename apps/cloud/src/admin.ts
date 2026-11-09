@@ -13,11 +13,11 @@ const quota = z.number().int().min(0).max(100000);
 const memberSettingsInput = z
   .object({
     disabled: z.boolean(),
-    daily_runs: quota,
-    scheduled_tasks: quota,
-    queued_runs: quota,
-    daily_chat: quota,
-    daily_models: quota,
+    daily_runs: quota.optional(),
+    scheduled_tasks: quota.optional(),
+    queued_runs: quota.optional(),
+    daily_chat: quota.optional(),
+    daily_models: quota.optional(),
   })
   .strict();
 const poolInput = z.object({ claimsEnabled: z.boolean() }).strict();
@@ -32,12 +32,14 @@ export const admin = adminBase
         "SELECT id,email,role,disabled,daily_runs,scheduled_tasks,queued_runs,daily_chat,daily_models FROM members ORDER BY email",
       ),
       c.env.DB.prepare(
-        "SELECT id,name,last_seen,revoked,protocol_version FROM devices ORDER BY name",
+        "SELECT id,name,last_seen,revoked,protocol_version,(SELECT json_group_array(r.id) FROM runs r WHERE r.device_id=devices.id AND (r.status IN ('running','waiting_user','verifying','unknown') OR r.cleanup_pending=1)) active_run_ids FROM devices ORDER BY name",
       ),
       c.env.DB.prepare(
         "SELECT id,user_id,device_id,status,created_at,updated_at,json_extract(result,'$.errorCode') error_code FROM run_details ORDER BY created_at DESC,id DESC LIMIT 50",
       ),
-      c.env.DB.prepare("SELECT id,user_id,assigned_device_id,login_reset FROM accounts"),
+      c.env.DB.prepare(
+        "SELECT id,name,origin,user_id,assigned_device_id,login_reset FROM accounts",
+      ),
       c.env.DB.prepare("SELECT key,value FROM settings WHERE key='claimsEnabled'"),
     ]);
     return c.json({
@@ -58,6 +60,7 @@ export const admin = adminBase
         last_seen: d.last_seen == null ? null : String(d.last_seen),
         revoked: Number(d.revoked),
         protocol_version: Number(d.protocol_version),
+        activeRunIds: JSON.parse(String(d.active_run_ids ?? "[]")) as string[],
       })),
       runs: runs.results.map((r) => ({
         id: String(r.id),
@@ -70,6 +73,8 @@ export const admin = adminBase
       })),
       accounts: accounts.results.map((a) => ({
         id: String(a.id),
+        name: String(a.name),
+        origin: String(a.origin),
         user_id: String(a.user_id),
         assigned_device_id: a.assigned_device_id == null ? null : String(a.assigned_device_id),
         login_reset: Number(a.login_reset),
@@ -95,14 +100,14 @@ export const admin = adminBase
       if (!exists) throw new Error("USER_NOT_FOUND");
       await c.env.DB.batch<Row>([
         c.env.DB.prepare(
-          "UPDATE members SET disabled=?,daily_runs=?,scheduled_tasks=?,queued_runs=?,daily_chat=?,daily_models=? WHERE id=?",
+          "UPDATE members SET disabled=?,daily_runs=COALESCE(?,daily_runs),scheduled_tasks=COALESCE(?,scheduled_tasks),queued_runs=COALESCE(?,queued_runs),daily_chat=COALESCE(?,daily_chat),daily_models=COALESCE(?,daily_models) WHERE id=?",
         ).bind(
           Number(b.disabled),
-          b.daily_runs,
-          b.scheduled_tasks,
-          b.queued_runs,
-          b.daily_chat,
-          b.daily_models,
+          b.daily_runs ?? null,
+          b.scheduled_tasks ?? null,
+          b.queued_runs ?? null,
+          b.daily_chat ?? null,
+          b.daily_models ?? null,
           id,
         ),
         c.env.DB.prepare(
@@ -142,7 +147,7 @@ export const admin = adminBase
       // 不再旋转 profile 或丢弃云端状态，目标设备下次领取后尝试恢复。
       const eligible = `EXISTS(SELECT 1 FROM accounts a WHERE a.id=?
    AND EXISTS(SELECT 1 FROM devices WHERE id=? AND revoked=0 AND protocol_version=${PROTOCOL_VERSION})
-   AND NOT EXISTS(SELECT 1 FROM runs WHERE account_key=a.id AND status IN ('running','waiting_user','verifying','unknown')))`;
+   AND NOT EXISTS(SELECT 1 FROM runs WHERE account_key=a.id AND (status IN ('running','waiting_user','verifying','unknown') OR write_pending=1 OR may_have_written=1)))`;
       const results = await c.env.DB.batch([
         c.env.DB.prepare(
           `UPDATE browser_state_candidates SET retired=1 WHERE run_id IN(SELECT id FROM runs WHERE account_key=? AND status IN ('succeeded','failed','cancelled','expired')) AND ${eligible}`,
@@ -151,7 +156,7 @@ export const admin = adminBase
           `UPDATE runs SET cleanup_pending=0,cleanup_confirmed=1,state_candidate_key=NULL WHERE account_key=? AND status IN ('succeeded','failed','cancelled','expired') AND ${eligible}`,
         ).bind(id, id, b.deviceId),
         c.env.DB.prepare(
-          `DELETE FROM account_locks WHERE account_key=? AND run_id IN(SELECT id FROM runs WHERE cleanup_pending=0 AND status IN ('succeeded','failed','cancelled','expired')) AND ${eligible}`,
+          `DELETE FROM account_locks WHERE account_key=? AND run_id IN(SELECT id FROM runs WHERE cleanup_pending=0 AND write_pending=0 AND may_have_written=0 AND status IN ('succeeded','failed','cancelled','expired')) AND ${eligible}`,
         ).bind(id, id, b.deviceId),
         c.env.DB.prepare(
           `UPDATE accounts SET assigned_device_id=?,last_device_id=? WHERE id=? AND ${eligible}

@@ -1,5 +1,5 @@
 import { HistoryCleanup, type CleanupSelection } from "./history-cleanup";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
   Check,
@@ -91,9 +91,100 @@ function Workspace({ transport }: { transport: Transport }) {
     refreshing = workspace.isFetching;
   const [actionError, setActionError] = useState(""),
     [busy, setBusy] = useState(false);
-  const [page, setPage] = useState<"tasks" | "runs" | "settings">("tasks"),
-    [selected, setSelected] = useState<string | null>(() => location.hash.slice(1) || null),
+  const [page, setPageState] = useState<"tasks" | "runs" | "settings">(() =>
+      location.hash.startsWith("#settings")
+        ? "settings"
+        : location.hash === "#runs"
+          ? "runs"
+          : "tasks",
+    ),
+    [selected, setSelected] = useState<string | null>(() =>
+      location.hash.startsWith("#settings") || location.hash === "#runs"
+        ? null
+        : location.hash.slice(1) || null,
+    ),
     [runId, setRunId] = useState<string | null>(null);
+  const [settingsSection, setSettingsSection] = useState(
+    () => location.hash.split("/")[1] || "general",
+  );
+  const settingsScroll = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (settingsScroll.current) settingsScroll.current.scrollTop = 0;
+  }, [page, settingsSection]);
+  const settingsLeave = useRef<(() => Promise<boolean>) | null>(null);
+  const lastHash = useRef(location.hash);
+  const historyIndex = useRef(Number(history.state?.settingsIndex ?? 0));
+  const routing = useRef(false);
+  const applyHash = useCallback((hash: string) => {
+    lastHash.current = hash;
+    if (hash.startsWith("#settings")) {
+      setPageState("settings");
+      setSettingsSection(hash.split("/")[1] || "general");
+    } else if (hash === "#runs") setPageState("runs");
+    else {
+      setPageState("tasks");
+      setSelected(hash.slice(1) || null);
+    }
+  }, []);
+  const navigate = useCallback(
+    async (hash: string, changeHistory = true) => {
+      if (routing.current || hash === lastHash.current) return false;
+      routing.current = true;
+      try {
+        if (settingsLeave.current && !(await settingsLeave.current())) {
+          if (!changeHistory) {
+            const targetIndex = history.state?.settingsIndex;
+            if (typeof targetIndex === "number" && targetIndex !== historyIndex.current)
+              history.go(historyIndex.current - targetIndex);
+            else
+              history.replaceState(
+                { settingsIndex: historyIndex.current },
+                "",
+                location.pathname + location.search + lastHash.current,
+              );
+          }
+          return false;
+        }
+        if (changeHistory) {
+          historyIndex.current++;
+          history.pushState(
+            { settingsIndex: historyIndex.current },
+            "",
+            location.pathname + location.search + hash,
+          );
+        } else historyIndex.current = Number(history.state?.settingsIndex ?? historyIndex.current);
+        applyHash(hash);
+        return true;
+      } finally {
+        routing.current = false;
+      }
+    },
+    [applyHash],
+  );
+  useEffect(() => {
+    if (typeof history.state?.settingsIndex !== "number")
+      history.replaceState({ settingsIndex: historyIndex.current }, "", location.href);
+    const back = () => {
+      void navigate(location.hash, false).catch(() => {});
+    };
+    window.addEventListener("popstate", back);
+    window.addEventListener("hashchange", back);
+    return () => {
+      window.removeEventListener("popstate", back);
+      window.removeEventListener("hashchange", back);
+    };
+  }, [navigate]);
+  function setPage(next: "tasks" | "runs" | "settings") {
+    void navigate(
+      next === "settings"
+        ? window.matchMedia("(max-width: 767px)").matches
+          ? "#settings/index"
+          : "#settings/general"
+        : next === "runs"
+          ? "#runs"
+          : "",
+    ).catch(() => {});
+  }
   const [older, setOlder] = useState<{
     owner: Transport;
     tasks: TaskDefinition[];
@@ -230,17 +321,20 @@ function Workspace({ transport }: { transport: Transport }) {
     taskRuns.find((r) => r.cleanupPending || r.dispatchGroupActive) ??
     null;
   const pending = data.waitingHelp ?? [];
-  function choose(id: string | null, rid: string | null = null) {
-    setSelected(id);
-    setRunId(rid);
-    setPage("tasks");
-    setActionError("");
-    setOpenMobile(false);
-    history.replaceState(null, "", location.pathname + location.search + (id ? "#" + id : ""));
+  function choose(id: string | null, rid: string | null = null, fresh = false) {
+    void (async () => {
+      if (lastHash.current !== (id ? "#" + id : "") && !(await navigate(id ? "#" + id : "")))
+        return;
+      if (fresh) setDraftKey((k) => k + 1);
+      setSelected(id);
+      setRunId(rid);
+      setPageState("tasks");
+      setActionError("");
+      setOpenMobile(false);
+    })().catch(() => {});
   }
   function newTask() {
-    choose(null);
-    setDraftKey((k) => k + 1);
+    choose(null, null, true);
   }
   const offline = !!error;
   function requestCleanup(
@@ -585,9 +679,21 @@ function Workspace({ transport }: { transport: Transport }) {
             </Button>
           </div>
         )}
-        {page === "settings" ? (
-          <div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-8">
-            <Settings transport={transport} snapshot={data} refresh={refresh} />
+        {page === "settings" &&
+        snapshot &&
+        !/AUTH_REQUIRED|MEMBER_DISABLED|EMAIL_VERIFICATION_REQUIRED/.test(error) ? (
+          <div ref={settingsScroll} className="min-h-0 flex-1 overflow-y-auto p-4 md:p-8">
+            <Settings
+              transport={transport}
+              snapshot={data}
+              refresh={refreshWorkspace}
+              section={settingsSection}
+              navigate={(id) => void navigate("#settings/" + id)}
+              theme={theme}
+              setTheme={setTheme}
+              leaveGuard={settingsLeave}
+              onCleanup={() => requestCleanup("all")}
+            />
           </div>
         ) : !snapshot ? (
           <div
@@ -609,7 +715,7 @@ function Workspace({ transport }: { transport: Transport }) {
             )}
           </div>
         ) : page === "runs" ? (
-          <div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-8">
+          <div ref={settingsScroll} className="min-h-0 flex-1 overflow-y-auto p-4 md:p-8">
             <div className="mx-auto flex max-w-3xl flex-col gap-2">
               {data.runs.length ? (
                 data.runs.map((r) => (

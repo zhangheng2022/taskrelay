@@ -133,7 +133,7 @@ test("当前迁移的全部表/列/主键/外键与 Drizzle 对齐，并完整�
         );
       const table = new RegExp(
         `-- ([^\\n]+)\\nCREATE TABLE ${config.name} \\(([\\s\\S]*?)\\n\\);`,
-      ).exec(baseline);
+      ).exec(baseline + "\n" + migrations);
       assert.ok(table && /[\u4e00-\u9fff]/.test(table[1]), config.name + " 表注释");
       for (const c of cols)
         assert.match(
@@ -144,9 +144,9 @@ test("当前迁移的全部表/列/主键/外键与 Drizzle 对齐，并完整�
           config.name + "." + c.name + " 字段注释",
         );
     }
-    for (const m of baseline.matchAll(/CREATE (?:UNIQUE )?INDEX (\w+)/g))
+    for (const m of (baseline + "\n" + migrations).matchAll(/CREATE (?:UNIQUE )?INDEX (\w+)/g))
       assert.match(
-        baseline.slice(0, m.index).split("\n").at(-2)!,
+        (baseline + "\n" + migrations).slice(0, m.index).split("\n").at(-2)!,
         /-- .*?[\u4e00-\u9fff]/,
         m[1] + " 索引说明",
       );

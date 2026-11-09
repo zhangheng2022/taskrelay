@@ -1,8 +1,10 @@
-import type {
-  Snapshot,
-  TaskDefinition,
-  Transport,
-  DesktopStatus,
+import type { MemoryPreference } from "../../../packages/contracts/src/preferences";
+import {
+  PROTOCOL_VERSION,
+  type Snapshot,
+  type TaskDefinition,
+  type Transport,
+  type DesktopStatus,
 } from "../../../packages/contracts/src/index";
 import type { ThreadPage } from "../../../packages/ui/src/use-thread";
 
@@ -35,6 +37,7 @@ export function createFixtureTransport(options: URLSearchParams): Transport {
     schedule: { kind: "manual" },
   };
   const snapshot: Snapshot = {
+    me: { id: "demo", email: "demo@example.com", role: options.has("admin") ? "admin" : "user" },
     tasks: state === "new" ? [] : [definition],
     runs: [],
     accounts: [],
@@ -161,7 +164,36 @@ export function createFixtureTransport(options: URLSearchParams): Transport {
       }))
     : [];
   const threads = new Map<string, ThreadPage & { kind: "chat" }>();
-  const memories = new Map<string, { key: string; value: { text: string } }>();
+  const memories = new Map<string, MemoryPreference>();
+  if (options.has("settings")) {
+    snapshot.accounts.push({
+      id: "demo_account",
+      name: "工作账号",
+      origin: "https://example.com",
+      usernameHint: "de***",
+      enabled: true,
+      managementVersion: 1,
+      createdAt: new Date().toISOString(),
+      assignedDeviceId: null,
+      credentialVersion: 1,
+      stateEpoch: 1,
+      credentialStatus: "valid",
+      syncStatus: "synced",
+    });
+    const at = new Date().toISOString();
+    for (let i = 0; i < (options.has("long") ? 105 : 2); i++)
+      memories.set("memory_" + i, {
+        id: "memory_" + i,
+        text:
+          i === 0 ? "结果优先使用中文，保持简洁，列出仍需确认的事项。" : "日期使用年-月-日格式。",
+        enabled: i === 0,
+        version: 1,
+        createdAt: at,
+        updatedAt: at,
+      });
+  }
+  let retentionDays = 30,
+    claimsEnabled = "0";
   let failed = false;
   let threadFailures = 0;
   const desktop: DesktopStatus = {
@@ -334,11 +366,30 @@ export function createFixtureTransport(options: URLSearchParams): Transport {
           snapshot.waitingHelp = [];
           result = { ...structuredClone(page), status: "done" };
         } else result = structuredClone(page);
-      } else if (path === "/api/user/memories") result = [...memories.values()];
+      } else if (path.startsWith("/api/user/memory-page")) {
+        const start = Number(new URL(path, "http://fixture").searchParams.get("before") ?? 0),
+          values = [...memories.values()];
+        result = {
+          items: values.slice(start, start + 30),
+          nextCursor: start + 30 < values.length ? String(start + 30) : null,
+        };
+      } else if (path === "/api/user/memories")
+        result = [...memories.values()].map((m) => ({ key: m.id, value: { text: m.text } }));
       else if (path.startsWith("/api/user/memories/")) {
         const key = path.split("/").at(-1)!;
         if (method === "DELETE") memories.delete(key);
-        else memories.set(key, { key, value: { text: (body as { text: string }).text } });
+        else {
+          const input = body as { text: string; enabled: boolean };
+          const at = new Date().toISOString();
+          memories.set(key, {
+            id: key,
+            text: input.text,
+            enabled: input.enabled,
+            version: (memories.get(key)?.version ?? 0) + 1,
+            createdAt: memories.get(key)?.createdAt ?? at,
+            updatedAt: at,
+          });
+        }
         result = { ok: true };
       } else if (path.endsWith("/cancel")) {
         snapshot.runs[0].cancelRequested = true;
@@ -369,7 +420,39 @@ export function createFixtureTransport(options: URLSearchParams): Transport {
           ],
           usage: [{ input: 11, output: 7, cost: null }],
         };
-      else if (path === "/api/user/settings") result = { retentionDays: 30 };
+      else if (path === "/api/user/settings" || path === "/api/admin/settings") {
+        if (method === "PUT") retentionDays = (body as { retentionDays: number }).retentionDays;
+        result = { retentionDays };
+      } else if (path === "/api/admin/pool") {
+        claimsEnabled = (body as { claimsEnabled: boolean }).claimsEnabled ? "1" : "0";
+        result = { ok: true };
+      } else if (path === "/api/admin/operations")
+        result = {
+          users: [
+            { id: "demo", email: "demo@example.com", role: "admin", disabled: 0 },
+            { id: "other", email: "member@example.com", role: "user", disabled: 0 },
+          ],
+          devices: [
+            {
+              id: "demo_device",
+              name: "办公室执行器",
+              last_seen: new Date().toISOString(),
+              revoked: 0,
+              protocol_version: PROTOCOL_VERSION,
+              activeRunIds: [],
+            },
+          ],
+          runs: [],
+          accounts: snapshot.accounts.map((a) => ({
+            id: a.id,
+            name: a.name,
+            origin: a.origin,
+            user_id: "demo",
+            assigned_device_id: null,
+            login_reset: 0,
+          })),
+          settings: { claimsEnabled },
+        };
       else result = { ok: true };
       return result as T;
     },
