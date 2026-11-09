@@ -11,4 +11,4 @@ export function productionHealth(): Promise<{
 export function github(route: string, method?: string, body?: unknown): Promise<any>;
 export function cloudflare(route: string, method?: string, body?: unknown): Promise<any>;
 export function query(sql: string, params?: unknown[]): Promise<any[]>;
-export function verifyQuality(sha: string): Promise<number>;
+export function verifyQuality(sha: string, legacy?: boolean): Promise<number>;

@@ -5,14 +5,21 @@ import { assertFloors, changedLines, parseLcov } from "../scripts/check-coverage
 
 test("质量汇总拒绝取消、漏跑、缺报告及必要安装作业跳过", () => {
   const jobs = Object.fromEntries(
-    ["static", "test", "security", "codeql", "web", "desktop"].map((name) => [
-      name,
-      { result: "success", outputs: { verified: "true" } },
-    ]),
+    [
+      "static",
+      "secrets",
+      "test-linux",
+      "test-windows",
+      "workflow-checks",
+      "security",
+      "codeql",
+      "web",
+      "desktop",
+    ].map((name) => [name, { result: "success", outputs: { verified: "true" } }]),
   );
   verifyJobs(jobs, true);
   for (const state of ["failure", "cancelled", "skipped", "unknown"]) {
-    assert.throws(() => verifyJobs({ ...jobs, test: { result: state } }, true));
+    assert.throws(() => verifyJobs({ ...jobs, "test-linux": { result: state } }, true));
   }
   assert.throws(() => verifyJobs({ ...jobs, web: { result: "success" } }, true));
   assert.throws(() => verifyJobs({ ...jobs, desktop: { result: "skipped" } }, true));

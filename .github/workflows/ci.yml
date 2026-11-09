@@ -1,24 +1,27 @@
-name: Quality
+name: CI · 持续集成
+run-name: CI · ${{ github.event_name }} · ${{ github.event.pull_request.number && format('PR {0}', github.event.pull_request.number) || github.ref_name }}
 on:
   push:
-    branches:
-      - master
-  pull_request: null
-  workflow_dispatch: null
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
   schedule:
-    - cron: 0 1 * * 1
+    - cron: "0 1 * * 1"
 permissions:
   contents: read
 concurrency:
-  group: quality-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 jobs:
   scope:
+    name: Scope · 检查范围
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     outputs:
+      code: ${{ steps.scope.outputs.code }}
       desktop: ${{ steps.scope.outputs.desktop }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -27,165 +30,256 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: node scripts/change-scope.mjs
   static:
+    name: Lint · 源码检查
+    needs: scope
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    outputs: &a1
+    outputs:
       verified: ${{ steps.verified.outputs.verified }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - &a2
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with:
-          node-version: 24.18.0
-          cache: npm
-      - &a3
-        run: npm ci --no-audit --no-fund
-        env:
-          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - uses: ./.github/actions/setup-node
       - run: npm run format:check
-      - run: npm run lint
-      - run: npm run typecheck
       - run: npm run check:repo
+      - if: needs.scope.outputs.code == 'true'
+        run: npm run lint
+      - if: needs.scope.outputs.code == 'true'
+        run: npm run typecheck
+      - run: git diff --exit-code
+      - id: verified
+        name: Verify · 记录完成
+        shell: bash
+        run: echo 'verified=true' >> "$GITHUB_OUTPUT"
+  test-linux:
+    name: Test · Linux / Coverage
+    needs: scope
+    if: needs.scope.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      verified: ${{ steps.verified.outputs.verified }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-node
+      - run: npm run test:coverage
+        env:
+          COVERAGE_BASE: ${{ github.event.pull_request.base.sha }}
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-${{ github.run_attempt }}
+          path: |
+            coverage/**
+            !coverage/tmp/**
+          if-no-files-found: error
+          retention-days: 7
+      - id: verified
+        name: Verify · 记录完成
+        shell: bash
+        run: echo 'verified=true' >> "$GITHUB_OUTPUT"
+  test-windows:
+    name: Test · Windows
+    needs: scope
+    if: needs.scope.outputs.code == 'true'
+    runs-on: windows-2025
+    timeout-minutes: 20
+    outputs:
+      verified: ${{ steps.verified.outputs.verified }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-node
+      - run: npm test
+      - id: verified
+        name: Verify · 记录完成
+        shell: bash
+        run: echo 'verified=true' >> "$GITHUB_OUTPUT"
+  secrets:
+    name: Secrets · 秘密扫描
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      verified: ${{ steps.verified.outputs.verified }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-node
+        with:
+          ignore-scripts: "true"
+      - run: node scripts/check-secrets.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - id: verified
+        name: Verify · 记录完成
+        shell: bash
+        run: echo 'verified=true' >> "$GITHUB_OUTPUT"
+  security:
+    name: Security · 依赖审计
+    needs: scope
+    if: needs.scope.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      verified: ${{ steps.verified.outputs.verified }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node
+        with:
+          ignore-scripts: "true"
+      - run: npm audit --audit-level=high
+      - run: node scripts/audit-runtime.mjs
+      - if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+          warn-only: false
+          comment-summary-in-pr: never
+      - id: verified
+        name: Verify · 记录完成
+        shell: bash
+        run: echo 'verified=true' >> "$GITHUB_OUTPUT"
+  workflow-checks:
+    name: Actions · 工作流与工具自检
+    needs: scope
+    if: needs.scope.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      verified: ${{ steps.verified.outputs.verified }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node
       - run: npm run check:workflows
         env:
           GH_TOKEN: ${{ github.token }}
       - run: node scripts/quality-probes.mjs
         env:
           GH_TOKEN: ${{ github.token }}
-      - run: git diff --exit-code
-      - &a4
-        id: verified
+      - id: verified
+        name: Verify · 记录完成
         shell: bash
         run: echo 'verified=true' >> "$GITHUB_OUTPUT"
-  test:
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    outputs: *a1
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - *a2
-      - *a3
-      - if: runner.os == 'Linux'
-        run: npm run test:coverage
-        env:
-          COVERAGE_BASE: ${{ github.event.pull_request.base.sha }}
-      - if: runner.os == 'Windows'
-        run: npm test
-      - if: runner.os == 'Linux' && always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: coverage
-          path: |
-            coverage/**
-            !coverage/tmp/**
-          if-no-files-found: error
-          retention-days: 7
-      - *a4
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-24.04
-          - windows-2025
-  security:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    outputs: *a1
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - *a2
-      - run: npm ci --ignore-scripts --no-audit --no-fund
-      - run: node scripts/check-secrets.mjs
-        env:
-          GH_TOKEN: ${{ github.token }}
-      - run: npm audit --audit-level=high
-      - run: node scripts/audit-runtime.mjs
-      - if: github.event_name == 'pull_request'
-        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294
-        with:
-          fail-on-severity: high
-          warn-only: false
-          comment-summary-in-pr: never
-      - *a4
   codeql:
+    name: CodeQL · 代码安全
+    needs: scope
+    if: needs.scope.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    # 质量门槛核验完整结果；不能只限制在 PR 差异行而遗漏既有高危问题。
+    permissions:
+      contents: read
+      security-events: write
     env:
       CODEQL_ACTION_DIFF_INFORMED_QUERIES: "false"
-    outputs: *a1
+    outputs:
+      verified: ${{ steps.verified.outputs.verified }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           languages: javascript-typescript
           queries: security-extended
           build-mode: none
-      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           output: out/codeql
           upload: always
       - if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: codeql-results
+          name: codeql-results-${{ github.run_attempt }}
           path: out/codeql/*.sarif
           if-no-files-found: error
           retention-days: 7
       - run: node scripts/quality-gate.mjs sarif out/codeql/javascript.sarif
-      - *a4
-    permissions:
-      contents: read
-      security-events: write
+      - id: verified
+        name: Verify · 记录完成
+        shell: bash
+        run: echo 'verified=true' >> "$GITHUB_OUTPUT"
   web:
+    name: Build · Web
+    needs: scope
+    if: needs.scope.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    outputs: *a1
+    outputs:
+      verified: ${{ steps.verified.outputs.verified }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - *a2
-      - *a3
+      - uses: ./.github/actions/setup-node
       - run: npm run build
-      - *a4
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        run: node scripts/release-artifacts.mjs stamp web apps/web/dist
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ci-web-${{ github.run_attempt }}
+          path: apps/web/dist
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
+      - id: verified
+        name: Verify · 记录完成
+        shell: bash
+        run: echo 'verified=true' >> "$GITHUB_OUTPUT"
   desktop:
+    name: Build · Windows
     needs: scope
     if: needs.scope.outputs.desktop == 'true'
-    uses: ./.github/workflows/windows-package.yml
+    uses: ./.github/workflows/build-windows.yml
     with:
       source-sha: ${{ github.sha }}
-  quality-gate:
-    name: quality-gate
+      archive-package: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      artifact-name: ci-windows-${{ github.run_attempt }}
+  ci-gate:
+    name: CI Gate · 合并检查
     if: always()
     needs:
-      - scope
-      - static
-      - test
-      - security
-      - codeql
-      - web
-      - desktop
+      [
+        scope,
+        static,
+        secrets,
+        test-linux,
+        test-windows,
+        security,
+        workflow-checks,
+        codeql,
+        web,
+        desktop,
+      ]
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - env:
-          SCOPE_RESULT: ${{ needs.scope.result }}
-          DESKTOP_REQUIRED: ${{ needs.scope.outputs.desktop }}
           QUALITY_NEEDS: ${{ toJSON(needs) }}
-        run: |-
-          test "$SCOPE_RESULT" = success
-          test "$DESKTOP_REQUIRED" = true || test "$DESKTOP_REQUIRED" = false
-          node scripts/quality-gate.mjs
+        run: node scripts/quality-gate.mjs
+  quality-gate:
+    # 迁移期间维持当前 ruleset；新门槛通过后才允许旧检查通过。
+    name: quality-gate
+    if: always()
+    needs: ci-gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - env:
+          GATE_RESULT: ${{ needs.ci-gate.result }}
+        run: test "$GATE_RESULT" = success

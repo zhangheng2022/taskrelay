@@ -1,16 +1,18 @@
 # TaskRelay 当前架构
 
-交付由 GitHub Actions 拥有：Quality 在 PR 与 master 汇总固定 `quality-gate`，手动 Production release 只接受同一 SHA 的主分支成功报告。发布状态机以 D1 settings 的 `productionRelease` 做条件更新，保存原开关、恢复点及不可变产物引用；失败不自动恢复领取或回滚数据库。新基线的 release_claim_barrier 触发器在领取事务中检查暂停状态，管理员设置入口拒绝与进行中的发布竞争。更新目录由 RequestCoordinator 从 D1 `desktopReleaseCatalog` 读取；Worker 只路由，旧编译目录仅作首次初始化。
+交付由 GitHub Actions 拥有：CI · 持续集成在 PR 与 master 汇总 `CI Gate · 合并检查`；迁移期间旧 `quality-gate` 依赖新门槛。手动 Release · 生产发布只接受同一 SHA 的主分支成功报告。发布状态机以 D1 settings 的 `productionRelease` 做条件更新，保存原开关、恢复点及不可变产物引用；失败不自动恢复领取或回滚数据库。新基线的 release_claim_barrier 触发器在领取事务中检查暂停状态，管理员设置入口拒绝与进行中的发布竞争。更新目录由 RequestCoordinator 从 D1 `desktopReleaseCatalog` 读取；Worker 只路由，旧编译目录仅作首次初始化。
 
 ```mermaid
 flowchart TD
-    PR[PR 检查] --> G[quality-gate]
+    PR[PR 检查] --> G[CI Gate · 合并检查]
     G --> M[合并 master 并重新检查]
     M --> R[手动发布固定 SHA]
-    R --> W[托管 Windows 构建与实际安装验收]
-    R --> B[托管 Linux 构建网站]
-    W --> P[暂停领取并确认清理]
-    B --> P
+    M --> W[托管 Windows 构建与实际安装验收]
+    M --> B[托管 Linux 构建网站]
+    W --> V[发布时核验并归档产物，缺失才补建]
+    B --> V
+    R --> V
+    V --> P[暂停领取并确认清理]
     P --> D[D1 恢复点与迁移]
     D --> C[云端和网页部署]
     C --> A[不可变 Release 与下载哈希校验]
@@ -19,6 +21,12 @@ flowchart TD
     R --> H[已有 workers.dev 入口健康检查]
     A --> H
 ```
+
+CI 影响范围与产品发布范围由 workflow-policy 共同维护，未知路径全量；删除和重命名同时保留前后路径。CI 配置改动触发构建验收但不自动要求应用发版。源码静态检查与工作流工具自检分开，两个平台的测试独立报告，汇总门槛校验范围、成功状态与完成标记。
+
+主分支 CI 保存同次构建的 Web 与 Windows 候选，PR 只保存报告。artifact-manifest 固定源提交、构建 run/attempt、版本和完整文件树哈希；Windows 同时绑定包内/安装 smoke。发布先验证 GitHub Artifact ID、所属工作流/事件/仓库/提交，再将文件和 release-plan 归档到本次发布运行。D1 保存 bundleId 与 planHash，区别于原始构建 run；恢复不依赖 CI 候选仍存在，且按阶段读取必要附件。等待设备阶段不再下载构建附件。旧记录无 bundleId 时沿用原报告和旧门槛恢复，新发布不能用旧门槛。
+
+生产作业的业务源码固定 source-sha，控制脚本来自本次工作流提交的独立 automation checkout，避免恢复旧发布时退回旧恢复逻辑。依赖安装与 Wrangler 操作仍针对业务源码；生产状态机及协议检查使用所选源码的 contracts。
 
 Actions 的无会话健康检查、部署 SHA 核验与安装包下载哈希核验固定访问同一 Worker 已保留的 `taskrelay.zhangheng.workers.dev`。主域的 Bot Fight Mode 可能挑战托管 Runner；不因此关闭全域防护、添加广泛 IP 放行或携带用户会话。主站与客户端更新地址不变，应用鉴权在两个域名仍由同一 Worker 执行。
 

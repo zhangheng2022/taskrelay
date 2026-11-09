@@ -2,15 +2,39 @@
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-export function verifyJobs(jobs, desktopRequired) {
-  const required = ["static", "test", "security", "codeql", "web"];
+export function verifyJobs(jobs, desktopRequired, codeRequired = true) {
+  const required = ["static", "secrets"];
+  if (codeRequired)
+    required.push("test-linux", "test-windows", "security", "codeql", "web", "workflow-checks");
   if (desktopRequired) required.push("desktop");
   for (const name of required) {
     if (jobs[name]?.result !== "success" || jobs[name]?.outputs?.verified !== "true")
       throw Error(`QUALITY_JOB_INCOMPLETE:${name}`);
   }
-  if (!desktopRequired && !["success", "skipped"].includes(jobs.desktop?.result))
-    throw Error("QUALITY_DESKTOP_UNEXPECTED_STATE");
+  for (const name of [
+    "test-linux",
+    "test-windows",
+    "security",
+    "codeql",
+    "web",
+    "workflow-checks",
+    "desktop",
+  ]) {
+    if (!required.includes(name) && !["success", "skipped"].includes(jobs[name]?.result))
+      throw Error(`QUALITY_JOB_UNEXPECTED_STATE:${name}`);
+  }
+}
+export function verifyPlan(jobs) {
+  const scope = jobs.scope;
+  if (
+    scope?.result !== "success" ||
+    !["true", "false"].includes(scope.outputs?.desktop) ||
+    !["true", "false"].includes(scope.outputs?.code)
+  )
+    throw Error("QUALITY_SCOPE_INVALID");
+  if (scope.outputs.desktop === "true" && scope.outputs.code !== "true")
+    throw Error("QUALITY_SCOPE_INVALID");
+  verifyJobs(jobs, scope.outputs.desktop === "true", scope.outputs.code === "true");
 }
 
 export function verifySarif(document) {
@@ -58,10 +82,6 @@ export function verifySarif(document) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   if (process.argv[2] === "sarif") verifySarif(JSON.parse(readFileSync(process.argv[3], "utf8")));
-  else
-    verifyJobs(
-      JSON.parse(process.env.QUALITY_NEEDS ?? "{}"),
-      process.env.DESKTOP_REQUIRED === "true",
-    );
+  else verifyPlan(JSON.parse(process.env.QUALITY_NEEDS ?? "{}"));
   console.log("质量门槛通过");
 }

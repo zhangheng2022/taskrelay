@@ -41,7 +41,7 @@ test("发布预检只接受目标 SHA 的 master push 最新报告和唯一成�
     status: "completed",
     conclusion: "success",
   };
-  let jobs = [{ name: "quality-gate", conclusion: "success" }];
+  let jobs = [{ name: "CI Gate · 合并检查", conclusion: "success" }];
   t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) =>
     requestUrl(input).includes("/jobs?")
       ? Response.json({ total_count: jobs.length, jobs })
@@ -59,9 +59,12 @@ test("发布预检只接受目标 SHA 的 master push 最新报告和唯一成�
     await assert.rejects(verifyQuality(sha));
     report = previous;
   }
+  jobs = [{ name: "quality-gate", conclusion: "success" }];
+  await assert.rejects(verifyQuality(sha));
+  assert.equal(await verifyQuality(sha, true), 7);
   jobs = [];
   await assert.rejects(verifyQuality(sha));
-  jobs = [{ name: "quality-gate", conclusion: "cancelled" }];
+  jobs = [{ name: "CI Gate · 合并检查", conclusion: "cancelled" }];
   await assert.rejects(verifyQuality(sha));
 });
 test("生产 API 禁止重定向、隐藏上游秘密，失败及未知结果不重试", async (t) => {

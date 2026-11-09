@@ -1,0 +1,29 @@
+name: Setup Node · 初始化依赖
+description: 固定 Node 与锁文件安装；缓存只包含 npm 下载，不包含产物或验收结果。
+inputs:
+  electron:
+    description: 是否下载 Electron 二进制
+    default: "false"
+  ignore-scripts:
+    description: 安全审计禁用依赖安装脚本
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: 24.18.0
+        cache: npm
+    - name: Install · 安装锁定依赖
+      shell: bash
+      env:
+        ELECTRON_SKIP_BINARY_DOWNLOAD: ${{ inputs.electron == 'true' && '0' || '1' }}
+        DOWNLOAD_ELECTRON: ${{ inputs.electron }}
+        IGNORE_SCRIPTS: ${{ inputs.ignore-scripts }}
+      run: |
+        if [ "$DOWNLOAD_ELECTRON" = true ]; then unset ELECTRON_SKIP_BINARY_DOWNLOAD; fi
+        if [ "$IGNORE_SCRIPTS" = true ]; then
+          npm ci --ignore-scripts --no-audit --no-fund
+        else
+          npm ci --no-audit --no-fund
+        fi

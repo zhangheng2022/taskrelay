@@ -1,19 +1,26 @@
-/** 路径影响保守归并；手动及首次检查默认包含安装验收，未知范围不允许静默省略。 */
-import { execFileSync } from "node:child_process";
+/** 输出经过保守分类的 CI 检查计划；手动、定时及差异不可用时执行全量。 */
 import { appendFileSync } from "node:fs";
+import { changedPaths, checkPlan } from "./workflow-policy.mjs";
 const base = process.env.BASE_SHA;
-const files =
-  base && /^[a-f0-9]{40}$/.test(base) && !/^0+$/.test(base)
-    ? execFileSync("git", ["diff", "--name-only", `${base}...HEAD`], { encoding: "utf8" })
-        .trim()
-        .split(/\r?\n/)
-    : null;
-const desktop =
-  !files ||
-  files.some((file) =>
-    /^(apps\/desktop\/|packages\/|resources\/|scripts\/|\.github\/|package(?:-lock)?\.json|tsconfig\.json|tests\/(?:executor-|browser-state-|local-cdp\.|stagehand-|updater\.|ui-executor-))/.test(
-      file,
-    ),
+let files = null;
+if (
+  !["schedule", "workflow_dispatch"].includes(process.env.GITHUB_EVENT_NAME) &&
+  /^[a-f0-9]{40}$/.test(base ?? "") &&
+  !/^0+$/.test(base)
+) {
+  try {
+    files = changedPaths(base, "HEAD", process.env.GITHUB_EVENT_NAME === "pull_request");
+  } catch {
+    console.error("差异不可用，执行全量检查");
+  }
+}
+const plan = checkPlan(files);
+if (process.env.GITHUB_OUTPUT)
+  for (const [key, value] of Object.entries(plan))
+    appendFileSync(process.env.GITHUB_OUTPUT, `${key}=${value}\n`);
+if (process.env.GITHUB_STEP_SUMMARY)
+  appendFileSync(
+    process.env.GITHUB_STEP_SUMMARY,
+    `检查范围：${plan.code ? "代码检查、跨平台测试、安全与构建" : "纯文档：格式、仓库约束与秘密扫描"}；Windows 安装验收：${plan.desktop ? "需要" : "无相关改动，跳过"}。\n`,
   );
-if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `desktop=${desktop}\n`);
-console.log(JSON.stringify({ desktop }));
+console.log(JSON.stringify(plan));

@@ -1,30 +1,23 @@
-name: Production release
+name: Release · 生产发布
+run-name: Release · ${{ inputs.mode }} · ${{ inputs.scope }} · ${{ inputs.source-sha || github.sha }}
 on:
   workflow_dispatch:
     inputs:
       scope:
         description: 发布范围（遗漏必要范围会失败）
         type: choice
-        options:
-          - auto
-          - all
-          - cloud
-          - desktop
+        options: [auto, all, cloud, desktop]
         default: auto
       mode:
         description: 发布或恢复未完成发布
         type: choice
-        options:
-          - publish
-          - resume
+        options: [publish, resume]
         default: publish
       source-sha:
         description: 固定提交 SHA；留空使用本次 master
-        required: false
         type: string
       recovery-run:
-        description: 恢复时填写首次验收运行 ID
-        required: false
+        description: 恢复时填写首次发布运行 ID
         type: string
 permissions:
   contents: read
@@ -33,6 +26,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   preflight:
+    name: Preflight · 发布预检
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -45,20 +39,17 @@ jobs:
       version: ${{ steps.plan.outputs.version }}
       mode: ${{ steps.plan.outputs.mode }}
       artifactRunId: ${{ steps.plan.outputs.artifactRunId }}
+      qualityRunId: ${{ steps.plan.outputs.qualityRunId }}
+      webArtifactId: ${{ steps.plan.outputs.webArtifactId }}
+      windowsArtifactId: ${{ steps.plan.outputs.windowsArtifactId }}
+      buildWeb: ${{ steps.plan.outputs.buildWeb }}
+      buildWindows: ${{ steps.plan.outputs.buildWindows }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
-      - &a1
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with:
-          node-version: 24.18.0
-          cache: npm
-      - &a2
-        run: npm ci --no-audit --no-fund
-        env:
-          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - uses: ./.github/actions/setup-node
       - id: plan
         env:
           GH_TOKEN: ${{ github.token }}
@@ -68,44 +59,93 @@ jobs:
           RECOVERY_RUN: ${{ inputs.recovery-run }}
         run: node scripts/release-preflight.mjs
   web:
+    name: Build · 补建 Web
     needs: preflight
-    if: needs.preflight.outputs.cloud == 'true' && needs.preflight.outputs.mode ==
-      'publish'
+    if: needs.preflight.outputs.buildWeb == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    outputs:
+      artifact-id: ${{ steps.archive.outputs.artifact-id }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 0
           ref: ${{ needs.preflight.outputs.sha }}
-      - *a1
-      - *a2
-      - run: npm audit --audit-level=high
-      - run: node scripts/audit-runtime.mjs
+      - uses: ./.github/actions/setup-node
       - run: npm run build
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      - run: node scripts/release-artifacts.mjs stamp web apps/web/dist
+      - id: archive
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: production-web
+          name: build-web-${{ github.run_attempt }}
           path: apps/web/dist
+          include-hidden-files: true
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
   desktop:
+    name: Build · 补建 Windows
     needs: preflight
-    if: needs.preflight.outputs.desktop == 'true' && needs.preflight.outputs.mode ==
-      'publish'
-    uses: ./.github/workflows/windows-package.yml
+    if: needs.preflight.outputs.buildWindows == 'true'
+    uses: ./.github/workflows/build-windows.yml
     with:
       source-sha: ${{ needs.preflight.outputs.sha }}
       archive-package: true
+      artifact-name: build-windows-${{ github.run_attempt }}
+  prepare:
+    name: Artifacts · 验证与归档
+    needs: [preflight, web, desktop]
+    if: >-
+      always() && needs.preflight.result == 'success' && needs.preflight.outputs.mode == 'publish' &&
+      (needs.web.result == 'success' || needs.web.result == 'skipped') &&
+      (needs.desktop.result == 'success' || needs.desktop.result == 'skipped')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      bundle-id: ${{ steps.archive.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node
+      - if: needs.preflight.outputs.cloud == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.preflight.outputs.webArtifactId || needs.web.outputs.artifact-id }}
+          path: artifacts/web
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          run-id: ${{ needs.preflight.outputs.webArtifactId && needs.preflight.outputs.qualityRunId || github.run_id }}
+      - if: needs.preflight.outputs.desktop == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.preflight.outputs.windowsArtifactId || needs.desktop.outputs.artifact-id }}
+          path: artifacts/windows
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          run-id: ${{ needs.preflight.outputs.windowsArtifactId && needs.preflight.outputs.qualityRunId || github.run_id }}
+      - run: node scripts/release-artifacts.mjs assemble
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.preflight.outputs.sha }}
+          WEB_ARTIFACT_ID: ${{ needs.preflight.outputs.webArtifactId || needs.web.outputs.artifact-id }}
+          WINDOWS_ARTIFACT_ID: ${{ needs.preflight.outputs.windowsArtifactId || needs.desktop.outputs.artifact-id }}
+      - id: archive
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-bundle-${{ github.run_attempt }}
+          path: artifacts
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
   production:
-    needs:
-      - preflight
-      - web
-      - desktop
-    if: always() && needs.preflight.result == 'success' && (needs.web.result ==
-      'success' || needs.web.result == 'skipped') && (needs.desktop.result ==
-      'success' || needs.desktop.result == 'skipped')
+    name: Deploy · 生产发布与恢复
+    needs: [preflight, prepare]
+    if: >-
+      always() && needs.preflight.result == 'success' &&
+      (needs.prepare.result == 'success' || (needs.preflight.outputs.mode == 'resume' && needs.prepare.result == 'skipped'))
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     environment: production
@@ -113,36 +153,61 @@ jobs:
       contents: write
       actions: read
     env:
-      GH_TOKEN: ${{ github.token }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: b3a410496c5e49e582b4af19d2f2eec6
       RELEASE_SHA: ${{ needs.preflight.outputs.sha }}
       RELEASE_CLOUD: ${{ needs.preflight.outputs.cloud }}
       RELEASE_DESKTOP: ${{ needs.preflight.outputs.desktop }}
       RELEASE_MODE: ${{ needs.preflight.outputs.mode }}
       ARTIFACT_RUN_ID: ${{ needs.preflight.outputs.artifactRunId }}
+      RELEASE_BUNDLE_ID: ${{ needs.prepare.outputs.bundle-id }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 0
           ref: ${{ needs.preflight.outputs.sha }}
-      - *a1
-      - *a2
-      - if: needs.preflight.outputs.cloud == 'true'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+          fetch-depth: 0
+      # 控制脚本固定在本次 workflow 提交，业务源码固定在 source-sha；旧发布恢复也使用新版恢复逻辑。
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          name: production-web
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          path: automation
+      - uses: ./automation/.github/actions/setup-node
+      - if: needs.preflight.outputs.mode == 'resume'
+        id: recovery
+        run: node automation/scripts/release-recovery.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      - if: needs.preflight.outputs.mode == 'publish' || steps.recovery.outputs.bundleId != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.prepare.outputs.bundle-id || steps.recovery.outputs.bundleId }}
+          path: artifacts
+          merge-multiple: true
+          run-id: ${{ needs.preflight.outputs.artifactRunId }}
+          github-token: ${{ github.token }}
+      - if: steps.recovery.outputs.legacyWebId != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ steps.recovery.outputs.legacyWebId }}
           path: apps/web/dist
+          merge-multiple: true
           run-id: ${{ needs.preflight.outputs.artifactRunId }}
           github-token: ${{ github.token }}
-      - if: needs.preflight.outputs.desktop == 'true'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      - if: steps.recovery.outputs.legacyWindowsId != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: windows-release
+          artifact-ids: ${{ steps.recovery.outputs.legacyWindowsId }}
           path: artifacts/windows
+          merge-multiple: true
           run-id: ${{ needs.preflight.outputs.artifactRunId }}
           github-token: ${{ github.token }}
-      - run: npm audit --audit-level=high
-      - run: node scripts/audit-runtime.mjs
-      - run: node --import tsx scripts/release-production.mjs
+      - if: needs.preflight.outputs.mode == 'publish'
+        run: npm audit --audit-level=high
+      - if: needs.preflight.outputs.mode == 'publish'
+        run: node automation/scripts/audit-runtime.mjs
+      - run: node --import tsx automation/scripts/release-production.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

@@ -2,6 +2,9 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync, createReadStream, appendFileSync } from "node:fs";
 import path from "node:path";
+import { cp, rm } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
+import { verifyBundle, sourceArtifact } from "./release-artifacts.mjs";
 import { createHash } from "node:crypto";
 import { runRelease, phases } from "./release-core.mjs";
 import {
@@ -16,7 +19,6 @@ import {
 } from "./release-api.mjs";
 
 const sha = process.env.RELEASE_SHA;
-await verifyQuality(sha);
 if (process.env.GITHUB_REF !== "refs/heads/master" || process.env.GITHUB_ACTIONS !== "true")
   throw Error("PRODUCTION_ACTIONS_ONLY");
 if (execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim() !== sha)
@@ -51,7 +53,7 @@ const command = (args) =>
   });
 const original = await readState();
 let record;
-let manifest, candidate;
+let manifest, candidate, releasePlan, planHash;
 const packageRoot = "artifacts/windows/apps/desktop/out/make/squirrel.windows/x64";
 const loadDesktop = async () => {
   manifest = JSON.parse(readFileSync("artifacts/windows/out/release-manifest.json", "utf8"));
@@ -62,7 +64,7 @@ const loadDesktop = async () => {
     manifest.version !== candidate.version ||
     !manifest.installedAsarMatches ||
     manifest.systemEntry?.runner !== "github-hosted" ||
-    manifest.actionsRunId !== artifactRunId
+    manifest.actionsRunId !== (releasePlan?.sources.windows?.runId ?? artifactRunId)
   )
     throw Error("RELEASE_ACCEPTANCE_INVALID");
   for (const kind of ["packaged-smoke", "installed-smoke"])
@@ -75,14 +77,42 @@ const loadDesktop = async () => {
     if ((await digest(path.join(packageRoot, path.basename(item.file)))) !== item.sha256)
       throw Error("ARTIFACT_HASH_MISMATCH");
 };
+const requiredArtifacts = (state) => [
+  ...(state.cloud &&
+  phases.indexOf(state.phase) < phases.indexOf("deployed") &&
+  state.phase !== "deploying"
+    ? ["web"]
+    : []),
+  ...(state.desktop && phases.indexOf(state.phase) < phases.indexOf("activated")
+    ? ["windows"]
+    : []),
+];
+const loadBundle = async (state, expectedHash) => {
+  const required = requiredArtifacts(state);
+  if (!required.length) return;
+  const verified = await verifyBundle("artifacts", sha, expectedHash, required);
+  releasePlan = verified.plan;
+  planHash = verified.hash;
+  if (releasePlan.releaseRunId !== artifactRunId) throw Error("RELEASE_PLAN_RUN_MISMATCH");
+  if (required.includes("web")) {
+    await cp("artifacts/web", "apps/web/dist", { recursive: true });
+    await rm("apps/web/dist/artifact-manifest.json");
+  }
+};
 if (mode === "resume") {
   if (!original) throw Error("RELEASE_STATE_MISSING");
   record = JSON.parse(original);
-  if (record.sha !== sha || record.phase === "complete") throw Error("RELEASE_RESUME_MISMATCH");
+  if (record.sha !== sha || !phases.includes(record.phase) || record.phase === "complete")
+    throw Error("RELEASE_RESUME_MISMATCH");
   if (record.artifactRunId !== artifactRunId) throw Error("RESUME_ARTIFACT_RUN_MISMATCH");
   const prior = await github(`/actions/runs/${record.runId}`);
   if (record.runId !== runId && prior?.status !== "completed")
     throw Error("PREVIOUS_RELEASE_STILL_RUNNING");
+  await verifyQuality(sha, !record.bundleId);
+  if (record.bundleId) {
+    if (!/^[a-f0-9]{64}$/.test(record.planHash ?? "")) throw Error("RELEASE_PLAN_HASH_MISSING");
+    await loadBundle(record, record.planHash);
+  }
   // 恢复不重新构建并替换公开候选；使用首次验收 run 的不可变附件。
   if (record.desktop && phases.indexOf(record.phase) < phases.indexOf("activated")) {
     await loadDesktop();
@@ -101,6 +131,23 @@ if (mode === "resume") {
   const cloud = process.env.RELEASE_CLOUD === "true",
     desktop = process.env.RELEASE_DESKTOP === "true";
   if (!cloud && !desktop) throw Error("RELEASE_SCOPE_EMPTY");
+  const qualityRunId = await verifyQuality(sha);
+  if (!/^\d+$/.test(process.env.RELEASE_BUNDLE_ID ?? "")) throw Error("RELEASE_BUNDLE_REQUIRED");
+  const archive = await github(`/actions/artifacts/${process.env.RELEASE_BUNDLE_ID}`);
+  if (
+    !archive ||
+    archive.expired ||
+    String(archive.workflow_run?.id) !== runId ||
+    archive.name !== `release-bundle-${process.env.GITHUB_RUN_ATTEMPT}`
+  )
+    throw Error("RELEASE_BUNDLE_INVALID");
+  await loadBundle({ cloud, desktop, phase: "prepared" });
+  if (String(releasePlan.qualityRunId) !== String(qualityRunId))
+    throw Error("RELEASE_QUALITY_CHANGED");
+  for (const kind of requiredArtifacts({ cloud, desktop, phase: "prepared" })) {
+    const built = JSON.parse(readFileSync(`artifacts/${kind}/artifact-manifest.json`, "utf8"));
+    await sourceArtifact(releasePlan.sources[kind].artifactId, built, qualityRunId, runId);
+  }
   if (desktop) await loadDesktop();
   record = {
     sha,
@@ -109,6 +156,8 @@ if (mode === "resume") {
     phase: "prepared",
     runId,
     artifactRunId: runId,
+    bundleId: process.env.RELEASE_BUNDLE_ID,
+    planHash,
     oldClaims: settings.claimsEnabled ?? "0",
     oldMaintenance: settings.maintenance ?? "0",
     createdAt: new Date().toISOString(),
@@ -142,7 +191,9 @@ const busy = async () =>
 const assertQuiescent = async () => {
   await assertOwnership();
   if (await busy()) throw Error("EXECUTION_NOT_QUIESCENT");
-  const { PROTOCOL_VERSION } = await import("../packages/contracts/src/index.ts");
+  const { PROTOCOL_VERSION } = await import(
+    pathToFileURL(path.resolve("packages/contracts/src/index.ts")).href
+  );
   if (
     (
       await query("SELECT COUNT(*) n FROM runs WHERE status='queued' AND execution_protocol<>?", [
@@ -157,8 +208,9 @@ const catalogValue = async () =>
     ?.value;
 const updateCatalog = async (activate) => {
   await assertOwnership();
-  const { releaseCatalogSchema, releaseSchema } =
-    await import("../packages/contracts/src/updates.ts");
+  const { releaseCatalogSchema, releaseSchema } = await import(
+    pathToFileURL(path.resolve("packages/contracts/src/updates.ts")).href
+  );
   releaseSchema.parse(candidate);
   const current = await catalogValue();
   const catalog = releaseCatalogSchema.parse(
@@ -296,7 +348,9 @@ const io = {
   },
   register: async () => updateCatalog(false),
   verifyDownload: async () => {
-    const { packagePath } = await import("../packages/contracts/src/updates.ts");
+    const { packagePath } = await import(
+      pathToFileURL(path.resolve("packages/contracts/src/updates.ts")).href
+    );
     const response = await fetch(productionOrigin + packagePath(candidate), {
       redirect: "error",
       signal: AbortSignal.timeout(600_000),
@@ -315,7 +369,9 @@ const io = {
   },
   activate: async () => updateCatalog(true),
   compatibleDevice: async () => {
-    const { PROTOCOL_VERSION } = await import("../packages/contracts/src/index.ts");
+    const { PROTOCOL_VERSION } = await import(
+      pathToFileURL(path.resolve("packages/contracts/src/index.ts")).href
+    );
     return (
       (
         await query(
@@ -330,9 +386,18 @@ const io = {
     if (ready) await settings("claimsEnabled", state.oldClaims);
   },
 };
-const result = await runRelease(io, record);
+let result;
+try {
+  result = await runRelease(io, record);
+} finally {
+  if (process.env.GITHUB_STEP_SUMMARY)
+    appendFileSync(
+      process.env.GITHUB_STEP_SUMMARY,
+      `恢复参数：mode=resume，source-sha=${sha}，recovery-run=${artifactRunId}。\n`,
+    );
+}
 if (process.env.GITHUB_STEP_SUMMARY)
   appendFileSync(
     process.env.GITHUB_STEP_SUMMARY,
-    `生产发布：${result.phase}\n\n提交：${sha}\n\nD1 恢复点已保存在 productionRelease 配置中。\n`,
+    `生产发布：${result.phase === "complete" ? "已完成" : "部署完成，等待兼容设备；领取仍暂停"}（${result.phase}）\n\n提交：${sha}\n\nD1 恢复点已保存在 productionRelease 配置中。\n`,
   );

@@ -75,21 +75,7 @@ export async function runRelease(io, record) {
   return state;
 }
 
-export function releaseScope(files, requested = "auto") {
-  if (!["auto", "cloud", "desktop", "all"].includes(requested))
-    throw Error("RELEASE_SCOPE_INVALID");
-  const shared = files.some((file) =>
-    /^(packages\/|package(?:-lock)?\.json|tsconfig\.json|scripts\/|\.github\/)/.test(file),
-  );
-  const desktop = shared || files.some((file) => /^(apps\/desktop\/|resources\/)/.test(file));
-  const cloud = shared || files.some((file) => /^apps\/(cloud|web)\//.test(file));
-  if ((requested === "cloud" && desktop) || (requested === "desktop" && cloud))
-    throw Error("RELEASE_SCOPE_OMITS_REQUIRED_CHANGES");
-  return {
-    cloud: cloud || requested === "all" || requested === "cloud",
-    desktop: desktop || requested === "all" || requested === "desktop",
-  };
-}
+export { releaseImpact as releaseScope } from "./workflow-policy.mjs";
 
 export function assertNewDesktopVersion(current, published) {
   const version = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
