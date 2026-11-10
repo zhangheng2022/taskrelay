@@ -4,10 +4,24 @@
 
 这里索引最近已记录的结果，不代替实时生产检查。下方历史记录中的“未部署”“待验收”属于记录时点，后续结果按日期与固定提交关联。
 
+- [执行器实时全自动更新 0.22.0 生产发布](#2026-11-10-执行器实时全自动更新0220生产发布)。
 - [流式 0.21.0 正式发布、长回复超时与验证限制](#2026-11-10-优先流式正式发布0210已完成)。
 - [手动 CI 夹具修复及远端验证](#2026-11-10-手动-ci-检查范围夹具修复)。
 - [存储 v2 切换、旧库删除及初始安装证据](#2026-11-08-存储-v2-生产全量重置与正式桌面发布)。
 - [归并补充的历史提交与外部配置](#历史部署补充证据)。
+
+## 2026-11-10 执行器实时全自动更新（0.22.0）生产发布
+
+[清理 PR #40](https://github.com/zhangheng2022/taskrelay/pull/40) 与 [更新 PR #41](https://github.com/zhangheng2022/taskrelay/pull/41) 已合并。固定发布提交 `64c5b7d3538de895e34d3913bf8d684285a9b1f6` 的 [master CI 42777794535](https://github.com/zhangheng2022/taskrelay/actions/runs/42777794535) 全部通过，包括正式签名、Windows 系统入口安装、包内和安装 smoke、Web/真实浏览器检查、全量测试与安全门槛。
+
+[Release 42778579229](https://github.com/zhangheng2022/taskrelay/actions/runs/42778579229) 复用同 SHA 的已验收产物，2026-11-10 15:58（北京时间）完成。顺序为 paused → drained → migrated → deployed → published → registered → download-verified → activated → complete；迁移检查返回 No migrations to apply，没有新迁移或密钥变更。完成阶段按原值恢复 maintenance 与 claimsEnabled，D1 恢复点由发布状态保存。
+
+- Worker 版本：`40b68e7d-1d73-439b-89ce-67ce2e7331fe`。主域与 workers.dev 的 health 均返回上述源提交和协议 19。
+- [公开版本 v0.22.0](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.22.0) 与主域更新清单均为 0.22.0。更新清单 publishedAt 为 `2026-11-10T07:53:16.412Z`，这是候选生成时间，实际激活见发布运行时间。
+- `TaskRelay-0.22.0-full.nupkg`：387890242 字节，SHA-256 `f878a7925f5e712d43f14730a422db5e33c633b86f714ae8c71985edd05f1189`，SHA-1 `40ffb829db3e96ecd64777e2868cecb88adbacbf`；发布作业经 Cloudflare 下载验证，公开资产 digest 与主域清单一致。
+- `TaskRelay.Setup.exe`：388445304 字节，SHA-256 `7b96c6aba747de326495adb523e6a8eace78029c5b1ad65c4115e4fbac6f73d0`。托管正式安装 ASAR SHA-256 为 `7109f892e0ec0c5093fb6f9d5c538b75cefa2589b257a9bad0ee7aa02b9a8691`，打包与安装结果一致。
+
+旧安装版首次升级仍需按旧流程确认一次，升级到 0.22.0 后才使用固定全自动更新。托管机实际安装与本轮线上 health/目录核验不证明用户电脑已经升级，也不替代公开通道跨版本自动重启、真实任务/断网/休眠及配对/Profile 保留验收；本轮未操作用户本机安装或发起模型/网站任务。
 
 ## 2026-11-10 执行器实时全自动更新（0.22.0 源码候选）
 
