@@ -1,3 +1,4 @@
+import type { ScheduleCard } from "../../../packages/contracts/src/task-schedule";
 import type { MemoryPreference } from "../../../packages/contracts/src/preferences";
 import {
   PROTOCOL_VERSION,
@@ -11,6 +12,16 @@ import type { ThreadPage } from "../../../packages/ui/src/use-thread";
 // 开发预览的隔离 Transport：按当前网站请求合同维护演示任务、聊天和执行器状态。
 // 每次创建独立状态；只返回内存演示数据，不访问网络、模型或安装程序。
 export function createFixtureTransport(options: URLSearchParams): Transport {
+  let scheduleCard: ScheduleCard = {
+    version: 1,
+    taskVersion: 1,
+    summary: "每天读取订单并汇总待处理事项",
+    ready: true,
+    state: "off",
+    frequency: null,
+    legacy: null,
+    nextRunAt: null,
+  };
   const state = options.get("state") ?? "new";
   const assistance = [
     "challenge",
@@ -244,7 +255,41 @@ export function createFixtureTransport(options: URLSearchParams): Transport {
       )
         throw new Error("OFFLINE");
       let result: unknown;
-      if (path === "/api/user/snapshot") result = structuredClone(snapshot);
+      if (path.includes("/schedule")) {
+        if (path.endsWith("/preview"))
+          result = {
+            times: [1, 2, 3].map((days) => new Date(Date.now() + days * 86400000).toISOString()),
+          };
+        else {
+          if (method !== "GET") {
+            const input = body as { enabled: boolean; frequency?: ScheduleCard["frequency"] };
+            scheduleCard = {
+              ...scheduleCard,
+              version: scheduleCard.version + 1,
+              state: input.enabled ? "enabled" : "paused",
+              frequency: input.frequency ?? scheduleCard.frequency,
+              nextRunAt: input.enabled ? new Date(Date.now() + 86400000).toISOString() : null,
+            };
+          }
+          result = {
+            card: options.has("schedule") ? scheduleCard : null,
+            learning: [
+              {
+                runId: "demo_run",
+                createdAt: new Date().toISOString(),
+                accountId: null,
+                accountName: null,
+                state: "done",
+                summary: "已读取当天订单；页面没有额外结果。",
+                improvements: "先核对日期范围，再读取列表，避免重复进入详情。",
+                applied: true,
+                incomplete: false,
+                error: null,
+              },
+            ],
+          };
+        }
+      } else if (path === "/api/user/snapshot") result = structuredClone(snapshot);
       else if (path.startsWith("/api/user/history-cleanups-preview"))
         result = {
           chats: snapshot.tasks.length,

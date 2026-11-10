@@ -15,7 +15,7 @@ import { DesktopUpdater } from "../apps/desktop/src/main/updater";
 import { createHash } from "node:crypto";
 import type { TaskRun } from "../packages/contracts/src/index";
 import { BrowserStateAdapter } from "../apps/desktop/src/main/browser-state";
-import type { ProtectedStateFiles } from "../apps/desktop/src/main/protected-state";
+import { ProtectedStateFiles } from "../apps/desktop/src/main/protected-state";
 import { browserStateSchema } from "../packages/contracts/src/accounts";
 
 const settle = () => new Promise<void>((r) => setImmediate(r));
@@ -711,4 +711,44 @@ test("正式 Host：旧指令完成请求被明确拒绝后不保留待上传成
   });
   await settle();
   assert.equal(s.journal.pending().length, 1);
+});
+
+test("操作记录断网后仅保存系统密文，可靠回传时解密且不重放浏览器", async (t) => {
+  const plaintext = new Map<string, string>();
+  const vault = new ProtectedStateFiles("unused-inline-records", {
+    isEncryptionAvailable: () => true,
+    encryptString(value) {
+      const key = crypto.randomUUID();
+      plaintext.set(key, value);
+      return Buffer.from(key);
+    },
+    decryptString(value) {
+      return plaintext.get(value.toString())!;
+    },
+  });
+  const s = fixture(t, undefined, vault),
+    run = s.run("record");
+  await s.host.start(run);
+  s.cloud.request = async () => {
+    throw Error("OFFLINE");
+  };
+  s.children[0].rpc("/api/runner/runs/record/execution-record", {
+    epoch: run.leaseEpoch,
+    callId: "read",
+    content: "private-operation-result",
+  });
+  await settle();
+  await settle();
+  const pending = s.journal.pending();
+  assert.equal(pending.length, 1);
+  assert.ok(!pending[0].body.includes("private-operation-result"));
+  let received: unknown;
+  s.cloud.request = async <T>(_method: string, _path: string, body?: unknown) => {
+    received = body;
+    return {} as T;
+  };
+  await s.host.flush();
+  assert.equal((received as { content: string }).content, "private-operation-result");
+  assert.equal(s.journal.pending().length, 0);
+  assert.equal(s.children.length, 1);
 });

@@ -1,3 +1,4 @@
+import { executeLearning, queueLearning } from "../execution-learning";
 import { dbTime } from "../database";
 import { applicationDb } from "../database";
 /**
@@ -13,6 +14,7 @@ import { dispatchGraphEvent, nextGraphWake, wakeGraph } from "./dispatch";
 /** 单个对象串行消费一个图；KV 仅有 id 键绑定 D1 graph_id，不保存用户正文或检查点。
  * 无分块/密文；alarm 可重复唤醒，先检查冻结屏障，D1 拥有事件，LangGraph 拥有图状态。 */
 export class AiTurn extends DurableObject<AppEnv> {
+  private learningWork: Promise<void> | null = null;
   constructor(ctx: DurableObjectState, env: AppEnv) {
     super(ctx, { ...env, DB: applicationDb(env.DB) });
   }
@@ -20,6 +22,7 @@ export class AiTurn extends DurableObject<AppEnv> {
     const prior = await this.ctx.storage.get<string>("id");
     if (prior && prior !== id) throw Error("GRAPH_CONFLICT");
     await this.ctx.storage.put("id", id);
+    if (id.startsWith("learning_") && (await this.ctx.storage.getAlarm()) !== null) return;
     await this.ctx.storage.setAlarm(Date.now() + 1);
   }
   async alarm() {
@@ -38,6 +41,17 @@ export class AiTurn extends DurableObject<AppEnv> {
     // A watchdog survives process loss; the next alarm resumes only checkpointed work.
     // ai_calls and command outboxes still prohibit repeating uncertain side effects.
     await this.ctx.storage.setAlarm(Date.now() + 180_000);
+    if (id.startsWith("learning_")) {
+      if (this.learningWork) return;
+      this.learningWork = executeLearning(this.env, id.slice(9));
+      try {
+        await this.learningWork;
+      } finally {
+        this.learningWork = null;
+      }
+      await this.ctx.storage.deleteAlarm();
+      return;
+    }
     await dispatchGraphEvent(this.env, id);
     const turn = await this.env.DB.prepare(
       "SELECT thread_id,owner FROM ai_dispatch WHERE graph_id=? AND kind='chat' AND state IN ('done','failed') LIMIT 1",
@@ -53,6 +67,7 @@ export class AiTurn extends DurableObject<AppEnv> {
 
 export async function wakeTurns(env: AppEnv) {
   await drainCommands(env);
+  await queueLearning(env);
   await env.DB.prepare(
     "UPDATE conversation_inbox SET status='failed' WHERE status='processing' AND id IN(SELECT id FROM ai_turns WHERE status<>'running')",
   ).run();

@@ -3,6 +3,7 @@ import { z } from "zod";
 /** 执行工具的唯一参数来源。模型 Schema 与本机运行校验从同一 Zod 定义生成；
  * 它描述浏览器机制，不包含业务完成门槛或任意脚本能力。 */
 const schemas = {
+  confirmRequirements: z.object({ summary: z.string().min(1).max(2000), changed: z.boolean() }),
   act: z.object({ instruction: z.string().min(1) }),
   observe: z.object({ instruction: z.string() }),
   extract: z.object({ instruction: z.string() }),
@@ -22,6 +23,8 @@ const schemas = {
   confirmAccountLogin: z.object({ evidence: z.string().min(1).max(2000) }),
 };
 const descriptions = {
+  confirmRequirements:
+    "理解当前目标与必要信息后发布定时卡片，不要求执行成功，不启用定时。收到后续用户消息时判断是否改变目标或范围，changed 仅在改变需求时为 true；普通问询、验证码回复为 false。确认摘要不含秘密，不把此工具当作浏览器操作或结束的必经门槛。",
   act: "让 Stagehand 根据当前页面执行一个自然语言操作。它会收到同一任务的原始用户消息。",
   observe: "让 Stagehand 查找当前页面可操作的控件。",
   extract: "让 Stagehand 读取当前页面信息，不拍摄聊天截图。",

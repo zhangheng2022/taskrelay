@@ -1,3 +1,4 @@
+import { scheduleFence } from "./schedule-fence";
 import { dbTime } from "./database";
 /** 账号执行组固定交办时的账号顺序。成员仅在前一浏览器已清理后投递，
  * 不把等待成员放入有领取期限的 runs；D1 条件写入处理重试、停止及聊天退休。
@@ -9,17 +10,19 @@ import { accountMatchesDomain } from "./accounts";
 
 /** 网站“立即运行”复用已确认的账号集合；新请求创建新组，相同请求只返回原组。 */
 export async function enqueueTaskDispatch(db: D1Database, task: TaskDefinition, key: string) {
-  if (!task.accountIds || task.accountIds.length < 2) return enqueue(db, task, key);
+  if (!task.accountIds || task.accountIds.length < 2)
+    return enqueue(db, task, key, task.scheduleTrigger?.slot);
   const id = `rerun_${(await hash(key)).slice(0, 48)}`;
   let command = await db
     .prepare("SELECT * FROM conversation_commands WHERE id=?")
     .bind(id)
     .first<Row>();
   if (!command) {
+    const fence = scheduleFence(task);
     const thread = await db
       .prepare(
         `SELECT t.id,t.user_id FROM ai_threads t JOIN tasks task ON task.id=t.task_id
-      WHERE t.task_id=? AND t.closed=0 AND task.version=? AND task.context_withdrawn=0 AND task.deleted=0 ORDER BY t.created_at DESC LIMIT 1`,
+      WHERE t.task_id=? AND t.closed=0 AND task.version=? AND task.context_withdrawn=0 AND task.deleted=0 ${task.scheduleTrigger ? "AND t.id=(SELECT thread_id FROM task_schedules WHERE task_id=t.task_id)" : ""} ORDER BY t.created_at DESC LIMIT 1`,
       )
       .bind(task.id, task.version)
       .first<{ id: string; user_id: string }>();
@@ -39,7 +42,7 @@ export async function enqueueTaskDispatch(db: D1Database, task: TaskDefinition, 
         WHERE task.id=? AND task.version=? AND task.context_withdrawn=0 AND task.deleted=0 AND t.id=? AND t.closed=0)
       AND NOT EXISTS(SELECT 1 FROM runs WHERE task_id=? AND (status IN ('queued','running','waiting_user','verifying','unknown') OR cleanup_pending=1))
       AND NOT EXISTS(SELECT 1 FROM account_dispatch_groups WHERE task_id=? AND state IN ('active','paused'))
-      AND NOT EXISTS(SELECT 1 FROM conversation_commands WHERE task_id=? AND state='committed' AND run_task IS NOT NULL)`,
+      AND NOT EXISTS(SELECT 1 FROM conversation_commands WHERE task_id=? AND state='committed' AND run_task IS NOT NULL) AND ${fence.sql}`,
       )
       .bind(
         id,
@@ -53,6 +56,7 @@ export async function enqueueTaskDispatch(db: D1Database, task: TaskDefinition, 
         task.id,
         task.id,
         task.id,
+        ...fence.values,
       )
       .run();
     command = await db
@@ -178,7 +182,7 @@ export async function advanceDispatchGroups(db: D1Database, id?: string) {
         db,
         task,
         `manual:conversation:${row.id}${row.position ? `:${row.position}` : ""}`,
-        undefined,
+        row.position === 0 ? definition.scheduleTrigger?.slot : undefined,
         { id: row.id, threadId: row.thread_id, groupId: row.id, position: row.position },
       );
       await db

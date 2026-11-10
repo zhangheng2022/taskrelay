@@ -66,6 +66,7 @@ export class RunnerPoller {
           {
             requestId: this.claimRequest,
             protocolVersion: PROTOCOL_VERSION,
+            supportsScheduling: true,
           },
         );
         if (run && ["running", "waiting_user", "verifying"].includes(run.status))

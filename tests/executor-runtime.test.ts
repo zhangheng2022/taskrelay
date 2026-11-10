@@ -1273,3 +1273,17 @@ test("正式 execute 单独传递固定偏好，保留用户纠正且不把偏�
     !JSON.stringify(result.calls.filter((c) => c.path.endsWith("/stagehand"))).includes(preference),
   );
 });
+
+test("正式 execute 明确需求后发布卡片，继续首次执行并回传操作记录", async () => {
+  const result = await scenario([
+    tool("confirmRequirements", { summary: "读取当前订单", changed: false }),
+    tool("act", { instruction: "点击查询" }),
+    answer("已读取"),
+  ]);
+  const confirmation = result.calls.find((c) => c.path.endsWith("/requirements"));
+  assert.equal(confirmation?.body.summary, "读取当前订单");
+  assert.equal(typeof confirmation?.body.userSeq, "number");
+  assert.equal(result.clicks, 1);
+  assert.equal(result.finish.result.executionRecordCount, 2);
+  assert.equal(result.calls.filter((c) => c.path.endsWith("/execution-record")).length, 2);
+});

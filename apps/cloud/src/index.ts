@@ -1,3 +1,4 @@
+import { tickSchedules } from "./task-schedules";
 import { dbTime } from "./database";
 /** 应用路由与维护入口：统一请求大小、来源、身份和错误响应；定时清理委托给队列与聊天生命周期模块。 */
 import { drainHistoryCleanups } from "./history-cleanup";
@@ -245,6 +246,7 @@ export async function maintenance(env: AppEnv) {
     return;
   await drainHistoryCleanups(env);
   await tick(env.DB);
+  await tickSchedules(env);
   await cleanupAccountCards(env);
   await advanceDispatchGroups(env.DB);
   const expired = await env.DB.prepare(
