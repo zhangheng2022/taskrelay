@@ -1,5 +1,11 @@
 # 部署与恢复
 
+## 2026-11-10 优先流式（0.21.0，已上线）
+
+固定源提交 `850983a64b7f1aa4f6d2ab2663058b98c1e60b16` 经主分支 CI 42761431532 后，由 [正式发布 42762214202](https://github.com/zhangheng2022/taskrelay/actions/runs/42762214202) 完成正式签名 Windows 包、托管实际安装验证、增量迁移 `0004_streaming_messages.sql` 和 Worker `75fc196e-98e8-4a24-846a-ddd76c82dcc7` 部署。即时健康遇到传播延迟后，[恢复发布 42763332234](https://github.com/zhangheng2022/taskrelay/actions/runs/42763332234) 复用原归档完成下载校验与更新目录激活，phase=complete；没有重复构建、迁移或部署，恢复的是原维护/领取值，不主动开启原已关闭的领取。
+
+[0.21.0 更新](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.21.0) 已公开，协议 19、本地 schema 4 不变，用户设备通过“检查更新”安装。本次没有在用户本机执行升级。双域健康和权限检查通过，生产 ModelEgress 确认为 US/IAD。真实 Responses 短回复及刷新恢复通过，长回复触发 60 秒超时并保留未完成草稿；完整证据、产物哈希及额外手动 CI 的既有夹具失败见 [ACCEPTANCE](ACCEPTANCE.md#2026-11-10-优先流式正式发布0210已完成)。下节保留发布准备与回退操作说明。
+
 ## 2026-11-10 流式发布准备（0.21.0）
 
 按下文固定 SHA 的 CI/Release 流程交付云端、网站和桌面；先应用增量 `0004_streaming_messages.sql` 并部署兼容旧客户端的服务，再发布 0.21.0 更新目录。旧网页只收 changed，旧执行器未声明 supportsDrafts 时不发布执行器正文草稿；固定模型版本的底层流式及完整响应返回保持兼容。没有新增付费服务、生产绑定或地区绕过。
