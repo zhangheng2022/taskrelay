@@ -2,6 +2,8 @@
 
 ## 模型流式与聊天草稿
 
+聊天展示由共享 `ChatMarkdown` 使用 Streamdown 解析助手正文，新交办、任务会话和云端/执行器草稿共用；用户原文、来源状态、Trace 和附件独立展示。草稿只在视图中补全未闭合语法，pending/interrupted 不表示继续生成；正式消息静态解析保存的原文，不改协议或存储。代码块沿用 shadcn CodeBlock；HTML 不执行，图片语法只显示替代文字，链接只开放完整、不带凭据的 HTTP/HTTPS 地址并在新标签页打开。原始附件仍使用受鉴权的图片链路；滚动、去重和草稿交接仍由既有 MessageScroller/useThread 负责。
+
 模型侧使用官方 OpenAI SDK 的 Chat Completions / Responses HTTP 流。公网校验、禁止重定向、60 秒整个响应超时、2 MB 上限、固定错误和 `maxRetries:0` 继续由 adapter 负责；成功流逐块读取，只有终止事件完整到达后返回原有 ModelResponse。文字预览独立发送，工具参数及结构化结果仍完整汇总、校验后交给 LangGraph；Stagehand ClientLLM.generate 也保留完整返回约定。内部摘要、推理分片、工具参数及 Stagehand 输出不发布到聊天正文。
 
 生产路径仍为 `models.invoke → egress → ModelEgress.jurisdiction("us") → alarm`。同一 submitAndWait RPC 等待终态并 ack，流期间没有新增 RPC 轮询。alarm 主动向用户的 NotificationHub 发布草稿，网站连接生命周期不影响任务。每个固定模型配置版本分别记录 text/tools/structured 流能力；未知类型先发送不含用户业务的独立探测。仅明确不支持且同格式非流式控制探测通过后，后续业务选用同模型完整响应；网络故障保持未知。业务调用已发送后的超时、断流、未知结果均不重发或切换模型，调用去重先于能力选择和开关读取。
