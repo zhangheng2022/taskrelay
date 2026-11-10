@@ -71,7 +71,7 @@
     "ACCESS_AUD": "14ace9836bc55fd84ab8f089c1a35a7361d46ffb0b729c4d47ade7b432a8b194",
     "DEV_MODE": "0",
     "AUTH_BASE_URL": "https://tr.zhangheng.eu.org",
-    "REGISTRATION_OPEN": "0",
+    "REGISTRATION_OPEN": "1",
     "MAIL_FROM": "noreply@mail.zhangheng.eu.org",
     "TURNSTILE_SITE_KEY": "0x4AAAAAAFxyuphrOg5vcFKc",
   },

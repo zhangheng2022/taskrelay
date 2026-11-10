@@ -12,7 +12,7 @@
 ## 当前状态
 
 - **开发预览阶段**：公开更新目录、源码版本与本机安装分别核验，当前版本与验证范围见部署和验收记录。Windows 自签名仅面向预置信任的受控设备，不保证消除 SmartScreen 提示，非稳定版。
-- 工作空间：[tr.zhangheng.eu.org](https://tr.zhangheng.eu.org)，公开注册当前关闭。原 `taskrelay.zhangheng.workers.dev` 地址继续兼容已配对客户端。
+- 工作空间：[tr.zhangheng.eu.org](https://tr.zhangheng.eu.org)，外部用户可注册并验证邮箱后使用。原 `taskrelay.zhangheng.workers.dev` 地址继续兼容已配对客户端。
 - Windows 是独立执行器；任务编辑、聊天、历史与模型设置在网站完成。当前源码支持发布通知触发检查、每 60 秒补查、自动下载与空闲安装重启；更新网络经过 Cloudflare，客户端不直连 GitHub。旧版首次升级仍需按原流程确认，发布通道状态见验收台账。
 - 已有源码测试、开发机打包，以及真实模型在虚构站上的协助、批准/拒绝、提交后进程中断与只读核查证据。干净 Windows、更多模型提供方、断网/休眠等其他故障和连续观察仍需补齐，以 [验收台账](docs/ACCEPTANCE.md) 为准。
 - Cloudflare 保持 Free，不设置项目级每日平台预算或个人次数门槛；**模型服务费用由提供方单独计算**。
