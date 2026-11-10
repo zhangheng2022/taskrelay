@@ -1,6 +1,16 @@
 # TaskRelay 验收记录
 
-## 2026-11-10 CUTOVER_NOT_READY 发布后设备登记修复（本地，未部署）
+## 2026-11-10 设备升级登记修复正式发布（已完成）
+
+用户授权部署后，[PR #34](https://github.com/zhangheng2022/taskrelay/pull/34) 经 CI 42739676261 通过并合并为 `25cb9b46dc723840f94f872c5a81892d3d254ac7`。[主分支 CI 42740368284](https://github.com/zhangheng2022/taskrelay/actions/runs/42740368284) 通过后，[正式发布 42741034620](https://github.com/zhangheng2022/taskrelay/actions/runs/42741034620) 以 scope=cloud、mode=publish 发布固定提交，复用 `ci-web-1`（Artifact ID `13728926707`），归档 `release-bundle-1`（Artifact ID `13728384100`）。没有补建 Web/Windows，没有待应用数据库迁移。
+
+Worker 版本 `6b1be8ae-59c2-410e-be18-2a7ade361593`，发布日志确认 phase=complete；状态机已恢复保存的原维护/领取开关。未手动更改设备协议/心跳、重放历史任务或清理用户数据，没有重新生成或覆盖 MASTER_KEY。桌面仍为 0.20.0、协议 19，无需新安装包。
+
+独立只读核验主域与 workers.dev：health=200、协议 19、sourceCommit 均为上述部署 SHA；首页和实际 JS/CSS 资源均为 200，资源 SHA-256 与主分支 CI 下载产物一致。`index-tJVQU3ON.js` 为 `73f04890ab7361dd39025d0a79cadd48a6d1578b2b0a04dc5d2687bc1dcbfd82`，`index-TNBmLhkm.css` 为 `cb3c74fa45a979f6f10d592197278bcea99a4c7139aca13f41ad96f173f47e6b`。匿名 user/me、admin/operations、device/status 均为 401，两个入口的 latest.json.release.version 均为 0.20.0。
+
+主分支 Linux 测试 523 通过、2 跳过，Windows 测试 524 通过、1 跳过，均无失败；跳过项为需独立 Chromium 的状态恢复用例，Linux 另跳过 Windows 证书用例。行覆盖率 76.40%、分支 82.42%、函数 81.63%；类型、lint、秘密/依赖/CodeQL 扫描、Web 构建及 Windows 图片浏览器验收通过。本批仅云端发布，未重新进行 Windows 打包/安装验收；未核验用户设备登记后的协议、readiness 或错误消失，未运行真实模型/网站任务。
+
+## 2026-11-10 CUTOVER_NOT_READY 发布后设备登记修复（发布前源码验证）
 
 截图中的 0.20.0 已安装不代表云端设备记录已升级。源码确认：常规发布现在直接恢复原维护/领取开关，而旧设备登记仍要求维护开启且领取关闭，形成发布后升级阻断。本批仅修改云端登记条件，允许本地就绪、未吊销且本设备没有活动/待清理运行时登记当前协议；保留冻结窗口检查、拒绝未来协议降级，协议实际变化时清除旧领取就绪状态。桌面版本和协议不变。
 
@@ -8,7 +18,7 @@
 
 OCR delegate preview/rule 成功，由宿主审查本批全部源码、测试及文档；默认排除的测试与 Markdown 已补审。total_files=5、reviewed_files=5、skipped_files=0、coverage_rate=100%，无未解决发现。Graphify 更新为 5729 节点、10771 边、451 社区；34 个 SQL 缺少 tree_sitter_sql 未提取，2 个文件未提取符号（含本批测试），13 个无支持扩展文件跳过，社区标签未调用 LLM 更新。本批 SQL 已直接核对源码与回归。
 
-本机 Wrangler 只读生产查询因缺少 CLOUDFLARE_API_TOKEN 失败，没有修改生产。Hono CLI 无法识别当前模块的 Worker 默认导出，改由测试中真实 `app.request` 路由验证；不声称 CLI 请求成功。尚未部署或实测用户设备，线上仍需通过正式发布应用此修复；未重写设备协议、伪造心跳或清理用户数据。
+本机 Wrangler 只读生产查询因缺少 CLOUDFLARE_API_TOKEN 失败，没有修改生产。Hono CLI 无法识别当前模块的 Worker 默认导出，改由测试中真实 `app.request` 路由验证；不声称 CLI 请求成功。本节为发布前验证记录，正式发布结果见上节；未重写设备协议、伪造心跳或清理用户数据。
 
 ## 2026-11-09 0.20.0 设置管理正式发布（已完成）
 
