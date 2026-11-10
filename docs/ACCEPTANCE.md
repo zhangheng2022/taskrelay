@@ -15,7 +15,7 @@
 
 验证证据：真实 workerd 经 Worker → RequestCoordinator → alarm → NotificationHub → WebSocket 收到一次激活通知，候选登记不通知候选；隔离数据库验证 44 台有效设备跨批投递和失败恢复、吊销设备排除。真实 Cloud 回环长连接验证任务/更新事件分流与重连，Updater 和实际 Poller/ExecutorHost 验证去重、哈希校验、退避、人工等待、领取响应丢失、资源清理和待回传阻止安装。UI 证据见 UI-REVIEW。
 
-本地首次全量测试 547 项中 546 通过，一个既有 Chromium 状态恢复测试超时；该测试独立重跑 2/2 通过，随后全量重跑 548/548 通过。补充通知权限回归后，覆盖率运行 549/549 通过（行 77.97%、分支 82.53%、函数 82.9%）；审查补充系统通知异常不阻断下载后，更新器定向 14/14 通过。类型、lint、仓库检查、Web build、Windows package 和真实 Chromium 界面检查通过；Web build 仍提示现有大 chunk。
+本地首次全量测试 547 项中 546 通过，一个既有 Chromium 状态恢复测试超时；该测试独立重跑 2/2 通过，随后全量重跑 548/548 通过。补充通知权限和系统通知异常回归后，最终覆盖率运行 550/550 通过（行 77.97%、分支 82.55%、函数 82.85%）；以清理 PR 的 8091615 为基线，本次差异覆盖 141/170 行（82.94%），超过 80% 门槛。类型、lint、仓库检查、Web build、Windows package 和真实 Chromium 界面检查通过；Web build 仍提示现有大 chunk。
 
 默认 `out/packaged-smoke.json` 使用的旧隔离目录报 LOCAL_STORAGE_CONVERSION_REQUIRED，没有清理或改写该旧目录；改用全新 `out/auto-update-022/` 后，打包版 smoke 通过。该 smoke 使用隔离数据和浏览器测试站，不证明系统已安装版本或真实自动升级；本轮没有覆盖用户现有安装，也没有部署服务或激活公开目录。
 
