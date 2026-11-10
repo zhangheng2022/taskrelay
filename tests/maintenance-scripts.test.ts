@@ -52,7 +52,7 @@ test("CDP 策略可幂等应用和升级已有边界补丁，未知源码拒绝�
   await assert.rejects(run(), /CDP_POLICY_REVIEW_REQUIRED/);
   assert.equal(await readFile(target, "utf8"), patched + "\n// unexpected upstream change\n");
 });
-test("安装验收范围识别独立浏览器测试改动，纯文档可跳过", async (t) => {
+test("安装验收范围按触发事件识别差异，手动和定时执行全量", async (t) => {
   const directory = await workspaceFixture(t, "scope");
   const git = (...args: string[]) => exec("git", args, { cwd: directory });
   await git("init");
@@ -62,7 +62,7 @@ test("安装验收范围识别独立浏览器测试改动，纯文档可跳过",
   await git("add", ".");
   await git("commit", "-m", "初始");
   const base = (await git("rev-parse", "HEAD")).stdout.trim();
-  const run = async (baseSha = base) =>
+  const run = async (baseSha = base, event = "push") =>
     JSON.parse(
       (
         await exec(
@@ -70,14 +70,24 @@ test("安装验收范围识别独立浏览器测试改动，纯文档可跳过",
           [fileURLToPath(new URL("../scripts/change-scope.mjs", import.meta.url))],
           {
             cwd: directory,
-            env: { ...process.env, BASE_SHA: baseSha, GITHUB_OUTPUT: "" },
+            // 夹具独立指定触发事件，避免宿主手动/定时 CI 改变差异场景，也不写入宿主报告。
+            env: {
+              ...process.env,
+              BASE_SHA: baseSha,
+              GITHUB_EVENT_NAME: event,
+              GITHUB_OUTPUT: "",
+              GITHUB_STEP_SUMMARY: "",
+            },
           },
         )
       ).stdout,
     );
   await writeFile(path.join(directory, "README.md"), "# 文档修改\n");
   await git("commit", "-am", "文档");
-  assert.equal((await run()).desktop, false);
+  for (const event of ["push", "pull_request"])
+    assert.deepEqual(await run(base, event), { code: false, desktop: false }, event);
+  for (const event of ["workflow_dispatch", "schedule"])
+    assert.deepEqual(await run(base, event), { code: true, desktop: true }, event);
   await mkdir(path.join(directory, "tests"));
   await writeFile(path.join(directory, "tests/browser-state-desktop.test.ts"), "// 生命周期验收\n");
   await git("add", ".");
