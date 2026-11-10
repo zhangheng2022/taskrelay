@@ -49,6 +49,12 @@ export async function retainHistory(env: AppEnv, cutoff: string) {
       "UPDATE ai_dispatch SET state='retired',message_id=NULL,error='HISTORY_EXPIRED' WHERE thread_id IN(SELECT id FROM ai_threads WHERE deleted=1 AND id NOT IN(SELECT resource_id FROM history_cleanup_targets WHERE kind='thread'))",
     ),
   ]);
+  // 以事务后已关闭的事实为准；预读过期候选会误关闭同时收到新消息的聊天。
+  const expired = await env.DB.prepare(
+    "SELECT id,user_id FROM ai_threads WHERE deleted=1 AND closed=1 AND id NOT IN(SELECT resource_id FROM history_cleanup_targets WHERE kind='thread')",
+  ).all<{ id: string; user_id: string }>();
+  for (const thread of expired.results)
+    await env.NOTIFICATIONS?.getByName("user:" + thread.user_id).closeDrafts(thread.id);
   await env.DB.prepare(
     "DELETE FROM preference_snapshots WHERE thread_id IN(SELECT id FROM ai_threads WHERE deleted=1)",
   ).run();

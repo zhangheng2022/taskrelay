@@ -176,8 +176,59 @@ try {
   });
   await request("/_publish");
   assert.equal(await closed, 1008);
+  // 真实休眠 DO 验证草稿推送、分块加密快照、身份隔离和关闭后的迟到写入。
+  await db
+    .prepare(
+      "INSERT INTO auth_user(id,name,email,emailVerified,createdAt,updatedAt) VALUES('draft_user','fixture','draft@example.com',1,?,?)",
+    )
+    .bind(Date.now(), Date.now())
+    .run();
+  await db.prepare("UPDATE members SET auth_id='draft_user' WHERE id='fixture_owner'").run();
+  await db
+    .prepare(
+      "INSERT INTO auth_session(id,expiresAt,token,createdAt,updatedAt,userId) VALUES('draft_session',?,'draft_token',?,?,'draft_user')",
+    )
+    .bind(Date.now() + 600000, Date.now(), Date.now())
+    .run();
+  const draftSocket = new WebSocket(origin.replace("http:", "ws:") + "/_draft-socket");
+  await new Promise((resolve, reject) => {
+    draftSocket.once("open", resolve);
+    draftSocket.once("error", reject);
+  });
+  const draftEvent = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(Error("Draft timeout")), 5000);
+    draftSocket.once("message", (message) => {
+      clearTimeout(timer);
+      assert.ok(Buffer.isBuffer(message));
+      resolve(JSON.parse(message.toString()));
+      draftSocket.send("draft.ack");
+    });
+  });
+  const publication = {
+    owner: "fixture_owner",
+    target: { threadId: thread.id, id: "draft_fixture", source: "cloud", mode: "reply" },
+    draft: {
+      id: "draft_fixture",
+      threadId: thread.id,
+      callId: "draft_call",
+      version: 0,
+      seq: 1,
+      content: "草稿密文检查".repeat(15000),
+      source: "cloud",
+      status: "streaming",
+      at: new Date().toISOString(),
+    },
+  };
+  const draftResult = await request("/_draft", { publication });
+  assert.equal((await draftEvent).type, "draft.start");
+  assert.equal(draftResult.drafts[0].content, publication.draft.content);
+  assert.deepEqual(draftResult.other, []);
+  publication.draft.seq = 2;
+  assert.deepEqual((await request("/_draft", { publication, close: true })).drafts, []);
+  assert.deepEqual((await request("/_draft", { publication })).drafts, []);
+  draftSocket.close();
   console.log(
-    "PASS: real workerd gateway, asynchronous alarm, durable help interrupt/resume, duplicate request, encrypted multi-chunk evidence and large checkpoints, staged evidence publication/orphan cleanup/duplicate alarm, cascading cleanup, WebSocket forwarding and revocation",
+    "PASS: real workerd gateway, asynchronous alarm, durable help interrupt/resume, duplicate request, encrypted multi-chunk evidence and large checkpoints, staged evidence publication/orphan cleanup/duplicate alarm, cascading cleanup, WebSocket forwarding and revocation, streaming draft snapshots and late-write rejection",
   );
 } finally {
   await mf.dispose();

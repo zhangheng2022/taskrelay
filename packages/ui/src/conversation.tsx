@@ -1,4 +1,5 @@
 import { createApi, rpcData } from "./api";
+import { DraftMessages } from "./chat-parts";
 import { useState, useRef } from "react";
 import type { TaskDefinition, TaskRun, Transport } from "../../contracts/src/index";
 import { useThread } from "./use-thread";
@@ -142,6 +143,7 @@ export function Conversation({
             <ChatMessage speaker="user">{m.content}</ChatMessage>
           </MessageScrollerItem>
         ))}
+        <DraftMessages drafts={thread.page?.drafts} />
         <SendingMessage message={thread.sending} />
         <ThreadActivity offline={offline} error={thread.error} paused={run?.status === "unknown"}>
           {activity}

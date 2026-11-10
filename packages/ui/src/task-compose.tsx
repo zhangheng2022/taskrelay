@@ -7,6 +7,7 @@ import { MessageScrollerItem } from "./components/ui/message-scroller";
 import { Button } from "./components/ui/button";
 import { ErrorText, LoadFeedback } from "./feedback";
 import { ChatAttachments } from "./chat-attachments";
+import { DraftMessages } from "./chat-parts";
 
 // 新任务以普通聊天交办；云端返回 taskId 后沿用原会话进入任务页，不在本地创建执行计划。
 export function TaskCompose({
@@ -106,6 +107,7 @@ export function TaskCompose({
             <ChatMessage speaker="user">{m.content}</ChatMessage>
           </MessageScrollerItem>
         ))}
+        <DraftMessages drafts={thread.page?.drafts} />
         <SendingMessage message={thread.sending} />
         <ThreadActivity offline={offline} error={thread.error}>
           {activity}

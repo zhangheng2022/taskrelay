@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execute, type RuntimePort } from "../apps/desktop/src/executor/runtime";
 import { run } from "./ui-fixtures";
-import type { ModelResponse } from "../packages/model/src/index";
+import { infer, type ModelResponse } from "../packages/model/src/index";
 import type { ClientLLM } from "@browserbasehq/stagehand";
 import sharp from "sharp";
 import { executionTimingSchema } from "../apps/desktop/src/shared/execution-timing";
@@ -14,6 +14,66 @@ const answer = (text: string): ModelResponse => ({
 const tool = (name: string, args: Record<string, unknown> = {}): ModelResponse => ({
   ...answer(""),
   calls: [{ id: crypto.randomUUID(), name, arguments: JSON.stringify(args) }],
+});
+
+test("正式 execute 等待流式工具参数完整再执行，并关联最终正文调用", async () => {
+  let observedPartial = false;
+  const enc = new TextEncoder();
+  const result = await scenario([], {
+    firstModel: async (clicks) => {
+      let controller!: ReadableStreamDefaultController<Uint8Array>;
+      const frame = (delta: unknown, finish: string | null = null) =>
+        enc.encode(
+          `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`,
+        );
+      return infer(
+        { baseUrl: "https://provider.example/v1", protocol: "chat", model: "fixture" },
+        "key",
+        { messages: [], stream: true },
+        async () =>
+          new Response(
+            new ReadableStream({
+              start(c) {
+                controller = c;
+                c.enqueue(
+                  frame({
+                    tool_calls: [
+                      {
+                        index: 0,
+                        id: "partial",
+                        function: { name: "act", arguments: '{"instruction":"' },
+                      },
+                    ],
+                  }),
+                );
+                c.enqueue(frame({ content: "正在处理" }));
+              },
+            }),
+            { headers: { "content-type": "text/event-stream" } },
+          ),
+        async () => {
+          assert.equal(clicks(), 0);
+          observedPartial = true;
+          controller.enqueue(
+            frame(
+              { tool_calls: [{ index: 0, function: { arguments: '点击按钮"}' } }] },
+              "tool_calls",
+            ),
+          );
+          controller.enqueue(enc.encode("data: [DONE]\n\n"));
+          controller.close();
+        },
+      );
+    },
+  });
+  assert.equal(observedPartial, true);
+  assert.equal(result.clicks, 1);
+  assert.equal(result.finish.status, "succeeded");
+  const last = result.calls
+    .filter((c) => c.path.endsWith("/model") && c.body.purpose === "decision")
+    .at(-1)!;
+  assert.equal(last.body.supportsDrafts, true);
+  assert.equal(result.finish.sourceCallId, `execute_${run.id}_${last.body.requestId}`);
 });
 
 test("正式 execute 在短摘要仍无法容纳近期工具结果时保留大小诊断，不额外决策或重试", async () => {
@@ -443,6 +503,7 @@ test("模型附带的求助文字不提前回显，内部协助立即解决不�
 async function scenario(
   turns: ModelResponse[],
   options: {
+    firstModel?: (clicks: () => number) => Promise<ModelResponse>;
     actionError?: boolean;
     actionRejected?: boolean;
     emptyObserve?: boolean;
@@ -612,7 +673,11 @@ async function scenario(
             response: answer(options.summaryText ?? "已读取页面并尝试操作，保留最近工具反馈继续。"),
           } as T;
         if (options.cancel) cancelled = true;
-        const response = turns.shift() ?? answer("已处理当前页面，结果如上。");
+        const firstModel = options.firstModel;
+        options.firstModel = undefined;
+        const response = firstModel
+          ? await firstModel(() => clicks)
+          : (turns.shift() ?? answer("已处理当前页面，结果如上。"));
         if (options.correctionAfterDecision && response.calls.length) changeInstructions();
         finalReply = !response.calls.length;
         return { response } as T;

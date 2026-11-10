@@ -7,6 +7,7 @@ import { outputSchema } from "./schema";
 import OpenAI from "openai";
 import type { ChatCompletionCreateParamsNonStreaming } from "openai/resources/chat/completions";
 import type { ResponseCreateParamsNonStreaming } from "openai/resources/responses/responses";
+import { readModelStream, boundedStream } from "./stream";
 
 export interface Message {
   role: "system" | "user" | "assistant" | "tool";
@@ -36,6 +37,8 @@ export interface Inference {
   jsonMode?: boolean;
   maxTokens?: number;
   tokenParameter?: "max_tokens" | "max_completion_tokens";
+  /** 仅内部能力探测指定；普通调用由固定配置版本的能力决定。 */
+  stream?: boolean;
 }
 export interface ModelResponse {
   text: string;
@@ -51,12 +54,15 @@ export async function infer(
   key: string,
   request: Inference,
   fetcher: Fetcher = fetch,
+  onText?: (text: string) => Promise<void>,
 ): Promise<ModelResponse> {
   if (request.imageRef) throw Error("IMAGE_REFERENCE_UNRESOLVED");
   // 从尾部单次扫描，避免未匹配的长斜杠序列触发正则反复回溯。
   let end = profile.baseUrl.length;
   while (end > 0 && profile.baseUrl[end - 1] === "/") end--;
   const root = profile.baseUrl.slice(0, end);
+  const streaming =
+    request.stream ?? profile.capabilities?.streaming?.[streamKind(request)] === "supported";
   const tools = request.tools?.map((t) => ({
     type: "function",
     function: { ...t, parameters: outputSchema(t.parameters), strict: true },
@@ -161,6 +167,10 @@ export async function infer(
     else if (request.jsonMode) body.text = { format: { type: "json_object" } };
   }
   // SDK 只在 ModelEgress 的 alarm 内创建；禁用环境默认账号与日志，避免额外凭据和正文外流。
+  if (streaming) {
+    body.stream = true;
+    if (profile.protocol === "chat") body.stream_options = { include_usage: true };
+  }
   // fetch 边界同时覆盖响应正文读取，SDK 的连接超时不能代替整个请求的时间限制。
   let transportFailure: string | undefined;
   // SDK 要求非空凭据；无密钥兼容端点使用占位值，并在网络边界删除整个 Authorization。
@@ -187,6 +197,15 @@ export async function infer(
           redirect: "manual",
           signal,
         });
+        if (streaming && response.ok) {
+          if (!response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) {
+            await response.body?.cancel();
+            throw new ModelBoundaryError("MODEL_STREAM_UNSUPPORTED");
+          }
+          return boundedStream(response, signal, (code) => {
+            transportFailure = code;
+          });
+        }
         return await boundedResponse(response, signal);
       } catch (error) {
         transportFailure = signal.aborted
@@ -199,6 +218,7 @@ export async function infer(
     },
   });
   try {
+    if (streaming) return await readModelStream(client, profile.protocol, body, onText);
     // DTO 由上方集中适配，兼容提供方仍允许自定义模型名和 token 参数；SDK 负责 HTTP 与标准解析。
     if (profile.protocol === "chat") {
       const data = await client.chat.completions.create(
@@ -246,8 +266,21 @@ export async function infer(
         error.status ? httpError(error.status, error.code) : "MODEL_CALL_OUTCOME_UNKNOWN",
       );
     if (error instanceof ModelBoundaryError) throw error;
+    if (
+      error instanceof Error &&
+      ["MODEL_STREAM_INCOMPLETE", "MODEL_STREAM_INVALID"].includes(error.message)
+    )
+      throw Error(error.message);
     throw Error("MODEL_INVALID_RESPONSE");
   }
+}
+
+export function streamKind(request: Inference): "text" | "tools" | "structured" {
+  return request.schema || request.jsonMode
+    ? "structured"
+    : request.tools?.length
+      ? "tools"
+      : "text";
 }
 
 function httpError(status: number, code: unknown) {

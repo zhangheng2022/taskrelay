@@ -168,6 +168,8 @@ export async function drainHistoryCleanups(env: AppEnv) {
       if (target) {
         const { kind, resource_id: resource } = target,
           field = kind === "thread" ? "thread_id" : "run_id";
+        if (kind === "thread" && env.NOTIFICATIONS)
+          await env.NOTIFICATIONS.getByName("user:" + job.user_id).closeDrafts(resource);
         if (kind === "task") {
           const result = await env.DB.batch([
             env.DB.prepare(

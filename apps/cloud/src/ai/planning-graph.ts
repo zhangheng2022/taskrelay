@@ -59,6 +59,15 @@ export async function planConversation(
         state.messages,
         state.history,
         runtime.guard,
+        {
+          threadId: thread.id,
+          id: id + "_assistant",
+          mode: "reply",
+          source: "cloud",
+          graphId: id,
+          generation: runtime.generation,
+          turnId: id,
+        },
       );
       await runtime.guard();
       if (

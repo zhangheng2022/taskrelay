@@ -67,7 +67,7 @@ export async function threadPage(
   await expireTurn(env, t);
   t = await ownedThread(env, id);
   const rows = await env.DB.prepare(
-    "SELECT id,seq,role,content,private_content,source,parts,run_id,reply_to,at FROM message_details WHERE thread_id=? AND seq<? ORDER BY seq DESC LIMIT 51",
+    "SELECT id,seq,role,content,private_content,source,parts,run_id,reply_to,at,source_call_id FROM message_details WHERE thread_id=? AND seq<? ORDER BY seq DESC LIMIT 51",
   )
     .bind(id, before)
     .all<{
@@ -81,6 +81,7 @@ export async function threadPage(
       run_id: string | null;
       reply_to: string | null;
       at: string;
+      source_call_id: string | null;
     }>();
   const items: ThreadPage["messages"] = await Promise.all(
     rows.results
@@ -102,6 +103,11 @@ export async function threadPage(
     .first<NonNullable<ThreadPage["latestTurn"]>>();
   return {
     id,
+    drafts: env.NOTIFICATIONS
+      ? await env.NOTIFICATIONS.getByName("user:" + t.user_id)
+          .drafts(t.user_id, id)
+          .catch(() => [])
+      : [],
     taskId: t.task_id,
     modelId: t.model_id,
     version: t.version,
@@ -341,6 +347,9 @@ export async function executeTurn(env: AppEnv, threadId: string, turnId: string)
       .bind(turnId)
       .run();
     if (!committed[2].meta.changes) throw new Error("TURN_STALE");
+    await env.NOTIFICATIONS?.getByName("user:" + t.user_id)
+      .closeDrafts(t.id, undefined, turnId + "_assistant")
+      .catch(() => {});
     return {
       turnId,
       status: "done",

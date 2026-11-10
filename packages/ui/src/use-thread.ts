@@ -6,6 +6,15 @@ import type { Transport } from "../../contracts/src/index";
 import type { ThreadPage } from "../../contracts/src/conversation";
 export type { ThreadPage } from "../../contracts/src/conversation";
 import { createApi, rpcData } from "./api";
+import type { ChatDraft } from "../../contracts/src/streaming";
+function visibleDrafts(page: ThreadPage, drafts: ChatDraft[]) {
+  return drafts.filter(
+    (draft) =>
+      !page.messages.some(
+        (message) => message.id === draft.id || message.source_call_id === draft.callId,
+      ),
+  );
+}
 function mergeLatest(previous: ThreadPage, next: ThreadPage): ThreadPage {
   // 最新页只更新尾部内容；历史游标属于已加载的历史范围，null 也表示已读到底。
   // 若两次读取之间新增超过一页，仍从新窗口回补缺口，避免遗漏新消息。
@@ -20,6 +29,19 @@ function mergeLatest(previous: ThreadPage, next: ThreadPage): ThreadPage {
       ...next.messages,
     ].sort((a, b) => a.seq - b.seq),
   };
+}
+function keepNewerDrafts(previous: ThreadPage, next: ThreadPage): ThreadPage {
+  const merged = new Map((next.drafts ?? []).map((draft) => [draft.id, draft]));
+  for (const draft of previous.drafts ?? []) {
+    const old = merged.get(draft.id);
+    if (
+      !old ||
+      draft.version > old.version ||
+      (draft.version === old.version && draft.seq > old.seq)
+    )
+      merged.set(draft.id, draft);
+  }
+  return { ...next, drafts: [...merged.values()] };
 }
 export function useThread(
   transport: Transport,
@@ -45,7 +67,23 @@ export function useThread(
     refreshQueued = useRef(false),
     loadingOlder = useRef<symbol | null>(null),
     writing = useRef(false);
+  const draftRevision = useRef(0);
+  const endedDrafts = useRef(new Map<string, { version: number; seq: number; callId: string }>());
   const accept = useCallback((p: ThreadPage) => {
+    p = {
+      ...p,
+      drafts: visibleDrafts(
+        p,
+        (p.drafts ?? []).filter((draft) => {
+          const ended = endedDrafts.current.get(draft.id);
+          return (
+            !ended ||
+            draft.version > ended.version ||
+            (draft.version === ended.version && draft.callId !== ended.callId)
+          );
+        }),
+      ),
+    };
     current.current = p;
     setPage(p);
   }, []);
@@ -58,6 +96,8 @@ export function useThread(
     setSending(null);
     loadingOlder.current = null;
     current.current = null;
+    endedDrafts.current.clear();
+    draftRevision.current++;
     setPage(null);
     attempt.current = null;
     setError("");
@@ -109,6 +149,7 @@ export function useThread(
     }
     const g = generation.current,
       r = revision.current,
+      d = draftRevision.current,
       ticket = ++reading.current;
     refreshing.current = g;
     refreshQueued.current = false;
@@ -126,7 +167,12 @@ export function useThread(
         setError("");
         // An idle turn does not acknowledge a particular POST. Keep its requestId
         // across refreshes until an explicit retry receives the write response.
-        accept(mergeLatest(current.current!, next));
+        accept(
+          mergeLatest(
+            current.current!,
+            d !== draftRevision.current ? keepNewerDrafts(current.current!, next) : next,
+          ),
+        );
       }
     } catch (error) {
       if (g === generation.current) throw error;
@@ -140,6 +186,52 @@ export function useThread(
       }
     }
   }, [transport, accept]);
+  useEffect(
+    () =>
+      transport.subscribeDrafts?.((event) => {
+        const p = current.current;
+        const incoming = event.draft;
+        if (!p || p.id !== incoming.threadId) return;
+        const old = p.drafts?.find((draft) => draft.id === incoming.id);
+        if (
+          old &&
+          (old.version > incoming.version ||
+            (old.version === incoming.version &&
+              old.callId === incoming.callId &&
+              old.seq >= incoming.seq))
+        )
+          return;
+        draftRevision.current++;
+        if (event.type === "draft.end") {
+          if (event.reason === "committed") {
+            // 正式快照到达前保留同一行，避免正文先消失再出现。
+            accept({
+              ...p,
+              drafts: [
+                ...(p.drafts ?? []).filter((draft) => draft.id !== incoming.id),
+                { ...incoming, status: "pending" },
+              ],
+            });
+            void refresh().catch((e) => setError(e.message));
+            return;
+          }
+          endedDrafts.current.set(incoming.id, incoming);
+          accept({ ...p, drafts: p.drafts?.filter((draft) => draft.id !== incoming.id) });
+          void refresh().catch((e) => setError(e.message));
+          return;
+        }
+        accept({
+          ...p,
+          drafts: [...(p.drafts ?? []).filter((draft) => draft.id !== incoming.id), incoming],
+        });
+        if (
+          (!old && incoming.seq > 1) ||
+          (old && old.callId === incoming.callId && incoming.seq > old.seq + 1)
+        )
+          void refresh().catch((e) => setError(e.message));
+      }),
+    [transport, accept, refresh],
+  );
   useEffect(() => {
     if (!page?.id) return;
     const unsubscribe = transport.subscribe?.(
@@ -164,7 +256,8 @@ export function useThread(
       content,
       requestId: crypto.randomUUID(),
     };
-    const g = generation.current;
+    const g = generation.current,
+      d = draftRevision.current;
     revision.current++;
     writing.current = true;
     setSending({ id: `pending_${attempt.current.requestId}`, content });
@@ -176,7 +269,12 @@ export function useThread(
         }),
       );
       if (g !== generation.current) return result;
-      accept(mergeLatest(current.current!, result));
+      accept(
+        mergeLatest(
+          current.current!,
+          d !== draftRevision.current ? keepNewerDrafts(current.current!, result) : result,
+        ),
+      );
       attempt.current = null;
       if (
         ("status" in result ? result.status : undefined) === "failed" ||

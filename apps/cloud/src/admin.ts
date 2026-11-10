@@ -25,6 +25,46 @@ const accountMigrationInput = z
   .object({ deviceId: z.string().min(1).max(100), oldExecutionStopped: z.literal(true) })
   .strict();
 export const admin = adminBase
+  .get("/streaming", async (c) => {
+    const flags = await c.env.DB.prepare(
+      "SELECT key,value FROM settings WHERE key IN ('modelStreamingEnabled','chatPreviewEnabled')",
+    ).all<{ key: string; value: string }>();
+    const metrics = await c.env.DB.prepare(
+      `SELECT stream_mode AS mode,COUNT(*) AS calls,
+      SUM(CASE WHEN status='unknown' OR error LIKE 'MODEL_STREAM_%' THEN 1 ELSE 0 END) AS interrupted,
+      AVG(first_delta_at-egress_started_at) AS firstDeltaMs,
+      AVG(CASE WHEN status IN ('done','failed','unknown') THEN updated_at-egress_started_at END) AS durationMs
+      FROM ai_calls WHERE egress_started_at>? AND stream_mode IS NOT NULL GROUP BY stream_mode`,
+    )
+      .bind(Date.now() - 86400000)
+      .all();
+    return c.json({
+      modelStreamingEnabled:
+        flags.results.find((f) => f.key === "modelStreamingEnabled")?.value !== "0",
+      chatPreviewEnabled: flags.results.find((f) => f.key === "chatPreviewEnabled")?.value !== "0",
+      metrics: metrics.results,
+    });
+  })
+  .patch(
+    "/streaming",
+    validator("json", (value) =>
+      z
+        .object({ modelStreamingEnabled: z.boolean(), chatPreviewEnabled: z.boolean() })
+        .strict()
+        .parse(value),
+    ),
+    async (c) => {
+      const b = c.req.valid("json");
+      await c.env.DB.batch(
+        Object.entries(b).map(([key, value]) =>
+          c.env.DB.prepare(
+            "INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+          ).bind(key, value ? "1" : "0"),
+        ),
+      );
+      return c.json({ ok: true });
+    },
+  )
   .route("/storage", storageAdmin)
   .get("/operations", async (c) => {
     const [members, devices, runs, accounts, settings] = await c.env.DB.batch<Row>([

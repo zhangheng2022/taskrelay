@@ -1,4 +1,5 @@
 import { readPreferences } from "./ai/preferences";
+import { closeDrafts } from "./chat-drafts";
 import { dbTime } from "./database";
 /** 设备执行协议：用租约约束上下文、模型转发、协助与动作登记；终态独立提交后回填原聊天。 */
 import { Buffer } from "node:buffer";
@@ -129,6 +130,7 @@ runner.post("/runs/:id/messages", async (c) => {
       content: z.string(),
       parts: parts.default([]),
       replyTo: idSchema.optional(),
+      sourceCallId: z.string().max(500).optional(),
     })
     .parse(await c.req.json());
   const run = await requireLease(c.env.DB, c.req.param("id"), c.get("deviceId"), b.epoch, true),
@@ -154,6 +156,8 @@ runner.post("/runs/:id/model", async (c) => {
       messages: z.array(modelMessage),
       purpose: z.enum(["decision", "summary"]).default("decision"),
       supportsScreenshot: z.boolean().optional(),
+      supportsDrafts: z.boolean().optional(),
+      expectedUserSeq: z.number().int().nonnegative().optional(),
     })
     .parse(await c.req.json());
   const run = await requireLease(c.env.DB, c.req.param("id"), c.get("deviceId"), b.epoch);
@@ -201,7 +205,39 @@ runner.post("/runs/:id/model", async (c) => {
         { tool_choice: "auto", maxTokens: profile.outputTokens ?? 4096 },
       )
     : model.withConfig({ maxTokens: profile.outputTokens ?? 4096 });
-  const response = aiMessageToModelResponse(await bound.invoke(toLangChainMessages(messages)));
+  const thread =
+    b.supportsDrafts && b.purpose === "decision" ? await runThread(c.env, run.id) : null;
+  const latestUser = thread
+    ? await c.env.DB.prepare(
+        "SELECT COALESCE(MAX(seq),0) seq FROM ai_messages WHERE thread_id=? AND role='user'",
+      )
+        .bind(thread.id)
+        .first<{ seq: number }>()
+    : null;
+  const operation = `execute_${run.id}_${b.requestId}`;
+  const response = aiMessageToModelResponse(
+    await bound.invoke(toLangChainMessages(messages), {
+      preview: thread
+        ? {
+            threadId: thread.id,
+            id: operation,
+            source: "executor",
+            mode: "text",
+            runId: run.id,
+            epoch: b.epoch,
+            deviceId: c.get("deviceId"),
+            userSeq: b.expectedUserSeq ?? latestUser?.seq,
+          }
+        : undefined,
+    }),
+  );
+  if (
+    thread &&
+    response.calls.some((call) =>
+      ["ask", "offerAccountSave", "requestAccountUpdate"].includes(call.name),
+    )
+  )
+    await closeDrafts(c.env, run.userId, thread.id, operation);
   await requireLease(c.env.DB, run.id, c.get("deviceId"), b.epoch);
   return c.json({ response });
 });
@@ -455,6 +491,7 @@ runner.post("/runs/:id/finish", async (c) => {
       result: runResultSchema,
       expectedUserSeq: z.number().int().nonnegative().optional(),
       stateCandidateKey: idSchema.nullable().optional(),
+      sourceCallId: z.string().max(500).optional(),
     })
     .parse(await c.req.json());
   const run = await getRun(c.env.DB, c.req.param("id"));
@@ -530,6 +567,7 @@ runner.post("/runs/:id/finish", async (c) => {
   if (thread)
     await appendMessage(c.env, thread.id, {
       id: `final_${run.id}`,
+      sourceCallId: b.sourceCallId,
       source: "executor",
       content: b.result.summary,
       runId: run.id,

@@ -336,6 +336,10 @@ export const aiCalls = sqliteTable(
     runId: text("run_id"),
     /** 调用转交模型出站的时点；NULL 表示未记录；UTC Unix 毫秒 */
     egressStartedAt: integer("egress_started_at"),
+    /** 实际选择的模型传输方式；旧调用为 NULL。 */
+    streamMode: text("stream_mode"),
+    /** 首个正文分片到达时点；不保存分片内容。 */
+    firstDeltaAt: integer("first_delta_at"),
   },
   (t): SQLiteTableExtraConfigValue[] => [
     /** 与 SQL 基线同源的校验约束；不得在 ORM 迁移中放宽。 */
@@ -355,6 +359,8 @@ export const aiCalls = sqliteTable(
 
     /** 按运行定位模型调用账本，停止与历史清理无需全表扫描。 */
     index("ai_calls_run").on(t.runId),
+    /** 实际传输方式仅允许流式或完整响应；旧调用可为空。 */
+    check("ai_calls_stream_mode", sql.raw("stream_mode IN ('stream','buffered','fallback')")),
     foreignKey({ columns: [t.userId], foreignColumns: [members.id] }),
   ],
 );
@@ -586,6 +592,8 @@ export const aiMessages = sqliteTable(
     runId: text("run_id"),
     /** 回复关联标识；可能为协助或卡片，不强制消息外键 */
     replyTo: text("reply_to"),
+    /** 生成正式正文的模型调用；用于接替临时预览，旧消息为 NULL。 */
+    sourceCallId: text("source_call_id"),
     /** 上下文撤回标志；本人历史可读，后续 AI 不得使用原文 */
     contextWithdrawn: integer("context_withdrawn").notNull().default(0),
   },
@@ -598,6 +606,10 @@ export const aiMessages = sqliteTable(
     check("ai_messages_check_2", sql.raw("context_withdrawn IN (0,1)")),
 
     uniqueIndex("ai_messages_unique_0").on(t.threadId, t.seq),
+    /** 按调用关联正式消息与临时草稿。 */
+    index("ai_messages_source_call")
+      .on(t.threadId, t.sourceCallId)
+      .where(sql.raw("source_call_id IS NOT NULL")),
     foreignKey({ columns: [t.threadId], foreignColumns: [aiThreads.id] }).onDelete("cascade"),
   ],
 );

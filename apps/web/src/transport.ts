@@ -1,10 +1,12 @@
 import type { Transport } from "../../../packages/contracts/src/index";
 import { requestJson } from "../../../packages/ui/src/request";
+import { draftEventSchema, type DraftEvent } from "../../../packages/contracts/src/streaming";
 
 // 网站请求与通知的浏览器 adapter。所有订阅共享一条连接；最后退订释放连接、定时器和事件。
 // 每个回调只操作自己仍持有的连接，防止旧 close/error 在切回页面后影响新连接。
 export function createWebTransport(): Transport {
   const subscribers = new Set<() => void>();
+  const drafts = new Set<(event: DraftEvent) => void>();
   let socket: WebSocket | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let failures = 0;
@@ -39,7 +41,7 @@ export function createWebTransport(): Transport {
     let connection: WebSocket;
     try {
       connection = new WebSocket(
-        `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/api/user/events`,
+        `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/api/user/events?protocol=2`,
       );
     } catch {
       reconnect();
@@ -51,8 +53,21 @@ export function createWebTransport(): Transport {
       failures = 0;
       notify();
     };
-    connection.onmessage = () => {
-      if (socket === connection) notify();
+    connection.onmessage = (message) => {
+      if (socket !== connection) return;
+      if (message.data === "changed") {
+        notify();
+        return;
+      }
+      try {
+        const event = draftEventSchema.safeParse(JSON.parse(String(message.data)));
+        if (!event.success) return;
+        for (const listener of [...drafts]) listener(event.data);
+        connection.send("draft.ack");
+        if (event.data.type === "draft.end") notify();
+      } catch {
+        /* 未识别的通知不改变聊天事实。 */
+      }
     };
     connection.onclose = () => {
       if (socket !== connection) return;
@@ -78,7 +93,15 @@ export function createWebTransport(): Transport {
     notify();
   };
 
-  return {
+  const transport: Transport = {
+    subscribeDrafts(listener) {
+      drafts.add(listener);
+      const stop = transport.subscribe!(() => {});
+      return () => {
+        drafts.delete(listener);
+        stop();
+      };
+    },
     // 同源图片请求沿用网站会话；地址不携带令牌，服务端仍检查图片归属。
     artifactUrl: (id, variant) =>
       `/api/user/artifacts/${encodeURIComponent(id)}${variant === "thumbnail" ? "?variant=thumbnail" : ""}`,
@@ -111,4 +134,5 @@ export function createWebTransport(): Transport {
       return requestJson<T>(path, { method, body, signal: options?.signal });
     },
   };
+  return transport;
 }

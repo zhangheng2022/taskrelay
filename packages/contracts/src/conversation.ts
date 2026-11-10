@@ -2,6 +2,7 @@
 import type { TaskInput } from "./index";
 export type ThreadPage = {
   id: string;
+  drafts?: import("./streaming").ChatDraft[];
   version: number;
   modelId: string;
   taskId?: string | null;
@@ -28,6 +29,7 @@ export type ThreadPage = {
     content: string;
     at: string;
     private?: boolean;
+    source_call_id?: string | null;
     source?: string;
     reply_to?: string | null;
     run_id?: string | null;

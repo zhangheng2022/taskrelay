@@ -19,6 +19,7 @@ const columns = new Set([
   "egress_started_at",
   "inference_started_at",
   "provider_started_at",
+  "first_delta_at",
 ]);
 export function dbTime(value: string | number | null | undefined): number | null {
   if (value == null) return null;
