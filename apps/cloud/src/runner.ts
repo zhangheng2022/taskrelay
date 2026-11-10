@@ -1,3 +1,5 @@
+import { confirmRequirements } from "./task-schedules";
+import { readLearning, saveExecutionRecord } from "./execution-learning";
 import { readPreferences } from "./ai/preferences";
 import { closeDrafts } from "./chat-drafts";
 import { dbTime } from "./database";
@@ -67,10 +69,37 @@ const parts = z.array(
     z.object({ type: z.literal("tool"), name: z.string(), result: z.string() }),
   ]),
 );
+runner.post("/runs/:id/requirements", async (c) => {
+  const b = lease
+    .extend({
+      userSeq: z.number().int().nonnegative(),
+      summary: z.string().min(1).max(2000),
+      changed: z.boolean(),
+    })
+    .parse(await c.req.json());
+  return c.json(await confirmRequirements(c.env, c.req.param("id"), c.get("deviceId"), b));
+});
+runner.post("/runs/:id/execution-record", async (c) => {
+  const b = lease
+    .extend({ callId: z.string().min(1).max(500), content: z.string().max(32000) })
+    .parse(await c.req.json());
+  const run = await getRun(c.env.DB, c.req.param("id"));
+  if (run.deviceId !== c.get("deviceId") || run.leaseEpoch !== b.epoch)
+    throw Error("LEASE_EXPIRED");
+  await saveExecutionRecord(c.env, run.id, b.callId, b.content);
+  return c.json({ ok: true });
+});
 runner.post("/claim", async (c) => {
   const b = z
-    .object({ requestId: idSchema, protocolVersion: z.literal(PROTOCOL_VERSION) })
+    .object({
+      requestId: idSchema,
+      protocolVersion: z.literal(PROTOCOL_VERSION),
+      supportsScheduling: z.boolean().optional(),
+    })
     .parse(await c.req.json());
+  await c.env.DB.prepare("UPDATE devices SET schedule_capable=? WHERE id=?")
+    .bind(Number(!!b.supportsScheduling), c.get("deviceId"))
+    .run();
   return c.json({ run: await claim(c.env.DB, c.get("deviceId"), b.requestId) });
 });
 runner.post("/runs/:id/heartbeat", async (c) => {
@@ -86,10 +115,15 @@ runner.post("/runs/:id/heartbeat", async (c) => {
 });
 runner.post("/runs/:id/context", async (c) => {
   const b = lease
-    .extend({ after: z.number().int().nonnegative().default(0) })
+    .extend({
+      after: z.number().int().nonnegative().default(0),
+      supportsScheduling: z.boolean().optional(),
+    })
     .parse(await c.req.json());
   const run = await requireLease(c.env.DB, c.req.param("id"), c.get("deviceId"), b.epoch),
     thread = await runThread(c.env, run.id);
+  if (b.supportsScheduling)
+    await c.env.DB.prepare("UPDATE runs SET learning_enabled=1 WHERE id=?").bind(run.id).run();
   const messages = await conversationContext(c.env, thread.id, b.after, { runId: run.id });
   await requireLease(c.env.DB, run.id, c.get("deviceId"), b.epoch);
   const current = await getRun(c.env.DB, run.id);
@@ -101,6 +135,7 @@ runner.post("/runs/:id/context", async (c) => {
     messages,
     ...(b.after === 0
       ? {
+          executionExperience: await readLearning(c.env, run.task),
           preferenceSnapshot: await readPreferences(
             c.env,
             run.userId,
@@ -156,6 +191,7 @@ runner.post("/runs/:id/model", async (c) => {
       messages: z.array(modelMessage),
       purpose: z.enum(["decision", "summary"]).default("decision"),
       supportsScreenshot: z.boolean().optional(),
+      supportsScheduling: z.boolean().optional(),
       supportsDrafts: z.boolean().optional(),
       expectedUserSeq: z.number().int().nonnegative().optional(),
     })
@@ -186,7 +222,11 @@ runner.post("/runs/:id/model", async (c) => {
   const tools =
     b.purpose === "summary"
       ? []
-      : executorTools.filter((tool) => tool.name !== "screenshot" || b.supportsScreenshot);
+      : executorTools.filter(
+          (tool) =>
+            (tool.name !== "screenshot" || b.supportsScreenshot) &&
+            (tool.name !== "confirmRequirements" || b.supportsScheduling),
+        );
   if (
     estimateTokens(messages) + estimateTokens(tools) + (profile.outputTokens ?? 4096) + 512 >
     (profile.contextTokens ?? 16000)

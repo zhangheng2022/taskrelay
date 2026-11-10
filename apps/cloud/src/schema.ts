@@ -1160,6 +1160,8 @@ export const conversationInbox = sqliteTable(
 export const devices = sqliteTable(
   "devices",
   {
+    /** 是否支持定时任务与执行总结扩展 */
+    scheduleCapable: integer("schedule_capable").notNull().default(0),
     /** 稳定标识；保留存量身份 */
     id: text("id").primaryKey(),
     /** 界面显示名称 */
@@ -1682,6 +1684,10 @@ export const runSnapshots = sqliteTable(
 export const runs = sqliteTable(
   "runs",
   {
+    /** 是否由新执行器登记执行总结 */
+    learningEnabled: integer("learning_enabled").notNull().default(0),
+    /** 是否要求定时任务扩展能力 */
+    requiresScheduling: integer("requires_scheduling").notNull().default(0),
     /** 稳定标识；保留存量身份 */
     id: text("id").primaryKey(),
     /** 所属任务 ID */
@@ -1918,6 +1924,8 @@ export const taskVersions = sqliteTable(
 export const tasks = sqliteTable(
   "tasks",
   {
+    /** 需求变化代次，隔离旧执行经验 */
+    requirementRevision: integer("requirement_revision").notNull().default(0),
     /** 稳定标识；保留存量身份 */
     id: text("id").primaryKey(),
     /** 本实体内的递增版本 */
@@ -1994,4 +2002,78 @@ export const preferenceSnapshots = sqliteTable(
     // 按原聊天清理快照。
     index("preference_snapshots_thread").on(table.threadId),
   ],
+);
+
+/** 每个任务的独立调度与执行器确认。 */
+export const taskSchedules = sqliteTable(
+  "task_schedules",
+  {
+    taskId: text("task_id")
+      .primaryKey()
+      .references(() => tasks.id),
+    threadId: text("thread_id").references(() => aiThreads.id),
+    version: integer("version").notNull().default(1),
+    taskVersion: integer("task_version").notNull(),
+    requirementRevision: integer("requirement_revision").notNull().default(0),
+    confirmedSeq: integer("confirmed_seq").notNull().default(0),
+    summary: text("summary"),
+    ready: integer("ready").notNull().default(0),
+    state: text("state").notNull().default("off"),
+    frequency: text("frequency"),
+    schedule: text("schedule"),
+    nextRunAt: integer("next_run_at"),
+    legacy: integer("legacy").notNull().default(0),
+  },
+  (t) => [
+    index("task_schedules_due").on(t.state, t.nextRunAt),
+    check("task_schedules_state", sql`${t.state} IN ('off','enabled','paused')`),
+  ],
+);
+/** 调度配置写入的幂等身份与摘要。 */
+export const scheduleRequests = sqliteTable(
+  "schedule_requests",
+  {
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id),
+    requestId: text("request_id").notNull(),
+    digest: text("digest").notNull(),
+    version: integer("version").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.taskId, t.requestId] })],
+);
+/** 每次执行的加密总结与经验，不改变用户任务记忆。 */
+export const executionLearning = sqliteTable(
+  "execution_learning",
+  {
+    runId: text("run_id")
+      .primaryKey()
+      .references(() => runs.id),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id),
+    taskVersion: integer("task_version").notNull(),
+    accountId: text("account_id"),
+    requirementRevision: integer("requirement_revision").notNull().default(0),
+    state: text("state").notNull().default("pending"),
+    summary: text("summary"),
+    improvements: text("improvements"),
+    incomplete: integer("incomplete").notNull().default(1),
+    error: text("error"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("execution_learning_task").on(t.taskId, t.taskVersion, t.createdAt)],
+);
+/** 原执行器逐次上报的加密操作记录。 */
+export const executionRecords = sqliteTable(
+  "execution_records",
+  {
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id),
+    callId: text("call_id").notNull(),
+    content: text("content").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.runId, t.callId] })],
 );

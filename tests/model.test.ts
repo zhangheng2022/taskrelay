@@ -50,7 +50,7 @@ for (const protocol of ["chat", "responses"] as const)
           protocol === "chat"
             ? body.tools.map((item: { function: unknown }) => item.function)
             : body.tools;
-        assert.equal(tools.length, 11);
+        assert.equal(tools.length, 12);
         assert.doesNotMatch(JSON.stringify(tools), /"format":"uri"|"minLength"|"maxLength"/);
         for (const item of tools)
           assert.deepEqual(item.parameters.required, Object.keys(item.parameters.properties));

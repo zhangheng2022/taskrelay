@@ -1,3 +1,4 @@
+import { ScheduleCard } from "./schedule-card";
 import { HistoryCleanup, type CleanupSelection } from "./history-cleanup";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -542,6 +543,12 @@ function Workspace({ transport }: { transport: Transport }) {
           </div>
           {task && page === "tasks" && (
             <>
+              <ScheduleCard
+                key={task.id}
+                transport={transport}
+                taskId={task.id}
+                offline={offline}
+              />
               <Status
                 value={activeRun?.status ?? run?.status ?? task.status}
                 outcome={(activeRun ?? run)?.result?.outcome}
@@ -588,23 +595,6 @@ function Workspace({ transport }: { transport: Transport }) {
                     >
                       立即运行
                     </DropdownMenuItem>
-                    {task.confirmedCondition && (
-                      <>
-                        <DropdownMenuItem
-                          disabled={offline || busy}
-                          onSelect={() =>
-                            void act(() =>
-                              createApi(transport).api.user.tasks[":id"].state.$post({
-                                param: { id: task.id },
-                                json: { enabled: task.status !== "active" },
-                              }),
-                            )
-                          }
-                        >
-                          {task.status === "active" ? "暂停调度" : "启用调度"}
-                        </DropdownMenuItem>
-                      </>
-                    )}
                     <DropdownMenuItem
                       disabled={offline}
                       onSelect={() => requestCleanup("clear", task)}

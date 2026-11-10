@@ -43,6 +43,10 @@ export const taskInputSchema = z
   .strict();
 export type TaskInput = z.infer<typeof taskInputSchema>;
 export interface TaskDefinition extends TaskInput {
+  learningIds?: string[];
+  requiresScheduling?: boolean;
+  requirementRevision?: number;
+  scheduleTrigger?: { version: number; slot: string };
   /** 加密偏好快照身份；正文经租约保护的 context 单独读取。 */
   preferenceSnapshotId?: string;
   /** 本轮固定的有序账号选择；每个执行仍只绑定一个账号。 */
@@ -109,6 +113,7 @@ export interface TaskRun {
   reconciliationOf?: string | null;
 }
 export const runResultSchema = z.object({
+  executionRecordCount: z.number().int().nonnegative().optional(),
   summary: z.string().max(8000),
   outcome: z.enum([
     "reported",

@@ -1,3 +1,5 @@
+import { scheduleRoutes } from "./task-schedules";
+import { learningSnapshot } from "./execution-learning";
 import { modelManagement, accountManagement } from "./resource-management";
 import { capturePreferences, checkPreferenceBudget } from "./ai/preferences";
 import { pageQuery, pageKey, pageCursor } from "./pagination";
@@ -65,6 +67,7 @@ const modelEditInput = modelInputSchema.extend({
 });
 const retentionInput = z.object({ retentionDays: z.number().int().min(1).max(365) });
 export const user = userBase
+  .route("/tasks", scheduleRoutes)
   .route("/accounts", accountManagement)
   .get("/me", async (c) =>
     c.json({
@@ -317,6 +320,24 @@ export const user = userBase
         .first<Row>();
       if (!row) throw new Error("TASK_NOT_FOUND");
       const task = taskFrom(row);
+      const schedule = await c.env.DB.prepare("SELECT version FROM task_schedules WHERE task_id=?")
+        .bind(id)
+        .first<{ version: number }>();
+      if (schedule)
+        return scheduleRoutes.request(
+          `http://local/${id}/schedule`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              requestId: crypto.randomUUID(),
+              expectedVersion: schedule.version,
+              expectedTaskVersion: task.version,
+              enabled,
+            }),
+          },
+          c.env,
+        );
       if (enabled) {
         if (row.context_withdrawn) throw Error("TASK_CONTEXT_WITHDRAWN");
         if (!row.confirmed_condition) throw Error("CONDITIONS_CONFIRMATION_REQUIRED");
@@ -373,7 +394,7 @@ export const user = userBase
       return c.json(
         await enqueueTaskDispatch(
           c.env.DB,
-          { ...task, preferenceSnapshotId },
+          { ...task, preferenceSnapshotId, learningIds: await learningSnapshot(c.env.DB, task) },
           `manual:${task.id}:${requestId}`,
         ),
       );

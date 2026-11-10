@@ -84,7 +84,12 @@ export class ExecutorHost {
   async flush() {
     for (const row of this.journal.pending()) {
       try {
-        const body = JSON.parse(row.body);
+        const queued = JSON.parse(row.body);
+        if (row.path.endsWith("/execution-record") && !this.protectedStates)
+          throw Error("OS_ENCRYPTION_UNAVAILABLE");
+        const body = row.path.endsWith("/execution-record")
+          ? (this.protectedStates!.decrypt(queued.encryptedRecord) as Record<string, unknown>)
+          : queued;
         const result = await this.cloud.request<{ synced?: boolean; revision?: number }>(
           "POST",
           row.path,
@@ -424,6 +429,14 @@ export class ExecutorHost {
       body?.epoch !== run.leaseEpoch
     )
       throw new Error("RUN_SCOPE_MISMATCH");
+    if (p.endsWith("/execution-record")) {
+      if (!this.protectedStates) throw Error("OS_ENCRYPTION_UNAVAILABLE");
+      const key = `record_${run.id}_${body.callId}`;
+      this.journal.queue(key, p, { encryptedRecord: this.protectedStates.encrypt(body) });
+      const result = await this.cloud.request("POST", p, body);
+      this.journal.remove(key);
+      return result;
+    }
     if (/\/(events|finish)$/.test(p)) {
       const key = p.endsWith("/finish") ? `finish_${run.id}` : `events_${body.events?.[0]?.id}`;
       this.journal.queue(key, p, body);

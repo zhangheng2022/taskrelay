@@ -12,6 +12,14 @@ export class ProtectedStateFiles {
       decryptString(value: Buffer): string;
     },
   ) {}
+  /** 小型可靠回执内联密文；普通 journal 只接触密文，不依赖临时文件恢复。 */
+  encrypt(value: unknown): string {
+    if (!this.encryption.isEncryptionAvailable()) throw Error("OS_ENCRYPTION_UNAVAILABLE");
+    return this.encryption.encryptString(JSON.stringify(value)).toString("base64");
+  }
+  decrypt(value: string): unknown {
+    return JSON.parse(this.encryption.decryptString(Buffer.from(value, "base64")));
+  }
   async put(value: unknown) {
     if (!this.encryption.isEncryptionAvailable()) throw Error("OS_ENCRYPTION_UNAVAILABLE");
     await mkdir(this.directory, { recursive: true });

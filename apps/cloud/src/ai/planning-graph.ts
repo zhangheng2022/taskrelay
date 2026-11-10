@@ -1,3 +1,4 @@
+import { resolveScheduleIntent } from "../task-schedules";
 /**
  * 交办图按“理解意图 → 可选任务交接 → 回复”推进；明确交办时产出可调整的大步骤。
  * 检查点保存图状态，命令模块承担任务交接的幂等性，不在此规划页面控件操作。
@@ -12,6 +13,7 @@ import { RelayChatModel } from "./model";
 
 const decisionSchema = z.object({
   reply: z.string(),
+  changesRequirements: z.boolean().default(false),
   start: z.boolean(),
   title: z.string().nullable(),
   goal: z.string().nullable(),
@@ -75,6 +77,13 @@ export async function planConversation(
         (!decision.goal || !decision.entryUrl || !decision.executionOutline.length)
       )
         throw Error("HANDOFF_INCOMPLETE");
+      if (thread.task_id)
+        await resolveScheduleIntent(
+          env,
+          thread.task_id,
+          thread.id,
+          decision.start || decision.changesRequirements,
+        );
       return { decision };
     })
     .addNode("handoff", async (state) => {
