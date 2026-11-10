@@ -1,10 +1,27 @@
 # TaskRelay 验收记录
 
+## 当前结果索引
+
+这里索引最近已记录的结果，不代替实时生产检查。下方历史记录中的“未部署”“待验收”属于记录时点，后续结果按日期与固定提交关联。
+
+- [流式 0.21.0 正式发布、长回复超时与验证限制](#2026-11-10-优先流式正式发布0210已完成)。
+- [手动 CI 夹具修复及远端验证](#2026-11-10-手动-ci-检查范围夹具修复)。
+- [存储 v2 切换、旧库删除及初始安装证据](#2026-11-08-存储-v2-生产全量重置与正式桌面发布)。
+- [归并补充的历史提交与外部配置](#历史部署补充证据)。
+
+## 脚本退役与文档归并
+
+2026-11-10 按确认范围删除旧 Node CPU 采样脚本和已完成全量重置的一次性 Worker；删除前核对 npm、CI、Forge、脚本互调与文档引用，前者无调用入口，后者仅被历史记录引用。[旧采样源码](https://github.com/zhangheng2022/taskrelay/blob/dcb68674e436891ef15b1287f546ca50df914ca4/scripts/profile-ai.ts)与[旧重置源码](https://github.com/zhangheng2022/taskrelay/blob/dcb68674e436891ef15b1287f546ca50df914ca4/scripts/db/reset-worker.ts)只供追溯。workerd 采样、转换/导出/冻结、旧结构 SQL、签名、发布恢复和隔离验收工具保持原样，没有运行生产维护或密钥初始化。
+
+README 修正记忆行为和过期版本说明；部署文档将重复发布记录归并为验收链接，保留原章节标题与锚点，独有固定提交、更新包哈希及历史外部配置转入本文。既有历史日期、失败和未完成记录不改写为成功；本轮没有变更业务源码、组件、类型、依赖、锁文件或扩展标识，没有部署或更新设备。
+
+本地类型、lint、仓库检查及 20 项相关脚本/迁移回归通过，无跳过；测试使用隔离数据，不代表执行生产迁移。文档检查核对相对链接、章节锚点，以及归并前部署记录中的固定提交、运行编号、Worker/资源 ID 和 SHA-256 仍可追溯。本轮核对 80 个相对链接、全部原章节标题以及 72 个历史固定标识，均保留或正确跳转。OCR delegate preview/rule 成功，宿主补审默认排除的 Markdown 和删除项：total_files=7、reviewed_files=7、skipped_files=0、coverage_rate=100%，无遗留发现。Graphify 更新为 5793 节点、10965 边、451 社区；35 个 SQL 因缺少 tree_sitter_sql 未解析，13 个不支持扩展文件跳过，未调用 LLM。远端结果以本次 PR 与手动 CI 为准。
+
 ## 2026-11-10 手动 CI 检查范围夹具修复
 
 已在本机以 `GITHUB_EVENT_NAME=workflow_dispatch` 复现下方手动 CI 的断言失败：夹具模拟文档差异，却继承了宿主手动运行事件。修复仅修改测试，子进程显式指定 push/pull_request/workflow_dispatch/schedule，并清空 GITHUB_OUTPUT、GITHUB_STEP_SUMMARY，隔离宿主输出。保留生产规则：push/PR 的纯文档可跳过，手动和定时始终全量；独立浏览器测试变化和缺少基线仍执行桌面检查。
 
-同一测试文件分别在宿主 push、workflow_dispatch、schedule 环境下运行，每轮 4/4，共 12 项通过；类型、lint、格式和仓库检查通过。OCR delegate preview/rule 成功，宿主补审默认排除的测试及本文，total_files=2、reviewed_files=2、skipped_files=0、coverage_rate=100%，无遗留发现。Graphify 更新为 5792 节点、10982 边、465 社区；35 个 SQL 因缺 tree_sitter_sql 未解析，13 个不支持扩展文件跳过，本批不改 SQL 或业务代码。远端手动 CI 结果另记，不触发产品部署或桌面升级。
+同一测试文件分别在宿主 push、workflow_dispatch、schedule 环境下运行，每轮 4/4，共 12 项通过；类型、lint、格式和仓库检查通过。OCR delegate preview/rule 成功，宿主补审默认排除的测试及本文，total_files=2、reviewed_files=2、skipped_files=0、coverage_rate=100%，无遗留发现。Graphify 更新为 5792 节点、10982 边、465 社区；35 个 SQL 因缺 tree_sitter_sql 未解析，13 个不支持扩展文件跳过，本批不改 SQL 或业务代码。固定修复提交 `e5275e676229a1b8288daf27e45c9c4af27ff486` 的[手动 CI 42766138110](https://github.com/zhangheng2022/taskrelay/actions/runs/42766138110)全部通过，包含跨平台测试、Web 构建和 Windows 打包实际安装；PR CI 42766200920 通过，[PR #39](https://github.com/zhangheng2022/taskrelay/pull/39)合并为 `dcb68674e436891ef15b1287f546ca50df914ca4`。未触发产品部署或桌面升级。下方早期手动 CI 失败记录保留为修复前证据。
 
 ## 2026-11-10 优先流式正式发布（0.21.0，已完成）
 
@@ -329,7 +346,7 @@ Graphify 增量更新成功，6745 节点、11637 边、584 社区。保留 12 �
 
 按用户“数据全部清空，不保留历史数据”的明确要求执行，取代本轮生产保留数据转换计划。[Quality 42396015821](https://github.com/zhangheng2022/taskrelay/actions/runs/42396015821) 与 [正式发布 42396374508](https://github.com/zhangheng2022/taskrelay/actions/runs/42396374508) 成功，源码固定为 `8f0009b29330b3903434c944ee8946c41164164c`。Worker 版本 `d8748c53-2466-4e44-8030-969a564da839` 的流量为 100%，协议 18。本文后续“尚未部署”段落是前批时间点记录，当前状态以上述最终发布为准。
 
-维护窗口暂停旧库领取和交办，运行/浏览器清理、AI 回合、调用、dispatch、命令、inbox 与清理作业待处理数均为 0。先部署无 DO 类/绑定的维护入口，应用 `storage-v2-reset-drop-20261108`，核验七个旧命名空间全部消失；再由正式发布应用 `storage-v2-reset-create-20261108` 建立七个新 SQLite DO 命名空间，其 ID 均不同。Secret 通过 keep_bindings 保留，未读取、生成或覆盖 MASTER_KEY 等平台密钥。
+维护窗口暂停旧库领取和交办，运行/浏览器清理、AI 回合、调用、dispatch、命令、inbox 与清理作业待处理数均为 0。先部署无 DO 类/绑定的[一次性维护入口](https://github.com/zhangheng2022/taskrelay/blob/dcb68674e436891ef15b1287f546ca50df914ca4/scripts/db/reset-worker.ts)（现已退役，仅供历史追溯），应用 `storage-v2-reset-drop-20261108`，核验七个旧命名空间全部消失；再由正式发布应用 `storage-v2-reset-create-20261108` 建立七个新 SQLite DO 命名空间，其 ID 均不同。Secret 通过 keep_bindings 保留，未读取、生成或覆盖 MASTER_KEY 等平台密钥。
 
 唯一业务 D1 已切为 `taskrelay-v2-20261108`（`1951016f-1c9b-459e-a332-75266106f7ad`），storage_meta=2、基线迁移已登记、foreign_key_check 为空。切换后核验认证用户/会话、成员、设备、模型、账号、任务、运行、聊天、消息和附件计数均为 0。核验新绑定、公开下载及权限后，旧业务 D1 `9d387f48-6e34-4af4-a2a0-10f958d65a16` 已通过 API 删除并从列表消失；既有独立验收库未删除。未制作旧数据转换归档，本机旧库和 Profile 未清除。
 
@@ -918,3 +935,25 @@ Windows 0.12.0 make、包内 smoke、实际系统目录安装 smoke、release-ma
 - 发布前活动运行/推理为 0；发布后任务 3、聊天 4、模型配置 2、设备 1、账号 0，未创建生产清理作业、未删除真实聊天。`maintenance=0`、`claimsEnabled=1` 已恢复，Cron 保持每分钟。生产后台删除闭环未用真实数据执行，仍以生产入口隔离回归和本地 D1 迁移证据为界。
 
 - 源码提交的 [GitHub Actions CI](https://github.com/zhangheng2022/taskrelay/actions/runs/42057489609) 已完成，Ubuntu/Windows Node 24 的类型检查、完整测试、Web 构建、仓库及差异检查均成功。
+
+## 历史部署补充证据
+
+本节在文档归并时从旧部署说明转入，只补充历史证据，不授权再次运行旧维护流程。[归并前完整部署记录](https://github.com/zhangheng2022/taskrelay/blob/dcb68674e436891ef15b1287f546ca50df914ca4/docs/DEPLOYMENT.md)保留原始文字、顺序和操作背景。
+
+2026-11-06 依赖基线源码 `df34a73` 已部署 Worker `32a8bb89-39a1-4ae6-b2a3-e8adcc4ef7dd`，本机实际安装 0.14.0 且安装 smoke 通过；D1 无新增迁移（0027），领取已恢复。完整安装哈希及证据边界见 ACCEPTANCE。
+
+2026-11-06 卡片紧凑化与重复提示修复从源码 `94b5c98cfa93d7a893dc467c1837edb4ce025875` 上线。先应用 D1 0027，再部署 Worker `487b9e41-dc31-4e55-9bb5-7b4b31f4849a`，API 确认 100% 流量；两个域名健康与权限检查通过，恢复 `maintenance=0`、`claimsEnabled=1`，本机设备协议 16、claim_ready=1。生产原聊天的三张待确认卡片已归并为一张，其余两张失效，静态入口引用 `index-DhS33mzA.js`。本轮不更换执行器安装包。
+
+以下资源及权限描述为存储 v2 切换前的历史记录，原 D1 已删除，版本和外部配置状态不能当作当前事实。
+
+- Cloudflare account：`b3a410496c5e49e582b4af19d2f2eec6`
+- Worker：`taskrelay`，每分钟 Cron
+- Durable Objects：`ModelEgress`、`RequestCoordinator`、`Scheduler`、`AiTurn`、`Evidence`、`NotificationHub`、`BrowserStateStore`，均为 SQLite 后端。ModelEgress 每次模型调用一个短期对象，限制在 `us` jurisdiction；迁移依次为 `model-egress-v1`、`free-runtime-v1`、`free-turn-v1`、`browser-state-v1`。
+- D1：`taskrelay` / `9d387f48-6e34-4af4-a2a0-10f958d65a16`
+- 旧私有 R2：`taskrelay-evidence` 保留，但生产不再绑定或使用；当前聊天图片使用加密 DO，随聊天删除。
+- Access：`TaskRelay` / `6cd2c9dc-ba3c-4969-9aaf-83ea360c398f`
+- 主站：`https://tr.zhangheng.eu.org`；旧入口：`https://taskrelay.zhangheng.workers.dev`
+
+两个域名统一通过应用自身会话认证。原 Access 应用与 owner allow 策略保留，新增 `TaskRelay application authentication` bypass 策略 `1ad2c9f8-cee7-427a-8f9e-39409a68422b` 允许到达 Worker；它不是 Worker 内部权限旁路。切换后两个域名均验证：匿名 user/admin 为 401，Bearer 访问 user/admin 为 403，旧 device/user 为 403，无令牌 device/status 为 401。当时设备协议 16 仍校验令牌和租约；配对批准只允许应用管理员。预览 URL 关闭。
+
+2026-11-06 的 0.17.1 正式产物由托管 Windows 构建和安装验收：包内／安装 ASAR 为 `0b67b1d6f07fcf4b2fb272f94f98a88d5f92575e03ab194f0f3d823fc841a011`，更新包 SHA-256 为 `77959e67264fc565b3d01b43d806d0d4d0820428a7fc60de211d050eedcd9701`。当时用户本机仍为 0.17.0，更新通道升级及升级后 Microsoft 只读验收未完成，不能用托管安装替代本机证据。

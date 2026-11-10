@@ -96,7 +96,7 @@ npm run check:repo
 
 ### GitHub 自动检查
 
-[CI · 持续集成](.github/workflows/ci.yml) 在 PR、master 推送、手动触发及每周一执行。纯文档只检查格式、仓库约束与秘密；代码改动执行静态检查、双平台测试、覆盖率、安全与 Web 构建，执行器相关改动追加 [Build · Windows 构建验收](.github/workflows/build-windows.yml)。总门槛为 `CI Gate · 合并检查`，仓库规则直接绑定此检查。[Release · 生产发布](.github/workflows/release.yml) 手动发布固定提交，优先复用该提交通过主分支 CI 的完整产物；合并不自动部署。
+[CI · 持续集成](.github/workflows/ci.yml) 在 PR、master 推送、手动触发及每周一执行。普通提交与 PR 的纯文档变化只检查格式、仓库约束与秘密，手动及定时运行始终全量；代码改动执行静态检查、双平台测试、覆盖率、安全与 Web 构建，执行器相关改动追加 [Build · Windows 构建验收](.github/workflows/build-windows.yml)。总门槛为 `CI Gate · 合并检查`，仓库规则直接绑定此检查。[Release · 生产发布](.github/workflows/release.yml) 手动发布固定提交，优先复用该提交通过主分支 CI 的完整产物；合并不自动部署。
 
 Web 图片真实浏览器验收在 Windows 执行 `npm run prepare:browser` 后运行 `npm run test:web-images`，使用合成图片和正式共享组件，报告与截图写入 `out/web-images`；CI 的 Windows 测试作业执行相同命令，验收失败或报告缺失阻止门槛通过。
 
@@ -156,14 +156,29 @@ node scripts/smoke.mjs "$env:LOCALAPPDATA\TaskRelay\app-<实际版本>\TaskRelay
 
 ### LangChain 与 Cloudflare 免费运行架构
 
-普通 Worker 只处理静态资源和轻量路由，Hono 业务进入 SQLite Durable Objects；对话通过 D1 outbox 异步执行，网站与客户端使用休眠 WebSocket 通知和低频兜底。短期图片在 DO 加密保存，生产已移除 R2 绑定。模型 API 保持现有配置与美国 alarm 出站链路，模型提供方费用不属于 Cloudflare 免费承诺。免费预算耗尽时停止接收新工作，不自动开通付费服务；详见 [免费部署](docs/DEPLOYMENT.md#cloudflare-free-运行架构)。
+普通 Worker 只处理静态资源和轻量路由，Hono 业务进入 SQLite Durable Objects；对话通过 D1 outbox 异步执行，网站与客户端使用休眠 WebSocket 通知和低频兜底。短期图片在 DO 加密保存，生产已移除 R2 绑定。模型 API 保持现有配置与美国 alarm 出站链路，模型提供方费用不属于 Cloudflare 免费承诺。免费预算耗尽时停止接收新工作，不自动开通付费服务；详见 [免费部署](docs/DEPLOYMENT.md#资源配置与已记录部署)。
 
 `node scripts/test-free-runtime.mjs` 验证隔离 workerd 的真实 DO 路由、异步 alarm、加密分块证据及 WebSocket 撤销；不调用真实模型。
 
 本机 CPU 对照采样：`node scripts/profile-worker.mjs .cache/ai-profile/current`。脚本在本机 workerd 使用隔离 D1、合成账号和模型响应，输出 CPU profile 与统计；不读取生产密钥，不验证真实模型地区。统计含本地 D1 绑定开销，不能等同 Cloudflare 计费 CPU 或免费套餐达标证明。保留某次构建后可加 `--reuse-bundle` 重跑同一版本。
 
-云端以 LangGraph 管理交办、阶段计划和协助，D1 加密保存图检查点；桌面以 LangGraph 管理现场工具循环，协助暂停只在同一执行进程内恢复。LangChain 统一模型和工具消息，平台 adapter 保持设备租约、动作防重和美国模型出站约束。设置中的“我的记忆”仍只管理偏好，不自动影响运行。
+云端以 LangGraph 管理交办、阶段计划和协助，D1 加密保存图检查点；桌面以 LangGraph 管理现场工具循环，协助暂停只在同一执行进程内恢复。LangChain 统一模型和工具消息，平台 adapter 保持设备租约、动作防重和美国模型出站约束。设置中本人启用的记忆会在交办时固定为加密偏好快照，供规划、执行和协助共同使用；旧记忆默认停用，不自动从聊天提取。
 
-本地新库使用 `npm run db:migrate` 初始化独立 v2 基线。源码协议 18、桌面 0.19.0 / SQLite schema 4，正常运行不兼容旧库、旧字段或旧聊天游标；旧库不能直接应用新基线。原 0001–0030 SQL 仅保留在 `scripts/db/legacy-schema` 供一次性离线转换使用。`npm run db:convert -- --source <路径> --inspect` 只读预检，`npm run db:benchmark` 在忽略目录生成合成容量对照；转换、导入和回退要求见 [部署与恢复](docs/DEPLOYMENT.md#存储-v2-离线切换保留数据参考流程)。生产和本机安装状态分别记录在 [验收](docs/ACCEPTANCE.md)，不能从源码版本推断已上线。
+本地新库使用 `npm run db:migrate` 初始化独立 v2 基线。当前协议、桌面版本和本地结构版本以[合同源码](packages/contracts/src/index.ts)、[桌面清单](apps/desktop/package.json)及[本地存储结构](apps/desktop/src/main/journal-schema.ts)为准。正常运行不兼容旧库、旧字段或旧聊天游标；旧库不能直接应用新基线。原 0001–0030 SQL 仅保留在 `scripts/db/legacy-schema` 供一次性离线转换使用。`npm run db:convert -- --source <路径> --inspect` 只读预检，`npm run db:benchmark` 在忽略目录生成合成容量对照；转换、导入和回退要求见 [部署与恢复](docs/DEPLOYMENT.md#存储-v2-离线切换保留数据参考流程)。生产和本机安装状态分别记录在 [验收](docs/ACCEPTANCE.md)，不能从源码版本推断已上线。
 
 两个容量命令可用 `-- --scales 1000` 做小规模隔离复验，或按递增顺序传入逗号分隔的规模；默认仍为 1000、100000、1000000 条消息。小规模报告只证明对应夹具和查询入口，不替代百万规模或生产容量验收。
+
+### 保留脚本入口
+
+| 用途                 | 入口                                                | 边界                                                                                           |
+| -------------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| 本地初始化           | `node scripts/setup-local.mjs`                      | 仅补齐缺失配置，不覆盖已有密钥                                                                 |
+| 隔离 workerd 验收    | `node scripts/test-free-runtime.mjs`                | 合成数据，不调用真实模型                                                                       |
+| workerd CPU 采样     | `node scripts/profile-worker.mjs <忽略目录>`        | 本地统计，不代表生产计费或模型地区                                                             |
+| 旧库转换、导出和冻结 | `npm run db:convert`、`scripts/db/freeze-worker.ts` | 按[保留数据流程](docs/DEPLOYMENT.md#存储-v2-离线切换保留数据参考流程)使用，旧结构 SQL 仍需保留 |
+| 容量对照             | `npm run db:benchmark`、`npm run db:benchmark:d1`   | 本地与远端用途不同；远端操作须明确指定环境                                                     |
+| 构建、签名与发布恢复 | npm 构建命令及 [Actions](.github/workflows)         | 入口、顺序和证据要求见部署说明                                                                 |
+| 首次空库密钥初始化   | `scripts/provision-secret.mjs`                      | 仅全新空环境，现有环境禁止重新生成 MASTER_KEY                                                  |
+| 隔离浏览器验收站     | `scripts/acceptance-site/worker.mjs`                | 测试专用，不替代真实业务验收                                                                   |
+
+旧 Node CPU 采样与一次性全量重置脚本已退役，历史依据见[验收记录](docs/ACCEPTANCE.md#脚本退役与文档归并)。不以手工运行旧重置流程处理日常故障。
