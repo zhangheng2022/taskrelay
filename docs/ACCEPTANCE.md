@@ -8,7 +8,7 @@
 
 真实 workerd 本地验收通过原 alarm/协助恢复链路和新增休眠 WebSocket 草稿、大密文快照、用户隔离、关闭后迟到写入拒绝。模型提供方仍为隔离夹具，不能证明美国部署位置或真实服务流式兼容性。真实 Chromium 验证桌面/手机宽度和历史滚动，证据见 UI-REVIEW；不等于真人手机验收。
 
-类型检查、lint、仓库检查、Web/Worker 构建和差异检查通过；Web 构建保留现有大分块提示。OCR delegate preview/rule 成功，宿主审查本次 49 个源码/测试/文档/锁文件（补审默认排除项），total_files=49、reviewed_files=49、skipped_files=0、coverage_rate=100%，无未解决发现；已修正旧 HTTP 响应覆盖草稿、控制探测输出未校验、保留期预读候选误关闭仍活跃聊天三处问题。未调用 OCR 外部模型。Graphify 更新为 5790 节点、10980 边、452 社区；35 个 SQL 因缺少 tree_sitter_sql 未解析，ui-streaming 测试未提取符号，已直接阅读差异补审；没有调用 LLM 更新社区标签。
+类型检查、lint、仓库检查、Web/Worker 构建和差异检查通过；Web 构建保留现有大分块提示。OCR delegate preview/rule 成功，宿主审查本次 50 个源码/测试/文档/锁文件（补审默认排除项），total_files=50、reviewed_files=50、skipped_files=0、coverage_rate=100%，无未解决发现；已修正旧 HTTP 响应覆盖草稿、控制探测输出未校验、保留期预读候选误关闭仍活跃聊天三处问题。未调用 OCR 外部模型。Graphify 更新为 5790 节点、10980 边、452 社区；35 个 SQL 因缺少 tree_sitter_sql 未解析，ui-streaming 测试未提取符号，已直接阅读差异补审；没有调用 LLM 更新社区标签。
 
 首片/终态耗时、未知或流式错误数、能力兼容回退数可通过管理员 `/api/admin/streaming` 读取，当前没有生产流量统计结论。两个回退开关只作用于新调用。尚未完成的发布、托管 Windows 打包/实际安装和真实模型验证不得据此记为通过，发布完成后另记证据。
 
