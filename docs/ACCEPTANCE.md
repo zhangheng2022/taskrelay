@@ -1,5 +1,15 @@
 # TaskRelay 验收记录
 
+## 2026-11-10 CUTOVER_NOT_READY 发布后设备登记修复（本地，未部署）
+
+截图中的 0.20.0 已安装不代表云端设备记录已升级。源码确认：常规发布现在直接恢复原维护/领取开关，而旧设备登记仍要求维护开启且领取关闭，形成发布后升级阻断。本批仅修改云端登记条件，允许本地就绪、未吊销且本设备没有活动/待清理运行时登记当前协议；保留冻结窗口检查、拒绝未来协议降级，协议实际变化时清除旧领取就绪状态。桌面版本和协议不变。
+
+真实 API 路由回归覆盖发布后原 token 升级、本地未就绪拒绝、重复登记、readiness 恢复、其他设备执行不受影响、三种活动状态、终态待清理、冻结组合、吊销及未来协议。定向测试 23/23；补充设备隔离用例后完整测试 525/525，无跳过。类型检查、lint、Web/Worker 构建通过；构建保留分块体积提示。测试使用 SQLite 适配器，不代表生产 D1 并发或真实设备升级闭环。
+
+OCR delegate preview/rule 成功，由宿主审查本批全部源码、测试及文档；默认排除的测试与 Markdown 已补审。total_files=5、reviewed_files=5、skipped_files=0、coverage_rate=100%，无未解决发现。Graphify 更新为 5729 节点、10771 边、451 社区；34 个 SQL 缺少 tree_sitter_sql 未提取，2 个文件未提取符号（含本批测试），13 个无支持扩展文件跳过，社区标签未调用 LLM 更新。本批 SQL 已直接核对源码与回归。
+
+本机 Wrangler 只读生产查询因缺少 CLOUDFLARE_API_TOKEN 失败，没有修改生产。Hono CLI 无法识别当前模块的 Worker 默认导出，改由测试中真实 `app.request` 路由验证；不声称 CLI 请求成功。尚未部署或实测用户设备，线上仍需通过正式发布应用此修复；未重写设备协议、伪造心跳或清理用户数据。
+
 ## 2026-11-09 0.20.0 设置管理正式发布（已完成）
 
 - 用户授权部署后，[PR #32](https://github.com/zhangheng2022/taskrelay/pull/32) 合并为 `a6bbe5dbf06c6a5991090bb837e04ede996cc5b2`。最终 [PR CI 42604506706](https://github.com/zhangheng2022/taskrelay/actions/runs/42604506706) 与 [master CI 42605599011](https://github.com/zhangheng2022/taskrelay/actions/runs/42605599011) 全部通过，包含双平台完整测试、覆盖率、源码/安全/秘密扫描、Web 构建及 Windows 签名、包内/实际安装、系统入口与 ASAR 一致性验收。

@@ -156,10 +156,14 @@ app.post("/api/device/upgrade", async (c) => {
   z.object({ protocolVersion: z.literal(PROTOCOL_VERSION), localReady: z.literal(true) })
     .strict()
     .parse(await c.req.json());
+  // 常规发布不等待设备在线：空闲设备可在发布后自行登记当前协议，不能依赖已结束的维护窗口。
+  // 存储冻结仍要求维护且暂停领取；在同一条件写入内检查本设备清理，升级后重新报告领取就绪。
   const result = await c.env.DB.prepare(
-    `UPDATE devices SET protocol_version=${PROTOCOL_VERSION} WHERE id=? AND revoked=0
-      AND EXISTS(SELECT 1 FROM settings WHERE key='maintenance' AND value='1')
-      AND EXISTS(SELECT 1 FROM settings WHERE key='claimsEnabled' AND value='0')
+    `UPDATE devices SET claim_ready=CASE WHEN protocol_version<>${PROTOCOL_VERSION} THEN 0 ELSE claim_ready END,
+      protocol_version=${PROTOCOL_VERSION} WHERE id=? AND revoked=0 AND protocol_version<=${PROTOCOL_VERSION}
+      AND (NOT EXISTS(SELECT 1 FROM settings WHERE key='storageFrozen' AND value='1')
+        OR (EXISTS(SELECT 1 FROM settings WHERE key='maintenance' AND value='1')
+          AND EXISTS(SELECT 1 FROM settings WHERE key='claimsEnabled' AND value='0')))
       AND NOT EXISTS(SELECT 1 FROM runs WHERE device_id=? AND (status IN ('running','waiting_user','verifying') OR cleanup_pending=1))`,
   )
     .bind(c.get("deviceId"), c.get("deviceId"))

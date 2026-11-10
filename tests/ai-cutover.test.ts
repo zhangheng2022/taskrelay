@@ -85,7 +85,7 @@ test("更高版本 SQLite 不允许覆盖重建", () => {
   rmSync(dir, { recursive: true });
 });
 
-test("旧设备原 token 升级须维护和本地就绪；旧协议请求继续被拒绝", async (t) => {
+test("旧设备发布后以原 token 升级，须本地就绪和本设备清理完成，无需全站维护", async (t) => {
   const s = await productionModelFixture(t);
   s.sql.exec("UPDATE devices SET protocol_version=2");
   assert.equal(
@@ -95,7 +95,7 @@ test("旧设备原 token 升级须维护和本地就绪；旧协议请求继续�
   const body = { protocolVersion: 19, localReady: true };
   assert.equal((await s.request("/api/device/upgrade", body)).data.error, "CUTOVER_NOT_READY");
   s.sql.exec(
-    "UPDATE runs SET status='succeeded',cleanup_pending=0,cleanup_confirmed=1;DELETE FROM account_locks;UPDATE settings SET value='1' WHERE key='maintenance';UPDATE settings SET value='0' WHERE key='claimsEnabled'",
+    "UPDATE runs SET status='succeeded',cleanup_pending=0,cleanup_confirmed=1;DELETE FROM account_locks;UPDATE settings SET value='0' WHERE key='maintenance';UPDATE settings SET value='1' WHERE key='claimsEnabled'",
   );
   assert.equal(
     (await s.request("/api/device/upgrade", { ...body, localReady: false })).status,
@@ -103,7 +103,55 @@ test("旧设备原 token 升级须维护和本地就绪；旧协议请求继续�
   );
   assert.equal((await s.request("/api/device/upgrade", body)).status, 200);
   assert.equal((await s.request("/api/device/status", undefined, "GET")).data.protocolVersion, 19);
+  assert.equal(s.sql.prepare("SELECT claim_ready FROM devices").get()!.claim_ready, 0);
+  assert.equal((await s.request("/api/device/readiness", { ready: true })).status, 200);
+  assert.equal((await s.request("/api/device/upgrade", body)).status, 200);
+  assert.equal(s.sql.prepare("SELECT claim_ready FROM devices").get()!.claim_ready, 1);
   assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM devices").get()!.n, 1);
+});
+
+test("其他设备正在执行不阻止空闲旧设备升级，不改变全站开关或其他设备", async (t) => {
+  const s = await productionModelFixture(t);
+  s.sql.exec(
+    "INSERT INTO devices(id,name,token_hash,protocol_version) VALUES('other','other','other-hash',18);UPDATE runs SET device_id='other';UPDATE devices SET protocol_version=18 WHERE id='device_test';UPDATE settings SET value='0' WHERE key='maintenance';UPDATE settings SET value='1' WHERE key='claimsEnabled'",
+  );
+  const settings = () => s.sql.prepare("SELECT key,value FROM settings ORDER BY key").all();
+  const before = settings();
+  assert.equal(
+    (await s.request("/api/device/upgrade", { protocolVersion: 19, localReady: true })).status,
+    200,
+  );
+  assert.equal(
+    s.sql.prepare("SELECT protocol_version FROM devices WHERE id='other'").get()!.protocol_version,
+    18,
+  );
+  assert.equal(s.sql.prepare("SELECT status FROM runs").get()!.status, "running");
+  assert.deepEqual(settings(), before);
+});
+
+test("设备协议登记保留活动、清理、冻结、吊销和未来协议边界", async (t) => {
+  const s = await productionModelFixture(t);
+  const body = { protocolVersion: 19, localReady: true };
+  s.sql.exec("UPDATE devices SET protocol_version=18");
+  for (const status of ["running", "waiting_user", "verifying", "failed"]) {
+    s.sql
+      .prepare("UPDATE runs SET status=?,cleanup_pending=?")
+      .run(status, status === "failed" ? 1 : 0);
+    assert.equal((await s.request("/api/device/upgrade", body)).data.error, "CUTOVER_NOT_READY");
+    assert.equal(s.sql.prepare("SELECT protocol_version FROM devices").get()!.protocol_version, 18);
+  }
+  s.sql.exec("UPDATE runs SET status='failed',cleanup_pending=0,cleanup_confirmed=1");
+  s.sql.exec("INSERT OR REPLACE INTO settings(key,value) VALUES('storageFrozen','1')");
+  assert.equal((await s.request("/api/device/upgrade", body)).data.error, "CUTOVER_NOT_READY");
+  s.sql.exec("UPDATE settings SET value='1' WHERE key='maintenance'");
+  assert.equal((await s.request("/api/device/upgrade", body)).data.error, "CUTOVER_NOT_READY");
+  s.sql.exec("UPDATE settings SET value='0' WHERE key='claimsEnabled'");
+  assert.equal((await s.request("/api/device/upgrade", body)).status, 200);
+  s.sql.exec("UPDATE devices SET protocol_version=20");
+  assert.equal((await s.request("/api/device/upgrade", body)).data.error, "CUTOVER_NOT_READY");
+  assert.equal(s.sql.prepare("SELECT protocol_version FROM devices").get()!.protocol_version, 20);
+  s.sql.exec("UPDATE devices SET revoked=1");
+  assert.equal((await s.request("/api/device/upgrade", body)).data.error, "DEVICE_UNAUTHORIZED");
 });
 
 test("模型结果持久化失败绝不 ACK；成功保存之后才 ACK", async () => {

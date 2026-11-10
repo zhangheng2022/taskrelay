@@ -1,5 +1,11 @@
 # 部署与恢复
 
+## 2026-11-10 发布后设备升级登记修复（未部署）
+
+0.20.0 发布已完成，但旧设备随后安装新版时，原 `/api/device/upgrade` 仍要求维护开启且领取关闭，可能返回 `CUTOVER_NOT_READY`。本批修复允许未吊销且本地/云端均空闲的设备在发布结束后自行登记当前协议；保留存储冻结的维护门禁，协议改变后必须重新报告领取就绪。无需迁移数据库或更新桌面包，协议仍为 19。
+
+本批尚未部署，线上旧逻辑仍可能阻止升级。后续通过正常 PR、master CI 和云端发布上线，不手动改写设备协议、心跳或清理历史。本机缺少 Cloudflare 查询凭据，未核验当前生产设备记录或调整生产开关；此前发布完成不代表设备升级验收已完成。
+
 ## 2026-11-09 0.20.0 设置管理（已上线）
 
 固定源提交 `a6bbe5dbf06c6a5991090bb837e04ede996cc5b2` 经 PR #32 与主分支完整检查通过后，由 [生产发布 42607998308](https://github.com/zhangheng2022/taskrelay/actions/runs/42607998308) 完成云端、网站及 [Windows 0.20.0 更新](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.20.0)。Worker `62df19bd-6100-4685-b2f1-bfc7cb7e4a1d`，协议 19；发布成功应用 D1 增量迁移 `0003_settings_management.sql`，保留既有账号、模型、密钥和历史，旧记忆默认停用。没有覆盖 MASTER_KEY，storage v2 与桌面 SQLite schema 4 不变。
