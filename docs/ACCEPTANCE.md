@@ -1,5 +1,19 @@
 # TaskRelay 验收记录
 
+## 2026-11-10 定时卡片与执行经验（0.24.0 生产发布及本机安装）
+
+[PR #50](https://github.com/zhangheng2022/taskrelay/pull/50) 已合并，固定发布提交为 `fe7da4bade3a31e9da3b5b849dfd032afa6cd793`。[PR CI 42819728120](https://github.com/zhangheng2022/taskrelay/actions/runs/42819728120) 与 [master CI 42820773301](https://github.com/zhangheng2022/taskrelay/actions/runs/42820773301) 全部通过，包含跨平台测试、覆盖率、UI/真实浏览器检查、安全扫描、Web 构建和 Windows 打包/实际安装；master 产物使用正式自签名证书。发布前本地完整测试 571/571，UI 85/85；本轮覆盖率为行 79.04%、分支 82.46%、函数 83.35%，本次差异可执行行覆盖 1149/1386。
+
+[Release 42821830313](https://github.com/zhangheng2022/taskrelay/actions/runs/42821830313) 复用同 SHA 产物，于北京时间 2026-11-10 21:12 到达 complete。生产迁移 `0005_task_schedules.sql` 成功，Worker 版本为 `ce723ea4-d27c-4656-8692-fadbc160a4fd`，更新目录激活后恢复原维护/领取开关。主域与 workers.dev 的 health 均返回上述提交、协议 19，更新目录均为 0.24.0；主域匿名及 bearer 权限边界检查通过。
+
+[公开版本 v0.24.0](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.24.0) 的安装器为 388441208 字节、SHA-256 `74586049ba3e89a19b93ebec8223fed577cd5af37df53329ed00670c32fdb0cd`；更新包为 387889865 字节、SHA-256 `95ae8d11a0d463260df0d0d1fe0f920b3fe6ab7932143853301a240a23ee9b16`，与 GitHub digest 和两域公开更新目录一致。目录 publishedAt 为候选生成时间，实际发布完成以上述运行记录为准。
+
+本机原快捷方式目标不存在，安装前确认无 TaskRelay 进程、无未完成 journal 与待回传 outbox，并完整备份原数据到忽略目录 `.cache/schedule-release-private-backup-20261110`。正式安装器哈希及签名指纹与发布证据一致；本机 Authenticode 返回根证书不受信任的 UnknownError，保留原信任设置，未导入证书。静默安装返回 0，再从开始菜单 TaskRelay 快捷方式启动；实际主进程位于 `%LOCALAPPDATA%/TaskRelay/app-0.24.0/TaskRelay.exe`，版本 0.24.0，使用原 `%APPDATA%/TaskRelay`，未见 Codex LocalCache 重定向。安装后 ASAR SHA-256 为 `23c7b30b69b9cdba0d5e670d263eb259e73f00cf66ce4c70a221895228ad9efc`，与托管正式包一致。本轮新生成的安装目录 smoke 通过，报告与系统入口证据在 `out/schedule-024-installed-smoke/`；没有改写原数据或清除配对。
+
+**线上业务验收未完成**：生产网页停留在未登录状态；随后电脑控制工具因无法可靠确认浏览器地址而停止本轮浏览器操作。没有创建测试任务、设置单次触发或观察真实总结，不将部署成功、安装 smoke 或公开健康检查等同于线上定时/真实模型执行通过。设备在线配对、真实网站首次执行、分钟触发、执行总结生成与经验应用仍待有效登录会话及浏览器访问恢复后验证；本轮没有新增真实手机或长期连续运行证据。
+
+原实现 OCR 宿主审查 43 个文件，本轮追加完整阅读发布说明和 CHANGELOG 两个文件及解析规则，合计 total_files=45、reviewed_files=45、skipped_files=0、coverage_rate=100%，无未解决发现。本节与发布状态更新仅作事实、链接和差异检查；没有源码变更，不重复运行全量测试或更新 Graphify，图解析限制沿用下方源码记录。
+
 ## 2026-11-10 定时卡片与执行经验（0.24.0 本地源码，未发布）
 
 首次执行、执行器确认、独立调度配置、云端触发、多账号串行、后台总结和后续经验固定已接入生产入口。新增 `0005_task_schedules.sql`，保留旧计划状态及下次时间，常用频率无损映射，其他 Cron 只读兼容。基础协议保持 19，通过能力标识限制新版定时的领取；旧执行器不伪造需求确认。执行记录在 Main 重试队列使用系统密文，云端记录和经验按上下文加密。
@@ -14,6 +28,7 @@
 
 这里索引最近已记录的结果，不代替实时生产检查。下方历史记录中的“未部署”“待验收”属于记录时点，后续结果按日期与固定提交关联。
 
+- [定时卡片与执行经验 0.24.0 生产发布及本机安装](#2026-11-10-定时卡片与执行经验0240-生产发布及本机安装)。
 - [聊天 Markdown 0.23.0 生产发布](#2026-11-10-聊天-markdown0230生产发布)。
 - [公开注册开放](#2026-11-10-公开注册开放)。
 - [移除独立邮箱验证入口](#2026-11-10-移除独立邮箱验证入口0231)。
