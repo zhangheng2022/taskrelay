@@ -1,110 +1,18 @@
 # 部署与恢复
 
-## 2026-11-10 优先流式（0.21.0，已上线）
-
-固定源提交 `850983a64b7f1aa4f6d2ab2663058b98c1e60b16` 经主分支 CI 42761431532 后，由 [正式发布 42762214202](https://github.com/zhangheng2022/taskrelay/actions/runs/42762214202) 完成正式签名 Windows 包、托管实际安装验证、增量迁移 `0004_streaming_messages.sql` 和 Worker `75fc196e-98e8-4a24-846a-ddd76c82dcc7` 部署。即时健康遇到传播延迟后，[恢复发布 42763332234](https://github.com/zhangheng2022/taskrelay/actions/runs/42763332234) 复用原归档完成下载校验与更新目录激活，phase=complete；没有重复构建、迁移或部署，恢复的是原维护/领取值，不主动开启原已关闭的领取。
-
-[0.21.0 更新](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.21.0) 已公开，协议 19、本地 schema 4 不变，用户设备通过“检查更新”安装。本次没有在用户本机执行升级。双域健康和权限检查通过，生产 ModelEgress 确认为 US/IAD。真实 Responses 短回复及刷新恢复通过，长回复触发 60 秒超时并保留未完成草稿；完整证据、产物哈希及额外手动 CI 的既有夹具失败见 [ACCEPTANCE](ACCEPTANCE.md#2026-11-10-优先流式正式发布0210已完成)。下节保留发布准备与回退操作说明。
+本文维护当前操作流程；发布版本、安装状态和失败记录统一见[验收索引](ACCEPTANCE.md#当前结果索引)。本文末尾保留历史章节锚点作为跳转入口。
 
 ## 2026-11-10 流式发布准备（0.21.0）
 
 按下文固定 SHA 的 CI/Release 流程交付云端、网站和桌面；先应用增量 `0004_streaming_messages.sql` 并部署兼容旧客户端的服务，再发布 0.21.0 更新目录。旧网页只收 changed，旧执行器未声明 supportsDrafts 时不发布执行器正文草稿；固定模型版本的底层流式及完整响应返回保持兼容。没有新增付费服务、生产绑定或地区绕过。
 
-回退由管理员 `PATCH /api/admin/streaming` 设置 `{"modelStreamingEnabled":false,"chatPreviewEnabled":false}`（需要有效管理员会话）；可分别启用。只影响随后开始的调用，不重试在途请求、不改模型、不开启旧任务恢复。读取同一路径的 GET 可查看模式、首片/完成耗时和异常计数。迁移包含新增列，回退功能不撤销数据结构；不得重建数据库或更换 MASTER_KEY。当前发布证据以 ACCEPTANCE 后续记录为准。
-
-## 2026-11-10 发布后设备升级登记修复（已上线）
-
-0.20.0 发布已完成，但旧设备随后安装新版时，原 `/api/device/upgrade` 仍要求维护开启且领取关闭，可能返回 `CUTOVER_NOT_READY`。本批修复允许未吊销且本地/云端均空闲的设备在发布结束后自行登记当前协议；保留存储冻结的维护门禁，协议改变后必须重新报告领取就绪。无需迁移数据库或更新桌面包，协议仍为 19。
-
-用户授权部署后，[PR #34](https://github.com/zhangheng2022/taskrelay/pull/34) 合并为 `25cb9b46dc723840f94f872c5a81892d3d254ac7`，主分支 CI 42740368284 通过，[云端发布 42741034620](https://github.com/zhangheng2022/taskrelay/actions/runs/42741034620) 复用同次 CI 的 Web 产物，未补建 Web/Windows。Worker `6b1be8ae-59c2-410e-be18-2a7ade361593` 已上线，没有待应用迁移，发布阶段 complete，按状态机恢复原维护/领取开关。
-
-主域与 workers.dev 的健康、源 SHA、页面资源哈希和匿名权限独立核验通过，桌面更新目录仍为 0.20.0。未手动改写设备协议、心跳或清理历史，未重新生成或覆盖 MASTER_KEY。用户设备保持运行后会按既有一分钟轮询重试；本次没有读取该设备的生产记录或观察错误实际消失，设备升级效果仍待分别验收，证据见 [ACCEPTANCE](ACCEPTANCE.md#2026-11-10-设备升级登记修复正式发布已完成)。
-
-## 2026-11-09 0.20.0 设置管理（已上线）
-
-固定源提交 `a6bbe5dbf06c6a5991090bb837e04ede996cc5b2` 经 PR #32 与主分支完整检查通过后，由 [生产发布 42607998308](https://github.com/zhangheng2022/taskrelay/actions/runs/42607998308) 完成云端、网站及 [Windows 0.20.0 更新](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.20.0)。Worker `62df19bd-6100-4685-b2f1-bfc7cb7e4a1d`，协议 19；发布成功应用 D1 增量迁移 `0003_settings_management.sql`，保留既有账号、模型、密钥和历史，旧记忆默认停用。没有覆盖 MASTER_KEY，storage v2 与桌面 SQLite schema 4 不变。
-
-发布复用 master 的正式签名 Windows 候选，并按预检补建 Web；签名、包内与托管系统安装验收、Cloudflare 完整下载校验通过后，更新目录激活为 0.20.0，发布阶段 complete，恢复原维护/领取开关。两域健康、源码 SHA、网页资源哈希与匿名权限独立核验通过，产物哈希及过程限制见 [ACCEPTANCE](ACCEPTANCE.md#2026-11-09-0200-设置管理正式发布已完成)。
-
-用户设备尚未由本次操作安装或确认升级。旧协议请求会提示升级，已授权设备更新后通过原维护/本地就绪入口登记协议，不能手工改写为兼容；真实模型/网站与设备升级效果仍需分别验收。默认 smoke 目录若有旧本地结构会拒绝启动，应保留旧数据并使用独立验证目录，不能删除用户库绕过转换。
-
-## 2026-11-09 0.19.5 已上线（发布完成，领取已恢复）
-
-图片 Loading 与预览优化经 [PR #25](https://github.com/zhangheng2022/taskrelay/pull/25) 和版本准备 [PR #26](https://github.com/zhangheng2022/taskrelay/pull/26) 合并。固定源提交 `1a5daed979406d6e09b7c2e395034b97e71ad437` 的 [master CI 42571799226](https://github.com/zhangheng2022/taskrelay/actions/runs/42571799226) 全部通过。[生产发布 42572476103](https://github.com/zhangheng2022/taskrelay/actions/runs/42572476103) 直接复用同次 CI 的 Web 和 Windows 候选，两个补建作业均跳过，哈希核验后归档 `release-bundle-1`（Artifact ID `13654106269`，保留 30 天）。
-
-Worker `6ba596bb-3d7e-41b1-a181-447b95630864` 已部署，双域健康返回上述源 SHA；[0.19.5 安装包与更新包](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.19.5) 已公开，Cloudflare 完整下载哈希通过，更新目录已切换到 0.19.5。没有待应用的数据库迁移；协议 18、SQLite schema 4 和依赖保持不变，未清空数据或更换 MASTER_KEY。
-
-首次运行停在 `awaiting-device` 后，用户明确要求本次及后续发布均不校验执行器状态。[PR #27](https://github.com/zhangheng2022/taskrelay/pull/27) 移除了该门槛，控制提交 `72e17bfbf11f9fb41c71af915d3c20ced160a039` 的 PR/master 检查全部通过。[恢复发布 42576417676](https://github.com/zhangheng2022/taskrelay/actions/runs/42576417676) 使用原 `source-sha=1a5daed979406d6e09b7c2e395034b97e71ad437` 与 `recovery-run=42572476103` 成功推进 `complete`，恢复发布前维护和领取开关。该阶段没有查询执行器状态、下载归档、重新构建或部署；线上仍为原 0.19.5 业务 SHA。后续发布校验完成后直接恢复原开关，实际任务继续遵循调度器的正常领取条件。实际验收和限制见 [ACCEPTANCE](ACCEPTANCE.md#2026-11-09-0195-正式发布已完成)。
-
-## 2026-11-08 0.19.4 已上线（领取已恢复）
-
-跨域账号保存修复经 [PR #21](https://github.com/zhangheng2022/taskrelay/pull/21) 合并，固定源提交 `6ba82cab7495feb1d79f55c189fd9fe1297de2e6` 通过主分支 Quality 42492540003。托管 Windows 正式产物的包内、实际安装、系统快捷方式和安装 ASAR 一致性验收均通过；[0.19.4 安装包及更新包](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.19.4) 已公开，Cloudflare 完整下载哈希核验后启用更新目录。协议保持 18，本地 schema 保持 4；用户设备仍需“检查更新”后才能使用新增桌面提示与诊断。
-
-[首次发布 42493069395](https://github.com/zhangheng2022/taskrelay/actions/runs/42493069395) 在排空运行、保留 D1 恢复点后成功应用 `0002_account_state_origins.sql`，Worker `4397dc2f-52ba-4e73-b2a4-a372720e2092` 已部署并承接 100% 流量；即时健康核验失败后没有盲目再次部署，确认两域源 SHA 后通过 [恢复发布 42493872442](https://github.com/zhangheng2022/taskrelay/actions/runs/42493872442) 继续原产物的发布和下载核验。未清空业务数据、重新初始化数据库、读取或更换 MASTER_KEY。两域健康、页面资源、匿名权限与 0.19.4 更新目录核验正常，详细产物哈希和限制见 [ACCEPTANCE](ACCEPTANCE.md#2026-11-08-0194-跨域账号保存正式发布)。
-
-首次恢复最终为 awaiting-device、maintenance=0、claimsEnabled=0。有效设备再次在线就绪后，用同一源 SHA、mode=resume、recovery-run=42493069395 触发的 [42494204028](https://github.com/zhangheng2022/taskrelay/actions/runs/42494204028) 已成功完成；最终 phase=complete、maintenance=0、claimsEnabled=1、storageFrozen=0，1 台未吊销、协议 18 的设备在线就绪。未重新打包、重复部署或手改发布开关。下节准备记录为发布前历史时点，不代表当前尚未部署。
-
-## 2026-11-08 跨域账号保存修复（0.19.4，准备发布）
-
-用户已授权提交并正式发布。桌面源码提升为 0.19.4，同步根及 runtime 锁文件；依赖和协议 18、本地 SQLite 4 保持不变。按下文 Production release 流程在 master 质量门禁通过后，由托管 Windows 构建同一份安装包并完成包内/实际安装 smoke，再由 production 作业应用 `0002_account_state_origins.sql`、部署匹配云端并更新下载目录。迁移只给 accounts 增加默认空数组的 state_origins，不改写既有账号、凭据密文、版本、设备或 MASTER_KEY；不重跑基线或初始化数据。
-
-跨域落点只用于本人确认后的登录状态采集和恢复，不扩展 loginOrigins 或 businessDomains。卡片生成不新增访问列表硬匹配；已结束运行不会因修复自动重放。源码验证及真实网站尚未复测的范围见 [ACCEPTANCE](ACCEPTANCE.md#2026-11-08-跨域账号保存修复源码验证)。本节为发布准备记录，生产结果在完成后补充。
-
-## 2026-11-08 0.19.3 已上线（领取已恢复）
-
-用户授权提交并部署，PR #19 合并后的固定源提交 `9bebe3d5e4effb5598535fd4f65568b290a0d60d` 通过主分支 Quality 42487677936 和 [正式发布 42488175891](https://github.com/zhangheng2022/taskrelay/actions/runs/42488175891)。[0.19.3 Release](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.19.3) 已公开，正式包内、实际安装及系统入口 smoke 通过；Cloudflare 完整下载哈希核验后启用更新目录。主域健康、源码 SHA、协议 18、页面资源及匿名权限核验正常，Worker 接收 100% 流量。没有待应用迁移，没有清空业务数据或更换平台 Secret；证据及验证限制见 ACCEPTANCE。
-
-首次切换因缺少持续在线就绪设备停在 awaiting-device，maintenance=0、claimsEnabled=0。[恢复发布 42489088082](https://github.com/zhangheng2022/taskrelay/actions/runs/42489088082) 使用 mode=resume、原源 SHA 及 recovery-run=42488175891 成功继续原状态，没有重打包、重新部署或手改领取开关。最终回读 phase=complete、maintenance=0、claimsEnabled=1，1 台协议 18 的有效设备在线就绪。另一台电脑仍需通过“检查更新”确认升级到 0.19.3；在线就绪不等于该电脑已更新，字段去重的实际任务效果仍待用户复测。下方未部署和 0.19.2 记录均为历史时点。
-
-## 2026-11-08 本地字段去重优化 0.19.3（未部署）
-
-按用户要求优化模型输入表示及共享摘要提示，源码版本为 0.19.3，协议 18／本地 schema 4 不变。变化字段完整覆盖同次工具结果的基础现场，引用必须能在实际消息中唯一定位、且比完整表示更小；摘要提示聚焦进展并保留关键执行事实。验证证据见 ACCEPTANCE。本批只进行本地源码测试及打包验收，不安装或发布更新、不部署云端；既有正式 0.19.2 发布及恢复记录保持有效。
-
-## 2026-11-08 0.19.2 已上线（领取已恢复）
-
-固定源提交 `d5ec76dbe6d657457e6e37580f89fd410f8c7ee8` 已通过主分支 Quality 和 [正式发布 42476649285](https://github.com/zhangheng2022/taskrelay/actions/runs/42476649285)。云端已切换，主域健康及源码 SHA、匿名权限、页面资源核验正常；[0.19.2 Release](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.19.2) 已公开，更新目录已在完整下载哈希核验后启用。正式包内、系统安装及入口验收证据见 ACCEPTANCE。本次不清空数据，没有待应用迁移，保留现有平台 Secret。
-
-原发布曾因两个旧设备均已吊销而进入 awaiting-device。用户确认另一台电脑已安装 0.19.2 并完成授权；只读核验 1 台新设备未吊销、协议 18、最近 90 秒内在线且 claim_ready=1 后，通过 [恢复发布 42479287437](https://github.com/zhangheng2022/taskrelay/actions/runs/42479287437) 继续原源提交及产物运行 42476649285。最终发布为 complete、maintenance=0、claimsEnabled=1，1 台有效设备在线且就绪；没有重打包或重新部署，未手改领取开关、吊销标志或伪造心跳。主域健康及 0.19.2 更新目录再次核验正常，真实任务效果待用户运行。本机原调试安装及此前未部署记录是历史状态。
-
-## 2026-11-08 本机页面去重版 0.19.2（未部署云端）
-
-按用户要求本地打包并安装 0.19.2，仅调整桌面模型输入中逐字相同的网址和完整相同的页面现场表示，浏览器仍使用完整网址。协议 18、本地 schema 4 不变；源码回归、包内 smoke、实际安装 smoke、桌面快捷方式启动及安装 ASAR 哈希核验通过，详细证据和验证限制见 ACCEPTANCE。
-
-升级前暂停并排空本地任务、领取确认和回执，在仓库外保留受限备份；原配对身份、配置和 Profile 核验一致。安装后已恢复原有领取状态，0.19.2 在主域名 `https://tr.zhangheng.eu.org` 显示“在线，等待任务”。此为未提交工作区调试包，未推送、发布更新或部署云端，也未调整云端防护和模型配置。真实任务复跑由用户进行，不能将本地 smoke 作为实际业务执行成功的证据。
-
-## 2026-11-08 本机主域名连接恢复（仅调整已授权的防护开关）
-
-0.19.1 首次配对报告 CLOUD_RESPONSE_INVALID；主域 GET health 和 POST 配对入口均收到 403、text/html、cf-mitigated=challenge，Cloudflare 安全事件确认为 botFight 的 managed_challenge。曾临时用已有 workers.dev 入口验证配对链路；用户明确要求用主域名后，已恢复本机连接地址并停止该临时配对，没有批准备用入口的设备请求。
-
-用户明确批准只关闭 `zhangheng.eu.org` 全域的 Bot Fight Mode；已将 fight_mode 从 true 改为 false，回读确认其他 Bot Management 字段未变，浏览器检查仍 on，自定义防火墙及配置规则版本未变。此项为该用户此次显式授权的配置调整，影响该域下所有子域；不作为后续发布检查失败时自动关闭防护的授权。未部署 Worker、修改域名绑定、模型配置或执行逻辑，主域 health 保持原源码 b4ad9133de04a1d14f95c4c49c3b59933a3fae9d、协议 18。
-
-变更传播后，主域 health=200，使用非法空名称／协议 0 的无写入配对探测返回 400 JSON INVALID_INPUT，未再返回挑战页。本机从主域重新发起配对，由用户在网站核对并批准；0.19.1 已显示“在线，等待任务”，本机保存的 cloudUrl 为主域。若恢复 Bot Fight Mode 为 true，仍可能再次拦截现有桌面 HTTP 客户端，应先评估接入方案，不能直接恢复后宣称执行器可用。
-
-## 2026-11-08 本机上下文诊断版 0.19.1（未部署云端）
-
-按用户要求在开发机本地 make 并从 Windows Explorer 安装 0.19.1，保留协议 18 和 SQLite schema 4。此为未提交工作区的本机调试包，未推送代码、发布 GitHub Release、切换更新目录或部署云端，不作为正式生产发布附件。包内及系统安装 smoke、实际桌面快捷方式启动、进程路径与安装 ASAR 一致性核验已通过，证据见 ACCEPTANCE。
-
-用户确认原执行器在另一台电脑，因此当前开发机为全新安装，没有迁移另一设备的令牌、Profile 或数据库；原电脑保持不动。当前本机 0.19.1 显示“尚未连接”，工作空间地址为 `https://tr.zhangheng.eu.org`。用户需在网站授权本机设备，并确保测试任务由这个新版执行器领取，再通过本机“导出诊断”取得大小统计；旧版执行器生成的诊断没有新增字段。真实任务和字段占用的调查仍等待这次复现。
-
-## 2026-11-08 全量重置发布（已上线，领取已恢复）
-
-配对后的设备已通过既有维护升级入口完成协议 18 升级；[恢复发布 42398978687](https://github.com/zhangheng2022/taskrelay/actions/runs/42398978687) 核验真实在线/就绪设备后，将原发布推进 complete、恢复 claimsEnabled=1，maintenance=0。下文 awaiting-device 为首次切换时点记录。新设备批准曾写入旧协议 2 的源码问题及回归见 ACCEPTANCE；新配对使用当前协议，已有旧设备仍须按维护流程升级，不通过数据库手工改版本。
-
-用户本轮明确要求清空全部数据、不保留历史，覆盖前批存量离线转换要求。本次清空云端认证/业务成员、账号凭据、模型配置、配对设备、任务、聊天、运行、图片/浏览器状态以及各 DO 的旧状态；保留既有平台 Secret，不读取、生成或覆盖 MASTER_KEY，不生成历史转换归档。上线后需重新登录、配置模型及配对设备；本机安装和旧 Profile 不由云端清空操作处理。
-
-固定提交 `8f0009b29330b3903434c944ee8946c41164164c` 已通过主分支 [Quality 42396015821](https://github.com/zhangheng2022/taskrelay/actions/runs/42396015821)，[正式发布 42396374508](https://github.com/zhangheng2022/taskrelay/actions/runs/42396374508) 成功。Worker `d8748c53-2466-4e44-8030-969a564da839` 接收 100% 流量，协议 18；唯一业务 D1 为 `taskrelay-v2-20261108`（`1951016f-1c9b-459e-a332-75266106f7ad`），新基线 storage_meta=2。
-
-维护窗口内暂停旧库交办和领取，确认运行/浏览器清理、回合、模型调用、dispatch、命令、inbox 和清理作业均无待处理项。先部署 `scripts/db/reset-worker.ts` 并应用 `storage-v2-reset-drop-20261108`，核验旧七个命名空间全部消失；随后正式发布应用 `storage-v2-reset-create-20261108` 创建七个新 SQLite DO 命名空间，ID 均与旧版不同。临时上传使用 keep_bindings 保留既有 Secret，未读取或重新设置密钥。新库、公开下载和权限核验后，原业务 D1 `9d387f48-6e34-4af4-a2a0-10f958d65a16` 已删除；独立验收库未处理。未制作旧数据转换归档，旧库/旧命名空间不能作为回退目标。
-
-[桌面 0.19.0](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.19.0) 已公开，托管 Windows 包内 smoke、系统入口实际安装和安装 smoke 均通过，Cloudflare 下载完整哈希核验通过。网站维护关闭，storageFrozen=0；因设备已清空，发布状态为 awaiting-device、claimsEnabled=0。须先用 OWNER_EMAIL 对应邮箱重新注册并验证、配置模型、准备本地 schema 4 并配对 0.19.0 执行器。设备在线且 claim_ready 后，从 master 触发 Production release：mode=resume、source-sha=`8f0009b29330b3903434c944ee8946c41164164c`、recovery-run=`42396374508`，由原发布记录恢复领取；不手改发布状态或伪造就绪设备。本机尚未安装或重新配对。
-
-本地迁移与生产发布按绑定名 `DB` 查库；界面检查使用独立 Transport 夹具。主域名命令行探测受到 Cloudflare 防护挑战，真实 Edge 已核对主站 health 的 SHA/协议和首次注册页面；workers.dev 的健康、匿名权限、静态资源和更新目录检查通过。详细哈希及证据边界见 [验收记录](ACCEPTANCE.md#2026-11-08-存储-v2-生产全量重置与正式桌面发布)。
+回退由管理员 `PATCH /api/admin/streaming` 设置 `{"modelStreamingEnabled":false,"chatPreviewEnabled":false}`（需要有效管理员会话）；可分别启用。只影响随后开始的调用，不重试在途请求、不改模型、不开启旧任务恢复。读取同一路径的 GET 可查看模式、首片/完成耗时和异常计数。迁移包含新增列，回退功能不撤销数据结构；不得重建数据库或更换 MASTER_KEY。发布结果见[流式验收记录](ACCEPTANCE.md#2026-11-10-优先流式正式发布0210已完成)。
 
 ## 存储 v2 离线切换（保留数据参考流程）
 
-以下保留数据的切换方案仍供未来需要时参考，本次按上节用户授权执行全量重置。
+以下流程仅适用于仍需保留旧结构数据的独立环境。生产已完成的全量重置是历史事件，不构成本次维护授权；一次性重置入口已退役。
 
-独立新基线使用协议 18、图 relay-graph-4、桌面 SQLite 4。下方既有 0001–0030 增量发布记录是历史证据，不能对旧结构直接执行新 `0001_storage_v2.sql`。常规 `release-production` 预检拒绝没有 storage_meta=2 或仍冻结的库；发布 API 的目标 ID 从唯一 Wrangler D1 配置读取。当前生产已按上节清空并切换；以下转换工具供其他仍需保留旧库的环境使用，不表示本次生产转换了历史。本机前批调试产物的包内 smoke 与本次托管正式安装证据分别记录，不混用。
+存储 v2 初始切换时使用协议 18、图 relay-graph-4、桌面 SQLite 4；当前协议和版本以源码清单为准。下方既有 0001–0030 增量发布记录是历史证据，不能对旧结构直接执行新 `0001_storage_v2.sql`。常规 `release-production` 预检拒绝没有 storage_meta=2 或仍冻结的库；发布 API 的目标 ID 从唯一 Wrangler D1 配置读取。历史生产已完成独立基线切换；以下转换工具供其他仍需保留旧库的环境使用，不表示本次生产转换了历史。本机前批调试产物的包内 smoke 与本次托管正式安装证据分别记录，不混用。
 
 1. 维护窗口先在旧代码中停接交办、暂停领取，等正在执行和浏览器清理结束，排空模型、图投递、命令、inbox、清理作业和设备待确认回执。unknown 已终态且清理确认的运行可保留，其账号锁不解锁、不重放。停止旧 Main；为源 D1 记录恢复点并导出，在受控本机完成 SQLite checkpoint。不得转换仍有非空 WAL 的文件。
 2. 将 Worker 临时切换到 `scripts/db/freeze-worker.ts`，保留原 Worker、DO 类名/namespace/jurisdiction 和绑定；它对请求返回 503，alarm 只延后，不写 D1 或对象正文。必须先排空再冻结，不能用换代码中断仍有未知提交的 I/O。记录源恢复点、源文件 SHA-256、设备列表和已有 MASTER_KEY 的安全保管位置；**不得生成或覆盖 MASTER_KEY**。
@@ -125,77 +33,23 @@ Worker `6ba596bb-3d7e-41b1-a181-447b95630864` 已部署，双域健康返回上�
 
 源库、加密归档、对象恢复点和清单不自动删除。切换前还须核对清单目标字节数和导出写行估算：单库超过 500 MB 或导入所需读/写超过当日 Free 剩余额度时阻断，不在一个维护窗口内强行导入、不临时购买服务。估算不含全部 DDL、已有种子删除及并行认证活动，实际计量以 D1 meta 为准。此流程仍需匹配产物及实际源库预检通过后执行；隔离验证不证明生产 D1 并发、真实模型地区、实际 Windows 安装或网站闭环。
 
-2026-11-07 图片链路源码批次：桌面版本 0.18.0，协议仍为 17，尚未部署、发布或安装。发布须先应用 `0029_image_references.sql`，再部署云端／网站，最后发布桌面；旧 JSON 上传、旧图片及 `format=data` 保留兼容，新桌面依赖新版云端的 multipart 和图片引用入口，不能先更新桌面。迁移只添加图片用途、租约代次和摘要字段；不绑定 R2，不更换 MASTER_KEY。打包在 runtime 依赖下载时因 npm 域名解析失败中断，尚无本批可验收安装包；不得复用旧 smoke 报告。
-
-2026-11-06 首次 [Actions 正式发布 42239257763](https://github.com/zhangheng2022/taskrelay/actions/runs/42239257763) 已完成，源提交 `41c916c133c449736afc92cd66203cff2d16cf83`。先记录 D1 恢复点并应用 0028，再部署 Worker `09848417-7a05-4d18-8dde-6be64eb360ab`（100%），随后发布 [0.17.1](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.17.1)、完整核验 Cloudflare 下载并切换 D1 更新目录。发布记录为 complete，领取恢复 1、维护恢复 0；两个域名健康均报告该 SHA，更新目录均为 0.17.1，匿名用户／管理员接口均为 401。
-
-安装包由 GitHub 托管 Windows 构建和实际安装验收。包内／安装 ASAR 为 `0b67b1d6f07fcf4b2fb272f94f98a88d5f92575e03ab194f0f3d823fc841a011`，更新包 SHA-256 为 `77959e67264fc565b3d01b43d806d0d4d0820428a7fc60de211d050eedcd9701`。用户本机仍为 0.17.0，更新通道升级与升级后 Microsoft 只读验收未完成，原因见 ACCEPTANCE；不能用托管安装报告替代本机证据。
-
-2026-11-06 Web 图片地址批次：仅发布网站图片加载与可选 Transport 能力，复用既有受鉴权二进制接口；D1 保持 0027、执行协议 17、本机执行器 0.17.0，不需要迁移或重新打包安装。后端 Base64 响应保留旧客户端兼容；现有 MASTER_KEY、图片存储和设备凭据不变。
-
-源码 `2f7ff5a` 已部署 Worker `482bdbad-3ee5-4610-928e-6bdc4300c63c`，线上资源 `index-DgSawW-l.js` 与本次构建一致。两个域名健康、匿名及设备令牌范围检查通过；发布窗口无活动执行、未清理浏览器或推理，领取已恢复、维护关闭。UI 实际检查的限制见 [验收记录](ACCEPTANCE.md#2026-11-06-web-图片改为受鉴权地址)。
-
-2026-11-06 CDP 批次源码 0e40975 已推送，CI 42198300218 的 Windows／Ubuntu 检查通过；Worker 29a285ee-3fc7-4f44-9e01-bc0a8918e76e 已部署，D1 仍为 0027。暂停领取并确认无活动／未清理运行和推理作业后发布；系统实际安装 0.17.0，经桌面快捷方式启动，安装与构建 ASAR 哈希一致。包内、实际安装 smoke 和 release-manifest 通过，真实路径不是 Codex LocalCache。随后连续五次 Microsoft 只读验证通过（3 次原 Profile、2 次独立 Profile 云端恢复），均自主收尾、关闭确认、释放账号并同步新状态。最终领取开启、维护关闭、设备就绪，状态版本 11；详见 [验收记录](ACCEPTANCE.md#连续五次-microsoft-登录状态复用)。两台物理设备验证尚未完成。
-
-0.17.0 接入 CRI 并修正运行依赖版本报告，包含此前未实际安装的 0.16.0 前端更新。协议仍为 17、D1 保持 0027，不新增 SQL。npm postinstall 与精选生产依赖暂存均校验并应用 scripts/cdp-policy.mjs；不得通过 ignore-scripts 绕过后直接交付。打包和实际安装 smoke 必须报告实际 Stagehand／CRI 版本、加载路径、连接策略与状态往返通过，release-manifest 拒绝旧字段或缺失证据。系统安装及五次真实验证结果见验收记录。
-
-2026-11-06 前端批次 b7a0774 已部署 Worker 60f073b2-fb82-417c-a2f4-a32d392ed07b，D1 保持 0027。0.16.0 包内 smoke 通过；系统安装前用户按 Esc 停止界面控制，实际本机仍 0.15.0／协议 17，领取已恢复，后续从实际安装核验继续。
-
-2026-11-06 官方 SDK 源码 a05ab00 已部署 Worker e0cf3891-6cf0-4dc1-821b-30c673e49af1，生产只读复验成功并恢复领取。前端类型／缓存批次提升桌面至 0.16.0，仅 Renderer 数据读取变化，协议仍为 17，无新增 SQL；按暂停领取、排空、云端网页、安装核验、恢复领取顺序发布。
+早期版本的图片、CDP、SDK 和安装记录见[验收索引](ACCEPTANCE.md#当前结果索引)，不属于当前离线转换步骤。
 
 ## 账号状态版本的发布要求（0.13.0）
 
-新增 D1 迁移 `0024_browser_state.sql`、`0025_account_dispatch.sql`、`0026_account_cards.sql`，以及 `browser-state-v1` SQLite DO migration 和 `BROWSER_STATES` 绑定。保留现有账号、Profile 和 MASTER_KEY，不重新初始化凭据。执行协议为 16，图为 relay-graph-2；旧版本不领取新协议任务。
-
-上线顺序：先暂停新增领取，等待旧执行终态并核实浏览器退出；备份数据库后应用增量迁移和新云端，再升级执行器并验证设备就绪，最后恢复领取。旧运行若在迁移时仍 active/unknown，会保留 cleanup_pending；不得为恢复调度直接删除未知结果锁。未获得关闭确认的非 unknown 账号可走管理员“已确认旧设备停止”入口，旧候选状态同时退休。
-
-2026-11-06 已按上述顺序完成生产迁移、云端部署与本机执行器升级，恢复领取。真实账号与双设备网站验证另见 ACCEPTANCE；不能把安装 smoke 当作真实网站免登录证据。
+历史 0024–0026 迁移、协议 16 与账号状态发布证据见[对应验收](ACCEPTANCE.md#2026-11-06-账号管理登录状态与串行账号组0130)。这些迁移现位于离线转换工具的旧结构目录，不是当前库待应用的迁移；常规升级按[发布流程](#发布)执行。
 
 ## 最近已记录部署
 
-2026-11-06 工具 Schema 修复 `662d9a7` 部署 Worker `7b046e11-febd-4b73-ba16-83bf3cae60c2`，保持数据库 0027、执行器 0.15.0。暂停领取并确认无活动／未清理运行及推理后部署，健康和权限检查通过，恢复领取；新的 Microsoft 只读复验自主结束，详情见验收记录。后续模型 SDK 批次只改云端，无新增 SQL 或桌面版本，仍须暂停领取、排空并按相同步骤发布。
-
-2026-11-06 官方 Agent 批次源码 `976f4ef` 部署 Worker `038a3ad6-814b-4450-9d3f-369ba004653d`，本机实际安装 0.15.0／协议 17。维护窗口无活动运行、未确认清理和推理作业；无新增 SQL。包内与实际安装 smoke、桌面快捷方式启动、ASAR 哈希核对通过，领取已恢复。真实网站结果另记。
-
-2026-11-06 依赖基线源码 `df34a73` 已部署 Worker `32a8bb89-39a1-4ae6-b2a3-e8adcc4ef7dd`，本机实际安装 0.14.0 且安装 smoke 通过；D1 无新增迁移（0027），领取已恢复。完整安装哈希及证据边界见 ACCEPTANCE。
-
-0.15.0 协议提升为 17、图版本 relay-graph-3。发布前暂停新领取，确认旧执行、未确认浏览器、模型作业及聊天推理清理后再部署；本批没有结构变更，不运行多余 SQL。旧图由版本检查拒绝恢复，不重放未知操作。云端部署后安装新版执行器，在维护窗口通过原设备 token 升级协议，核对实际版本与 ASAR 后恢复领取。
-
-2026-11-06 四项账号界面从源码 `2f852684342c3074dc0725658a530efd5fd6e3d5` 上线，Worker `3cd368fb-b697-4b8a-914e-448afd0f2fca` 承接 100% 流量。无新增迁移，D1 保持 0027、执行器保持 0.13.0／协议 16。两域健康与权限检查、跨平台 CI、线上四项卡片核对通过；`maintenance=0`、`claimsEnabled=1`、设备 claim_ready=1。用户随后自行确认保存账号，本机实际安装执行器在新的独立 Profile 中恢复云端状态，再复用同一 Profile 完成第二轮 Microsoft 只读免登录验证；两轮浏览器关闭均确认，状态版本由 1 经 2 更新为 3，账号锁和本机 outbox 清零。第二轮需要提醒结束重复导航，详细证据和双设备等未验收边界见 [ACCEPTANCE](ACCEPTANCE.md#用户确认后的真实登录状态复用)。此验证未重新部署或覆盖安装包。
-
-2026-11-06 卡片紧凑化与重复提示修复从源码 `94b5c98cfa93d7a893dc467c1837edb4ce025875` 上线。先应用 D1 0027，再部署 Worker `487b9e41-dc31-4e55-9bb5-7b4b31f4849a`，API 确认 100% 流量；两个域名健康与权限检查通过，恢复 `maintenance=0`、`claimsEnabled=1`，本机设备协议 16、claim_ready=1。生产原聊天的三张待确认卡片已归并为一张，其余两张失效，静态入口引用 `index-DhS33mzA.js`。本轮不更换执行器安装包。
-
-卡片重复修复需先应用 `0027_account_card_identity.sql`，再部署对应云端/Web。该增量迁移只增加身份摘要、归并引用和部分唯一索引；旧待确认密文由鉴权接口按需解密归并，不在 SQL 中写入明文或删除聊天游标。保留原 MASTER_KEY，协议 16 和已安装 0.13.0 不变。发布前暂停新增领取、确认无活动运行及待关闭浏览器，记录 Time Travel bookmark；健康及权限检查通过后恢复原开关。
-
-2026-11-06 从源码 `cabdee8d9f8866ec42cd9def67e5647c359e7155` 部署账号管理与登录状态复用，Worker `96067a0d-ddc1-4398-8cc0-35b44de57881` 已承接 100% 流量，D1 0024–0026 与 `BROWSER_STATES` SQLite DO 已上线。迁移前暂停领取、确认无活动或未知运行，并记录 D1 Time Travel bookmark；云端部署后安装 Windows 0.13.0，确认协议 16、设备就绪和数据保留，再恢复 `maintenance=0`、`claimsEnabled=1`。两个域名健康与权限自检、Windows / Ubuntu CI、包内及系统实际安装 smoke 通过。保留原 MASTER_KEY，未发布 GitHub Release 或切换自动更新目录。
-
-2026-11-05 聊天滚动与 iPhone Loading 兼容修复已从 `1777a1daca056d55a68f61733157c1141e9d81f2` 上线，活动 Worker 版本 `24ce3fa3-484b-4eb3-a06a-cf8312860257`（Cloudflare API 确认 100%）。主域健康、权限、JS/CSS 构建哈希及跨平台 CI 通过。CLI 上传成功后 Cron 核对遇网络错误；API 确认原定时配置正常，无需重复迁移或重建。备用 workers.dev 复检因本机网络连接重置未完成。桌面仍为 0.12.5；iPhone 真机验收未完成，详见 [ACCEPTANCE](ACCEPTANCE.md)。
-
-2026-11-05 网站发送即时反馈已从源码 `3fa4d7161ac9df3b1322fd747ccb093a7bb29c66` 部署，Worker 版本 `198a7751-901d-4ef6-a17e-357f1a5e65c6`。两个域名健康与权限自检通过，主域引用新资源 `index-BGoiEkHm.js`。发布前活动运行 0，本轮无数据库结构或桌面执行器改动，Windows 实际安装仍为 0.12.5。
-
-此前消息防重与按需截图修复：源码 `9ba3d511e6819ead7839c00fac073cc5b472f513`，Worker 版本 `f6f7a752-5348-4899-b1c8-57508a94c080`，Windows 实际安装版本 **0.12.5**。两域名健康及权限自检、Windows / Ubuntu CI、包内与实际安装 smoke 均通过；该轮无 SQL 结构迁移，沿用协议 15 和迁移 0022。系统快捷方式启动、配置保留与 ASAR 哈希证据见 [ACCEPTANCE](ACCEPTANCE.md)。未发布 GitHub Release 或切换自动更新目录。
-
-以下为 0.12.2 的迁移部署基线：
-
-2026-11-05 从干净源码提交 `05789de81dc377510536249a45abac4705f24254` 部署云端/Web，版本为 `ad3876af-4ada-4a2c-891f-f08eb55d5232`，协议 15，生产 D1 已迁移至 `0022_checkpoint_chunks.sql`。两个生产域名的健康、权限拒绝与静态资源哈希检查通过；领取恢复为 1、维护恢复为 0，设备心跳正常。该源码的 Ubuntu / Windows、Node 24 [远程 CI](https://github.com/zhangheng2022/taskrelay/actions/runs/42019037637) 均通过。
-
-同一提交已生成并实际安装 Windows **0.12.2**。从桌面快捷方式启动的进程位于系统 `C:/Users/96227/AppData/Local/TaskRelay/app-0.12.2/TaskRelay.exe`，安装与构建 ASAR SHA-256 均为 `29b98cfb520fba6877c0c532700e1303b7c46015d283b309d8d2b1d6e29d9b17`；包内 smoke、实际安装 smoke 与 release-manifest 均通过。本地配置及 23 个 Profile 目录保留，没有清空历史或更改 MASTER_KEY；未发布 GitHub Release 或切换自动更新目录。证据与未验证范围见 [ACCEPTANCE](ACCEPTANCE.md)。
-
-本次先暂停领取并确认无活动运行，保存 D1 Time Travel bookmark，再应用 `0021_context_withdrawal.sql`、`0022_checkpoint_chunks.sql` 并部署匹配代码。0021 会停止含历史已撤回消息的旧运行，以阻止继续使用已缓存内容；本次生产库没有此类旧记录。0022 增加检查点密文分块表，保留旧格式读取。不要直接用旧服务代码读取新分块格式；回退须评估新格式数据，不能只切换 Worker 版本。此次为常规升级，未重做此前的历史重置。
+旧版部署证据见[验收索引](ACCEPTANCE.md#当前结果索引)及[历史补充证据](ACCEPTANCE.md#历史部署补充证据)。本节保留原锚点，不再重复维护版本、哈希与领取状态。
 
 ## 资源配置与已记录部署
 
-- Cloudflare account：`b3a410496c5e49e582b4af19d2f2eec6`
-- Worker：`taskrelay`，每分钟 Cron
-- Durable Objects：`ModelEgress`、`RequestCoordinator`、`Scheduler`、`AiTurn`、`Evidence`、`NotificationHub`、`BrowserStateStore`，均为 SQLite 后端。ModelEgress 每次模型调用一个短期对象，限制在 `us` jurisdiction；迁移依次为 `model-egress-v1`、`free-runtime-v1`、`free-turn-v1`、`browser-state-v1`。
-- D1：`taskrelay` / `9d387f48-6e34-4af4-a2a0-10f958d65a16`
-- 旧私有 R2：`taskrelay-evidence` 保留，但生产不再绑定或使用；当前聊天图片使用加密 DO，随聊天删除。
-- Access：`TaskRelay` / `6cd2c9dc-ba3c-4969-9aaf-83ea360c398f`
-- 主站：`https://tr.zhangheng.eu.org`；旧入口：`https://taskrelay.zhangheng.workers.dev`
+当前部署目标以 [Wrangler 配置](../apps/web/wrangler.jsonc) 为准：Worker 为 `taskrelay`，D1 绑定名为 `DB`，数据库为 `taskrelay-v2-20261108`。配置中的数据库 ID、DO 迁移和绑定是结构权威，不在本文复制第二套清单。旧 `taskrelay` 业务 D1 已删除，不能用作当前迁移或回退目标。
 
-两个域名统一通过应用自身会话认证。原 Access 应用与 owner allow 策略保留，新增 `TaskRelay application authentication` bypass 策略 `1ad2c9f8-cee7-427a-8f9e-39409a68422b` 允许到达 Worker；它不是 Worker 内部权限旁路。切换后两个域名均验证：匿名 user/admin 为 401，Bearer 访问 user/admin 为 403，旧 device/user 为 403，无令牌 device/status 为 401。当前设备协议 16 仍校验令牌和租约；配对批准只允许应用管理员。预览 URL 关闭。
+Cloudflare 保持 Free，生产不绑定 R2；普通 Worker 负责轻量路由，业务与后台模型调用进入 SQLite DO。模型调用保留美国 jurisdiction 与 alarm，详见[模型出站实现](#模型出站实现)。不得自动切换付费服务。
 
-故障时首先保持 `REGISTRATION_OPEN=0`、将 D1 settings 的 `claimsEnabled` 设为 `0`；如需外层收紧，删除上述新增 bypass 策略即可恢复原 Access owner 限制。不要回退到旧设备管理接口，也不要重新生成 `MASTER_KEY`。
+主站与 workers.dev 使用应用会话认证；设备 bearer 只访问设备接口。历史 Access 配置标识及当时权限验证收录于[历史补充证据](ACCEPTANCE.md#历史部署补充证据)，不作为当前外部配置的实时保证。故障处理遵循[发布恢复](#发布)，不得更换 MASTER_KEY 或恢复旧设备管理接口。
 
 ## 发布
 
@@ -219,11 +73,11 @@ production Environment 仅允许 master。Cloudflare 凭据和 Release 写权限
 
 GitHub [上传接口会改写特殊文件名](https://docs.github.com/en/rest/releases/assets#upload-a-release-asset)。Squirrel 磁盘文件 `TaskRelay Setup.exe` 固定以 `TaskRelay.Setup.exe` 发布并核对返回名称；中断恢复也按公开名匹配，再比较大小和哈希。不能因本地名有空格而误判资产缺失，更不能删除重传已公开文件。
 
-本批新增迁移 `0028_release_claim_barrier.sql`，在领取事务内再次检查暂停/维护开关，阻止早先读到旧开关的并发领取。管理员不能在未完成发布期间覆盖领取开关。协议仍为 17；不改变账号、Profile、快照格式或加密密钥。
+领取事务内再次检查暂停/维护开关，阻止早先读到旧开关的并发领取；管理员不能在未完成发布期间覆盖领取开关。旧结构的 `0028_release_claim_barrier.sql` 是历史迁移，当前基线已包含此保护，不应重复应用旧迁移。
 
 `MASTER_KEY` 已配置为 Workers Secret。**不要再次执行初次密钥生成脚本，不要覆盖现有主密钥。** 现有模型密钥、账号密码和短期回复都依赖它解密。迁移/恢复时必须同时保留该密钥和 D1 数据。仓库及诊断包不保存主密钥；需要持有者从自己的秘密管理设施维护备份和轮换策略。
 
-新部署到另一账号时，先创建空 D1 / Access 应用，替换 wrangler 配置，保留 SQLite DO 迁移，再对该全新空库执行一次 `node scripts/provision-secret.mjs --initial-empty-database`。不创建 R2。脚本通过标准输入传递随机密钥，不输出或落盘。
+新部署到另一账号时，先创建空 D1 并配置应用认证，替换 wrangler 配置，保留 SQLite DO 迁移，再对该全新空库执行一次 `node scripts/provision-secret.mjs --initial-empty-database`。Access 仅作为可选外层限制，不创建 R2。脚本通过标准输入传递随机密钥，不输出或落盘。
 
 模型地址先校验 HTTPS、域名、IP 和 DNS 结果，拒绝私网及带 URL 凭据的地址。Workers 使用 `redirect: manual`，显式拒绝重定向，避免将 Authorization 转发到别的地址。不能使用 Workers 不支持的 `redirect: error`。
 
@@ -233,7 +87,7 @@ GitHub [上传接口会改写特殊文件名](https://docs.github.com/en/rest/re
 
 主入口为 `https://tr.zhangheng.eu.org`，原 `https://taskrelay.zhangheng.workers.dev` 保留。自定义域名已在 `apps/web/wrangler.jsonc` 的 `routes` 中声明为 `custom_domain: true`，指向同一 `taskrelay` Worker；不创建另一套 D1/R2/模型配置。
 
-两个主机名纳入同一个 TaskRelay Access application，当前通过上述 bypass 切换到应用认证；旧入口也没有保留 owner JWT 或设备管理权限。网站注册、发信及重置回调以新主域名为准，用户应使用主入口；原地址继续支持 v2 设备执行接口。HTTPS 验证使用正常证书校验。
+两个主机名均使用应用认证；历史 Access 切换证据见[验收补充](ACCEPTANCE.md#历史部署补充证据)，旧入口也没有保留 owner JWT 或设备管理权限。网站注册、发信及重置回调以新主域名为准，用户应使用主入口；原地址继续支持 v2 设备执行接口。HTTPS 验证使用正常证书校验。
 
 已配对客户端可继续使用原地址；新配对可填写新域名。回退域名时只撤下自定义域名绑定/配置并保留原地址，不轮换 MASTER_KEY、不重建 Access 应用或数据存储。
 
@@ -255,9 +109,9 @@ GitHub [上传接口会改写特殊文件名](https://docs.github.com/en/rest/re
 
 云端为任务和调度权威，D1 事务完成领取、设备并发和账号锁。模型配置更新生成新版本，运行持有任务/模型版本快照。
 
-0.12.0 使用协议 15 / `relay-graph-1`。先应用 `0020_graph_orchestration.sql`，再部署云端并安装桌面；迁移将旧 dispatch 记录退休，不会删除任务历史或将旧 checkpoint 恢复到新图。云端规划和协助通过 D1 事件与 AiTurn alarm 推进，纯等待节点由绑定当前问题的回复恢复。桌面只恢复同一 utilityProcess 内的等待，不跨进程重播浏览器动作。
+旧 0.12.0 / 协议 15 的迁移记录见[历史验收](ACCEPTANCE.md#2026-11-05-云端粗步骤与-langchain--langgraph0120--协议-15)，不再作为当前升级步骤。云端规划和协助通过 D1 事件与 AiTurn alarm 推进，纯等待节点由绑定当前问题的回复恢复。桌面只恢复同一 utilityProcess 内的等待，不跨进程重播浏览器动作。
 
-本次已授权历史重置使用 `historyEpoch=4`。执行维护前暂停领取并确认无活动运行，先关闭旧聊天和图写入，再清理图片正文、任务及派生数据；保留用户、账号、模型、设备、密钥、登录 Profile 与独立用量。新桌面空闲且没有未决 journal/outbox 时才能升级设备协议并接受历史代次。一般版本升级不再次清空历史；不能把此次维护方式作为异常任务的自动恢复策略。
+早期一次性历史重置曾使用 `historyEpoch=4`，仅为历史记录。执行维护前暂停领取并确认无活动运行，先关闭旧聊天和图写入，再清理图片正文、任务及派生数据；保留用户、账号、模型、设备、密钥、登录 Profile 与独立用量。新桌面空闲且没有未决 journal/outbox 时才能升级设备协议并接受历史代次。一般版本升级不再次清空历史；不能把此次维护方式作为异常任务的自动恢复策略。
 
 Main 在产生浏览器副作用前记录 SQLite 检查点。云端也先记录动作意图，再让执行器执行。事件及终结事实放入持久化 outbox；旧代次和旧租约不能推进新运行。已执行写入但最终结果不明时保留账号锁，失败或租约到期不会触发盲目重放。未决写入保留账号锁；历史 unknown 不自动恢复。
 
@@ -294,7 +148,7 @@ Actions 正式构建只接受主分支 push 或手动发布及 master 上的源�
 
 ### 构建与安装验证
 
-依赖清单固定经过验证的解析版本；Dependabot 每周一北京时间 09:00 创建更新 PR，不自动合并或部署。框架与桌面依赖升级须重新运行生产入口回归、浏览器资源准备、打包及实际安装验证。`prepare:browser`、资源校验和发布清单共同读取桌面清单的 Stagehand 版本；不在脚本中另外固定旧版本。Cloudflare 工具链现有 Miniflare beta、Hono CLI next 通道保持显式版本，其他直接依赖使用正式 release。
+依赖清单固定经过验证的解析版本；Dependabot 每周一北京时间 09:00 创建更新 PR，不自动合并或部署。框架与桌面依赖升级须重新运行生产入口回归、浏览器资源准备、打包及实际安装验证。`prepare:browser`、资源校验和发布清单共同读取桌面清单的 Stagehand 版本；不在脚本中另外固定旧版本。工具链版本及预发布标记以根清单和锁文件为准，不从历史说明推断当前通道。
 
 桌面生产依赖另由 `scripts/runtime-package-lock.json` 锁定；依赖更新后执行 `node scripts/stage-runtime.mjs --update-lock` 并审查该锁文件，普通打包只执行 `npm ci`。每个 Stagehand release 的公开扩展标识保存在 `resources/stagehand-<版本>-public-key.txt`，新增版本须一同提交；它只固定 Chromium 扩展身份，不是账号加密密钥。启动时仅启用当前版本扩展，避免旧 Profile 的扩展运行缓存与新 SDK 混用，保留站点存储。
 
@@ -353,8 +207,60 @@ README 负责使用入口与状态，CHANGELOG 记录客户端版本的变更，
 
 ## 聊天清理迁移（0023）
 
-`0023_history_cleanup.sql` 新增任务删除/运行历史清理标记、持久清理作业与目标、旧请求迟到写入触发器和模型调用运行索引；不改 MASTER_KEY、账号、模型配置或设备。旧无归属模型响应缓存只保留防重摘要，已知执行调用回填 run_id，聊天消息和图片不由迁移删除。
+本节仅保留历史锚点。2026-11-05 的迁移、固定提交、Worker 和验证限制见[聊天清理交付](ACCEPTANCE.md#2026-11-05-聊天清理交付)；旧 0023 SQL 只供旧结构转换使用，不对当前库再次执行。当前清理机制见[架构说明](ARCHITECTURE.md#聊天删除与持久清理)。
 
-发布前保存 maintenance/claimsEnabled 原值，开启维护并暂停领取，确认运行、聊天推理及模型调用均无活动项，再执行 `npx wrangler d1 migrations apply taskrelay --remote`。SQL 自带活动窗口校验，失败应排查并恢复开关，不绕过校验。随后部署新的 Web/Worker，检查服务、认证边界、schema 和资源文件，再恢复原开关。桌面协议 15、安装版本 0.12.5 保持兼容，本功能无需重装桌面。
+## 历史发布索引
 
-2026-11-05 已按上述顺序完成生产迁移与部署：源码 `f96ca08`，Worker `dedc1df5-7075-4974-a86a-a096b023e04c`，Wrangler 上传与 triggers 均成功。主域资源哈希、健康与认证检查通过，原开关已恢复；生产未执行聊天清理。具体测试数量和边界见 [ACCEPTANCE](ACCEPTANCE.md#2026-11-05-聊天清理交付)。
+以下标题保留旧链接；“已上线”“未部署”等均为对应记录时点，不代表当前设备状态。
+
+## 2026-11-10 优先流式（0.21.0，已上线）
+
+历史时点与验证限制见[对应验收记录](ACCEPTANCE.md#2026-11-10-优先流式正式发布0210已完成)；当前操作统一按[发布流程](#发布)执行。
+
+## 2026-11-10 发布后设备升级登记修复（已上线）
+
+历史时点与验证限制见[对应验收记录](ACCEPTANCE.md#2026-11-10-设备升级登记修复正式发布已完成)；当前操作统一按[发布流程](#发布)执行。
+
+## 2026-11-09 0.20.0 设置管理（已上线）
+
+历史时点与验证限制见[对应验收记录](ACCEPTANCE.md#2026-11-09-0200-设置管理正式发布已完成)；当前操作统一按[发布流程](#发布)执行。
+
+## 2026-11-09 0.19.5 已上线（发布完成，领取已恢复）
+
+历史时点与验证限制见[对应验收记录](ACCEPTANCE.md#2026-11-09-0195-正式发布已完成)；当前操作统一按[发布流程](#发布)执行。
+
+## 2026-11-08 0.19.4 已上线（领取已恢复）
+
+历史时点与验证限制见[对应验收记录](ACCEPTANCE.md#2026-11-08-0194-跨域账号保存正式发布)；当前操作统一按[发布流程](#发布)执行。
+
+## 2026-11-08 跨域账号保存修复（0.19.4，准备发布）
+
+历史时点与验证限制见[对应验收记录](ACCEPTANCE.md#2026-11-08-跨域账号保存修复源码验证)；当前操作统一按[发布流程](#发布)执行。
+
+## 2026-11-08 0.19.3 已上线（领取已恢复）
+
+历史时点与验证限制见[对应验收记录](ACCEPTANCE.md#2026-11-08-0193-正式生产发布领取已恢复)；当前操作统一按[发布流程](#发布)执行。
+
+## 2026-11-08 本地字段去重优化 0.19.3（未部署）
+
+历史时点与验证限制见[对应验收记录](ACCEPTANCE.md#2026-11-08-0193-字段去重与摘要提示优化本地验证完成未部署)；当前操作统一按[发布流程](#发布)执行。
+
+## 2026-11-08 0.19.2 已上线（领取已恢复）
+
+历史时点与验证限制见[对应验收记录](ACCEPTANCE.md#2026-11-08-0192-正式生产发布领取已恢复)；当前操作统一按[发布流程](#发布)执行。
+
+## 2026-11-08 本机页面去重版 0.19.2（未部署云端）
+
+历史时点与验证限制见[对应验收记录](ACCEPTANCE.md#2026-11-08-0192-现场网址与重复页面信息去重已安装本机未部署云端)；当前操作统一按[发布流程](#发布)执行。
+
+## 2026-11-08 本机主域名连接恢复（仅调整已授权的防护开关）
+
+历史时点与验证限制见[对应验收记录](ACCEPTANCE.md#2026-11-08-0191-主域名配对与连接恢复)；当前操作统一按[发布流程](#发布)执行。
+
+## 2026-11-08 本机上下文诊断版 0.19.1（未部署云端）
+
+历史时点与验证限制见[对应验收记录](ACCEPTANCE.md#2026-11-08-上下文诊断版-0191-本机安装未部署云端)；当前操作统一按[发布流程](#发布)执行。
+
+## 2026-11-08 全量重置发布（已上线，领取已恢复）
+
+历史时点与验证限制见[对应验收记录](ACCEPTANCE.md#2026-11-08-存储-v2-生产全量重置与正式桌面发布)；当前操作统一按[发布流程](#发布)执行。
