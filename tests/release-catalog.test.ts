@@ -80,7 +80,10 @@ test(
             script: bundle.outputFiles[0].text,
             compatibilityDate: "2026-11-03",
             compatibilityFlags: ["nodejs_compat"],
-            durableObjects: { REQUESTS: { className: "RequestCoordinator", useSQLite: true } },
+            durableObjects: {
+              REQUESTS: { className: "RequestCoordinator", useSQLite: true },
+              NOTIFICATIONS: { className: "NotificationHub", useSQLite: true },
+            },
             d1Databases: ["DB"],
           },
         ],
@@ -95,6 +98,50 @@ test(
       .run();
     const url = "https://fixture.test/api/updates/windows-x64/latest.json";
     assert.deepEqual(await (await mf.dispatchFetch(url)).json(), { release: null });
+    await db.exec("CREATE TABLE devices(id TEXT PRIMARY KEY,revoked INTEGER)");
+    await db.exec("INSERT INTO devices VALUES('device',0)");
+    const hubs = await mf.getDurableObjectNamespace("NOTIFICATIONS");
+    const hub = hubs.get(hubs.idFromName("device:device"));
+    const response = await hub.fetch("https://notification.internal/", {
+      headers: {
+        Upgrade: "websocket",
+        "x-subscriber": JSON.stringify({ device: "device", expires: Date.now() + 60_000 }),
+      },
+    });
+    const ws = response.webSocket!;
+    ws.accept();
+    t.after(() => ws.close());
+    const messages: string[] = [];
+    ws.addEventListener("message", (event) => {
+      if (typeof event.data === "string") messages.push(event.data);
+    });
+    const release = {
+      version: "0.22.0",
+      sha256: "a".repeat(64),
+      sha1: "b".repeat(40),
+      bytes: 1,
+      notes: "",
+      publishedAt: "2026-11-10T00:00:00.000Z",
+    };
+    await db
+      .prepare("UPDATE settings SET value=?")
+      .bind(JSON.stringify({ latest: null, releases: [release] }))
+      .run();
+    await mf.dispatchFetch(url);
+    assert.deepEqual(messages, []);
+    await db
+      .prepare("UPDATE settings SET value=?")
+      .bind(JSON.stringify({ latest: release.version, releases: [release] }))
+      .run();
+    assert.deepEqual(await (await mf.dispatchFetch(url)).json(), { release });
+    for (let i = 0; i < 100 && !messages.length; i++)
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.deepEqual(
+      messages.map((message) => JSON.parse(message)),
+      [{ type: "update.available", version: 1 }],
+    );
+    await mf.dispatchFetch(url);
+    assert.equal(messages.length, 1);
     await db.exec("UPDATE settings SET value='invalid'");
     assert.equal((await mf.dispatchFetch(url)).status, 503);
   },

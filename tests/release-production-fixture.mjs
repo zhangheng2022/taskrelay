@@ -432,6 +432,12 @@ globalThis.fetch = async (input, options) => {
     assert.equal(catalog.releases.at(-1).sha256, candidate.sha256);
     return new Response(mode === "bad-download" ? Buffer.alloc(bytes.length) : bytes);
   }
+  if (url === "https://taskrelay.zhangheng.workers.dev/api/updates/windows-x64/latest.json") {
+    const catalog = JSON.parse(state().desktopReleaseCatalog);
+    assert.equal(catalog.latest, candidate.version);
+    assert.equal(options.redirect, "error");
+    return Response.json({ release: catalog.releases.find((r) => r.version === catalog.latest) });
+  }
   // 与生产入口读取同一绑定身份；网络仍全部截获到隔离 SQLite，不访问实际 D1。
   const db = `https://api.cloudflare.com/client/v4${dbPath}`;
   if (url === db + "/time_travel/bookmark")

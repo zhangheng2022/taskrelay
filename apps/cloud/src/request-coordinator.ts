@@ -5,9 +5,11 @@ import type { AppEnv } from "./env";
 import { wakeTurns } from "./ai/turn";
 import { notifyDevices } from "./notifications";
 import { loadReleaseCatalog } from "./updates";
+import { UpdateBroadcast } from "./update-broadcast";
 
 /** Bounded session shards route application work. A routing hash is NEVER identity;
- * the application authenticates the original request on every invocation. */
+ * the application authenticates the original request on every invocation.
+ * 独立 updates 对象拥有更新目录观察与持久广播游标，普通会话分片不承担发布广播。 */
 export class RequestCoordinator extends DurableObject<AppEnv> {
   constructor(ctx: DurableObjectState, env: AppEnv) {
     super(ctx, { ...env, DB: applicationDb(env.DB) });
@@ -16,7 +18,16 @@ export class RequestCoordinator extends DurableObject<AppEnv> {
     return app.fetch(request, this.env);
   }
   async releaseCatalog() {
-    return loadReleaseCatalog(this.env.DB);
+    return this.ctx.blockConcurrencyWhile(async () => {
+      const catalog = await loadReleaseCatalog(this.env.DB);
+      await new UpdateBroadcast(this.ctx.storage, this.env).observe(
+        catalog.releases.find((release) => release.version === catalog.latest) ?? null,
+      );
+      return catalog;
+    });
+  }
+  async alarm() {
+    await new UpdateBroadcast(this.ctx.storage, this.env).alarm();
   }
 }
 

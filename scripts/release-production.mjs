@@ -369,7 +369,27 @@ const io = {
     if (size !== candidate.bytes || hash.digest("hex") !== candidate.sha256)
       throw Error("CLOUDFLARE_DOWNLOAD_HASH_MISMATCH");
   },
-  activate: async () => updateCatalog(true),
+  activate: async () => {
+    await updateCatalog(true);
+    // 公开清单读取会持久登记版本通知；失败时保持发布阶段可恢复。
+    const { UPDATE_PATH, releaseSchema } = await import(
+      pathToFileURL(path.resolve("packages/contracts/src/updates.ts")).href
+    );
+    const response = await fetch(`${productionOrigin}${UPDATE_PATH}/latest.json`, {
+      redirect: "error",
+      cache: "no-store",
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!response.ok) throw Error("PUBLIC_RELEASE_UNAVAILABLE");
+    const release = releaseSchema.parse((await response.json()).release);
+    if (
+      release.version !== candidate.version ||
+      release.sha256 !== candidate.sha256 ||
+      release.sha1 !== candidate.sha1 ||
+      release.bytes !== candidate.bytes
+    )
+      throw Error("PUBLIC_RELEASE_MISMATCH");
+  },
   restore: async (state) => {
     await settings("maintenance", state.oldMaintenance);
     await settings("claimsEnabled", state.oldClaims);

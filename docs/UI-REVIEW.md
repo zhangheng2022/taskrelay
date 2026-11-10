@@ -1,5 +1,11 @@
 # UI 实现与检查
 
+## 2026-11-10 执行器全自动更新（0.22.0 源码候选）
+
+沿用 ExecutorApp、ExecutorUpdate 和既有 Card/Button；移除下载确认入口，展示自动下载、等待任务与回传结束、安装重启及失败重试。保留手动检查与失败后的立即重试，没有自动更新开关。
+
+组件/Transport 测试验证进度展示、无需确认和等待阶段入口禁用。`npm run test:web-images` 使用生产 ExecutorApp 与合成 Transport，在真实 Chromium 的 1280×844、390×844 检查下载、等待、安装和错误四个状态，无横向溢出；截图见忽略目录 `out/web-images/executor-update-*.png`。已查看窄屏等待与宽屏错误截图。本项不证明真实 Electron 通知、Windows 休眠或安装器自动重启；对应限制见 ACCEPTANCE。
+
 ## 2026-11-10 流式正文预览
 
 复用 MessageScroller、Message 和 Bubble；新增“生成中”“正在确认回复”“生成中断，内容未完成”状态，正式消息按稳定消息/调用身份接替草稿。HTTP 读写途中到达的事件保留较新版本，旧响应、重复事件和已撤下版本不复活；断线仍使用现有 HTTP 刷新。官方 message-scroller CLI 差异核对无更新，未替换原语。

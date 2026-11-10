@@ -60,7 +60,6 @@ let journal: Journal,
   pairing: { id: string; pollToken: string } | null = null;
 let poller: RunnerPoller;
 let updater: DesktopUpdater;
-let updatePrompt = false;
 let login: ReturnType<typeof loginSettings>;
 function loginLaunchPath() {
   const stub = path.resolve(process.execPath, "../../TaskRelay.exe");
@@ -215,33 +214,10 @@ function registerIpc() {
     notify();
   });
   handle("stop", () => host.stop(true));
-  handle("checkUpdate", () => updater.check());
+  handle("checkUpdate", () => updater.check(true));
   handle("downloadUpdate", async (input: unknown) => {
     const version = releaseSchema.shape.version.parse(input);
-    const update = updater.status;
-    if (
-      updatePrompt ||
-      !["available", "error"].includes(update.phase) ||
-      update.release?.version !== version
-    )
-      return;
-    updatePrompt = true;
-    try {
-      const answer = await dialog.showMessageBox(window!, {
-        type: "question",
-        title: "更新 TaskRelay 执行器",
-        message: `下载并安装 ${version}？`,
-        detail:
-          "确认后通过 Cloudflare 下载更新。下载完成后暂停领取新任务，等待当前任务（包括人工协助）和结果回传结束，再自动安装并重启。",
-        buttons: ["暂不更新", "确认下载并安装"],
-        defaultId: 0,
-        cancelId: 0,
-        noLink: true,
-      });
-      if (answer.response === 1) void updater.download(version).catch(() => {});
-    } finally {
-      updatePrompt = false;
-    }
+    if (updater.status.release?.version === version) await updater.check(true);
   });
   handle("diagnostics", async () => {
     const result = await dialog.showSaveDialog(window!, {
@@ -393,7 +369,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
           if (Notification.isSupported()) {
             const notification = new Notification({
               title: "TaskRelay 有新版本",
-              body: `${release.version} 已可用，点击查看并确认更新。`,
+              body: `${release.version} 已可用，正在自动下载，任务结束后安装并重启。`,
             });
             notification.on("click", show);
             notification.show();
@@ -436,7 +412,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
             label: "检查版本更新",
             click: () => {
               show();
-              void updater.check().catch(backgroundFailed);
+              void updater.check(true).catch(backgroundFailed);
             },
           },
           { label: "退出 TaskRelay", click: () => void quit().catch(backgroundFailed) },
@@ -446,15 +422,19 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
       powerMonitor.on("suspend", () => {
         void host.stop(true).catch(() => {});
       });
-      powerMonitor.on("resume", () => void poll().catch(backgroundFailed));
+      powerMonitor.on("resume", () => {
+        void updater.check().catch(backgroundFailed);
+        void poll().catch(backgroundFailed);
+      });
       createWindow();
-      cloud.watch(() => {
+      cloud.watch((event) => {
+        if (event === "open" || event === "update") void updater.check().catch(backgroundFailed);
+        if (event === "update") return;
         void host.refreshControl().catch(() => {});
         void poll().catch(backgroundFailed);
       });
       setInterval(() => void poll().catch(backgroundFailed), 60000);
-      setTimeout(() => void updater.check().catch(backgroundFailed), 15000);
-      setInterval(() => void updater.check().catch(backgroundFailed), 6 * 60 * 60 * 1000);
+      updater.start();
       setInterval(() => {
         if (updater.status.phase === "waiting") {
           void poll().catch(backgroundFailed);

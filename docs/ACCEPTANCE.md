@@ -9,6 +9,22 @@
 - [存储 v2 切换、旧库删除及初始安装证据](#2026-11-08-存储-v2-生产全量重置与正式桌面发布)。
 - [归并补充的历史提交与外部配置](#历史部署补充证据)。
 
+## 2026-11-10 执行器实时全自动更新（0.22.0 源码候选）
+
+实现发布通知触发检查、启动/重连/恢复补查、60 秒 HTTP 兜底、自动下载和空闲安装重启。失败按 1/5/15/60 分钟退避；发布通知由更新协调 DO 保存分页游标并经 alarm 投递，覆盖所有未吊销设备。没有关闭开关，没有生产数据迁移、密钥变更或依赖升级；版本及两份锁文件同步为 0.22.0。
+
+验证证据：真实 workerd 经 Worker → RequestCoordinator → alarm → NotificationHub → WebSocket 收到一次激活通知，候选登记不通知候选；隔离数据库验证 44 台有效设备跨批投递和失败恢复、吊销设备排除。真实 Cloud 回环长连接验证任务/更新事件分流与重连，Updater 和实际 Poller/ExecutorHost 验证去重、哈希校验、退避、人工等待、领取响应丢失、资源清理和待回传阻止安装。UI 证据见 UI-REVIEW。
+
+本地首次全量测试 547 项中 546 通过，一个既有 Chromium 状态恢复测试超时；该测试独立重跑 2/2 通过，随后全量重跑 548/548 通过。补充通知权限和系统通知异常回归后，最终覆盖率运行 550/550 通过（行 77.97%、分支 82.55%、函数 82.85%）；以清理 PR 的 8091615 为基线，本次差异覆盖 141/170 行（82.94%），超过 80% 门槛。类型、lint、仓库检查、Web build、Windows package 和真实 Chromium 界面检查通过；Web build 仍提示现有大 chunk。
+
+默认 `out/packaged-smoke.json` 使用的旧隔离目录报 LOCAL_STORAGE_CONVERSION_REQUIRED，没有清理或改写该旧目录；改用全新 `out/auto-update-022/` 后，打包版 smoke 通过。该 smoke 使用隔离数据和浏览器测试站，不证明系统已安装版本或真实自动升级；本轮没有覆盖用户现有安装，也没有部署服务或激活公开目录。
+
+OCR 差异筛选与规则读取成功：选中 15 项全部审查，默认排除的文档、测试及根锁文件另补查 15 项，共 30/30、无跳过；修复了广播看门狗与新版本立即唤醒竞争，并隔离系统通知异常。代码图已更新；35 个 SQL 缺少 tree_sitter_sql、13 个无支持扩展，部分测试/说明无可提取符号，图不代表全仓语义覆盖。
+
+手动全量 [CI 42774294113](https://github.com/zhangheng2022/taskrelay/actions/runs/42774294113) 在源码 `d41bdbf35725df999f20b4607c84436aada76d6b` 全部通过，包含 Windows/Linux 全量测试、覆盖率、源码与工作流检查、秘密/依赖扫描、CodeQL、Web 构建及 Windows 打包与实际安装。`windows-acceptance-1` 报告确认版本 0.22.0、runner=github-hosted、packaged/installed smoke 均通过、installedAsarMatches=true，系统入口安装 ASAR SHA-256 为 `7109f892e0ec0c5093fb6f9d5c538b75cefa2589b257a9bad0ee7aa02b9a8691`。本次修改见 [PR #41](https://github.com/zhangheng2022/taskrelay/pull/41)，基于尚未合并的清理 PR #40。
+
+托管机首次安装不等于真实自动升级。公开新版本后仍需验证旧版首次确认、自动升级后的系统入口/版本/ASAR、配对及 Profile 保留，以及真实运行、断网和休眠场景。安装脚本限制在 GitHub 托管 Windows，不在用户机器上伪造该环境。发布顺序为先上线兼容服务端，再发布桌面候选。
+
 ## 脚本退役与文档归并
 
 2026-11-10 按确认范围删除旧 Node CPU 采样脚本和已完成全量重置的一次性 Worker；删除前核对 npm、CI、Forge、脚本互调与文档引用，前者无调用入口，后者仅被历史记录引用。[旧采样源码](https://github.com/zhangheng2022/taskrelay/blob/dcb68674e436891ef15b1287f546ca50df914ca4/scripts/profile-ai.ts)与[旧重置源码](https://github.com/zhangheng2022/taskrelay/blob/dcb68674e436891ef15b1287f546ca50df914ca4/scripts/db/reset-worker.ts)只供追溯。workerd 采样、转换/导出/冻结、旧结构 SQL、签名、发布恢复和隔离验收工具保持原样，没有运行生产维护或密钥初始化。
