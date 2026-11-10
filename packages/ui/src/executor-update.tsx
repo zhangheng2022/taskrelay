@@ -25,11 +25,11 @@ export function ExecutorUpdate({
     [error, setError] = useState("");
   const messages: Record<DesktopUpdateStatus["phase"], string> = {
     unsupported: "安装版执行器支持自动更新；开发或解压运行时不可用。",
-    idle: "自动检查新版本，确认后下载并安装。",
+    idle: "实时检查新版本，自动下载，空闲后安装并重启。",
     checking: "正在检查新版本…",
     unpublished: "更新通道尚未发布版本。",
     current: "当前已是最新版本。",
-    available: `发现新版本 ${update.release?.version ?? ""}`,
+    available: `发现新版本 ${update.release?.version ?? ""}，即将自动下载`,
     downloading: `正在下载更新 ${update.progress ?? 0}%`,
     waiting: "下载完成，已暂停领取新任务。等待当前任务、人工协助和结果回传结束后自动安装。",
     installing: "正在安装更新，随后自动重启…",
@@ -86,8 +86,8 @@ export function ExecutorUpdate({
             {update.release.notes}
           </p>
         )}
-        {["available", "error"].includes(update.phase) && update.release && (
-          <p className="text-sm text-muted-foreground">确认后下载，任务结束后自动安装并重启。</p>
+        {update.phase === "error" && update.release && (
+          <p className="text-sm text-muted-foreground">更新失败后将自动重试，也可立即重试。</p>
         )}
         {error && <ErrorText error={error} />}
       </CardContent>
@@ -99,12 +99,12 @@ export function ExecutorUpdate({
         >
           检查更新
         </Button>
-        {["available", "error"].includes(update.phase) && update.release && (
+        {update.phase === "error" && update.release && (
           <Button
             disabled={busy}
             onClick={() => void act(() => executor.downloadUpdate(update.release!.version))}
           >
-            下载并安装
+            立即重试
           </Button>
         )}
       </CardFooter>

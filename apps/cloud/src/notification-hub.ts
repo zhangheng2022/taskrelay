@@ -1,11 +1,12 @@
 import { applicationDb } from "./database";
-/** 休眠 WebSocket 分发变化通知与可选正文草稿；短期加密快照供断线恢复。
+/** 休眠 WebSocket 分发变化、设备版本通知与可选正文草稿；短期加密快照供断线恢复。
  * 每次推送复查身份，草稿串行仲裁；正式消息和任务状态仍由鉴权 API 与业务事务拥有。 */
 import { DurableObject } from "cloudflare:workers";
 import type { AppEnv } from "./env";
 import { seal, unseal } from "./crypto";
 import { allowedDraft, type DraftPublication } from "./chat-drafts";
 import type { ChatDraft, DraftEvent } from "../../../packages/contracts/src/streaming";
+import type { UpdateEvent } from "../../../packages/contracts/src/updates";
 type Subscriber = {
   owner?: string;
   session?: string;
@@ -30,7 +31,8 @@ export class NotificationHub extends DurableObject<AppEnv> {
     pair[1].serializeAttachment(subscriber);
     return new Response(null, { status: 101, webSocket: pair[0] });
   }
-  async publish(event?: DraftEvent) {
+  async publish(event?: DraftEvent | UpdateEvent) {
+    const update = event?.type === "update.available";
     for (const ws of this.ctx.getWebSockets()) {
       const s = ws.deserializeAttachment() as Subscriber;
       const allowed =
@@ -49,14 +51,16 @@ export class NotificationHub extends DurableObject<AppEnv> {
         continue;
       }
       try {
-        if (event && (s.protocol !== 2 || s.device)) continue;
+        if (update && !s.device) continue;
+        if (event && !update && (s.protocol !== 2 || s.device)) continue;
         // 每连接最多一帧未确认正文，慢客户端跳过中间帧并通过快照追赶。
-        if (event && s.pendingDraft) {
+        if (event && !update && s.pendingDraft) {
           ws.serializeAttachment({ ...s, draftChanged: true });
           continue;
         }
         ws.send(event ? JSON.stringify(event) : "changed");
-        if (event) ws.serializeAttachment({ ...s, pendingDraft: true, draftChanged: false });
+        if (event && !update)
+          ws.serializeAttachment({ ...s, pendingDraft: true, draftChanged: false });
       } catch {
         ws.close();
       }

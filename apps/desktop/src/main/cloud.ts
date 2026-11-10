@@ -4,6 +4,7 @@ import { Journal } from "./journal";
 import WebSocket from "ws";
 import { z } from "zod";
 import { idSchema } from "../../../../packages/contracts/src/index";
+import { updateEventSchema } from "../../../../packages/contracts/src/updates";
 /** Main 的云端适配器：保存设备令牌、协商协议，并提供 HTTP 请求和变更通知。
  * WebSocket 仅触发重新读取；运行、租约和任务状态仍以鉴权后的 HTTP 响应为准。
  */
@@ -59,7 +60,7 @@ export class Cloud {
     }
     return status;
   }
-  watch(fn: () => void) {
+  watch(fn: (event: "open" | "changed" | "update") => void) {
     this.stopEvents?.();
     let stopped = false,
       socket: WebSocket | undefined,
@@ -84,9 +85,21 @@ export class Cloud {
         });
         socket.on("open", () => {
           failures = 0;
-          fn();
+          fn("open");
         });
-        socket.on("message", () => fn());
+        socket.on("message", (data) => {
+          const text = (Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data)).toString(
+            "utf8",
+          );
+          if (text === "changed") fn("changed");
+          else if (text.length < 256) {
+            try {
+              if (updateEventSchema.safeParse(JSON.parse(text)).success) fn("update");
+            } catch {
+              /* 忽略不认识的通知；HTTP 补查仍为权威。 */
+            }
+          }
+        });
         socket.on("error", () => socket?.close());
         socket.on("close", () => {
           if (!stopped)

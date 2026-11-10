@@ -36,9 +36,10 @@ class Native extends EventEmitter {
     this.checks++;
   }
 }
-async function fixture(t: TestContext) {
+async function fixture(t: TestContext, notificationFails = false) {
   const directory = await mkdtemp(path.join(tmpdir(), "relay-update-"));
   const native = new Native();
+  let now = 0;
   let busy = false,
     restarted = 0,
     reminders = 0;
@@ -46,13 +47,17 @@ async function fixture(t: TestContext) {
   let response = () =>
     new Response(payload, { headers: { "Content-Length": String(payload.length) } });
   const updater = new DesktopUpdater({
+    now: () => now,
     version: "0.4.7",
     supported: true,
     directory,
     native,
     busy: () => busy,
     changed: () => {},
-    available: () => reminders++,
+    available: () => {
+      reminders++;
+      if (notificationFails) throw Error("notifications unavailable");
+    },
     restart: () => restarted++,
     fetcher: async (url, options) => {
       calls.push({ url: requestUrl(url), options });
@@ -68,6 +73,9 @@ async function fixture(t: TestContext) {
     native,
     calls,
     directory,
+    advance: (ms: number) => {
+      now += ms;
+    },
     setBusy: (value: boolean) => {
       busy = value;
     },
@@ -82,16 +90,15 @@ async function fixture(t: TestContext) {
     },
   };
 }
-test("仅检查不下载，通知去重；确认绑定版本，CF 下载校验后只给安装器本地路径", async (t) => {
+test("发现新版自动下载、通知去重；CF 下载校验后等待空闲，仅给安装器本地路径", async (t) => {
   const s = await fixture(t);
-  await s.updater.check();
+  s.setBusy(true);
+  await Promise.all([s.updater.check(), s.updater.check()]);
   await s.updater.check();
   assert.equal(s.reminders, 1);
   assert.equal(s.native.checks, 0);
   assert.equal(s.calls.length, 2);
   await assert.rejects(s.updater.download("0.4.9"), /UPDATE_SELECTION_EXPIRED/);
-  s.setBusy(true);
-  await s.updater.download(release.version);
   assert.equal(s.updater.status.phase, "waiting");
   assert.equal(s.updater.blocksClaims, true);
   assert.equal(s.native.checks, 0);
@@ -113,12 +120,12 @@ test("仅检查不下载，通知去重；确认绑定版本，CF 下载校验�
     assert.equal(call.options?.credentials, "omit");
   }
   s.native.emit("update-downloaded", {}, "", release.version);
+  s.native.emit("update-downloaded", {}, "", release.version);
   assert.equal(s.restarted, 1);
 });
 for (const failure of ["checksum", "size", "redirect", "truncated", "offline"] as const)
   test(`下载 ${failure} 失败不触发安装且可重试`, async (t) => {
     const s = await fixture(t);
-    await s.updater.check();
     s.setResponse(() => {
       if (failure === "offline") throw Error("private network error");
       return new Response(
@@ -136,7 +143,7 @@ for (const failure of ["checksum", "size", "redirect", "truncated", "offline"] a
         },
       );
     });
-    await s.updater.download(release.version);
+    await s.updater.check();
     assert.equal(s.updater.status.phase, "error");
     assert.equal(s.updater.blocksClaims, false);
     assert.equal(s.native.checks, 0);
@@ -151,7 +158,6 @@ for (const failure of ["checksum", "size", "redirect", "truncated", "offline"] a
 test("本地安装错误恢复领取；已停止、错误版本或重新忙碌均不重启", async (t) => {
   const s = await fixture(t);
   await s.updater.check();
-  await s.updater.download(release.version);
   s.native.emit("error", Error("private path"));
   assert.equal(s.updater.blocksClaims, false);
   assert.equal(s.updater.status.phase, "error");
@@ -176,6 +182,79 @@ test("语义版本比较拒绝降级、字符串排序及不合法路径", () =>
     releaseCatalogSchema.safeParse({ latest: "0.4.9", releases: [release] }).success,
     false,
   );
+});
+
+test("自动失败按 1/5/15/60 分钟退避，重复推送不绕过；手动检查可立即重试", async (t) => {
+  const s = await fixture(t);
+  s.setResponse(() => {
+    throw Error("offline");
+  });
+  await s.updater.check();
+  for (const minutes of [1, 5, 15, 60, 60]) {
+    const calls = s.calls.length;
+    await Promise.all([s.updater.check(), s.updater.check()]);
+    assert.equal(s.calls.length, calls);
+    s.advance(minutes * 60_000 - 1);
+    await s.updater.check();
+    assert.equal(s.calls.length, calls);
+    s.advance(1);
+    await s.updater.check();
+    assert.equal(s.calls.length, calls + 2);
+  }
+  s.setResponse(
+    () => new Response(payload, { headers: { "Content-Length": String(payload.length) } }),
+  );
+  await s.updater.check(true);
+  assert.equal(s.native.checks, 1);
+});
+
+test("系统通知异常不阻断自动下载和空闲安装", async (t) => {
+  const s = await fixture(t, true);
+  await s.updater.check();
+  assert.equal(s.native.checks, 1);
+  assert.equal(s.updater.status.phase, "installing");
+});
+
+test("启动立即检查且仅有一个 60 秒补查定时器，停止后不再检查", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const s = await fixture(t);
+  s.setResponse(() => {
+    throw Error("offline");
+  });
+  s.updater.start();
+  s.updater.start();
+  await s.updater.check();
+  assert.equal(s.calls.length, 2);
+  s.advance(60_000);
+  t.mock.timers.tick(60_000);
+  await s.updater.check();
+  assert.equal(s.calls.length, 4);
+  s.updater.stop();
+  t.mock.timers.tick(600_000);
+  assert.equal(s.calls.length, 4);
+});
+
+test("下载中退出取消流并清理自有半包，不触发安装", async (t) => {
+  const s = await fixture(t);
+  s.setResponse(
+    () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(payload.subarray(0, 3));
+          },
+        }),
+        { headers: { "Content-Length": String(payload.length) } },
+      ),
+  );
+  const download = s.updater.check();
+  for (let i = 0; i < 100 && s.calls.length < 2; i++)
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(s.calls.length, 2);
+  s.updater.stop();
+  await download;
+  assert.equal(s.native.checks, 0);
+  assert.deepEqual(await readdir(s.directory), []);
 });
 test("CF 更新路由只代理固定文件，内部消化 GitHub 重定向，不透传凭据或 Location", async () => {
   const catalog = { latest: release.version, releases: [release] };

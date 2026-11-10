@@ -25,7 +25,7 @@ type NativeUpdater = Pick<AutoUpdater, "setFeedURL" | "checkForUpdates"> & {
     listener: (event: unknown, notes: string, version: string) => void,
   ): unknown;
 };
-/** 更新流程分为发现版本、用户确认后下载校验、等待执行器空闲、调用本地安装器。
+/** 更新流程分为实时/定时发现版本、自动下载校验、等待执行器空闲、调用本地安装器。
  * waiting/installing 阻止新领取，busy 回调统一检查任务、领取请求和待回传记录。
  */
 export class DesktopUpdater {
@@ -34,6 +34,10 @@ export class DesktopUpdater {
   private stopped = false;
   private abort = new AbortController();
   private checking: Promise<void> | null = null;
+  private timer: ReturnType<typeof setInterval> | undefined;
+  private failures = 0;
+  private retryAt = 0;
+  private restarting = false;
   constructor(
     private options: {
       version: string;
@@ -45,6 +49,7 @@ export class DesktopUpdater {
       available: (release: DesktopRelease) => void;
       restart: () => void;
       fetcher?: typeof fetch;
+      now?: () => number;
     },
   ) {
     this.value = {
@@ -61,11 +66,12 @@ export class DesktopUpdater {
       if (this.value.phase === "installing") this.fail("安装器未找到对应版本，请重新检查更新。");
     });
     options.native.on("update-downloaded", (_event, _notes, version) => {
-      if (this.stopped || this.value.phase !== "installing") return;
+      if (this.stopped || this.restarting || this.value.phase !== "installing") return;
       if (version !== this.value.release?.version || options.busy()) {
         this.fail("安装状态不一致，未自动重启。");
         return;
       }
+      this.restarting = true;
       options.restart();
     });
   }
@@ -81,12 +87,21 @@ export class DesktopUpdater {
     this.options.changed();
   }
   private fail(error: string) {
+    if (this.stopped) return;
+    const minutes = [1, 5, 15, 60][Math.min(this.failures++, 3)];
+    this.retryAt = (this.options.now ?? Date.now)() + minutes * 60_000;
     this.set({ phase: "error", progress: null, error });
   }
-  check(): Promise<void> {
+  start() {
+    if (this.stopped || this.timer || this.value.phase === "unsupported") return;
+    this.timer = setInterval(() => void this.check().catch(() => {}), 60_000);
+    void this.check().catch(() => {});
+  }
+  check(manual = false): Promise<void> {
     if (this.checking) return this.checking;
     if (
       this.stopped ||
+      (!manual && (this.options.now ?? Date.now)() < this.retryAt) ||
       ["unsupported", "downloading", "waiting", "installing"].includes(this.value.phase)
     )
       return Promise.resolve();
@@ -122,15 +137,27 @@ export class DesktopUpdater {
         chunks.push(chunk);
       }
       const { release } = manifestSchema.parse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      if (this.stopped) return;
       const available = release && newerVersion(release.version, this.options.version);
+      if (!available || previous !== release.version) {
+        this.failures = 0;
+        this.retryAt = 0;
+      }
       this.set({
         phase: !release ? "unpublished" : available ? "available" : "current",
         release: available ? release : null,
         checkedAt: new Date().toISOString(),
         progress: null,
       });
-      if (!this.stopped && available && previous !== release.version)
-        this.options.available(release);
+      if (!this.stopped && available && previous !== release.version) {
+        // 系统通知只是提示，不能因通知服务异常阻断自动更新。
+        try {
+          this.options.available(release);
+        } catch {
+          /* 下载仍继续。 */
+        }
+      }
+      if (available) await this.download(release.version);
     } catch {
       this.fail("无法检查更新，请检查网络后重试。");
     }
@@ -233,6 +260,7 @@ export class DesktopUpdater {
   }
   stop() {
     this.stopped = true;
+    clearInterval(this.timer);
     this.abort.abort();
   }
 }

@@ -20,6 +20,37 @@ const hook = registerHooks({
 const { NotificationHub } = await import("../apps/cloud/src/notification-hub");
 hook.deregister();
 
+test("版本通知仅发送有效设备，不进入网页草稿背压，兼容旧设备连接", async (t) => {
+  const { db, sql } = testDb();
+  t.after(() => sql.close());
+  sql
+    .prepare(
+      "INSERT INTO devices(id,name,token_hash,last_seen,protocol_version) VALUES('legacy','legacy','legacy',0,19)",
+    )
+    .run();
+  const sent: string[] = [];
+  let closed = false;
+  const device = {
+    deserializeAttachment: () => ({ device: "legacy", expires: Date.now() + 60000 }),
+    send: (value: string) => sent.push(value),
+    close: () => {
+      closed = true;
+    },
+    serializeAttachment: () => assert.fail("更新通知不设置草稿背压"),
+  } as unknown as WebSocket;
+  const hub = new NotificationHub(
+    { getWebSockets: () => [device] } as unknown as DurableObjectState,
+    { DB: db } as AppEnv,
+  );
+  await hub.publish({ type: "update.available", version: 1 });
+  await hub.publish();
+  assert.deepEqual(sent, [JSON.stringify({ type: "update.available", version: 1 }), "changed"]);
+  sql.prepare("UPDATE devices SET revoked=1 WHERE id='legacy'").run();
+  await hub.publish({ type: "update.available", version: 1 });
+  assert.equal(closed, true);
+  assert.equal(sent.length, 2);
+});
+
 test("草稿 Hub 隔离、去重、加密分块、背压恢复、正式合并与过期清理", async (t) => {
   const { db, sql } = testDb();
   t.after(() => sql.close());
@@ -101,6 +132,9 @@ test("草稿 Hub 隔离、去重、加密分块、背压恢复、正式合并与
       status: "streaming",
     },
   };
+  await hub.publish({ type: "update.available", version: 1 });
+  assert.deepEqual(modern.sent, []);
+  assert.deepEqual(legacy.sent, []);
   await hub.publishDraft(publication);
   assert.equal(JSON.parse(modern.sent[0]).type, "draft.start");
   assert.equal(legacy.sent.length, 0);

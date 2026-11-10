@@ -512,7 +512,6 @@ test("真实 Poller + Host + Updater：领取响应丢失、人工等待、清�
   await poller.poll();
   assert.equal(poller.unsettled, true);
   await updater.check();
-  await updater.download(release.version);
   assert.equal(checks, 0);
   // Retry the identical cloud claim even though updates now block fresh claims.
   const pending = poller.poll();

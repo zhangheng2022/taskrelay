@@ -2,6 +2,11 @@ import { z } from "zod";
 
 export const UPDATE_ORIGIN = "https://tr.zhangheng.eu.org";
 export const UPDATE_PATH = "/api/updates/windows-x64";
+// 通知只使客户端重新读取固定更新源，不承载下载地址或安装指令。
+export const updateEventSchema = z
+  .object({ type: z.literal("update.available"), version: z.literal(1) })
+  .strict();
+export type UpdateEvent = z.infer<typeof updateEventSchema>;
 export const releaseSchema = z
   .object({
     version: z.string().regex(/^(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})$/),

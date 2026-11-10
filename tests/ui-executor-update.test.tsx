@@ -5,7 +5,7 @@ import { render, fireEvent, cleanup, waitFor } from "@testing-library/react";
 import { ExecutorApp } from "../packages/ui/src/executor-app";
 import type { DesktopStatus, Transport } from "../packages/contracts/src/index";
 afterEach(cleanup);
-test("执行器展示新版本，点击才向真实 Transport 请求确认，等待时禁用更新入口", async () => {
+test("执行器展示新版本，自动下载无需确认，失败支持重试，等待时禁用更新入口", async () => {
   const calls: string[] = [];
   let changed = () => {};
   const status: DesktopStatus = {
@@ -18,7 +18,7 @@ test("执行器展示新版本，点击才向真实 Transport 请求确认，等
     autoStart: false,
     error: null,
     update: {
-      phase: "available",
+      phase: "downloading",
       release: {
         version: "0.4.8",
         sha1: "a".repeat(40),
@@ -54,21 +54,25 @@ test("执行器展示新版本，点击才向真实 Transport 请求确认，等
     },
   };
   const view = render(<ExecutorApp executor={executor} />);
-  await view.findByText("发现新版本 0.4.8");
+  await view.findByText("正在下载更新 0%");
+  assert.equal(view.queryByRole("button", { name: "立即重试" }), null);
+  status.update.phase = "error";
+  changed();
+  await view.findByText("更新失败，请重试。");
   assert.deepEqual(calls, []);
   fireEvent.click(view.getByRole("button", { name: "检查更新" }));
   await waitFor(() => assert.deepEqual(calls, ["check"]));
   await waitFor(() =>
     assert.equal(
-      (view.getByRole("button", { name: "下载并安装" }) as HTMLButtonElement).disabled,
+      (view.getByRole("button", { name: "立即重试" }) as HTMLButtonElement).disabled,
       false,
     ),
   );
-  fireEvent.click(view.getByRole("button", { name: "下载并安装" }));
+  fireEvent.click(view.getByRole("button", { name: "立即重试" }));
   await view.findByText(/下载完成，已暂停领取/);
   assert.deepEqual(calls, ["check", "0.4.8"]);
   assert.equal(status.activeRunId, "live-run");
-  assert.equal(view.queryByRole("button", { name: "下载并安装" }), null);
+  assert.equal(view.queryByRole("button", { name: "立即重试" }), null);
   assert.equal(
     (view.getByRole("button", { name: "检查更新" }) as HTMLButtonElement).disabled,
     true,

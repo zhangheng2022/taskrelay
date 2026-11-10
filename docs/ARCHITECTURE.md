@@ -8,7 +8,7 @@
 
 云端规划只预览顶层 reply；协助仅在读到完整 askUser=true 后预览 message。词法解析处理跨块转义、Unicode 与嵌套字段，不用正则截取 JSON。格式修复使用新草稿版本替换旧稿。执行器普通回复正文可先预览；最终选择 ask / offerAccountSave / requestAccountUpdate 时撤下前导草稿，正式问题和确认卡仍由原流程发布。不新增报告或润色回合，草稿不进入历史上下文或改变任务状态。
 
-Web 通过 `/api/user/events?protocol=2` 复用休眠 WebSocket，接收 draft.start/update/end（会话、调用、版本、序号）；旧网页和设备仅接收 changed。首段立即发布，后续默认 250 ms 合并；每连接最多一条未确认正文帧，draft.ack 后若有跳过更新则发送 changed 促使快照追赶。Transport.subscribeDrafts 可选，ThreadPage.drafts 提供 HTTP 恢复。事件重复/旧版本丢弃，序号缺口、重连与原有定时刷新均读取快照，不重新调用模型。
+Web 通过 `/api/user/events?protocol=2` 复用休眠 WebSocket，接收 draft.start/update/end（会话、调用、版本、序号）；旧网页仅接收 changed；设备另接收独立的 update.available 版本通知，不接收正文草稿。首段立即发布，后续默认 250 ms 合并；每连接最多一条未确认正文帧，draft.ack 后若有跳过更新则发送 changed 促使快照追赶。Transport.subscribeDrafts 可选，ThreadPage.drafts 提供 HTTP 恢复。事件重复/旧版本丢弃，序号缺口、重连与原有定时刷新均读取快照，不重新调用模型。
 
 NotificationHub 将草稿按 60,000 字符密文分块写入私有 DO storage，不逐 token 写正式聊天表；每次更新延长最多 10 分钟的短期存活，alarm 清理过期密文。更新复查用户、聊天、当前回合、云端 graph generation、执行租约/设备及用户消息游标；桌面仍由 Main 拒绝旧 generation。聊天清理先关闭写入，Hub 保存关闭标识拒绝迟到更新，再回收草稿。中断/停止留下的可读快照明确标为未完成，正式消息成功保存后删除对应草稿。`0004_streaming_messages.sql` 增加可空 source_call_id 与索引，旧客户端兼容；网页以消息 ID 或调用 ID 合并正式结果，避免重复。
 
@@ -180,6 +180,10 @@ Stagehand 使用 ClientLLM 转发至现有云端模型链路，cache/selfHeal �
 未决操作保留账号锁。历史 unknown 和本地检查点不会自动恢复旧任务。清理历史属于明确授权的维护操作，不能把删历史当作正常恢复策略。
 
 默认心跳 15 秒、租约 90 秒，全机并发 1；无五分钟执行、四十动作或五分钟人工等待的业务上限。停止直接控制执行器；Main 重连先回传 outbox，再领取任务。关窗口保留托盘，明确退出停止领取并关闭自有进程，自启动默认关闭。
+
+执行器更新由 Main 的 DesktopUpdater 统一调度：启动立即检查，设备连接 open/update.available、系统恢复及每 60 秒补查都合并到同一检查；通知只触发固定源 HTTP 读取。发现新版自动下载并校验，完成后禁止新增领取，等待 Host 空闲、未决领取、RPC、outbox 与 journal 收尾后安装重启。错误按 1/5/15/60 分钟退避，人工重试可提前；用户暂停领取偏好不变。更新不依赖配对状态，不强停任务，不重放未知操作。
+
+公开更新目录仍由发布流程写入 D1。RequestCoordinator 的 updates 对象读取真实 latest 后持久记录版本及待广播游标，alarm 每批处理 20 台未吊销设备，失败重复该批，完成后清理待通知状态；不会截断为仅前 20 台。NotificationHub 复用设备休眠连接发送 update.available v1；旧客户端按原有消息处理刷新，新客户端与任务 changed 分开处理。
 
 utilityProcess 创建同步失败也进入 Host 收尾，持久化未启动失败事实并释放单机占用；收尾存储失败时保留可重试状态。领取响应重试先回传旧终态，不重新执行失败运行。
 

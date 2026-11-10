@@ -108,6 +108,7 @@ try {
         input: [
           path.join(root, "tests/browser-fixtures/images.html"),
           path.join(root, "tests/browser-fixtures/streaming.html"),
+          path.join(root, "tests/browser-fixtures/executor-update.html"),
         ],
       },
     },
@@ -398,6 +399,39 @@ try {
     }
     report.cases.push(
       "streaming first draft, interrupted snapshot, final merge, desktop/mobile width and history scroll retention",
+    );
+    for (const width of [1280, 390]) {
+      await client.Emulation.setDeviceMetricsOverride({
+        width,
+        height: 844,
+        deviceScaleFactor: 1,
+        mobile: width === 390,
+      });
+      await client.Page.navigate({ url: `${origin}tests/browser-fixtures/executor-update.html` });
+      await wait('document.body.textContent.includes("正在下载更新 42%")');
+      for (const [phase, label] of [
+        ["downloading", "正在下载更新"],
+        ["waiting", "已暂停领取"],
+        ["installing", "随后自动重启"],
+        ["error", "立即重试"],
+      ]) {
+        await evaluate(`window.updateFixture.set(${JSON.stringify(phase)})`);
+        await wait(`document.body.textContent.includes(${JSON.stringify(label)})`);
+        assert.ok(
+          await evaluate("document.documentElement.scrollWidth <= innerWidth"),
+          "执行器更新状态无横向溢出",
+        );
+        assert.equal(
+          await evaluate(
+            'Array.from(document.querySelectorAll("button")).some(b => b.textContent.includes("下载并安装"))',
+          ),
+          false,
+        );
+        await screenshot(`executor-update-${phase}-${width}`);
+      }
+    }
+    report.cases.push(
+      "executor automatic download, waiting, installing and retry at desktop/mobile widths",
     );
   }
   assert.deepEqual(report.browserErrors, [], "浏览器无未处理异常");

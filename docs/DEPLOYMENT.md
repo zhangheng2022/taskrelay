@@ -119,7 +119,7 @@ Main 在产生浏览器副作用前记录 SQLite 检查点。云端也先记录�
 
 未知结果可能长期阻止账号继续运行，这是保守恢复的预期行为；首版没有绕过核查的强制解锁入口。复杂 iframe/新标签页工作流、不能通过输入/扫码/确认完成的验证可能不受支持，并应保留明确失败记录。
 
-升级保留 userData。0.4.7 起安装版支持版本检查、提醒、确认后下载及空闲安装，旧客户端首次启用仍需新安装包。客户端拒绝读取高于自身支持版本的 SQLite。常规卸载是否保留用户数据、干净机器升级及代码签名状态必须按验收表实际记录。
+升级保留 userData。0.22.0 源码改为实时检查、自动下载及空闲安装重启；旧安装版首次升级仍需确认，实际发布状态见验收台账。客户端拒绝读取高于自身支持版本的 SQLite。常规卸载是否保留用户数据、干净机器升级及代码签名状态必须按验收表实际记录。
 
 ## Windows 更新交付
 
@@ -178,9 +178,9 @@ README 负责使用入口与状态，CHANGELOG 记录客户端版本的变更，
 
 公开更新版本以 D1 settings 的 `desktopReleaseCatalog` 为准；`apps/cloud/src/desktop-releases.json` 仅在首次没有目录时初始化。存在但损坏的目录拒绝服务，不回退复活旧版本。不能用源码版本或本机安装版本推断公开版本。历史预览不代表当前版本已发布，也不代表长期运行验收完成。
 
-- 执行器启动 15 秒后及每 6 小时检查一次，也可从窗口或托盘“检查更新”。更新地址固定为 `https://tr.zhangheng.eu.org/api/updates/windows-x64/latest.json`，不随配对的工作空间地址变化。只有 Windows x64 Squirrel 安装版启用；开发及解压运行明确显示不可用。
-- 新版本显示更新说明并发 Windows 通知。用户确认“下载并安装”后才下载完整 nupkg。下载仅请求同一 Cloudflare 域名，拒绝重定向，不发送设备令牌。大小、SHA-256 和 SHA-1 均验证后生成只含本地文件名的 RELEASES；Squirrel 仅使用该本地目录，没有第二条网络链路。
-- 下载期间原任务继续运行。下载完成后自动暂停新增领取，等待正在领取的请求、执行/人工等待、浏览器与子进程清理、RPC 和结果回传结束，再安装重启。原“暂停领取”偏好不变；回传失败则继续等待，不强停任务或清空 outbox。更新不解锁 unknown 账号、不重放写入。确认不跨应用重启保存；中途关闭后须重新确认，失败支持重试，新下载会清理应用自有旧下载缓存。
+- 执行器启动后立即检查，收到设备 WebSocket 的 update.available 通知、重连或系统恢复时补查，每 60 秒兜底检查；未配对时同样执行 HTTP 补查，也可从窗口或托盘“检查更新”。更新地址固定为 `https://tr.zhangheng.eu.org/api/updates/windows-x64/latest.json`，不随配对的工作空间地址变化。只有 Windows x64 Squirrel 安装版启用；开发及解压运行明确显示不可用。
+- 新版本显示更新说明并发 Windows 通知，自动下载完整 nupkg，不提供关闭开关。下载仅请求同一 Cloudflare 域名，拒绝重定向，不发送设备令牌。大小、SHA-256 和 SHA-1 均验证后生成只含本地文件名的 RELEASES；Squirrel 仅使用该本地目录，没有第二条网络链路。
+- 下载期间原任务继续运行。下载完成后自动暂停新增领取，等待正在领取的请求、执行/人工等待、浏览器与子进程清理、RPC 和结果回传结束，再安装重启。原“暂停领取”偏好不变；回传失败则继续等待，不强停任务或清空 outbox。更新不解锁 unknown 账号、不重放写入。中途关闭后下次启动重新检查并下载。失败按 1、5、15、60 分钟退避，之后最多每小时一次；定时补查和重复通知不绕过退避，手动检查/立即重试可绕过。新下载会清理应用自有旧下载缓存。
 - Worker 只对目录中固定版本/哈希/文件路径提供流式下载。源限定为 `zhangheng2022/taskrelay` 的 `v<版本>` Release；仅在 CF 内跟随 GitHub 的指定资产域名，绝不向客户端返回 Location，不转发用户的 Cookie/Authorization，不启用 R2 或付费服务。
 
 更新通道的发布与验收步骤：
@@ -188,8 +188,8 @@ README 负责使用入口与状态，CHANGELOG 记录客户端版本的变更，
 1. 提交桌面版本、锁文件和 `docs/RELEASE-NOTES.md`，在合并提交的 CI Gate · 合并检查通过后手动启动 [生产发布](#发布)。
 2. Windows Runner 构建并安装同一份产物，核验系统入口和 ASAR 后运行 `release-manifest`、`prepare-update`，将产物与验收报告关联到固定 SHA 和 Actions run。
 3. 生产作业发布 `TaskRelay-<版本>-full.nupkg` 与 Setup 到可公开下载的 `v<版本>` Release；仅使用已验收附件，不重建或覆盖公开资产。不得把 GitHub token 配到客户端。
-4. 生产作业先登记 D1 `desktopReleaseCatalog`，从 Cloudflare 下载核对完整大小和 SHA-256，再切换 `latest`，保留历史条目供已确认的下载继续使用。不要再修改编译时 JSON 来切换公开版本；`latest:null` 表示尚未发布。
-5. 本机通过更新通道确认下载，检查空闲升级后的系统入口、版本、ASAR、配对和 Profile。运行中、人工等待及断网回传时不重启的实际故障验收另行记录；隔离 adapter 测试和 Runner smoke 均不替代真实本机升级验证。
+4. 生产作业先登记 D1 `desktopReleaseCatalog`，从 Cloudflare 下载核对完整大小和 SHA-256，再切换 `latest` 并读取公开清单验证版本、大小和哈希。更新协调 DO 根据真实目录保存版本通知和分页游标，经 alarm 向全部未吊销设备投递；失败保留批次重试。仅登记候选不触发候选通知，重复读取不重复建任务；保留历史条目供已开始的下载继续使用。不要再修改编译时 JSON 来切换公开版本；`latest:null` 表示尚未发布。
+5. 本机通过更新通道自动下载（旧版首次升级仍需确认），检查空闲升级后的系统入口、版本、ASAR、配对和 Profile。运行中、人工等待及断网回传时不重启的实际故障验收另行记录；隔离 adapter 测试和 Runner smoke 均不替代真实本机升级验证。
 
 实现依据：[Electron autoUpdater](https://www.electronjs.org/docs/latest/api/auto-updater)、[Squirrel 本地更新源](https://github.com/Squirrel/Squirrel.Windows/blob/develop/src/Squirrel/UpdateManager.DownloadReleases.cs)、[Cloudflare Streams](https://developers.cloudflare.com/workers/runtime-apis/streams/)。
 
