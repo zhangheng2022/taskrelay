@@ -1,5 +1,29 @@
 # TaskRelay 验收记录
 
+## 2026-11-10 优先流式正式发布（0.21.0，已完成）
+
+[PR #36](https://github.com/zhangheng2022/taskrelay/pull/36) 与发布前失败状态修正 [PR #37](https://github.com/zhangheng2022/taskrelay/pull/37) 已合并。固定源提交 `850983a64b7f1aa4f6d2ab2663058b98c1e60b16` 的 [主分支 CI 42761431532](https://github.com/zhangheng2022/taskrelay/actions/runs/42761431532) 全部通过：Windows 542 通过、1 跳过，Linux 541 通过、2 跳过；Linux 行/分支/函数覆盖率 76.84%/82.46%/81.92%。跳过项为独立浏览器及平台限定验证；本地同批 543/543 无跳过，生产入口与浏览器证据见下节。类型、lint、格式、仓库、秘密/依赖/CodeQL、Web 构建均通过。
+
+[正式发布 42762214202](https://github.com/zhangheng2022/taskrelay/actions/runs/42762214202) 复用同 SHA 的 Web 候选，补建正式签名 Windows 0.21.0；包内、托管 Windows 实际安装、系统入口、签名及 ASAR 一致性验证通过。归档 `release-bundle-1`（ID `13737994483`），应用 `0004_streaming_messages.sql`，部署 Worker `75fc196e-98e8-4a24-846a-ddd76c82dcc7`。首次即时健康检查遇到旧版本传播，返回 `DEPLOYMENT_HEALTH_MISMATCH`；双域随后确认正确 SHA 后，[恢复发布 42763332234](https://github.com/zhangheng2022/taskrelay/actions/runs/42763332234) 复用原归档，不重复构建、迁移或部署，完成下载校验、更新目录激活和 phase=complete，按状态机恢复发布前维护/领取设置。页面仍显示“等待手动恢复”，不能将恢复原开关解释为已经开启领取。
+
+[0.21.0 Release](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.21.0) 已公开。GitHub 资产元数据记录如下，发布流程另外完成 Cloudflare 下载核验：
+
+| 产物                        |    字节数 | SHA-256                                                          |
+| --------------------------- | --------: | ---------------------------------------------------------------- |
+| TaskRelay.Setup.exe         | 388445304 | cf697c9f76889f5e0bb442fe03ba7729d62f3f2e8fc67137bdf6e9fddc6c8c01 |
+| TaskRelay-0.21.0-full.nupkg | 387889954 | 26d9891d05661b72c565b2fb90f8772cb155544365f5c732416d8b25135cfd0c |
+| RELEASES                    |        81 | db85e0e319c271d1b3dd1531f6e4ff49122997f3909a224d52cfce9faf38c7b3 |
+
+主域与 workers.dev 健康均为 200、协议 19、上述源 SHA；匿名与设备 bearer 的用户/管理员权限自检通过。生产管理员地区诊断确认 `workerEgress_status=200`、`jurisdiction=us`、`loc=US`、`colo=IAD`，模型出站仍走美国 alarm。`modelStreamingEnabled`、`chatPreviewEnabled` 均为 true，没有更换模型、密钥或启用付费服务。
+
+真实 Edge、当前 Responses 模型进行了两条仅文字请求，未创建任务或启动浏览器执行。约 600 字长回答出现部分正文后触发既有 60 秒 `MODEL_TIMEOUT`；界面标为“生成中断，内容未完成”，刷新后恢复相同草稿，没有自动重发。另一条独立短请求正式返回“短回复验收完成”，只显示一条，刷新后仍在。浏览器观察没有完整捕获从首片到正式替换的连续过程，不能据此宣称真实首屏延迟或完整长回复通过；该时序由下节合成 Transport 的 Chromium 验证覆盖。
+
+验收前统计为空，验收后管理员聚合为 stream calls=3、interrupted=1、平均 firstDeltaMs=4096.33、平均 durationMs=24704，未出现 fallback 模式。统计包含能力探测及业务调用，完成耗时按实现的终态样本计算；不是独立业务延迟、稳定断流率或全部模型兼容性结论，不保存正文或秘密。长回复超时是本次真实验证的限制，未放宽超时或自动重试。
+
+额外手动 [CI 42761467546](https://github.com/zhangheng2022/taskrelay/actions/runs/42761467546) 失败：`tests/maintenance-scripts.test.ts:80` 的子进程继承 `GITHUB_EVENT_NAME=workflow_dispatch`，范围脚本正确选择全量，但夹具仍断言文档变化 desktop=false。该既有夹具问题未在本批修改；同 SHA 标准 push CI 全绿，正式发布按既有门禁选用成功 push CI，没有绕过检查。手动运行的测试证书安装验收不作为正式签名候选证据。
+
+托管安装不代表用户本机已更新，用户设备应通过“检查更新”安装 0.21.0。本批未完成用户设备升级后配对/Profile、真实网站执行闭环、真实 Chat Completions 提供方、iPhone Safari 或持续断网验证；未清空历史、重新生成 MASTER_KEY 或重放旧任务。
+
 ## 2026-11-10 优先流式（0.21.0，源码验证）
 
 实现模型 HTTP 流式、复用网页 WebSocket 草稿与 HTTP 快照恢复；迁移 `0004_streaming_messages.sql` 只增加可空消息关联、调用耗时/模式字段和默认开关，不改写用户正文、设备、凭据或 MASTER_KEY。桌面版本为 0.21.0，协议 19 与本地 schema 4 保持不变。协助前导正文允许短暂预览，最终进入协助时撤下，以正式问题为准。
