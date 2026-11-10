@@ -406,6 +406,12 @@ test("草稿授权拒绝停止、旧租约、用户补充、旧图代次和关�
     await allowedDraft(f.env, f.run.userId, { ...target, graphId: "graph", generation: 2 }),
     true,
   );
+  await f.db.prepare("UPDATE ai_graph_inputs SET status='failed' WHERE id='graph'").run();
+  assert.equal(
+    await allowedDraft(f.env, f.run.userId, { ...target, graphId: "graph", generation: 2 }),
+    false,
+    "完整输出后的业务校验失败也必须撤销草稿写入并标记未完成",
+  );
   await f.db.prepare("UPDATE ai_threads SET closed=1 WHERE id=?").bind(thread.id).run();
   assert.equal(await allowedDraft(f.env, f.run.userId, target), false);
 });

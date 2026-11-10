@@ -22,6 +22,7 @@ export type DraftTarget = {
 };
 export type DraftPublication = { owner: string; target: DraftTarget; draft: ChatDraft };
 export async function allowedDraft(env: AppEnv, owner: string, target: DraftTarget) {
+  // 模型已完成仍可能在业务校验时失败；缓存栅栏保留这些图，正文草稿需额外拒绝其失败状态。
   const graph = target.graphId
     ? graphWriteFence(owner, target.graphId, target.generation)
     : undefined;
@@ -29,7 +30,7 @@ export async function allowedDraft(env: AppEnv, owner: string, target: DraftTarg
     `SELECT id FROM ai_threads WHERE id=? AND user_id=? AND closed=0
     AND EXISTS(SELECT 1 FROM members WHERE id=ai_threads.user_id AND disabled=0)
     ${target.turnId ? "AND active_turn=?" : ""}
-    ${graph ? `AND ${graph.sql}` : ""}
+    ${graph ? `AND ${graph.sql} AND EXISTS(SELECT 1 FROM ai_graph_inputs g WHERE g.id=? AND g.owner=? AND g.status NOT IN ('failed','unknown','cancelled'))` : ""}
     ${target.runId ? `AND EXISTS(SELECT 1 FROM runs r WHERE r.id=? AND r.thread_id=ai_threads.id AND r.user_id=ai_threads.user_id AND r.history_deleted=0 AND r.cancel_requested=0 AND r.status IN ('running','waiting_user','verifying') AND r.lease_epoch=? AND r.device_id=? AND r.lease_expires_at>? AND EXISTS(SELECT 1 FROM devices d WHERE d.id=r.device_id AND d.revoked=0))` : ""}
     ${target.userSeq !== undefined ? "AND (SELECT COALESCE(MAX(seq),0) FROM ai_messages WHERE thread_id=ai_threads.id AND role='user')=?" : ""}`,
   )
@@ -38,6 +39,7 @@ export async function allowedDraft(env: AppEnv, owner: string, target: DraftTarg
       owner,
       ...(target.turnId ? [target.turnId] : []),
       ...(graph?.values ?? []),
+      ...(graph ? [target.graphId, owner] : []),
       ...(target.runId
         ? [
             target.runId,
