@@ -4,12 +4,25 @@
 
 这里索引最近已记录的结果，不代替实时生产检查。下方历史记录中的“未部署”“待验收”属于记录时点，后续结果按日期与固定提交关联。
 
+- [聊天 Markdown 0.23.0 生产发布](#2026-11-10-聊天-markdown0230生产发布)。
 - [执行器实时全自动更新 0.22.0 生产发布](#2026-11-10-执行器实时全自动更新0220生产发布)。
 - [聊天 Markdown 本地实现](#2026-11-10-聊天-markdown本地源码)。
 - [流式 0.21.0 正式发布、长回复超时与验证限制](#2026-11-10-优先流式正式发布0210已完成)。
 - [手动 CI 夹具修复及远端验证](#2026-11-10-手动-ci-检查范围夹具修复)。
 - [存储 v2 切换、旧库删除及初始安装证据](#2026-11-08-存储-v2-生产全量重置与正式桌面发布)。
 - [归并补充的历史提交与外部配置](#历史部署补充证据)。
+
+## 2026-11-10 聊天 Markdown（0.23.0）生产发布
+
+[PR #44](https://github.com/zhangheng2022/taskrelay/pull/44) 已合并，发布固定提交为 `98ab16487524b6f9a2a279780772b92cb8f5bd3a`。功能提交 `ea648cd` 使用中文说明；为发布补充桌面版本与更新说明后，增量文档/清单审查通过，16 个变更文件中人工审查 15 个，生成锁文件另作元数据核验。原有独立的更新说明 PR #43 未合并或修改。
+
+[PR CI 42793083555](https://github.com/zhangheng2022/taskrelay/actions/runs/42793083555) 与 [master CI 42794110419](https://github.com/zhangheng2022/taskrelay/actions/runs/42794110419) 全部通过，覆盖全量跨平台测试、Linux 覆盖率、安全审计、Web 构建、真实 Chromium 界面检查及 Windows 打包/实际安装；master 使用正式签名证书。托管机包内和安装 smoke 均为 0.23.0，ASAR SHA-256 一致：`44e536ac080deae0eb66e4ff17b89487c08ef2330333076d4d6ebcd92752f4b0`。
+
+[Release 42795044902](https://github.com/zhangheng2022/taskrelay/actions/runs/42795044902) 复用同 SHA 的 CI 产物，2026-11-10 18:02（北京时间）完成。阶段到达 complete，下载验证后激活更新目录并恢复发布前的 maintenance/claimsEnabled；迁移返回 No migrations to apply，没有重建库或变更密钥。Worker 版本为 `2880dc8f-b66a-4920-879f-00bf825b5d13`。发布后主域及 workers.dev 的 health 均为 HTTP 200、协议 19、上述源提交；两域更新目录均为 0.23.0。
+
+[公开版本 v0.23.0](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.23.0) 的 `TaskRelay-0.23.0-full.nupkg` 为 387889028 字节，SHA-256 `fb4e5653c4af693521058caa01c87c1c8de2edf10bde346c191ddd7873465454`，与主站目录和 GitHub digest 一致；`TaskRelay.Setup.exe` 为 388440184 字节，SHA-256 `0593d7ab1b3f056146722d8163c640e7a6dff6d3d1c1d67520d326908b10eba4`。目录 publishedAt 为候选生成时间 `2026-11-10T09:56:43.054Z`，实际发布完成以上述运行记录为准。
+
+本轮未操作用户电脑安装，不证明当前设备已自动升级；真实账号聊天、模型/网站执行、iPhone/Safari、断网/休眠和长期观察没有新增验收。界面细节沿用下方源码记录及 UI-REVIEW。
 
 ## 2026-11-10 聊天 Markdown（本地源码）
 
