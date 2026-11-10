@@ -21,7 +21,9 @@
 
 OCR 差异筛选与规则读取成功：选中 15 项全部审查，默认排除的文档、测试及根锁文件另补查 15 项，共 30/30、无跳过；修复了广播看门狗与新版本立即唤醒竞争，并隔离系统通知异常。代码图已更新；35 个 SQL 缺少 tree_sitter_sql、13 个无支持扩展，部分测试/说明无可提取符号，图不代表全仓语义覆盖。
 
-发布前仍需托管 Windows 实际安装检查；公开新版本后仍需验证旧版首次确认、自动升级后的系统入口/版本/ASAR、配对及 Profile 保留，以及真实运行、断网和休眠场景。安装脚本限制在 GitHub 托管 Windows，不在用户机器上伪造该环境。发布顺序为先上线兼容服务端，再发布桌面候选。
+手动全量 [CI 42774294113](https://github.com/zhangheng2022/taskrelay/actions/runs/42774294113) 在源码 `d41bdbf35725df999f20b4607c84436aada76d6b` 全部通过，包含 Windows/Linux 全量测试、覆盖率、源码与工作流检查、秘密/依赖扫描、CodeQL、Web 构建及 Windows 打包与实际安装。`windows-acceptance-1` 报告确认版本 0.22.0、runner=github-hosted、packaged/installed smoke 均通过、installedAsarMatches=true，系统入口安装 ASAR SHA-256 为 `7109f892e0ec0c5093fb6f9d5c538b75cefa2589b257a9bad0ee7aa02b9a8691`。本次修改见 [PR #41](https://github.com/zhangheng2022/taskrelay/pull/41)，基于尚未合并的清理 PR #40。
+
+托管机首次安装不等于真实自动升级。公开新版本后仍需验证旧版首次确认、自动升级后的系统入口/版本/ASAR、配对及 Profile 保留，以及真实运行、断网和休眠场景。安装脚本限制在 GitHub 托管 Windows，不在用户机器上伪造该环境。发布顺序为先上线兼容服务端，再发布桌面候选。
 
 ## 脚本退役与文档归并
 
