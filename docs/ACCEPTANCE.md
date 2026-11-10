@@ -15,7 +15,11 @@
 
 ## 2026-11-10 公开注册开放
 
-按用户要求将生产部署变量 `REGISTRATION_OPEN` 改为 `"1"`，同步 Wrangler 生成类型与产品/开发/部署说明。注册仍要求 Turnstile、邮箱验证和既有邮件限流，普通邮箱只获得普通用户权限；没有改动桌面程序、数据结构或密钥。此段为发布前证据，线上结果待正式发布后补充。
+按用户要求将生产部署变量 `REGISTRATION_OPEN` 改为 `"1"`，同步 Wrangler 生成类型与产品/开发/部署说明。注册仍要求 Turnstile、邮箱验证和既有邮件限流，普通邮箱只获得普通用户权限；没有改动桌面程序、数据结构或密钥。
+
+[PR #46](https://github.com/zhangheng2022/taskrelay/pull/46) 已合并，固定发布提交 `f9bc6337d1fed73d0b564a64544af5975d0db50e`；[PR CI 42798249530](https://github.com/zhangheng2022/taskrelay/actions/runs/42798249530) 与 [master CI 42799043360](https://github.com/zhangheng2022/taskrelay/actions/runs/42799043360) 均通过，包含跨平台全量测试、覆盖率、真实浏览器界面检查、安全检查与 Web 构建。本次没有桌面变更，Windows 打包作业按范围跳过。
+
+[Release 42799946339](https://github.com/zhangheng2022/taskrelay/actions/runs/42799946339) 使用 `scope=cloud`，复用同 SHA 的 Web 产物，于 2026-11-10 18:34（北京时间）到达 complete，按原值恢复发布前的维护/领取开关。迁移返回 No migrations to apply，Worker 版本为 `bd2f7704-1dc1-4122-9ada-0cfa4d1d5ac2`，未生成或替换桌面版本。发布后主域与 workers.dev 的 `/api/auth/config` 均返回 `registrationOpen:true`，health 均返回上述源提交与协议 19。主域使用保留的 `.invalid` 测试邮箱、不带人机验证令牌访问注册接口，返回 HTTP 400/TURNSTILE_REQUIRED，确认已通过公开注册开关但仍执行人机验证；请求在创建账号和发送邮件前被拒绝。
 
 本地类型检查、仓库检查、格式检查、差异检查、Web 构建及 API/多用户测试 10/10 通过。隔离生产路由检查确认：关闭时普通邮箱收到 403/REGISTRATION_CLOSED，开放后 config 返回 true，无人机验证令牌的请求仍收到 400/TURNSTILE_REQUIRED，未创建账号或发送邮件。Web 构建仍有既有大 chunk 和动态导入提示。
 
