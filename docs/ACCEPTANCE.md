@@ -1,5 +1,11 @@
 # TaskRelay 验收记录
 
+## 2026-11-10 手动 CI 检查范围夹具修复
+
+已在本机以 `GITHUB_EVENT_NAME=workflow_dispatch` 复现下方手动 CI 的断言失败：夹具模拟文档差异，却继承了宿主手动运行事件。修复仅修改测试，子进程显式指定 push/pull_request/workflow_dispatch/schedule，并清空 GITHUB_OUTPUT、GITHUB_STEP_SUMMARY，隔离宿主输出。保留生产规则：push/PR 的纯文档可跳过，手动和定时始终全量；独立浏览器测试变化和缺少基线仍执行桌面检查。
+
+同一测试文件分别在宿主 push、workflow_dispatch、schedule 环境下运行，每轮 4/4，共 12 项通过；类型、lint、格式和仓库检查通过。OCR delegate preview/rule 成功，宿主补审默认排除的测试及本文，total_files=2、reviewed_files=2、skipped_files=0、coverage_rate=100%，无遗留发现。Graphify 更新为 5792 节点、10982 边、465 社区；35 个 SQL 因缺 tree_sitter_sql 未解析，13 个不支持扩展文件跳过，本批不改 SQL 或业务代码。远端手动 CI 结果另记，不触发产品部署或桌面升级。
+
 ## 2026-11-10 优先流式正式发布（0.21.0，已完成）
 
 [PR #36](https://github.com/zhangheng2022/taskrelay/pull/36) 与发布前失败状态修正 [PR #37](https://github.com/zhangheng2022/taskrelay/pull/37) 已合并。固定源提交 `850983a64b7f1aa4f6d2ab2663058b98c1e60b16` 的 [主分支 CI 42761431532](https://github.com/zhangheng2022/taskrelay/actions/runs/42761431532) 全部通过：Windows 542 通过、1 跳过，Linux 541 通过、2 跳过；Linux 行/分支/函数覆盖率 76.84%/82.46%/81.92%。跳过项为独立浏览器及平台限定验证；本地同批 543/543 无跳过，生产入口与浏览器证据见下节。类型、lint、格式、仓库、秘密/依赖/CodeQL、Web 构建均通过。
