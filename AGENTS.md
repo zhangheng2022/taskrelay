@@ -4,7 +4,7 @@
 
 ## 工作流程
 
-TaskRelay 为用户提供隔离的浏览器任务空间：网站交办与聊天，Cloudflare 规划和调度，管理员授权的 Windows 设备池执行。桌面仅为执行器，不提供任务编辑、聊天或模型管理；公开注册默认关闭。RewardPilot 仅参考进程架构，不复用 UI、积分业务或本地调度。
+TaskRelay 为用户提供隔离的浏览器任务空间：网站交办与聊天，Cloudflare 规划和调度，管理员授权的 Windows 设备池执行。桌面仅为执行器，不提供任务编辑、聊天或模型管理；公开注册由部署配置控制，保留人机验证、邮箱验证和用户隔离。RewardPilot 仅参考进程架构，不复用 UI、积分业务或本地调度。
 
 1. 阅读请求和目录约定，查看 `git status --short`，保留已有改动；不顺手提交技能、截图、密钥、缓存或产物。
 2. 按任务查阅 [架构](docs/ARCHITECTURE.md)、[产品](PRODUCT.md)、[部署](docs/DEPLOYMENT.md)、[验收](docs/ACCEPTANCE.md)，由下方导航定位源码。

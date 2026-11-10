@@ -12,7 +12,7 @@ React、Vite、TypeScript、shadcn/ui、Tailwind CSS；TanStack Query、React Ho
 
 ## Users
 
-注册用户在网站拥有隔离的浏览器任务空间，支持手机访问。管理员维护共享模型与可信 Windows 设备池。公开注册默认关闭。
+注册用户在网站拥有隔离的浏览器任务空间，支持手机访问。管理员维护共享模型与可信 Windows 设备池。外部用户可在开放注册的部署中自行注册，通过人机验证和邮箱验证后使用独立工作空间；普通注册不授予管理员权限。
 
 ## Product Purpose
 

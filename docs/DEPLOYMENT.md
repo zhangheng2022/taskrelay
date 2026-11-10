@@ -85,6 +85,8 @@ GitHub [上传接口会改写特殊文件名](https://docs.github.com/en/rest/re
 
 ## 工作空间域名
 
+公开注册由 `apps/web/wrangler.jsonc` 的 `REGISTRATION_OPEN` 控制，`"1"` 开放，`"0"` 关闭普通邮箱新注册；变更须走上述正式发布流程。关闭不会删除已有账号或撤销既有会话。发布后读取主域 `/api/auth/config` 核对 `registrationOpen`，保留 `TURNSTILE_SECRET`、`TURNSTILE_SITE_KEY`、`BREVO_API_KEY` 与 `MAIL_FROM` 的现有配置；注册仍须完成人机验证和邮箱验证。线上开放及验证证据见 ACCEPTANCE。
+
 主入口为 `https://tr.zhangheng.eu.org`，原 `https://taskrelay.zhangheng.workers.dev` 保留。自定义域名已在 `apps/web/wrangler.jsonc` 的 `routes` 中声明为 `custom_domain: true`，指向同一 `taskrelay` Worker；不创建另一套 D1/R2/模型配置。
 
 两个主机名均使用应用认证；历史 Access 切换证据见[验收补充](ACCEPTANCE.md#历史部署补充证据)，旧入口也没有保留 owner JWT 或设备管理权限。网站注册、发信及重置回调以新主域名为准，用户应使用主入口；原地址继续支持 v2 设备执行接口。HTTPS 验证使用正常证书校验。

@@ -279,7 +279,7 @@ D1 负责业务事实；本轮采用独立基线 `apps/cloud/migrations/0001_sto
 
 私有 Evidence/BrowserStateStore 继续每个对象一个 SQLite DO，KV 格式 2，按序批量读取分块，D1 引用仍拥有发布权；加密、退休墓碑与 alarm 仲裁保留。冻结窗口的 convertMetadata 逐块校验后只升级元数据，不改对象键和 MASTER_KEY。短期 ModelEgress 旧作业不再执行；美国 jurisdiction/alarm 出站边界保留。桌面使用独立 `taskrelay-v4.sqlite`，配置、journal、outbox 分表、多行建表，WAL/FULL；离线转换保留身份和待确认事实，cache 重建，检查点不能恢复旧浏览器任务。
 
-网站使用 Better Auth 会话与已验证邮箱，服务端校验用户归属与管理员角色。设备 bearer token 可吊销，只访问设备/租约绑定入口。Cloudflare Access 是可选外层限制；DEV_MODE=1 只限本机，生产关闭。公开注册默认关闭。
+网站使用 Better Auth 会话与已验证邮箱，服务端校验用户归属与管理员角色。设备 bearer token 可吊销，只访问设备/租约绑定入口。Cloudflare Access 是可选外层限制；DEV_MODE=1 只限本机，生产关闭。公开注册由部署变量 `REGISTRATION_OPEN` 控制，仅值为 `"1"` 时开放普通邮箱注册；关闭时仅允许配置的管理员邮箱首次注册。注册保留 Turnstile、邮件限流与邮箱验证，普通用户只创建自己的业务成员。
 
 Main 使用系统 safeStorage 保存设备令牌。MASTER_KEY 保护现有密文，禁止重新生成或覆盖；轮换必须有迁移与恢复方案。Profile 按账号/任务隔离，但不对可信设备管理员隐藏数据。
 
