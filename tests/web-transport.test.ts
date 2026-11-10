@@ -15,13 +15,53 @@ test("图片地址始终使用同源受鉴权路径，资源 ID 不能注入查�
   );
 });
 
+test("正文订阅复用连接，不逐块触发全量读取，旧协议变化通知仍可用", (t) => {
+  const env = browser(t),
+    transport = createWebTransport();
+  let reads = 0,
+    chunks = 0;
+  const stop = transport.subscribe!(() => {
+    reads++;
+  });
+  const stopDraft = transport.subscribeDrafts!(() => {
+    chunks++;
+  });
+  assert.equal(env.sockets.length, 1);
+  env.sockets[0].onmessage!({
+    data: JSON.stringify({
+      protocol: 2,
+      type: "draft.start",
+      draft: {
+        id: "draft",
+        threadId: "thread",
+        callId: "call",
+        version: 0,
+        seq: 1,
+        content: "正文",
+        at: "now",
+        source: "cloud",
+        status: "streaming",
+      },
+    }),
+  });
+  assert.equal(reads, 0);
+  assert.equal(chunks, 1);
+  env.sockets[0].onmessage!({ data: "changed" });
+  assert.equal(reads, 1);
+  stop();
+  assert.equal(env.sockets[0].closeCalls, 0);
+  stopDraft();
+  assert.equal(env.sockets[0].closeCalls, 1);
+});
+
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
   onopen: (() => void) | null = null;
-  onmessage: (() => void) | null = null;
+  onmessage: ((event: { data: string }) => void) | null = null;
   onclose: (() => void) | null = null;
   onerror: (() => void) | null = null;
   closeCalls = 0;
+  send(_message: string) {}
   constructor(readonly url: string) {
     FakeWebSocket.instances.push(this);
   }
@@ -73,12 +113,12 @@ test("真实 Web Transport 的双订阅共用连接，最后退订才释放并�
     thread++;
   });
   assert.equal(env.sockets.length, 1);
-  assert.equal(env.sockets[0].url, "ws://localhost/api/user/events");
+  assert.equal(env.sockets[0].url, "ws://localhost/api/user/events?protocol=2");
   env.sockets[0].onopen!();
   assert.deepEqual([workspace, thread], [1, 1]);
   offWorkspace();
   assert.equal(env.sockets[0].closeCalls, 0);
-  env.sockets[0].onmessage!();
+  env.sockets[0].onmessage!({ data: "changed" });
   assert.deepEqual([workspace, thread], [1, 2]);
   const lateClose = env.sockets[0].onclose!;
   offThread();
@@ -106,7 +146,13 @@ test("快速隐显后旧 close/error/open/message 不影响新连接，也不遗
     notifications++;
   });
   const previous = env.sockets[0];
-  const callbacks = [previous.onclose!, previous.onerror!, previous.onopen!, previous.onmessage!];
+  const oldMessage = previous.onmessage!;
+  const callbacks = [
+    previous.onclose!,
+    previous.onerror!,
+    previous.onopen!,
+    () => oldMessage({ data: "changed" }),
+  ];
   env.visibility(true);
   assert.equal(previous.closeCalls, 1);
   assert.equal(previous.onclose, null);
@@ -163,10 +209,10 @@ test("同一回调的两次订阅独立退订", (t) => {
   };
   const first = transport.subscribe!(listener),
     second = transport.subscribe!(listener);
-  env.sockets[0].onmessage!();
+  env.sockets[0].onmessage!({ data: "changed" });
   assert.equal(notifications, 2);
   first();
-  env.sockets[0].onmessage!();
+  env.sockets[0].onmessage!({ data: "changed" });
   assert.equal(notifications, 3);
   second();
   assert.equal(env.sockets[0].closeCalls, 1);

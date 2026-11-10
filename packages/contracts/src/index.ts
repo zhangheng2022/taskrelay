@@ -182,6 +182,7 @@ export const modelInputSchema = z
   });
 export type ModelInput = z.infer<typeof modelInputSchema>;
 export interface ModelCapabilities {
+  streaming?: Partial<Record<"text" | "tools" | "structured", "supported" | "unsupported">>;
   connection: boolean;
   tools: boolean;
   structured: "schema" | "json" | "none";
@@ -267,6 +268,7 @@ export interface Transport {
   /** 宿主提供受鉴权的图片地址；图片二进制不经过 JSON 请求通道。 */
   artifactUrl?(id: string, variant?: "original" | "thumbnail"): string;
   subscribe?(fn: () => void): () => void;
+  subscribeDrafts?(fn: (event: import("./streaming").DraftEvent) => void): () => void;
   desktop?: {
     status(): Promise<DesktopStatus>;
     configure(url: string): Promise<{ url: string; code: string }>;

@@ -12,6 +12,8 @@ export type EgressJob =
       runId: string | null;
       userId: string;
       reservationId: string;
+      callId?: string;
+      preview?: import("./chat-drafts").DraftTarget;
     };
 export async function egress<T>(
   env: AppEnv,

@@ -56,6 +56,8 @@ export function attachTestEgress(env: AppEnv) {
                 job.runId,
                 job.userId,
                 job.reservationId,
+                job.callId,
+                job.preview,
               );
             },
           );

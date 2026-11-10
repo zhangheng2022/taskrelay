@@ -14,6 +14,8 @@ export function testDb() {
   sql.exec(
     "INSERT INTO members(id,email,role) VALUES('fixture_owner','fixture@example.com','admin')",
   );
+  // 旧业务夹具显式使用非流式；流式生产入口套件单独打开并供应真实分块响应。
+  sql.exec("INSERT OR REPLACE INTO settings(key,value) VALUES('modelStreamingEnabled','0')");
   class Statement {
     args: any[] = [];
     constructor(readonly query: string) {}

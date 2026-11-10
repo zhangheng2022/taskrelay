@@ -123,6 +123,7 @@ app.get("/api/user/events", async (c) => {
         "x-subscriber": JSON.stringify({
           owner: c.get("userId"),
           session: c.get("sessionId"),
+          protocol: c.req.query("protocol") === "2" ? 2 : 1,
           expires: Date.now() + 3600000,
         }),
       },

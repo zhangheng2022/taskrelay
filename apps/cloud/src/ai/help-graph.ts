@@ -153,7 +153,18 @@ export async function executeHelpGraph(env: AppEnv, event: GraphEvent) {
         runtime.generation,
       );
       return {
-        answer: await model.runAgent(answerSchema, state.messages, state.history, runtime.guard),
+        answer: await model.runAgent(answerSchema, state.messages, state.history, runtime.guard, {
+          threadId: stored.thread_id,
+          id: `${event.graph_id}:${state.round}:question`,
+          mode: "question",
+          source: "cloud",
+          graphId: event.graph_id,
+          generation: runtime.generation,
+          runId: run.id,
+          epoch: run.leaseEpoch,
+          deviceId: run.deviceId ?? undefined,
+          userSeq: state.latestUserSeq,
+        }),
       };
     })
     .addNode("publish", async (state) => {
@@ -244,6 +255,9 @@ export async function executeHelpGraph(env: AppEnv, event: GraphEvent) {
           .run();
         return { ready: false };
       }
+      await env.NOTIFICATIONS?.getByName("user:" + run.userId)
+        .closeDrafts(stored.thread_id, undefined, `${event.graph_id}:${state.round}:question`)
+        .catch(() => {});
       return { ready: response.ready };
     })
     .addNode("wait", (state) => {

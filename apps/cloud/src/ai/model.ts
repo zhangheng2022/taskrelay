@@ -31,6 +31,7 @@ import {
   toLangChainMessages,
 } from "../../../../packages/model/src/langchain";
 import { assertPrivateAI } from "./privacy";
+import type { DraftTarget } from "../chat-drafts";
 
 export interface RelayModelOptions extends BaseChatModelCallOptions {
   operationId?: string;
@@ -44,6 +45,7 @@ export interface RelayModelOptions extends BaseChatModelCallOptions {
   jsonMode?: boolean;
   invalidCode?: string;
   capabilityProbe?: boolean;
+  preview?: DraftTarget;
 }
 
 /** LangChain interface over the existing encrypted, region-bound model adapter. */
@@ -72,6 +74,7 @@ export class RelayChatModel extends BaseChatModel<RelayModelOptions> {
     protectedInput: Message[],
     history: Message[],
     guard: () => Promise<void>,
+    preview?: DraftTarget,
   ): Promise<T> {
     const { profile } = await getModelProfile(this.env, this.modelId, this.version);
     const protectedMessages = toLangChainMessages(protectedInput);
@@ -87,6 +90,7 @@ export class RelayChatModel extends BaseChatModel<RelayModelOptions> {
       await guard();
       const result = await this.withStructuredOutput<T>(schema, { includeRaw: true }).invoke(
         toLangChainMessages(messages),
+        { preview },
       );
       await guard();
       if (!(result.raw instanceof AIMessage)) throw Error("MODEL_INVALID_RESPONSE");
@@ -209,11 +213,13 @@ export class RelayChatModel extends BaseChatModel<RelayModelOptions> {
         ...(options.tokenParameter ? { tokenParameter: options.tokenParameter } : {}),
         ...(options.schema ? { schema: options.schema } : {}),
         ...(options.jsonMode ? { jsonMode: true } : {}),
+        ...(options.capabilityProbe ? { stream: false } : {}),
       },
       this.runId,
       options.operationId ?? this.operationId,
       this.graphId,
       this.graphGeneration,
+      options.preview,
     );
     options.signal?.throwIfAborted();
     return {
@@ -299,6 +305,7 @@ export class RelayChatModel extends BaseChatModel<RelayModelOptions> {
           ...(config.method ? { format: config.method === "jsonMode" ? "json" : "schema" } : {}),
         },
         this.graphGeneration,
+        options?.preview,
       );
       options?.signal?.throwIfAborted();
       return config.includeRaw

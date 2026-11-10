@@ -20,6 +20,7 @@ import { stagehandSchema } from "../../apps/cloud/src/ai/stagehand-schema";
 import { z } from "zod";
 import { applicationDb } from "../../apps/cloud/src/database";
 import { validateSnapshotPng } from "../../apps/cloud/src/png";
+import type { DraftPublication } from "../../apps/cloud/src/chat-drafts";
 app.onError((e, c) => {
   console.error("fixture error", e.message);
   return c.json({ error: e.message }, 500);
@@ -53,6 +54,7 @@ export default {
       return Response.json({ valid, rejected });
     }
     if (path === "/_init") {
+      await env.DB.prepare("UPDATE settings SET value='0' WHERE key='modelStreamingEnabled'").run();
       await env.DB.prepare(
         "INSERT INTO members(id,email,role) VALUES('fixture_owner','fixture@example.com','admin')",
       ).run();
@@ -224,6 +226,31 @@ export default {
     if (path === "/_publish") {
       await env.NOTIFICATIONS.getByName("device:fixture").publish();
       return Response.json({ ok: true });
+    }
+    if (path === "/_draft-socket") {
+      return env.NOTIFICATIONS.getByName("user:fixture_owner").fetch(
+        new Request("https://notification.internal/", {
+          headers: {
+            Upgrade: "websocket",
+            "x-subscriber": JSON.stringify({
+              owner: "fixture_owner",
+              session: "draft_session",
+              expires: Date.now() + 600000,
+              protocol: 2,
+            }),
+          },
+        }),
+      );
+    }
+    if (path === "/_draft") {
+      const body = (await req.json()) as { publication: DraftPublication; close?: boolean };
+      const hub = env.NOTIFICATIONS.getByName("user:fixture_owner");
+      if (body.close) await hub.closeDrafts(body.publication.target.threadId);
+      else await hub.publishDraft(body.publication);
+      return Response.json({
+        drafts: await hub.drafts("fixture_owner", body.publication.target.threadId),
+        other: await hub.drafts("other", body.publication.target.threadId),
+      });
     }
     return worker.fetch(req, env, ctx);
   },

@@ -1,5 +1,17 @@
 # TaskRelay 验收记录
 
+## 2026-11-10 优先流式（0.21.0，源码验证）
+
+实现模型 HTTP 流式、复用网页 WebSocket 草稿与 HTTP 快照恢复；迁移 `0004_streaming_messages.sql` 只增加可空消息关联、调用耗时/模式字段和默认开关，不改写用户正文、设备、凭据或 MASTER_KEY。桌面版本为 0.21.0，协议 19 与本地 schema 4 保持不变。协助前导正文允许短暂预览，最终进入协助时撤下，以正式问题为准。
+
+本轮完整测试含覆盖率 543/543 通过、无跳过（Windows 行 77.21%、分支 82.47%、函数 82.52%，Linux 门禁另由 CI 执行）。新增回归覆盖两种协议、中文逐字节分块、工具参数汇总、实际用量/缺失用量、截断不成功且不重发、响应上限/取消、格式修复版本、独立兼容探测、网络失败不降级、草稿身份隔离与加密分块、重复/乱序/背压/过期/清空、旧租约和代次、正式消息合并。实际 execute 入口验证半截工具参数时无操作、完整后仅一次执行，并将最终消息关联原调用。
+
+真实 workerd 本地验收通过原 alarm/协助恢复链路和新增休眠 WebSocket 草稿、大密文快照、用户隔离、关闭后迟到写入拒绝。模型提供方仍为隔离夹具，不能证明美国部署位置或真实服务流式兼容性。真实 Chromium 验证桌面/手机宽度和历史滚动，证据见 UI-REVIEW；不等于真人手机验收。
+
+类型检查、lint、仓库检查、Web/Worker 构建和差异检查通过；Web 构建保留现有大分块提示。OCR delegate preview/rule 成功，宿主审查本次 49 个源码/测试/文档/锁文件（补审默认排除项），total_files=49、reviewed_files=49、skipped_files=0、coverage_rate=100%，无未解决发现；已修正旧 HTTP 响应覆盖草稿、控制探测输出未校验、保留期预读候选误关闭仍活跃聊天三处问题。未调用 OCR 外部模型。Graphify 更新为 5790 节点、10980 边、452 社区；35 个 SQL 因缺少 tree_sitter_sql 未解析，ui-streaming 测试未提取符号，已直接阅读差异补审；没有调用 LLM 更新社区标签。
+
+首片/终态耗时、未知或流式错误数、能力兼容回退数可通过管理员 `/api/admin/streaming` 读取，当前没有生产流量统计结论。两个回退开关只作用于新调用。尚未完成的发布、托管 Windows 打包/实际安装和真实模型验证不得据此记为通过，发布完成后另记证据。
+
 ## 2026-11-10 设备升级登记修复正式发布（已完成）
 
 用户授权部署后，[PR #34](https://github.com/zhangheng2022/taskrelay/pull/34) 经 CI 42739676261 通过并合并为 `25cb9b46dc723840f94f872c5a81892d3d254ac7`。[主分支 CI 42740368284](https://github.com/zhangheng2022/taskrelay/actions/runs/42740368284) 通过后，[正式发布 42741034620](https://github.com/zhangheng2022/taskrelay/actions/runs/42741034620) 以 scope=cloud、mode=publish 发布固定提交，复用 `ci-web-1`（Artifact ID `13728926707`），归档 `release-bundle-1`（Artifact ID `13728384100`）。没有补建 Web/Windows，没有待应用数据库迁移。

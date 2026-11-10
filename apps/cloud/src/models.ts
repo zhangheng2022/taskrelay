@@ -6,7 +6,13 @@ import { dbTime } from "./database";
 import { reserve } from "./tenancy";
 import { resolveModelImage } from "./images";
 import { z } from "zod";
-import { infer, type Inference, type ModelResponse } from "../../../packages/model/src/index";
+import {
+  infer,
+  streamKind,
+  type Inference,
+  type ModelResponse,
+} from "../../../packages/model/src/index";
+import { draftPublisher, type DraftTarget } from "./chat-drafts";
 import { publicEndpoint } from "../../../packages/contracts/src/security";
 import type { ModelCapabilities, ModelProfile } from "../../../packages/contracts/src/index";
 import type { AppEnv } from "./env";
@@ -111,6 +117,7 @@ export async function invoke(
   operationId?: string,
   graphId?: string,
   graphGeneration?: number,
+  preview?: DraftTarget,
 ) {
   const userId = runId
     ? (
@@ -173,12 +180,29 @@ export async function invoke(
     throw new Error(prior.status === "failed" ? prior.error : "MODEL_CALL_OUTCOME_UNKNOWN");
   }
   try {
+    let streamMode = request.stream ? "stream" : "buffered";
+    // 去重先于能力选择：回退开关或能力更新不能改变已发出调用的身份，也不能触发重探测。
+    if (request.stream === undefined) {
+      const disabled =
+        (
+          await env.DB.prepare(
+            "SELECT value FROM settings WHERE key='modelStreamingEnabled'",
+          ).first<{ value: string }>()
+        )?.value === "0";
+      if (!disabled) await ensureStreaming(env, id, version, request, userId);
+      const { profile } = await getModelProfile(env, id, version);
+      request = {
+        ...request,
+        stream: !disabled && profile.capabilities.streaming?.[streamKind(request)] === "supported",
+      };
+      streamMode = request.stream ? "stream" : disabled ? "buffered" : "fallback";
+    }
     const reservationId = await reserve(env, userId, "model", callId);
     const egressStartedAt = now();
     await env.DB.prepare(
-      "UPDATE ai_calls SET status='running',updated_at=?,egress_started_at=? WHERE id=?",
+      "UPDATE ai_calls SET status='running',updated_at=?,egress_started_at=?,stream_mode=? WHERE id=?",
     )
-      .bind(dbTime(egressStartedAt), dbTime(egressStartedAt), callId)
+      .bind(dbTime(egressStartedAt), dbTime(egressStartedAt), streamMode, callId)
       .run();
     return await egress<ModelResponse>(
       env,
@@ -190,6 +214,8 @@ export async function invoke(
         version,
         request,
         runId,
+        callId,
+        preview,
       },
       async (result) => {
         const at = now(),
@@ -237,6 +263,8 @@ export async function performInference(
   runId: string | null = null,
   userId: string,
   reservationId: string,
+  callId?: string,
+  preview?: DraftTarget,
 ) {
   const inferenceStartedAt = now();
   if (
@@ -254,7 +282,35 @@ export async function performInference(
   const { imageRef, ...wire } = request;
   if (imageRef) wire.image = await resolveModelImage(env, imageRef, runId, userId);
   const providerStartedAt = now();
-  const result = await infer(profile, key, wire);
+  const disabled =
+    (
+      await env.DB.prepare("SELECT value FROM settings WHERE key='chatPreviewEnabled'").first<{
+        value: string;
+      }>()
+    )?.value === "0";
+  const publisher = draftPublisher(
+    env,
+    userId,
+    callId ?? reservationId,
+    disabled ? undefined : preview,
+  );
+  let result: ModelResponse;
+  let first = true;
+  try {
+    result = await infer(profile, key, wire, fetch, async (text) => {
+      if (first) {
+        first = false;
+        await env.DB.prepare("UPDATE ai_calls SET first_delta_at=? WHERE id=? AND user_id=?")
+          .bind(dbTime(now()), callId ?? reservationId, userId)
+          .run();
+      }
+      await publisher.text(text);
+    });
+    await publisher.end();
+  } catch (error) {
+    await publisher.end(true);
+    throw error;
+  }
   await recordUsage(env, profile, result, runId, userId, {
     callId: reservationId,
     inferenceStartedAt,
@@ -282,6 +338,7 @@ export async function generateStructured<T>(
     wireSchema?: Record<string, unknown>;
   },
   graphGeneration?: number,
+  preview?: DraftTarget,
 ): Promise<{ data: T; response: ModelResponse }> {
   const { profile } = await getModelProfile(env, id, version);
   if (profile.capabilities.structured === "none") throw new Error("STRUCTURED_OUTPUT_REQUIRED");
@@ -326,6 +383,7 @@ export async function generateStructured<T>(
       operationId ? `${operationId}:${attempt}` : undefined,
       graphId,
       graphGeneration,
+      preview ? { ...preview, version: attempt } : undefined,
     );
     try {
       return { data: await validate(JSON.parse(response.text)), response };
@@ -334,6 +392,84 @@ export async function generateStructured<T>(
     }
   }
   throw new Error(invalidCode);
+}
+
+/** 用无业务内容的独立调用确定流式能力；探测失败不会重放用户请求。 */
+async function ensureStreaming(
+  env: AppEnv,
+  id: string,
+  version: number,
+  request: Inference,
+  userId: string,
+) {
+  const kind = streamKind(request);
+  const { profile } = await getModelProfile(env, id, version);
+  if (profile.capabilities.streaming?.[kind]) return;
+  const shape = {
+    type: "object",
+    properties: { ok: { type: "boolean" } },
+    required: ["ok"],
+    additionalProperties: false,
+  };
+  const probe: Inference = {
+    messages: [
+      {
+        role: "user",
+        content:
+          kind === "tools"
+            ? "Call check with ok true."
+            : kind === "structured"
+              ? 'Return JSON {"ok":true}.'
+              : "Reply OK.",
+      },
+    ],
+    maxTokens: 512,
+    ...(kind === "tools"
+      ? { tools: [{ name: "check", description: "Capability test", parameters: shape }] }
+      : {}),
+    ...(kind === "structured" ? (request.schema ? { schema: shape } : { jsonMode: true }) : {}),
+  };
+  const validateProbe = (response: ModelResponse) => {
+    try {
+      if (kind === "tools") {
+        if (
+          response.calls.length !== 1 ||
+          response.calls[0].name !== "check" ||
+          JSON.parse(response.calls[0].arguments).ok !== true
+        )
+          throw Error();
+      } else if (kind === "structured") {
+        if (JSON.parse(response.text).ok !== true) throw Error();
+      } else if (!response.text.trim()) throw Error();
+    } catch {
+      throw Error("MODEL_STREAM_INVALID");
+    }
+  };
+  let state: "supported" | "unsupported" = "supported";
+  try {
+    const response = await invoke({ ...env, requestUserId: userId }, id, version, {
+      ...probe,
+      stream: true,
+    });
+    validateProbe(response);
+  } catch (error) {
+    if (
+      !["MODEL_STREAM_UNSUPPORTED", "MODEL_HTTP_400", "MODEL_HTTP_422"].includes(
+        (error as Error).message,
+      )
+    )
+      throw error;
+    // 非流式控制探测成功后才能确认能力缺失，鉴权/网络失败仍保留未知。
+    validateProbe(
+      await invoke({ ...env, requestUserId: userId }, id, version, { ...probe, stream: false }),
+    );
+    state = "unsupported";
+  }
+  await env.DB.prepare(
+    "UPDATE model_profile_versions SET capabilities=json_set(capabilities,?,?) WHERE id=? AND version=?",
+  )
+    .bind(`$.streaming.${kind}`, state, id, version)
+    .run();
 }
 export async function generate<T>(
   env: AppEnv,

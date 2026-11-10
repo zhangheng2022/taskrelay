@@ -44,6 +44,7 @@ export interface ChatMessageWrite {
   replyTo?: string;
   private?: boolean;
   at?: string;
+  sourceCallId?: string;
 }
 
 /** Compose encrypted chat publication with a domain transaction without copying its storage rules. */
@@ -60,8 +61,8 @@ export async function messageStatement(
   // 元数据与正文一同交给调用方事务；重复发布只能读取既有正文，不能覆盖。
   return [
     env.DB.prepare(
-      `INSERT OR IGNORE INTO ai_messages(id,thread_id,seq,role,turn_id,at,source,run_id,reply_to,context_withdrawn)
-    SELECT ?,id,(SELECT COALESCE(MAX(seq),0)+1 FROM ai_messages WHERE thread_id=?),?,?,?,?,?,?,
+      `INSERT OR IGNORE INTO ai_messages(id,thread_id,seq,role,turn_id,at,source,run_id,reply_to,source_call_id,context_withdrawn)
+    SELECT ?,id,(SELECT COALESCE(MAX(seq),0)+1 FROM ai_messages WHERE thread_id=?),?,?,?,?,?,?,?,
       CASE WHEN EXISTS(SELECT 1 FROM runs WHERE id=? AND context_withdrawn=1) THEN 1 ELSE 0 END
       FROM ai_threads WHERE id=? AND closed=0 ${fence ? `AND (${fence.sql})` : ""}`,
     ).bind(
@@ -73,6 +74,7 @@ export async function messageStatement(
       message.source,
       message.runId ?? null,
       message.replyTo ?? null,
+      message.sourceCallId ?? null,
       message.role === "user" ? null : (message.runId ?? null),
       threadId,
       ...(fence?.values ?? []),
@@ -105,7 +107,12 @@ export async function appendMessage(env: AppEnv, threadId: string, message: Chat
   const t = await env.DB.prepare("SELECT user_id FROM ai_threads WHERE id=?")
     .bind(threadId)
     .first<{ user_id: string }>();
-  if (t) await notifyUser(env, t.user_id).catch(() => {});
+  if (t) {
+    await env.NOTIFICATIONS?.getByName("user:" + t.user_id)
+      .closeDrafts(threadId, message.sourceCallId, message.id)
+      .catch(() => {});
+    await notifyUser(env, t.user_id).catch(() => {});
+  }
 }
 export async function conversationContext(
   env: AppEnv,

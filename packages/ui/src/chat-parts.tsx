@@ -19,6 +19,26 @@ import {
   useMessageScroller,
 } from "./components/ui/message-scroller";
 import { Marker, MarkerIcon, MarkerContent } from "./components/ui/marker";
+import type { ChatDraft } from "../../contracts/src/streaming";
+
+/** 草稿是实时正文预览，不是正式历史；滚动仍交给 MessageScroller。 */
+export function DraftMessages({ drafts = [] }: { drafts?: ChatDraft[] }) {
+  return drafts.map((draft) => (
+    <MessageScrollerItem key={draft.id} messageId={draft.id} deferRendering={false}>
+      <ChatMessage speaker="assistant">
+        <div className="text-xs text-muted-foreground">
+          {draft.source === "executor" ? "执行器" : "云端助手"} ·{" "}
+          {draft.status === "interrupted"
+            ? "生成中断，内容未完成"
+            : draft.status === "pending"
+              ? "正在确认回复…"
+              : "生成中…"}
+        </div>
+        {draft.content}
+      </ChatMessage>
+    </MessageScrollerItem>
+  ));
+}
 
 // 普通更新由官方组件跟随底部或保留上翻位置；只有本地发送请求才主动回到最新。
 // 不将历史用户行设为 turn anchor，避免同数量节点替换重新定位到旧问题。

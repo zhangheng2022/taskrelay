@@ -104,7 +104,12 @@ try {
     ],
     build: {
       outDir: path.join(profile, "site"),
-      rolldownOptions: { input: path.join(root, "tests/browser-fixtures/images.html") },
+      rolldownOptions: {
+        input: [
+          path.join(root, "tests/browser-fixtures/images.html"),
+          path.join(root, "tests/browser-fixtures/streaming.html"),
+        ],
+      },
     },
     preview: { host: "127.0.0.1", port: 0, strictPort: false },
   };
@@ -344,6 +349,57 @@ try {
   }
   report.metrics.bytes = requests.reduce((sum, r) => sum + r.bytes, 0);
   report.requests = requests;
+  if (!baseline) {
+    for (const width of [1280, 390]) {
+      await client.Emulation.setDeviceMetricsOverride({
+        width,
+        height: 844,
+        deviceScaleFactor: 1,
+        mobile: width === 390,
+      });
+      await client.Page.navigate({ url: `${origin}tests/browser-fixtures/streaming.html` });
+      await wait('document.querySelectorAll("[data-slot=message-scroller-item]").length === 40');
+      await evaluate('window.streamFixture.update("首段正文已经到达")');
+      await wait(
+        'document.body.textContent.includes("首段正文已经到达") && document.body.textContent.includes("生成中")',
+      );
+      await screenshot(`streaming-first-${width}`);
+      assert.ok(
+        await evaluate("document.documentElement.scrollWidth <= innerWidth"),
+        "流式正文无横向溢出",
+      );
+      await evaluate(
+        'document.querySelector("[data-slot=message-scroller-viewport]").scrollTop = 0',
+      );
+      await delay(300);
+      const before = await evaluate(
+        'document.querySelector("[data-slot=message-scroller-viewport]").scrollTop',
+      );
+      await evaluate(
+        'window.streamFixture.update("首段正文已经到达\\n" + "后续生成内容。\\n".repeat(40))',
+      );
+      await delay(300);
+      const after = await evaluate(
+        'document.querySelector("[data-slot=message-scroller-viewport]").scrollTop',
+      );
+      assert.ok(Math.abs(before - after) < 2, "上翻历史时流式追加保持位置");
+      await evaluate("window.streamFixture.interrupt()");
+      await wait('document.body.textContent.includes("生成中断，内容未完成")');
+      await evaluate("window.streamFixture.finish()");
+      await wait(
+        '!document.body.textContent.includes("生成中断") && !document.body.textContent.includes("正在确认回复")',
+      );
+      assert.equal(
+        await evaluate('document.querySelectorAll("[data-slot=message-scroller-item]").length'),
+        41,
+        "正式回复接替草稿不重复",
+      );
+      await screenshot(`streaming-final-${width}`);
+    }
+    report.cases.push(
+      "streaming first draft, interrupted snapshot, final merge, desktop/mobile width and history scroll retention",
+    );
+  }
   assert.deepEqual(report.browserErrors, [], "浏览器无未处理异常");
   report.passed = true;
 } catch (error) {

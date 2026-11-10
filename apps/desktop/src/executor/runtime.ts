@@ -92,6 +92,7 @@ export async function execute(
   let cursor = 0,
     userSeq = 0,
     writePending = false;
+  let sourceCallId: string | undefined;
   const deliveredHistory = new Set<number>();
   let taskPreferences: TaskPreference[] = [];
   let modelContext: ContextBudget = { contextTokens: 16000, outputTokens: 4096 };
@@ -122,6 +123,7 @@ export async function execute(
         id: `${progress ? "progress" : "image"}_${await hash(`${run.id}:${run.leaseEpoch}:${event}`)}`,
         content: redactSnapshot(content, secrets),
         parts,
+        ...(event.startsWith("thought:") ? { sourceCallId } : {}),
       },
       "message",
     );
@@ -244,6 +246,7 @@ export async function execute(
         status,
         result,
         stateCandidateKey,
+        sourceCallId,
         ...(expectedUserSeq === undefined ? {} : { expectedUserSeq }),
       },
       "finish",
@@ -500,10 +503,13 @@ export async function execute(
             messages,
             purpose,
             supportsScreenshot: true,
+            supportsDrafts: true,
+            expectedUserSeq: userSeq,
           },
           purpose,
         );
         // 提供方可能在不同回合重复 call id；给本次推理的每个调用加命名空间。
+        if (purpose === "decision") sourceCallId = `execute_${run.id}_${requestId}`;
         reply.response.calls = await Promise.all(
           reply.response.calls.map(async (call, index) => ({
             ...call,
