@@ -231,6 +231,8 @@ Stagehand 视觉输入上传为 `purpose=vision` 的私有临时图片，后续 
 
 平台与私有模型分别由空或具体 owner_user_id 标识。连接不可变地绑定供应商、上游及托管密钥别名，模型版本保存 connection_id 和发布时解析的 effective_region。自动直接从命名空间创建对象，美国和欧盟通过 jurisdiction 创建。连接默认区域与模型的显式自动值互相独立；只有新发布且选择继承的版本会采用修改后的默认区域。普通用户列表和出站均按可信用户检查归属。设备租约决定运行身份。配置服务读取 Cloudflare 的供应商及密钥记录，比对自定义上游 origin 和托管别名，核验成功的连接才允许出站。网关以专属端点和托管别名调用第三方；Workers AI 使用账户 REST 端点并显式选择同一网关。正文日志、响应缓存和重试关闭。区域约束只适用于本项目的后台对象。
 
+桌面执行器使用自动工具选择。能力探测与相应的流式探测发送相同的选择方式，并检查返回的函数名与实参。Workers AI 的 Llama 3.3 70B FP8 Fast 在 Chat Completions 下使用非流式 JSON Mode 处理结构化输出，旧的流式探测结果也遵循此限制。普通文本和工具调用分别使用各自的探测结果。参见 [Workers AI JSON Mode](https://developers.cloudflare.com/workers-ai/features/json-mode/)。
+
 submitAndWait 一次 RPC 完成提交与等待，循环在对象内部。alarm 期间不能新建读取 RPC 替换入站 I/O 上下文，终态才 ack。作业与结果短期加密，未确认记录过期清理。上游调用前持久化 running；中断保持 MODEL_CALL_OUTCOME_UNKNOWN，不重放。workerd 的 MODEL_REGION_REQUIRES_DEPLOYMENT 不得绕过，地区和真实模型证据必须来自部署环境。
 
 模型名自由输入，支持 Chat Completions 与 Responses。缺少必需能力时拒绝使用，不暗换模型或提供方。自定义服务仅允许校验后的公网 HTTPS，拒绝跨域重定向传递凭据；上游错误映射公开分类，不返回响应正文。用量来自实际响应，缺少 token 或价格显示“未知”。

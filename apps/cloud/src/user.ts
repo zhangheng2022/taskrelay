@@ -99,7 +99,7 @@ export const user = userBase
         .bind(c.get("userId")),
       db
         .prepare(
-          "SELECT v.id,v.version,v.config,v.capabilities,v.connection_id,v.effective_region,m.owner_user_id,m.enabled,m.management_version FROM models m JOIN model_profile_versions v ON v.id=m.id AND v.version=m.current_version JOIN model_connections c ON c.id=v.connection_id AND c.owner_user_id IS m.owner_user_id WHERE (m.owner_user_id IS NULL OR m.owner_user_id=?) AND (m.enabled=1 OR ?=1) ORDER BY m.created_at DESC",
+          "SELECT v.id,v.version,v.config,v.capabilities,v.connection_id,v.effective_region,c.kind AS connection_kind,m.owner_user_id,m.enabled,m.management_version FROM models m JOIN model_profile_versions v ON v.id=m.id AND v.version=m.current_version JOIN model_connections c ON c.id=v.connection_id AND c.owner_user_id IS m.owner_user_id WHERE (m.owner_user_id IS NULL OR m.owner_user_id=?) AND (m.enabled=1 OR ?=1) ORDER BY m.created_at DESC",
         )
         .bind(c.get("userId"), Number(c.get("actor") === "owner")),
       db
