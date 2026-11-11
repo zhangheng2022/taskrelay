@@ -765,7 +765,8 @@ test("网络日志只接受同代白名单事件，限量持久化并随本机�
     at: new Date().toISOString(),
     elapsedMs: 12,
     query: "AAAA",
-    attempt: 1,
+    resolver: "alidns",
+    attempt: 2,
     reason: "ECONNRESET",
   };
   const send = (gen: string, event: unknown) =>

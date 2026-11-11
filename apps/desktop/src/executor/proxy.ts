@@ -3,79 +3,121 @@ import net from "node:net";
 import { networkReason, networkEventLimit, type NetworkEvent } from "../shared/network-log";
 import { isPublicIp, publicUrl } from "../../../../packages/contracts/src/security";
 type Sample = Omit<NetworkEvent, "at" | "connection">;
-/** Resolve the origin through authenticated HTTPS DNS, not a local TUN's fake-IP
- * mapping. Every answer is checked and the selected public IP is pinned below. */
+const resolvers = [
+  {
+    name: "cloudflare",
+    endpoint: "https://cloudflare-dns.com/dns-query",
+    timeoutMs: 3000,
+    attempt: 1,
+  },
+  { name: "alidns", endpoint: "https://dns.alidns.com/resolve", timeoutMs: 5000, attempt: 2 },
+] as const;
+
+const transientDnsErrors = new Set([
+  "TimeoutError",
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "EAI_AGAIN",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_SOCKET",
+]);
+
+/** 每次只查询一个地址族。null 表示传输失败，可换解析器；有效空答案表示该族没有地址。 */
+async function queryAddresses(
+  hostname: string,
+  query: "A" | "AAAA",
+  resolver: (typeof resolvers)[number],
+  log?: (sample: Sample) => void,
+) {
+  const started = performance.now();
+  const signal = AbortSignal.timeout(resolver.timeoutMs);
+  const url = new URL(resolver.endpoint);
+  url.searchParams.set("name", hostname);
+  url.searchParams.set("type", query);
+  const sample = {
+    phase: "dns",
+    query,
+    resolver: resolver.name,
+    attempt: resolver.attempt,
+  } as const;
+  let httpStatus: number | undefined, dnsStatus: number | undefined;
+  try {
+    const response = await fetch(url, {
+      headers: { accept: "application/dns-json" },
+      redirect: "error",
+      signal,
+    });
+    httpStatus = response.status;
+    if (!response.ok) throw Error("DNS_LOOKUP_FAILED");
+    const data = (await response.json()) as {
+      Status?: number;
+      TC?: boolean;
+      Answer?: { type: number; data: string }[];
+    };
+    dnsStatus = data?.Status;
+    if (dnsStatus !== 0 || data.TC || (data.Answer !== undefined && !Array.isArray(data.Answer)))
+      throw Error("DNS_LOOKUP_FAILED");
+    const addresses = [];
+    for (const record of data.Answer ?? []) {
+      if (!Number.isInteger(record?.type)) throw Error("DNS_LOOKUP_FAILED");
+      if (record.type !== 1 && record.type !== 28) continue;
+      const family = record.type === 1 ? 4 : 6;
+      if (
+        typeof record.data !== "string" ||
+        net.isIP(record.data) !== family ||
+        !isPublicIp(record.data)
+      )
+        throw Error("PRIVATE_NETWORK_BLOCKED");
+      if (record.type === (query === "A" ? 1 : 28))
+        addresses.push({ address: record.data, family });
+    }
+    log?.({
+      ...sample,
+      httpStatus,
+      dnsStatus,
+      answers: addresses.length,
+      result: "ok",
+      elapsedMs: Math.round(performance.now() - started),
+    });
+    return addresses;
+  } catch (error) {
+    const reason = networkReason(
+      signal.aborted && error instanceof Error && error.name === "AbortError"
+        ? signal.reason
+        : error,
+    );
+    log?.({
+      ...sample,
+      httpStatus,
+      dnsStatus,
+      result: "error",
+      reason,
+      elapsedMs: Math.round(performance.now() - started),
+    });
+    if (transientDnsErrors.has(reason)) return null;
+    throw error;
+  }
+}
+
+/** 先取 IPv4，必要时查询 IPv6。只容忍传输故障；明确拒绝、非法或非公网答案立即终止。
+ * CONNECT 只使用本轮已验证的地址，避免连接时再次按域名解析。
+ */
 export async function resolvePublicHost(hostname: string, log?: (sample: Sample) => void) {
   publicUrl(`https://${hostname.includes(":") ? "[" + hostname + "]" : hostname}`);
   if (net.isIP(hostname)) return [{ address: hostname, family: net.isIP(hostname) }];
-  const answers = await Promise.all(
-    (["A", "AAAA"] as const).map(async (type) => {
-      let data: { Status: number; Answer?: { type: number; data: string }[] } | undefined;
-      // Only the credential-free, read-only DNS lookup may retry. No CONNECT
-      // success or browser bytes are sent until all answers pass public-IP checks.
-      for (let attempt = 0; attempt < 2; attempt++) {
-        const started = performance.now();
-        const attemptNumber = attempt === 0 ? 1 : 2;
-        let httpStatus: number | undefined;
-        try {
-          const response = await fetch(
-            `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(hostname)}&type=${type}`,
-            {
-              headers: { accept: "application/dns-json" },
-              redirect: "error",
-              signal: AbortSignal.timeout(10000),
-            },
-          );
-          httpStatus = response.status;
-          if (!response.ok) throw new Error("DNS_LOOKUP_FAILED");
-          data = (await response.json()) as typeof data;
-          log?.({
-            phase: "dns",
-            query: type,
-            attempt: attemptNumber,
-            httpStatus,
-            dnsStatus: data?.Status,
-            result: data?.Status === 0 ? "ok" : "error",
-            answers: Array.isArray(data?.Answer)
-              ? data.Answer.filter((a) => a?.type === 1 || a?.type === 28).length
-              : 0,
-            elapsedMs: Math.round(performance.now() - started),
-          });
-          break;
-        } catch (error) {
-          log?.({
-            phase: "dns",
-            query: type,
-            attempt: attemptNumber,
-            httpStatus,
-            result: "error",
-            reason: networkReason(error),
-            elapsedMs: Math.round(performance.now() - started),
-          });
-          const e = error as Error & { cause?: { code?: string } };
-          const transient =
-            [
-              "ECONNRESET",
-              "ETIMEDOUT",
-              "EAI_AGAIN",
-              "UND_ERR_CONNECT_TIMEOUT",
-              "UND_ERR_SOCKET",
-            ].includes(e.cause?.code ?? "") || e.name === "TimeoutError";
-          if (!transient) throw error;
-          if (attempt === 1) throw new Error("DNS_TRANSPORT_FAILED");
-        }
+  let transportFailed = false;
+  for (const type of ["A", "AAAA"] as const) {
+    for (const resolver of resolvers) {
+      const addresses = await queryAddresses(hostname, type, resolver, log);
+      if (addresses === null) {
+        transportFailed = true;
+        continue;
       }
-      if (!data) throw new Error("DNS_LOOKUP_FAILED");
-      if (data.Status !== 0) throw new Error("DNS_LOOKUP_FAILED");
-      return (data.Answer ?? [])
-        .filter((a) => a.type === 1 || a.type === 28)
-        .map((a) => ({ address: a.data, family: net.isIP(a.data) }));
-    }),
-  );
-  const addresses = answers.flat();
-  if (!addresses.length || addresses.some((a) => !a.family || !isPublicIp(a.address)))
-    throw new Error("PRIVATE_NETWORK_BLOCKED");
-  return addresses;
+      if (addresses.length) return addresses;
+      break;
+    }
+  }
+  throw Error(transportFailed ? "DNS_TRANSPORT_FAILED" : "DNS_LOOKUP_FAILED");
 }
 // DNS is checked and the returned address is pinned to the outgoing socket.
 // HTTPS credentials stay inside the browser's CONNECT tunnel.
