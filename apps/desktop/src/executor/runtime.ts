@@ -19,7 +19,9 @@ import type { ContextBudget } from "../../../../packages/model/src/agent-context
 import { chatSnapshots } from "./chat-snapshots";
 import { compactPageUrls, pageContextGuide } from "./page-context";
 import type { BrowserStateAccess } from "../../../../packages/contracts/src/accounts";
+import type { NetworkEvent } from "../shared/network-log";
 export interface RuntimePort {
+  networkEvent?: (event: NetworkEvent) => void;
   rpc<T>(path: string, body?: unknown, binary?: Uint8Array): Promise<T>;
   checkpoint(state: string, payload: unknown): Promise<void>;
   cancelled(): boolean;
@@ -401,7 +403,11 @@ export async function execute(
   };
   try {
     const sdk = await adapters.loadSdk();
-    proxy = await adapters.startProxy();
+    proxy = await adapters.startProxy(
+      port.networkEvent
+        ? { entryHost: new URL(run.task.entryUrl).hostname, event: port.networkEvent }
+        : undefined,
+    );
     guard();
     await checkpoint("starting", { run });
     const launch = await port.rpc<{ cdpUrl: string; state?: BrowserStateAccess }>("local:browser", {

@@ -2,6 +2,7 @@ import { requestUrl } from "./http-fixture";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { resolvePublicHost, startProxy } from "../apps/desktop/src/executor/proxy";
+import type { NetworkEvent } from "../apps/desktop/src/shared/network-log";
 import http from "node:http";
 import net from "node:net";
 import { once } from "node:events";
@@ -80,7 +81,8 @@ async function tunnelFixture(t: import("node:test").TestContext) {
     targets.push(socket);
     return socket;
   });
-  const proxy = await startProxy();
+  const events: NetworkEvent[] = [];
+  const proxy = await startProxy({ entryHost: "login.example.com", event: (e) => events.push(e) });
   t.after(async () => {
     for (const socket of [...clients, ...origins]) socket.destroy();
     await proxy.close();
@@ -111,7 +113,7 @@ async function tunnelFixture(t: import("node:test").TestContext) {
     socket.write(text);
     assert.equal(String((await response)[0]), "ack");
   };
-  return { proxy, open, send, received, targets, origins };
+  return { events, proxy, open, send, received, targets, origins };
 }
 
 test(
@@ -127,6 +129,11 @@ test(
     f.targets[0].setTimeout(40);
     await closed;
     assert.equal(f.targets[0].destroyed, true);
+    assert.deepEqual(f.events.map((e) => [e.phase, e.result]).slice(-3), [
+      ["address", "ok"],
+      ["connect", "ok"],
+      ["tunnel", "timeout"],
+    ]);
     assert.deepEqual(
       f.proxy.diagnostics!().map(({ host, code }) => ({ host, code })),
       [{ host: "login.example.com", code: "TUNNEL_IDLE_TIMEOUT" }],
@@ -152,7 +159,11 @@ test("上游非正常关闭或连接错误立即关闭浏览器端且不泄露�
     f.proxy.diagnostics!().map((e) => e.code),
     ["TUNNEL_CLOSED", "TUNNEL_CONNECTION_FAILED"],
   );
-  assert.doesNotMatch(JSON.stringify(f.proxy.diagnostics!()), /sensitive/);
+  assert.doesNotMatch(JSON.stringify([f.proxy.diagnostics!(), f.events]), /sensitive/);
+  assert.deepEqual(
+    f.events.filter((e) => e.phase === "tunnel").map((e) => e.result),
+    ["closed", "error"],
+  );
 });
 
 test("上游正常结束完整交付缓冲响应，浏览器断开清理上游", { timeout: 5000 }, async (t) => {
@@ -272,4 +283,56 @@ test("DNS 仅重试一次传输重置；成功答案仍全量校验，拒绝项�
   mode = "rejected";
   await assert.rejects(resolvePublicHost("example.com"), /DNS_LOOKUP_FAILED/);
   assert.equal(counts.get("A"), 1);
+});
+test("入口 A 成功而 AAAA 连续重置时记录每次结果，其他主机和响应正文不进入日志", async (t) => {
+  const events: NetworkEvent[] = [];
+  t.mock.method(globalThis, "fetch", async (input: unknown) => {
+    if (new URL(requestUrl(input)).searchParams.get("type") === "AAAA")
+      throw new TypeError("sensitive upstream", { cause: { code: "ECONNRESET" } });
+    return Response.json({
+      Status: 0,
+      Answer: [
+        { type: 5, data: "internal.alias" },
+        { type: 1, data: "1.1.1.1" },
+      ],
+    });
+  });
+  const proxy = await startProxy({ entryHost: "www.baidu.com", event: (e) => events.push(e) });
+  t.after(() => proxy.close());
+  for (const host of ["other.example", "www.baidu.com"]) {
+    const req = http.request({
+      hostname: "127.0.0.1",
+      port: proxy.port,
+      method: "CONNECT",
+      path: host + ":443",
+    });
+    const result = once(req, "connect");
+    req.end();
+    const [res, socket] = await result;
+    socket.destroy();
+    assert.equal(res.statusCode, 403);
+  }
+  assert.equal(events.length, 3);
+  assert.ok(
+    events.every(
+      (e) =>
+        e.phase === "dns" &&
+        e.connection === 2 &&
+        e.elapsedMs >= 0 &&
+        !Number.isNaN(Date.parse(e.at)),
+    ),
+  );
+  const a = events.find((e) => e.query === "A")!;
+  assert.deepEqual(
+    [a.attempt, a.result, a.httpStatus, a.dnsStatus, a.answers],
+    [1, "ok", 200, 0, 1],
+  );
+  assert.deepEqual(
+    events.filter((e) => e.query === "AAAA").map((e) => [e.attempt, e.result, e.reason]),
+    [
+      [1, "error", "ECONNRESET"],
+      [2, "error", "ECONNRESET"],
+    ],
+  );
+  assert.doesNotMatch(JSON.stringify(events), /internal.alias|sensitive|1\.1\.1\.1|other\.example/);
 });

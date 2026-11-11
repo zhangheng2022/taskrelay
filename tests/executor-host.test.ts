@@ -752,3 +752,41 @@ test("操作记录断网后仅保存系统密文，可靠回传时解密且不�
   assert.equal(s.journal.pending().length, 0);
   assert.equal(s.children.length, 1);
 });
+test("网络日志只接受同代白名单事件，限量持久化并随本机历史清除", async (t) => {
+  const s = fixture(t);
+  const run = s.run("network");
+  await s.host.start(run);
+  const child = s.children[0],
+    generation = child.messages[0].generation;
+  const sample = {
+    phase: "dns",
+    result: "error",
+    connection: 1,
+    at: new Date().toISOString(),
+    elapsedMs: 12,
+    query: "AAAA",
+    attempt: 1,
+    reason: "ECONNRESET",
+  };
+  const send = (gen: string, event: unknown) =>
+    child.emit("message", { generation: gen, type: "network", event });
+  send("old", sample);
+  send(generation, { ...sample, raw: "secret" });
+  assert.equal(s.journal.diagnostic().journal[0].network, undefined);
+  for (let connection = 1; connection <= 68; connection++)
+    send(generation, { ...sample, connection });
+  await s.host.stop(false);
+  await s.host.flush();
+  const reopened = new Journal(s.dir);
+  try {
+    const report = reopened.diagnostic().journal[0].network!;
+    assert.equal(report.host, new URL(run.task.entryUrl).hostname);
+    assert.equal(report.truncated, true);
+    assert.equal(report.events.length, 64);
+    assert.deepEqual(report.events[63], { ...sample, connection: 64 });
+    reopened.clearHistory();
+    assert.equal(reopened.cached("network:" + generation), null);
+  } finally {
+    reopened.close();
+  }
+});
