@@ -64,7 +64,8 @@ test("删除接受后迟到的列表翻页不能重新显示已删除历史", as
 test("清理须确认，失败重试复用请求 ID，重复点击不并发提交", async () => {
   const bodies: unknown[] = [];
   let resolve!: (value: unknown) => void,
-    accepted = 0;
+    accepted = 0,
+    closed = 0;
   const transport = transportWith(async (method, path, body) => {
     if (path.includes("preview")) return { chats: 7, active: 2 };
     if (method === "GET") return [];
@@ -78,7 +79,9 @@ test("清理须确认，失败重试复用请求 ID，重复点击不并发提�
     <HistoryCleanup
       transport={transport}
       selection={{ scope: "all", requestId: "same" }}
-      onClose={() => {}}
+      onClose={() => {
+        closed++;
+      }}
       onAccepted={async () => {
         accepted++;
       }}
@@ -86,14 +89,17 @@ test("清理须确认，失败重试复用请求 ID，重复点击不并发提�
   );
   await waitFor(() => assert.ok(v.getByText(/将停止 2 项/)));
   assert.equal(bodies.length, 0);
+  assert.equal(document.activeElement, v.getByRole("button", { name: "取消" }));
   fireEvent.click(v.getByRole("button", { name: "确认清理全部聊天" }));
   const retry = await v.findByRole("button", { name: "重试清理" });
   fireEvent.click(retry);
   fireEvent.click(retry);
   await waitFor(() => assert.equal(bodies.length, 2));
   assert.deepEqual(bodies[0], bodies[1]);
+  assert.equal(closed, 0);
   await act(async () => resolve(job));
   await waitFor(() => assert.equal(accepted, 1));
+  assert.equal(closed, 1);
 });
 
 test("删除其他聊天保留当前输入，删除当前聊天才返回新任务", async () => {
@@ -126,7 +132,7 @@ test("删除其他聊天保留当前输入，删除当前聊天才返回新任�
   fireEvent.click(await v.findByRole("menuitem", { name: "删除聊天" }));
   fireEvent.click(await v.findByRole("button", { name: "确认删除聊天" }));
   await waitFor(() => assert.equal(writes.length, 1));
-  await waitFor(() => assert.ok(!v.queryByRole("dialog")));
+  await waitFor(() => assert.ok(!v.queryByRole("alertdialog")));
   assert.equal(
     (v.getByRole("textbox", { name: "消息" }) as HTMLTextAreaElement).value,
     "保留这段草稿",
@@ -191,7 +197,7 @@ test("发送未完成时从顶部清空，旧请求结束后新会话仍可发�
     ),
   );
   fireEvent.click(v.getByRole("button", { name: "确认清空当前聊天" }));
-  await waitFor(() => assert.ok(!v.queryByRole("dialog")));
+  await waitFor(() => assert.ok(!v.queryByRole("alertdialog")));
   await act(async () => finish(threadPage));
   fireEvent.change(v.getByRole("textbox", { name: "消息" }), { target: { value: "新消息" } });
   fireEvent.click(v.getByRole("button", { name: "发送消息" }));

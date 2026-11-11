@@ -142,7 +142,8 @@
     @apply text-base font-semibold;
   }
   .section-heading p,
-  .settings-row p {
+  .settings-row p,
+  .settings-detail [data-slot="item-content"] > p {
     @apply mt-1 break-words text-sm text-muted-foreground;
   }
   .settings-row {
@@ -151,13 +152,13 @@
   .settings-row > div:first-child {
     @apply min-w-0 basis-full md:flex-1 md:basis-0;
   }
-  .settings-row h3 {
+  .settings-detail [data-slot="item-content"] h3,
+  .settings-detail [data-slot="item-content"] h4 {
     @apply flex flex-wrap items-center gap-2 text-sm font-medium;
   }
-  .settings-row small {
+  .settings-detail [data-slot="item-content"] small {
     @apply text-xs text-muted-foreground;
   }
-  .row-actions,
   .capabilities {
     @apply flex flex-wrap items-center gap-2;
   }
@@ -178,9 +179,6 @@
   }
   .retention-form {
     @apply flex max-w-sm flex-col gap-5;
-  }
-  .spin {
-    @apply animate-spin;
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -219,12 +217,6 @@
   .settings-details dd {
     @apply break-all text-sm;
   }
-  .settings-detail .settings-row {
-    @apply flex-wrap items-start gap-4;
-  }
-  .settings-detail .row-actions {
-    @apply flex-wrap;
-  }
   .settings-detail .section-heading {
     @apply flex-wrap gap-3;
   }
@@ -236,5 +228,16 @@
     .settings-detail-desktop {
       @apply hidden;
     }
+  }
+}
+
+/* 设置条目保留底部分隔和窄屏操作换行，覆盖 Item 自带的尺寸工具类。 */
+@layer utilities {
+  .settings-detail [data-slot="item"] {
+    @apply items-start gap-4 rounded-none border-0 border-b border-border px-0 py-5;
+  }
+  .settings-detail [data-slot="item-content"] {
+    @apply min-w-0 basis-full items-start break-words md:basis-0;
+    overflow-wrap: anywhere;
   }
 }

@@ -127,8 +127,14 @@ test("成员管理禁止停用自己，筛选后独立提交状态并按需读�
   assert.equal(usages, 0);
   fireEvent.change(view.getByLabelText("角色"), { target: { value: "user" } });
   assert.equal(view.queryByText("admin@example.com"), null);
-  fireEvent.click(view.getByRole("button", { name: "查看今日使用量" }));
-  await view.findByText("运行 2 · 对话 3 · 模型调用 4");
+  const usageToggle = view.getByRole("button", { name: "查看今日使用量" });
+  assert.equal(usageToggle.getAttribute("aria-expanded"), "false");
+  fireEvent.click(usageToggle);
+  const usageText = await view.findByText("运行 2 · 对话 3 · 模型调用 4");
+  assert.equal(usageToggle.getAttribute("aria-expanded"), "true");
+  assert.ok(
+    document.getElementById(usageToggle.getAttribute("aria-controls")!)?.contains(usageText),
+  );
   assert.equal(usages, 1);
   fireEvent.click(view.getByRole("button", { name: "停用用户" }));
   let dialog = await view.findByRole("alertdialog");

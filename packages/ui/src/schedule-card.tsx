@@ -10,9 +10,17 @@ import {
 } from "../../contracts/src/task-schedule";
 import { useTransportQuery } from "./queries";
 import { Button } from "./components/ui/button";
+import { ToggleGroup, ToggleGroupItem } from "./components/ui/toggle-group";
 import { Input } from "./components/ui/input";
 import { NativeSelect, NativeSelectOption } from "./components/ui/native-select";
-import { Field, FieldGroup, FieldLabel, FieldDescription } from "./components/ui/field";
+import {
+  Field,
+  FieldGroup,
+  FieldLabel,
+  FieldDescription,
+  FieldSet,
+  FieldLegend,
+} from "./components/ui/field";
 import {
   Sheet,
   SheetContent,
@@ -288,28 +296,30 @@ function ScheduleEditor({
               </NativeSelect>
             </Field>
             {kind === "weekly" && (
-              <Field>
-                <FieldLabel>执行日期</FieldLabel>
-                <div className="flex flex-wrap gap-2">
+              <FieldSet>
+                <FieldLegend variant="label" id={`${id}-days`}>
+                  执行日期
+                </FieldLegend>
+                <ToggleGroup
+                  type="multiple"
+                  variant="outline"
+                  size="sm"
+                  className="max-w-full flex-wrap"
+                  aria-labelledby={`${id}-days`}
+                  disabled={busy || offline}
+                  value={days.map(String)}
+                  onValueChange={(values) => {
+                    setDays(values.map(Number));
+                    dirty();
+                  }}
+                >
                   {weekdays.map((name, index) => (
-                    <Button
-                      key={name}
-                      type="button"
-                      variant={days.includes(index) ? "default" : "outline"}
-                      size="sm"
-                      aria-pressed={days.includes(index)}
-                      onClick={() => {
-                        setDays(
-                          days.includes(index) ? days.filter((d) => d !== index) : [...days, index],
-                        );
-                        dirty();
-                      }}
-                    >
+                    <ToggleGroupItem key={name} value={String(index)}>
                       {name}
-                    </Button>
+                    </ToggleGroupItem>
                   ))}
-                </div>
-              </Field>
+                </ToggleGroup>
+              </FieldSet>
             )}
             {kind === "monthly" && (
               <Field>

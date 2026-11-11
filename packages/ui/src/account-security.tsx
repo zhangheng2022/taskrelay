@@ -2,11 +2,12 @@
 import { useContext, useState } from "react";
 import { useQuery, QueryClientContext } from "@tanstack/react-query";
 import { authClient, authResult } from "./auth-client";
+import { Item, ItemContent, ItemActions } from "./components/ui/item";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
-import { Field, FieldGroup, FieldLabel } from "./components/ui/field";
+import { Field, FieldGroup, FieldLabel, FieldError } from "./components/ui/field";
 import { Badge } from "./components/ui/badge";
-import { ErrorText, LoadFeedback, formatDate } from "./feedback";
+import { LoadFeedback, formatDate } from "./feedback";
 import {
   useConfirmation,
   useSettingsAction,
@@ -123,14 +124,15 @@ export function AccountSecurity() {
               maxLength={128}
               required
               aria-invalid={!!error}
+              aria-describedby={error ? "confirm-password-error" : undefined}
               value={confirm}
               onChange={(e) => {
                 setConfirm(e.target.value);
                 setError("");
               }}
             />
+            {error && <FieldError id="confirm-password-error">{error}</FieldError>}
           </Field>
-          {error && <ErrorText error={error} />}
           <Button disabled={!!action.busy}>修改密码并重新登录</Button>
         </FieldGroup>
       </form>
@@ -160,35 +162,45 @@ export function AccountSecurity() {
         />
       )}
       {sessions.data?.list.map((s) => (
-        <article className="settings-row" key={s.id}>
-          <div>
-            <h3>{s.id === sessions.data.current ? "当前会话" : "其他登录会话"}</h3>
-            <p className="break-words">{s.userAgent || "未知设备"}</p>
-            <p>最近更新：{formatDate(String(s.updatedAt))}</p>
-            <p>到期：{formatDate(String(s.expiresAt))}</p>
-          </div>
-          {s.id === sessions.data.current ? (
-            <Badge variant="secondary">当前登录</Badge>
-          ) : (
-            <Button
-              variant="outline"
-              disabled={!!action.busy}
-              onClick={() =>
-                void (async () => {
-                  if (await ask("退出这个登录会话？", "该设备下次访问时需要重新登录。", "退出会话"))
-                    await action.act(
-                      s.id,
-                      () => authResult(authClient.revokeSession({ token: s.token })),
-                      reload,
-                      "已退出该会话",
-                    );
-                })()
-              }
-            >
-              退出会话
-            </Button>
-          )}
-        </article>
+        <Item key={s.id} asChild>
+          <article>
+            <ItemContent>
+              <h3>{s.id === sessions.data.current ? "当前会话" : "其他登录会话"}</h3>
+              <p className="break-words">{s.userAgent || "未知设备"}</p>
+              <p>最近更新：{formatDate(String(s.updatedAt))}</p>
+              <p>到期：{formatDate(String(s.expiresAt))}</p>
+            </ItemContent>
+            <ItemActions>
+              {s.id === sessions.data.current ? (
+                <Badge variant="secondary">当前登录</Badge>
+              ) : (
+                <Button
+                  variant="outline"
+                  disabled={!!action.busy}
+                  onClick={() =>
+                    void (async () => {
+                      if (
+                        await ask(
+                          "退出这个登录会话？",
+                          "该设备下次访问时需要重新登录。",
+                          "退出会话",
+                        )
+                      )
+                        await action.act(
+                          s.id,
+                          () => authResult(authClient.revokeSession({ token: s.token })),
+                          reload,
+                          "已退出该会话",
+                        );
+                    })()
+                  }
+                >
+                  退出会话
+                </Button>
+              )}
+            </ItemActions>
+          </article>
+        </Item>
       ))}
       <div className="flex flex-wrap gap-2">
         <Button

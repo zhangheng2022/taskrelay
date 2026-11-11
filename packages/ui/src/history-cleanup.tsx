@@ -4,15 +4,17 @@ import { createApi, rpcData } from "./api";
  */
 import { useEffect, useRef, useState } from "react";
 import type { Transport } from "../../contracts/src/index";
+import { XIcon } from "lucide-react";
 import { Button } from "./components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from "./components/ui/dialog";
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogCancel,
+} from "./components/ui/alert-dialog";
 import { ErrorText } from "./feedback";
 
 export type CleanupSelection = {
@@ -166,30 +168,40 @@ export function HistoryCleanup({
             : notice}
         </div>
       )}
-      <Dialog
+      <AlertDialog
         open={!!selection}
         onOpenChange={(open) => {
           if (!open && !busy) onClose();
         }}
       >
-        <DialogContent
-          showCloseButton={!busy}
-          onOpenAutoFocus={(e) => {
-            e.preventDefault();
-            document.getElementById("cleanup-cancel")?.focus();
+        <AlertDialogContent
+          onOverlayClick={() => {
+            if (!busy) onClose();
           }}
         >
-          <DialogHeader>
-            <DialogTitle>{label}</DialogTitle>
-            <DialogDescription>
+          {!busy && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              className="absolute right-2 top-2"
+              aria-label="关闭"
+              onClick={onClose}
+            >
+              <XIcon />
+            </Button>
+          )}
+          <AlertDialogHeader>
+            <AlertDialogTitle>{label}</AlertDialogTitle>
+            <AlertDialogDescription>
               {selection?.scope === "all"
                 ? `将清理你的全部聊天与任务入口${preview ? `（当前 ${preview.chats} 项）` : ""}。`
                 : selection?.scope === "clear"
                   ? `将清空“${selection.title}”的聊天记录，保留暂停的任务入口，之后需要重新交办。`
                   : `将删除“${selection?.title}”的聊天记录与任务入口。`}
               消息、图片与相关运行内容会永久清理，无法撤销。账号、模型配置和设备保留。
-            </DialogDescription>
-          </DialogHeader>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
           {preview ? (
             <p className="text-sm">
               {preview.active
@@ -206,16 +218,15 @@ export function HistoryCleanup({
               重新获取范围
             </Button>
           )}
-          <DialogFooter>
-            <Button id="cleanup-cancel" variant="outline" disabled={busy} onClick={onClose}>
-              取消
-            </Button>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>取消</AlertDialogCancel>
+            {/* 仅在服务端确认后关闭；失败保留预览和同一次请求 ID。 */}
             <Button variant="destructive" disabled={busy || !preview} onClick={() => void submit()}>
               {busy ? "正在提交…" : error ? "重试清理" : `确认${label}`}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }
