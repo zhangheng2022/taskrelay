@@ -79,6 +79,30 @@ if (mode === "original-paused")
   sql.exec(
     "UPDATE settings SET value='0' WHERE key='claimsEnabled'; UPDATE settings SET value='1' WHERE key='maintenance'",
   );
+// 桌面发布经过真实排空 SQL：先保留未结束清理，再模拟 Main 送达退出回执。
+if (mode === "desktop") {
+  sql.exec(`INSERT INTO members(id) VALUES('release-user');
+    INSERT INTO runs(id,task_id,status,scheduled_for,deadline,account_key,idempotency_key,created_at,updated_at,user_id,history_deleted,cleanup_pending)
+    VALUES('historical','task','unknown',1,2,'locked','only',1,1,'release-user',1,1);
+    INSERT INTO account_locks(account_key,run_id) VALUES('locked','historical')`);
+  const schedule = globalThis.setTimeout;
+  globalThis.setTimeout = (callback, milliseconds, ...args) => {
+    if (milliseconds !== 10_000) return schedule(callback, milliseconds, ...args);
+    // 即使 pending 标记已清除，没有退出确认或仍有租约时也必须继续等待。
+    const row = sql
+      .prepare(
+        "SELECT cleanup_pending,cleanup_confirmed,lease_expires_at FROM runs WHERE id='historical'",
+      )
+      .get();
+    if (row.cleanup_pending) sql.exec("UPDATE runs SET cleanup_pending=0 WHERE id='historical'");
+    else if (!row.cleanup_confirmed)
+      sql.exec("UPDATE runs SET cleanup_confirmed=1,lease_expires_at=1 WHERE id='historical'");
+    else if (row.lease_expires_at)
+      sql.exec("UPDATE runs SET lease_expires_at=NULL WHERE id='historical'");
+    else throw Error("CLOSED_UNKNOWN_BLOCKED");
+    return schedule(callback, 1, ...args);
+  };
+}
 const state = () =>
   Object.fromEntries(
     sql
@@ -463,6 +487,11 @@ process.on("exit", () => {
       JSON.stringify({
         state: state(),
         commands,
+        unknownLocks: sql
+          .prepare(
+            "SELECT COUNT(*) n FROM runs JOIN account_locks ON run_id=runs.id WHERE runs.status='unknown'",
+          )
+          .get().n,
         migrations: sql.prepare("SELECT COUNT(*) n FROM d1_migrations").get().n,
       }),
   );

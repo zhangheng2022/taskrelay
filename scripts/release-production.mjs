@@ -184,12 +184,22 @@ const settings = async (name, value) => {
   );
   if (saved[0].meta?.changes !== 1) throw Error("RELEASE_SETTING_WRITE_UNCONFIRMED");
 };
-const busy = async () =>
-  (
+// 排空只确认执行资源已收尾。unknown 的业务结果、账号锁与定时防重由业务层继续保留。
+const busy = async (report = false) => {
+  const result = (
     await query(
-      "SELECT (SELECT COUNT(*) FROM runs WHERE status IN ('running','waiting_user','verifying','unknown') OR cleanup_pending=1) + (SELECT COUNT(*) FROM ai_turns WHERE status='running') + (SELECT COUNT(*) FROM ai_calls WHERE status IN ('reserved','running')) + (SELECT COUNT(*) FROM ai_dispatch WHERE state IN ('pending','running')) n",
+      `SELECT
+      (SELECT COUNT(*) FROM runs WHERE status IN ('running','waiting_user','verifying')
+        OR cleanup_pending<>0 OR (status='unknown' AND (cleanup_confirmed<>1 OR lease_expires_at IS NOT NULL))) AS busyRuns,
+      (SELECT COUNT(*) FROM runs WHERE status='unknown' AND cleanup_confirmed=1 AND cleanup_pending=0 AND lease_expires_at IS NULL) AS closedUnknown,
+      (SELECT COUNT(*) FROM ai_turns WHERE status='running') AS turns,
+      (SELECT COUNT(*) FROM ai_calls WHERE status IN ('reserved','running')) AS calls,
+      (SELECT COUNT(*) FROM ai_dispatch WHERE state IN ('pending','running')) AS dispatches`,
     )
-  )[0].results[0].n;
+  )[0].results[0];
+  if (report) console.log("发布排空计数", JSON.stringify(result));
+  return result.busyRuns + result.turns + result.calls + result.dispatches !== 0;
+};
 const assertQuiescent = async () => {
   await assertOwnership();
   if (await busy()) throw Error("EXECUTION_NOT_QUIESCENT");
@@ -258,7 +268,7 @@ const io = {
   },
   drain: async () => {
     const deadline = Date.now() + 600_000;
-    while (await busy()) {
+    while (await busy(true)) {
       if (Date.now() > deadline) throw Error("RELEASE_DRAIN_TIMEOUT");
       console.log("等待旧执行清理确认…");
       await sleep(10_000);

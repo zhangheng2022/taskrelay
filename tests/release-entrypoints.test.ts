@@ -136,6 +136,22 @@ test("真实生产发布入口核对 SQL、安装包和恢复结果，异常保�
         .find((line) => line.startsWith("RELEASE_FIXTURE_RESULT="))!
         .slice("RELEASE_FIXTURE_RESULT=".length),
     );
+    if (mode === "desktop") {
+      const counts = stdout
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("发布排空计数 "))
+        .map((line) => JSON.parse(line.slice("发布排空计数 ".length)));
+      assert.deepEqual(
+        counts.map(({ busyRuns, closedUnknown }) => [busyRuns, closedUnknown]),
+        [
+          [1, 0],
+          [1, 0],
+          [1, 0],
+          [0, 1],
+        ],
+      );
+      assert.equal(output.unknownLocks, 1);
+    }
     if (!expected.phase) {
       assert.deepEqual(output.commands, []);
       assert.equal(output.state.productionRelease, undefined);
