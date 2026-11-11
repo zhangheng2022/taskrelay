@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { Loader2 } from "lucide-react";
 import type { Transport } from "../../contracts/src/index";
 import type { AccountCardDetail } from "../../contracts/src/accounts";
 import {
@@ -10,6 +9,7 @@ import {
   type AccountFieldsValue,
 } from "./account-fields";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "./components/ui/card";
+import { Spinner } from "./components/ui/spinner";
 import { Button } from "./components/ui/button";
 import {
   Dialog,
@@ -252,7 +252,7 @@ export function AccountCard({
                       收起
                     </Button>
                     <Button type="submit" disabled={busy || offline}>
-                      {busy && <Loader2 data-icon="inline-start" className="animate-spin" />}
+                      {busy && <Spinner aria-hidden="true" data-icon="inline-start" />}
                       {saveLabel}
                     </Button>
                   </div>
@@ -275,7 +275,7 @@ export function AccountCard({
               disabled={busy || offline}
               onClick={() => void submit(false)}
             >
-              {busy && <Loader2 data-icon="inline-start" className="animate-spin" />}
+              {busy && <Spinner aria-hidden="true" data-icon="inline-start" />}
               {saveLabel}
             </Button>
           </CardFooter>

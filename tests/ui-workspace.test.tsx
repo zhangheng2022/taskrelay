@@ -50,12 +50,17 @@ test("工作空间翻页绑定当前用户，旧请求不能混入新用户或�
     (view.getByRole("button", { name: "加载更多任务" }) as HTMLButtonElement).disabled,
     false,
   );
+  fireEvent.change(view.getByLabelText("搜索任务"), { target: { value: "较早任务" } });
+  assert.ok(view.getByText("没有匹配的任务"));
+  assert.ok(view.getByText(/已加载的任务中没有匹配项/));
   resolveOld({
     items: [{ ...task, id: "private-a", title: "用户 A 私有旧任务" }],
     nextCursor: null,
   });
   fireEvent.click(view.getByRole("button", { name: "加载更多任务" }));
   await view.findByText("用户 B 较早任务");
+  assert.equal(view.queryByText("没有匹配的任务"), null);
+  fireEvent.change(view.getByLabelText("搜索任务"), { target: { value: "" } });
   assert.equal(view.queryByText("用户 A 私有旧任务"), null);
 });
 

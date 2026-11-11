@@ -110,7 +110,13 @@ test("改密已成功而退出未确认时保留成功事实，不重复改密",
   fireEvent.change(view.getByLabelText("新密码（12–128 位）"), {
     target: { value: "new-password-value" },
   });
-  fireEvent.change(view.getByLabelText("确认新密码"), { target: { value: "new-password-value" } });
+  const confirm = view.getByLabelText("确认新密码");
+  fireEvent.change(confirm, { target: { value: "different-password" } });
+  fireEvent.submit(view.getByRole("button", { name: "修改密码并重新登录" }).closest("form")!);
+  const mismatch = view.getByText("两次输入的新密码不一致");
+  assert.equal(confirm.getAttribute("aria-describedby"), mismatch.id);
+  assert.equal(changes, 0);
+  fireEvent.change(confirm, { target: { value: "new-password-value" } });
   fireEvent.submit(view.getByRole("button", { name: "修改密码并重新登录" }).closest("form")!);
   await view.findByText(/密码已修改，其他会话已撤销/);
   assert.equal(changes, 1);

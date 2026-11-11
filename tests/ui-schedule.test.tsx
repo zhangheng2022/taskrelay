@@ -49,8 +49,29 @@ test("需求明确后才显示入口，预览后启用；频率没有工作日�
       false,
     ),
   );
+  fireEvent.change(view.getByLabelText("执行频率"), { target: { value: "weekly" } });
+  const friday = view.getByRole("button", { name: "周五" });
+  fireEvent.click(friday);
+  assert.equal(friday.getAttribute("aria-pressed"), "true");
+  fireEvent.click(view.getByRole("button", { name: "预览执行时间" }));
+  await waitFor(() =>
+    assert.ok(!view.getByRole("button", { name: "保存并启用" }).hasAttribute("disabled")),
+  );
+  assert.deepEqual(writes.at(-1)?.body.days, [1, 5]);
+  fireEvent.click(view.getByRole("button", { name: "周一" }));
+  assert.ok(view.getByRole("button", { name: "保存并启用" }).hasAttribute("disabled"));
+  fireEvent.click(view.getByRole("button", { name: "预览执行时间" }));
+  await waitFor(() =>
+    assert.ok(!view.getByRole("button", { name: "保存并启用" }).hasAttribute("disabled")),
+  );
   fireEvent.click(view.getByRole("button", { name: "保存并启用" }));
   await view.findByText("已保存并启用");
+  assert.deepEqual(card.frequency, {
+    kind: "weekly",
+    time: "09:00",
+    timezone: "Asia/Shanghai",
+    days: [5],
+  });
   fireEvent.click(view.getByRole("button", { name: "暂停定时" }));
   await view.findByText("已暂停，当前运行不受影响");
   assert.equal(writes.filter((w) => w.path.endsWith("/cancel")).length, 0);

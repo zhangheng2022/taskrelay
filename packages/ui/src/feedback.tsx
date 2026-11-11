@@ -1,7 +1,7 @@
 import { Badge } from "./components/ui/badge";
 import { Alert, AlertDescription } from "./components/ui/alert";
 import { useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Spinner } from "./components/ui/spinner";
 import { Button } from "./components/ui/button";
 export function LoadingState({ label }: { label: string }) {
   const [slow, setSlow] = useState(false);
@@ -15,7 +15,7 @@ export function LoadingState({ label }: { label: string }) {
       aria-live="polite"
       className="flex items-start gap-2 text-sm text-muted-foreground"
     >
-      <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin" aria-hidden="true" />
+      <Spinner aria-hidden="true" className="mt-0.5 shrink-0" />
       <div>
         <p>{label}</p>
         {slow && <p className="mt-1">等待时间较长，连接可能较慢。请稍候，已有请求不会自动重发。</p>}

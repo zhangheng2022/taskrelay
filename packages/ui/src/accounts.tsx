@@ -6,7 +6,7 @@ import {
   useSettingsDirty,
 } from "./settings-support";
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 import type { SiteAccount, Snapshot, Transport } from "../../contracts/src/index";
 import {
   AccountFields,
@@ -15,6 +15,8 @@ import {
   type AccountFieldsValue,
 } from "./account-fields";
 import { Badge } from "./components/ui/badge";
+import { Item, ItemContent, ItemActions } from "./components/ui/item";
+import { Spinner } from "./components/ui/spinner";
 import { Button } from "./components/ui/button";
 import {
   Dialog,
@@ -183,83 +185,85 @@ export function Accounts({
             <section key={domain} aria-label={`${domain} 的账号`} className="flex flex-col gap-3">
               <h3 className="break-all">{domain}</h3>
               {accounts.map((account) => (
-                <article className="settings-row" key={account.id}>
-                  <div className="min-w-0">
-                    <h4>{account.name}</h4>
-                    <Badge variant="outline">
-                      {account.enabled === false ? "已停用" : "已启用"}
-                    </Badge>
-                    <p className="break-all">
-                      {account.usernameHint || "未设置用户名"} · {account.origin}
-                    </p>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <Badge
-                        variant={
-                          account.credentialStatus === "invalid" ? "destructive" : "secondary"
-                        }
-                      >
-                        {account.credentialStatus === "valid"
-                          ? "凭据已验证"
-                          : account.credentialStatus === "invalid"
-                            ? "需要修改凭据"
-                            : "凭据待验证"}
-                      </Badge>
+                <Item key={account.id} asChild>
+                  <article>
+                    <ItemContent>
+                      <h4>{account.name}</h4>
                       <Badge variant="outline">
-                        {account.syncStatus === "synced"
-                          ? "状态已同步"
-                          : account.syncStatus === "failed"
-                            ? "状态未同步"
-                            : account.loginReset
-                              ? "需要登录"
-                              : "暂无同步状态"}
+                        {account.enabled === false ? "已停用" : "已启用"}
                       </Badge>
-                    </div>
-                    {account.syncStatus === "failed" && (
-                      <p>{syncErrorDescription(account.syncError)}</p>
-                    )}
-                    <p>
-                      优先使用
-                      {snapshot.devices.find((device) => device.id === account.lastDeviceId)
-                        ?.name ?? "上次可用设备"}
-                      ；登录状态失效时会在聊天中协助登录。
-                    </p>
-                  </div>
-                  <div className="row-actions">
-                    <Button
-                      variant="outline"
-                      disabled={!!busy || !!management.busy}
-                      onClick={() => void manage(account, false)}
-                    >
-                      {account.enabled === false ? "启用" : "停用"}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      disabled={!!busy || !!management.busy}
-                      onClick={() => void manage(account, true)}
-                    >
-                      删除
-                    </Button>
-                    <Button
-                      variant="outline"
-                      disabled={!!busy || !!management.busy}
-                      aria-label={`编辑${account.name}`}
-                      onClick={() => setEditing(account)}
-                    >
-                      编辑
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      disabled={!!busy || !!management.busy}
-                      aria-label={`清除${account.name}的登录状态`}
-                      onClick={() => void clear(account)}
-                    >
-                      {busy === account.id && (
-                        <Loader2 className="animate-spin" data-icon="inline-start" />
+                      <p className="break-all">
+                        {account.usernameHint || "未设置用户名"} · {account.origin}
+                      </p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <Badge
+                          variant={
+                            account.credentialStatus === "invalid" ? "destructive" : "secondary"
+                          }
+                        >
+                          {account.credentialStatus === "valid"
+                            ? "凭据已验证"
+                            : account.credentialStatus === "invalid"
+                              ? "需要修改凭据"
+                              : "凭据待验证"}
+                        </Badge>
+                        <Badge variant="outline">
+                          {account.syncStatus === "synced"
+                            ? "状态已同步"
+                            : account.syncStatus === "failed"
+                              ? "状态未同步"
+                              : account.loginReset
+                                ? "需要登录"
+                                : "暂无同步状态"}
+                        </Badge>
+                      </div>
+                      {account.syncStatus === "failed" && (
+                        <p>{syncErrorDescription(account.syncError)}</p>
                       )}
-                      清除登录状态
-                    </Button>
-                  </div>
-                </article>
+                      <p>
+                        优先使用
+                        {snapshot.devices.find((device) => device.id === account.lastDeviceId)
+                          ?.name ?? "上次可用设备"}
+                        ；登录状态失效时会在聊天中协助登录。
+                      </p>
+                    </ItemContent>
+                    <ItemActions className="flex-wrap">
+                      <Button
+                        variant="outline"
+                        disabled={!!busy || !!management.busy}
+                        onClick={() => void manage(account, false)}
+                      >
+                        {account.enabled === false ? "启用" : "停用"}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        disabled={!!busy || !!management.busy}
+                        onClick={() => void manage(account, true)}
+                      >
+                        删除
+                      </Button>
+                      <Button
+                        variant="outline"
+                        disabled={!!busy || !!management.busy}
+                        aria-label={`编辑${account.name}`}
+                        onClick={() => setEditing(account)}
+                      >
+                        编辑
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        disabled={!!busy || !!management.busy}
+                        aria-label={`清除${account.name}的登录状态`}
+                        onClick={() => void clear(account)}
+                      >
+                        {busy === account.id && (
+                          <Spinner aria-hidden="true" data-icon="inline-start" />
+                        )}
+                        清除登录状态
+                      </Button>
+                    </ItemActions>
+                  </article>
+                </Item>
               ))}
             </section>
           ))
@@ -431,7 +435,7 @@ function AccountDialog({
                 取消
               </Button>
               <Button type="submit" disabled={busy}>
-                {busy && <Loader2 data-icon="inline-start" className="animate-spin" />}保存账号
+                {busy && <Spinner aria-hidden="true" data-icon="inline-start" />}保存账号
               </Button>
             </div>
           </form>

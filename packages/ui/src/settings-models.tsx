@@ -1,9 +1,11 @@
 /** 模型服务管理保留配置版本与独立能力结果；停用立即停止关联运行，配置编辑仍按版本保存。 */
 import { useState } from "react";
-import { Plus, CheckCircle2, Loader2 } from "lucide-react";
+import { Plus, CheckCircle2 } from "lucide-react";
 import type { ModelProfile, Snapshot, Transport } from "../../contracts/src/index";
 import { createApi } from "./api";
 import { ModelDialog } from "./model-dialog";
+import { Item, ItemContent, ItemActions } from "./components/ui/item";
+import { Spinner } from "./components/ui/spinner";
 import { Button } from "./components/ui/button";
 import { Badge } from "./components/ui/badge";
 import {
@@ -102,87 +104,93 @@ export function SettingsModels({
         </Empty>
       ) : (
         models.map((m) => (
-          <article className="settings-row" key={m.id}>
-            <div>
-              <h3>
-                {m.name}
-                <small>v{m.version}</small>{" "}
-                <Badge variant="outline">{m.enabled === false ? "已停用" : "已启用"}</Badge>
-              </h3>
-              <p>
-                {m.model} · {m.protocol === "chat" ? "Chat Completions" : "Responses"}
-              </p>
-              <div className="capabilities mt-3">
-                <Badge variant="secondary">
-                  连接 {m.capabilities.connection ? "通过" : "未通过"}
-                </Badge>
-                <Badge variant="secondary">
-                  工具调用 {m.capabilities.tools ? "通过" : "未通过"}
-                </Badge>
-                <Badge variant="secondary">
-                  结构化输出{" "}
-                  {m.capabilities.structured === "none" ? "未通过" : m.capabilities.structured}
-                </Badge>
-                <Badge variant="secondary">
-                  图像输入{" "}
+          <Item key={m.id} asChild>
+            <article>
+              <ItemContent>
+                <h3>
+                  {m.name}
+                  <small>v{m.version}</small>{" "}
+                  <Badge variant="outline">{m.enabled === false ? "已停用" : "已启用"}</Badge>
+                </h3>
+                <p>
+                  {m.model} · {m.protocol === "chat" ? "Chat Completions" : "Responses"}
+                </p>
+                <div className="capabilities mt-3">
+                  <Badge variant="secondary">
+                    连接 {m.capabilities.connection ? "通过" : "未通过"}
+                  </Badge>
+                  <Badge variant="secondary">
+                    工具调用 {m.capabilities.tools ? "通过" : "未通过"}
+                  </Badge>
+                  <Badge variant="secondary">
+                    结构化输出{" "}
+                    {m.capabilities.structured === "none" ? "未通过" : m.capabilities.structured}
+                  </Badge>
+                  <Badge variant="secondary">
+                    图像输入{" "}
+                    {m.capabilities.visionTestedAt
+                      ? m.capabilities.vision
+                        ? "通过"
+                        : "未通过"
+                      : "未验证"}
+                  </Badge>
+                </div>
+                <p>
+                  能力测试：
+                  {m.capabilities.testedAt ? formatDate(m.capabilities.testedAt) : "尚未测试"}
+                </p>
+                <p>
+                  图像测试：
                   {m.capabilities.visionTestedAt
-                    ? m.capabilities.vision
-                      ? "通过"
-                      : "未通过"
-                    : "未验证"}
-                </Badge>
-              </div>
-              <p>
-                能力测试：
-                {m.capabilities.testedAt ? formatDate(m.capabilities.testedAt) : "尚未测试"}
-              </p>
-              <p>
-                图像测试：
-                {m.capabilities.visionTestedAt
-                  ? formatDate(m.capabilities.visionTestedAt)
-                  : "尚未测试"}
-              </p>
-              {m.capabilities.error && <ErrorText error={m.capabilities.error} />}
-            </div>
-            <div className="row-actions">
-              <Button variant="outline" disabled={!!busy} onClick={() => void manage(m, false)}>
-                {m.enabled === false ? "启用" : "停用"}
-              </Button>
-              <Button variant="ghost" disabled={!!busy} onClick={() => void manage(m, true)}>
-                删除
-              </Button>
-              <Button variant="outline" disabled={!!busy} onClick={() => setModel(m)}>
-                编辑
-              </Button>
-              <Button
-                variant="outline"
-                disabled={!!busy}
-                onClick={() =>
-                  void act(m.id, () =>
-                    createApi(transport).api.admin.models[":id"].test.$post({
-                      param: { id: m.id },
-                    }),
-                  )
-                }
-              >
-                {busy === m.id ? <Loader2 className="spin" /> : <CheckCircle2 />}
-                测试能力
-              </Button>
-              <Button
-                variant="ghost"
-                disabled={!!busy || !m.capabilities.connection}
-                onClick={() =>
-                  void act(m.id + "vision", () =>
-                    createApi(transport).api.admin.models[":id"].vision.$post({
-                      param: { id: m.id },
-                    }),
-                  )
-                }
-              >
-                测试图像（可选）
-              </Button>
-            </div>
-          </article>
+                    ? formatDate(m.capabilities.visionTestedAt)
+                    : "尚未测试"}
+                </p>
+                {m.capabilities.error && <ErrorText error={m.capabilities.error} />}
+              </ItemContent>
+              <ItemActions className="flex-wrap">
+                <Button variant="outline" disabled={!!busy} onClick={() => void manage(m, false)}>
+                  {m.enabled === false ? "启用" : "停用"}
+                </Button>
+                <Button variant="ghost" disabled={!!busy} onClick={() => void manage(m, true)}>
+                  删除
+                </Button>
+                <Button variant="outline" disabled={!!busy} onClick={() => setModel(m)}>
+                  编辑
+                </Button>
+                <Button
+                  variant="outline"
+                  disabled={!!busy}
+                  onClick={() =>
+                    void act(m.id, () =>
+                      createApi(transport).api.admin.models[":id"].test.$post({
+                        param: { id: m.id },
+                      }),
+                    )
+                  }
+                >
+                  {busy === m.id ? (
+                    <Spinner aria-hidden="true" data-icon="inline-start" />
+                  ) : (
+                    <CheckCircle2 />
+                  )}
+                  测试能力
+                </Button>
+                <Button
+                  variant="ghost"
+                  disabled={!!busy || !m.capabilities.connection}
+                  onClick={() =>
+                    void act(m.id + "vision", () =>
+                      createApi(transport).api.admin.models[":id"].vision.$post({
+                        param: { id: m.id },
+                      }),
+                    )
+                  }
+                >
+                  测试图像（可选）
+                </Button>
+              </ItemActions>
+            </article>
+          </Item>
         ))
       )}
 

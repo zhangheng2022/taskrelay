@@ -1,5 +1,10 @@
 import { cloneElement, isValidElement, useId, type ReactElement, type ReactNode } from "react";
-import { Field as ShadcnField, FieldLabel, FieldDescription } from "./components/ui/field";
+import {
+  Field as ShadcnField,
+  FieldLabel,
+  FieldDescription,
+  FieldError,
+} from "./components/ui/field";
 
 export function Field({
   label,
@@ -17,22 +22,22 @@ export function Field({
     ? (children as ReactElement<{ id?: string; "aria-describedby"?: string }>)
     : null;
   const id = child?.props.id ?? generated;
+  const describedBy =
+    [child?.props["aria-describedby"], hint && id + "-hint", error && id + "-error"]
+      .filter(Boolean)
+      .join(" ") || undefined;
   return (
     <ShadcnField data-invalid={!!error}>
       <FieldLabel htmlFor={id}>{label}</FieldLabel>
       {child
         ? cloneElement(child, {
             id,
-            ...(hint ? { "aria-describedby": id + "-hint" } : {}),
-            ...(error ? { "aria-invalid": true, "aria-describedby": id + "-error" } : {}),
+            "aria-describedby": describedBy,
+            ...(error ? { "aria-invalid": true } : {}),
           })
         : children}
       {hint && <FieldDescription id={id + "-hint"}>{hint}</FieldDescription>}
-      {error && (
-        <FieldDescription id={id + "-error"} role="alert">
-          {error}
-        </FieldDescription>
-      )}
+      {error && <FieldError id={id + "-error"}>{error}</FieldError>}
     </ShadcnField>
   );
 }

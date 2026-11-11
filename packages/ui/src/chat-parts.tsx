@@ -1,4 +1,5 @@
 import { ImagePreviewProvider } from "./chat-image";
+import { Spinner } from "./components/ui/spinner";
 import { ChatMarkdown } from "./chat-markdown";
 import { useLayoutEffect, type ReactNode } from "react";
 import { ArrowUp, Loader2, CirclePause } from "lucide-react";
@@ -209,7 +210,7 @@ export function Composer({
             disabled={busy || disabled || !text.trim()}
           >
             {busy ? (
-              <Loader2 data-icon="inline-start" className="animate-spin" />
+              <Spinner aria-hidden="true" data-icon="inline-start" />
             ) : (
               <ArrowUp data-icon="inline-start" />
             )}

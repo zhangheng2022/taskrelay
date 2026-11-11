@@ -131,6 +131,9 @@ test("模型表单保留编辑草稿、Zod 阻止无效预算、请求失败清�
   fireEvent.change(view.getByLabelText("配置名称"), { target: { value: "我的编辑" } });
   view.rerender(<ModelDialog {...props} value={{ ...original, name: "后台版本", version: 2 }} />);
   assert.equal((view.getByLabelText("配置名称") as HTMLInputElement).value, "我的编辑");
+  const url = view.getByLabelText("Base URL") as HTMLInputElement;
+  const originalUrl = url.value;
+  fireEvent.change(url, { target: { value: "" } });
   fireEvent.change(view.getByLabelText("输出预留（token）"), { target: { value: "8192" } });
   fireEvent.change(view.getByLabelText("上下文预算（token，保守估计）"), {
     target: { value: "8192" },
@@ -143,6 +146,12 @@ test("模型表单保留编辑草稿、Zod 阻止无效预算、请求失败清�
     ),
   );
   assert.equal(calls, 0);
+  const description = url
+    .getAttribute("aria-describedby")!
+    .split(" ")
+    .map((id) => document.getElementById(id)?.dataset.slot);
+  assert.deepEqual(description, ["field-description", "field-error"]);
+  fireEvent.change(url, { target: { value: originalUrl } });
   fireEvent.change(view.getByLabelText("上下文预算（token，保守估计）"), {
     target: { value: "32000" },
   });
