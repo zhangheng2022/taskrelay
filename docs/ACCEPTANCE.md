@@ -1,5 +1,13 @@
 # TaskRelay 验收记录
 
+## 2026-11-11 自定义 OpenAI、Llama 3.3 与 Stagehand 生产复验
+
+生产健康检查已确认提交 `53f2657d03b8bd6831699333ab40125669d71684`、协议 19。首次发布停在部署阶段，在主站确认目标提交后，沿用原发布记录恢复成功。D1 确认发布阶段为 complete，维护关闭，领取恢复为 1。本次仅发布云端，桌面沿用 0.25.0。全量 587 项测试通过。PR 的 Windows 首轮有一项聊天通知 UI 测试超时，本机定向复测、远端重跑和主分支检查均通过。[第一次修复](https://github.com/zhangheng2022/taskrelay/pull/62) · [第二次修复](https://github.com/zhangheng2022/taskrelay/pull/63) · [主分支 CI](https://github.com/zhangheng2022/taskrelay/actions/runs/43035622251) · [生产发布](https://github.com/zhangheng2022/taskrelay/actions/runs/43036496395) · [完成恢复](https://github.com/zhangheng2022/taskrelay/actions/runs/43037038748)
+
+- 自定义 OpenAI 的欧盟连接固定到 `gpt-6.1-sol`。同一 Chat Completions 配置在强制与自动工具选择下均未通过实际函数探测，连接和 JSON Schema 通过。已恢复停用该验收配置。同一连接的 Responses v1 完成下面的真实桌面任务。[OpenAI 函数调用说明](https://developers.openai.com/api/docs/guides/function-calling)
+- Workers AI（自动）固定到 `@cf/meta/llama-3.3-70b-instruct-fp8-fast` v1。同一问题在流式结构化响应下出现格式错误，非流式完成并回答“法国的首都是巴黎”。已撤销测试时手动设置的单版本非流式标记。第一轮修复使原有正向缓存下的结构化请求也使用非流式；随后日本首都问题暴露普通咨询返回了缺少交办信息的启动决定。第二轮将该矛盾纳入已有的一次结构化校正，并在校正仍失败时阻止创建任务。最终版本在同一会话回答“法国的首都是巴黎，日本的首都是东京。”，其中重复了前一题的法国信息；接着按要求只用数字回答七加五，返回 `12`。D1 核对两个业务回合均为 done，各有一次非流式出站、零条流式增量，用量归属正确，该会话未创建桌面运行。[Cloudflare JSON Mode](https://developers.cloudflare.com/workers-ai/features/json-mode/)
+- 原生 OpenAI（美国）的只读提取对照使用同一条要求。实际设备在 example.com 显示多语言说明，未确认一级标题；运行 `run_80ae3f1904c9497ca973ef7b44a88982` 如实报告未找到。换到有明确一级标题的 Selenium 表单页后，原生模型运行 `run_4196b5db2ad64a51a45bb53521d467fa` 与欧盟自定义 Responses 运行 `run_a91127a990c547d79adb0310e4f24733` 均返回 `Web form`。两次正例各有 2 次完成的 Stagehand 模型调用，欧盟运行 5 条用量均属于实际用户和固定模型版本，三次浏览器清理均已确认。最终提交再次用欧盟自定义 Responses 运行 `run_9e1acc67c55f49289be9d0982ba99594`，实际返回同一标题，2 次 Stagehand 调用完成，4 条用量均匹配运行用户及固定版本，浏览器清理已确认。验收指令没有包含预期标题，未填写或提交表单。[Selenium 测试页](https://www.selenium.dev/selenium/web/web-form.html)
+
 ## 2026-11-11 生产 AI Gateway 切换（0.25.0）
 
 生产健康检查返回提交 `45fc255a717cb7478553d768d71dfda8ba6ed989`、协议 19。发布令牌临时获得的 AI Gateway Read 已在网关预检通过后移除。迁移 0007 完成后，首次部署健康检查读到版本不符；主站确认目标提交后，使用原发布记录恢复并完成发布。D1 核对结果为发布完成、维护关闭、领取恢复为原值 1，旧模型启用数与旧模型密钥列数均为 0。管理员已登记三条平台连接。[首次切换](https://github.com/zhangheng2022/taskrelay/actions/runs/43019992208) · [恢复发布](https://github.com/zhangheng2022/taskrelay/actions/runs/43020720615) · [Windows 0.25.0](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.25.0)
