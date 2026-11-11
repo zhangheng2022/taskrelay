@@ -59,7 +59,7 @@ Cloudflare 保持 Free，生产不绑定 R2；普通 Worker 负责轻量路由�
 2. 在 master 运行 Release · 生产发布，通常选择 `scope=auto`、`mode=publish`；可指定完整 `source-sha`。预检核验同 SHA 的 master push，不接受 PR、其他提交或旧门槛；遗漏必要范围、桌面修改未提升版本、已公开版本均拒绝发布。CI 编排修改需要验收，但不会单独要求产品发版。
 3. 优先复用 master 的 Web/Windows 候选；缺失、已过期或当时未生成的产品在生产写入前补建。Windows 始终完成真实 Chromium 状态测试、make、包内 smoke、实际安装、系统快捷方式启动和 ASAR 校验。PR 仍执行完整验收，只是不保存安装包。
 4. Artifacts 作业核验来源、文件哈希和验收后，将选定文件和 release-plan 归档到本次运行。发布前审计一次根依赖和桌面 runtime 锁。production 作业重新校验清单与来源，D1 productionRelease 保存 bundleId、planHash、源 SHA、原开关、恢复点和阶段；恢复禁止重新构建替换。
-5. 先暂停领取并等待清理，保存 Time Travel bookmark，再迁移和部署。GitHub Release 文件不可覆盖；更新目录登记后经 Cloudflare 下载验证大小/哈希才切换 latest。校验完成后恢复发布前的网页维护和领取开关，不等待或查询执行器在线就绪状态。没有可用执行器时任务仍须等待正常调度；设备授权、协议和领取校验保持不变。
+5. 先暂停领取并等待清理。结果待核查的运行仅在浏览器已确认关闭、清理完成且租约已释放时计入已收尾历史；发布保留其原状态和账号锁。排空日志只显示聚合数量。保存 Time Travel bookmark，再迁移和部署。GitHub Release 文件不可覆盖；更新目录登记后经 Cloudflare 下载验证大小/哈希才切换 latest。校验完成后恢复发布前的网页维护和领取开关，不等待或查询执行器在线就绪状态。没有可用执行器时任务仍须等待正常调度；设备授权、协议和领取校验保持不变。
 
 production Environment 仅允许 master。Cloudflare 凭据和 Release 写权限仅授予 production 作业，不读取或覆盖 MASTER_KEY。控制脚本固定本次工作流提交，业务源码和依赖固定 source-sha；两者身份分别核对。
 
