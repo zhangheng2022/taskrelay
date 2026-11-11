@@ -2,6 +2,18 @@ import { dbTime } from "../database";
 import { deleteEvidence } from "../evidence";
 import type { AppEnv } from "../env";
 
+// 显式清理覆盖直接关联运行的调用，也覆盖经图关联运行或聊天的调用。
+// 正文和调用标记归同一作业处理，避免保留期每轮把 THREAD_DELETED 改回 HISTORY_EXPIRED。
+const expiredCall = `(created_at<? OR EXISTS(
+  SELECT 1 FROM ai_graph_inputs g WHERE g.owner=ai_calls.user_id AND g.id=ai_calls.graph_id AND g.active=0
+)) AND NOT EXISTS(
+  SELECT 1 FROM history_cleanup_targets t WHERE t.kind='run' AND t.resource_id=ai_calls.run_id
+) AND NOT EXISTS(
+  SELECT 1 FROM ai_graph_inputs g JOIN history_cleanup_targets t
+    ON (t.kind='thread' AND t.resource_id=g.parent_thread) OR (t.kind='run' AND t.resource_id=g.run_id)
+  WHERE g.owner=ai_calls.user_id AND g.id=ai_calls.graph_id
+)`;
+
 export async function retainHistory(env: AppEnv, cutoff: string) {
   // 显式删除的目标归分批清理作业所有，保留期任务不越过它的批次边界。
   // Expiring a conversation invalidates every derived copy before removing its text.
@@ -28,10 +40,11 @@ export async function retainHistory(env: AppEnv, cutoff: string) {
       "DELETE FROM ai_checkpoints WHERE EXISTS(SELECT 1 FROM ai_graph_inputs g WHERE g.owner=ai_checkpoints.owner AND g.id=ai_checkpoints.thread AND g.active=0 AND NOT EXISTS(SELECT 1 FROM history_cleanup_targets x WHERE (x.kind='thread' AND x.resource_id=g.parent_thread) OR (x.kind='run' AND x.resource_id=g.run_id)))",
     ),
     env.DB.prepare(
-      "DELETE FROM call_results WHERE id IN(SELECT id FROM ai_calls WHERE created_at<? OR graph_id IN(SELECT id FROM ai_graph_inputs WHERE active=0))",
+      `DELETE FROM call_results WHERE id IN(SELECT id FROM ai_calls WHERE ${expiredCall})`,
     ).bind(dbTime(cutoff)),
     env.DB.prepare(
-      "UPDATE ai_calls SET status='unknown',error='HISTORY_EXPIRED' WHERE (created_at<? OR graph_id IN(SELECT id FROM ai_graph_inputs WHERE active=0)) AND (status<>'unknown' OR error IS NULL OR error<>'HISTORY_EXPIRED')",
+      `UPDATE ai_calls SET status='unknown',error='HISTORY_EXPIRED'
+       WHERE (status<>'unknown' OR error IS NULL OR error<>'HISTORY_EXPIRED') AND ${expiredCall}`,
     ).bind(dbTime(cutoff)),
     env.DB.prepare(
       "UPDATE ai_turns SET result=NULL,status='cancelled',error='HISTORY_EXPIRED' WHERE thread_id IN(SELECT id FROM ai_threads WHERE deleted=1 AND id NOT IN(SELECT resource_id FROM history_cleanup_targets WHERE kind='thread')) AND (result IS NOT NULL OR status<>'cancelled' OR error IS NULL OR error<>'HISTORY_EXPIRED')",
