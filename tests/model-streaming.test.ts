@@ -267,6 +267,10 @@ test("未知流式能力先做独立探测，仅明确不支持且控制探测�
   assert.equal(response.status, 200);
   assert.equal(response.data.response.text, "业务回复");
   assert.deepEqual(
+    f.requests.map((r) => r.body.tool_choice),
+    ["auto", "auto", "auto"],
+  );
+  assert.deepEqual(
     f.requests.map((r) => r.body.stream),
     [true, false, false],
   );
@@ -275,6 +279,23 @@ test("未知流式能力先做独立探测，仅明确不支持且控制探测�
     .prepare("SELECT capabilities FROM model_profile_versions WHERE id='model_test' AND version=1")
     .first<{ capabilities: string }>();
   assert.equal(JSON.parse(row!.capabilities).streaming.tools, "unsupported");
+});
+
+test("工具能力探测采用执行器的自动选择并验证真实函数及参数", async (t) => {
+  const f = await productionModelFixture(t);
+  f.replies(
+    "OK",
+    JSON.stringify({
+      __model: { text: "", calls: [{ id: "call", name: "check", arguments: '{"value":7}' }] },
+    }),
+    '{"ok":true}',
+  );
+  const { status, data: capabilities } = await f.request("/api/admin/models/model_test/test", {});
+  assert.equal(status, 200);
+  assert.equal(f.requests[1].body.tool_choice, "auto");
+  assert.equal(capabilities.tools, true);
+  f.replies("OK", "check with value 7", '{"ok":true}');
+  assert.equal((await f.request("/api/admin/models/model_test/test", {})).data.tools, false);
 });
 
 test("能力探测网络故障不降级、不提交用户业务、不标记不支持", async (t) => {

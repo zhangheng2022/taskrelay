@@ -25,8 +25,19 @@ import { graphWriteFence } from "./ai/fence";
 import { callResultStatements, unpackCallCipher } from "./call-cache";
 
 export function modelFrom(row: Row): ModelProfile {
+  const config = JSON.parse(row.config);
+  const capabilities: ModelCapabilities = JSON.parse(row.capabilities);
+  // Workers AI 的这款 Llama 能流式返回文本，但 JSON Mode 只在非流式请求中执行约束。
+  // 旧版本可能已缓存简单 JSON 流探测的假阳性。按真实连接修正，保留文本和工具的独立探测。
+  if (
+    row.connection_kind === "workers-ai" &&
+    config.protocol === "chat" &&
+    config.model === "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+  ) {
+    capabilities.streaming = { ...capabilities.streaming, structured: "unsupported" };
+  }
   return {
-    ...JSON.parse(row.config),
+    ...config,
     id: row.id,
     version: row.version,
     enabled: row.enabled !== 0,
@@ -34,7 +45,7 @@ export function modelFrom(row: Row): ModelProfile {
     scope: row.owner_user_id == null ? "platform" : "personal",
     connectionId: row.connection_id,
     effectiveRegion: row.effective_region,
-    capabilities: JSON.parse(row.capabilities),
+    capabilities,
   };
 }
 // 读能力与真正出站使用同一归属约束。未迁移的历史版本缺少连接，只可查询历史用量。
@@ -45,7 +56,7 @@ export async function getModelProfile(
   userId: string | null | undefined = env.requestUserId,
 ) {
   const row = await env.DB.prepare(
-    `SELECT v.id,v.version,v.config,v.connection_id,v.effective_region,v.capabilities,m.owner_user_id,m.enabled,m.management_version
+    `SELECT v.id,v.version,v.config,v.connection_id,v.effective_region,v.capabilities,c.kind AS connection_kind,m.owner_user_id,m.enabled,m.management_version
      FROM model_profile_versions v JOIN models m ON m.id=v.id JOIN model_connections c
      ON c.id=v.connection_id AND c.owner_user_id IS m.owner_user_id WHERE v.id=? AND (m.owner_user_id IS NULL OR m.owner_user_id=?)
      AND v.version=COALESCE(?,m.current_version)`,
@@ -424,7 +435,10 @@ async function ensureStreaming(
     ],
     maxTokens: 512,
     ...(kind === "tools"
-      ? { tools: [{ name: "check", description: "Capability test", parameters: shape }] }
+      ? {
+          tools: [{ name: "check", description: "Capability test", parameters: shape }],
+          toolChoice: request.toolChoice,
+        }
       : {}),
     ...(kind === "structured" ? (request.schema ? { schema: shape } : { jsonMode: true }) : {}),
   };
@@ -509,7 +523,8 @@ async function probeInference(
     await new RelayChatModel(env, id, version).invoke(toLangChainMessages(messages), {
       ...options,
       capabilityProbe: true,
-      tool_choice: toolChoice ?? (request.tools?.length ? "required" : undefined),
+      // 与桌面工具循环一致，仍由实际返回的函数名和参数决定是否通过。
+      tool_choice: toolChoice ?? (request.tools?.length ? "auto" : undefined),
     }),
   );
 }

@@ -2,10 +2,72 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { testDb, insertTask, task } from "./helpers";
 import { attachTestEgress } from "./egress-helpers";
-import { invoke, storeModel, probe } from "../apps/cloud/src/models";
+import {
+  generateStructured,
+  getModelProfile,
+  invoke,
+  storeModel,
+  probe,
+} from "../apps/cloud/src/models";
 import { createConnection } from "../apps/cloud/src/model-gateway";
 import type { AppEnv } from "../apps/cloud/src/env";
 import { app } from "../apps/cloud/src/index";
+
+test("Workers AI Llama 的旧结构化流式探测不能覆盖非流式 JSON 约束", async (t) => {
+  const { db, sql } = testDb();
+  t.after(() => sql.close());
+  const env = {
+    DB: db,
+    MASTER_KEY: Buffer.alloc(32, 8).toString("base64"),
+    requestUserId: "fixture_owner",
+  } as AppEnv;
+  attachTestEgress(env);
+  const connection = await createConnection(env, {
+    kind: "workers-ai",
+    name: "WA",
+    defaultRegion: "auto",
+  });
+  const config = {
+    name: "Llama",
+    model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+    protocol: "chat",
+  };
+  const workers = await storeModel(env, { ...config, connectionId: connection.id });
+  const other = await storeModel(env, { ...config, connectionId: "conn_test" });
+  sql.prepare("UPDATE settings SET value='1' WHERE key='modelStreamingEnabled'").run();
+  for (const id of [workers.id, other.id]) {
+    sql
+      .prepare(
+        "UPDATE model_profile_versions SET capabilities=json_set(capabilities,'$.structured','schema','$.streaming.text','supported','$.streaming.structured','supported') WHERE id=?",
+      )
+      .run(id);
+  }
+  assert.deepEqual((await getModelProfile(env, workers.id)).profile.capabilities.streaming, {
+    text: "supported",
+    structured: "unsupported",
+  });
+  assert.equal(
+    (await getModelProfile(env, other.id)).profile.capabilities.streaming?.structured,
+    "supported",
+  );
+  const fetch = t.mock.method(globalThis, "fetch", async (_url: unknown, init?: RequestInit) => {
+    assert.ok(typeof init?.body === "string");
+    const body = JSON.parse(init.body);
+    assert.equal(body.stream, false);
+    assert.equal(body.response_format.type, "json_schema");
+    return Response.json({ choices: [{ message: { content: '{"answer":"Paris"}' } }] });
+  });
+  const format = {
+    type: "object",
+    properties: { answer: { type: "string" } },
+    required: ["answer"],
+  };
+  const result = await generateStructured(env, workers.id, 1, format, (value) => value, [
+    { role: "user", content: "Capital of France?" },
+  ]);
+  assert.deepEqual(result.data, { answer: "Paris" });
+  assert.equal(fetch.mock.callCount(), 1);
+});
 
 test("发布模型固定连接和有效区域，原生网关、托管密钥、Workers AI 请求边界", async (t) => {
   const { db, sql } = testDb();
