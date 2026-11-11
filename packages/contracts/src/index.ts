@@ -168,15 +168,48 @@ export interface HumanChallenge extends z.infer<typeof challengeInputSchema> {
   status: "pending" | "answered" | "consuming" | "consumed" | "expired";
   imageId?: string;
 }
+export const egressRegionSchema = z.enum(["auto", "us", "eu"]);
+export type EgressRegion = z.infer<typeof egressRegionSchema>;
+export const connectionInputSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("workers-ai"),
+      name: z.string().trim().min(1).max(80),
+      defaultRegion: egressRegionSchema.default("auto"),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("provider"),
+      name: z.string().trim().min(1).max(80),
+      defaultRegion: egressRegionSchema.default("auto"),
+      provider: z.enum(["openai", "deepseek", "groq", "openrouter", "grok"]),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("custom"),
+      name: z.string().trim().min(1).max(80),
+      defaultRegion: egressRegionSchema.default("auto"),
+      upstream: z.url().max(2000),
+    })
+    .strict(),
+]);
+export type ModelConnection = z.infer<typeof connectionInputSchema> & {
+  id: string;
+  bindingVerified: boolean;
+  gatewayProvider: string;
+  keyAlias: string | null;
+};
 export const modelInputSchema = z
   .object({
     name: z.string().min(1).max(80),
-    baseUrl: z.url().max(2000),
+    connectionId: idSchema,
+    region: z.enum(["inherit", "auto", "us", "eu"]).default("inherit"),
     protocol: z.enum(["chat", "responses"]).default("chat"),
     model: z.string().min(1).max(200),
     contextTokens: z.number().int().min(8192).max(200000).optional(),
     outputTokens: z.number().int().min(512).max(8192).optional(),
-    apiKey: z.string().max(4000).optional(),
     inputPrice: z.number().nonnegative().nullable().default(null),
     outputPrice: z.number().nonnegative().nullable().default(null),
   })
@@ -197,12 +230,15 @@ export interface ModelCapabilities {
   tokenParameter?: "max_tokens" | "max_completion_tokens";
   error?: string;
 }
-export interface ModelProfile extends Omit<ModelInput, "apiKey"> {
+export interface ModelProfile extends Omit<ModelInput, "connectionId" | "region"> {
   enabled?: boolean;
   managementVersion?: number;
   id: string;
   version: number;
-  hasKey: boolean;
+  scope?: "platform" | "personal";
+  connectionId?: string;
+  region?: ModelInput["region"];
+  effectiveRegion?: EgressRegion;
   capabilities: ModelCapabilities;
 }
 export interface SiteAccount {
@@ -246,6 +282,7 @@ export interface Snapshot {
   tasks: TaskDefinition[];
   runs: TaskRun[];
   models: ModelProfile[];
+  modelConnections?: ModelConnection[];
   accounts: SiteAccount[];
   devices: Device[];
   challenges: HumanChallenge[];

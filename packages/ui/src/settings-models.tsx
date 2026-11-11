@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Plus, CheckCircle2 } from "lucide-react";
 import type { ModelProfile, Snapshot, Transport } from "../../contracts/src/index";
 import { createApi } from "./api";
+import { ModelConnections } from "./model-connections";
 import { ModelDialog } from "./model-dialog";
 import { Item, ItemContent, ItemActions } from "./components/ui/item";
 import { Spinner } from "./components/ui/spinner";
@@ -36,6 +37,7 @@ export function SettingsModels({
   const act = (id: string, fn: () => Promise<unknown>) => action.act(id, fn, refresh);
   const models = snapshot.models.filter(
     (m) =>
+      m.scope !== "personal" &&
       (!search || `${m.name} ${m.model}`.toLowerCase().includes(search.toLowerCase())) &&
       (state === "all" || (m.enabled !== false) === (state === "enabled")),
   );
@@ -66,6 +68,11 @@ export function SettingsModels({
   }
   return (
     <>
+      <ModelConnections
+        connections={snapshot.modelConnections ?? []}
+        transport={transport}
+        refresh={refresh}
+      />
       {action.feedback}
       {savedNotice && <p role="status">{savedNotice}</p>}
       {confirmation}
@@ -93,7 +100,7 @@ export function SettingsModels({
               {snapshot.models.length ? "没有匹配的模型" : "先连接一个模型服务"}
             </EmptyTitle>
             <EmptyDescription>
-              支持 Chat Completions 和 Responses。API Key 加密保存在云端。
+              支持 Chat Completions 和 Responses。供应商密钥由 Cloudflare 托管。
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
@@ -196,6 +203,7 @@ export function SettingsModels({
 
       {model && (
         <ModelDialog
+          connections={snapshot.modelConnections ?? []}
           value={model === true ? null : model}
           transport={transport}
           onClose={() => setModel(null)}

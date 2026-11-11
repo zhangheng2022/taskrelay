@@ -64,7 +64,7 @@ export class RelayChatModel extends BaseChatModel<RelayModelOptions> {
     assertPrivateAI();
   }
   _llmType() {
-    return "taskrelay-us-egress";
+    return "taskrelay-model-egress";
   }
 
   /** 业务图拥有持久状态；推理与历史摘要交给官方 Agent。结构化校验和已收到响应的

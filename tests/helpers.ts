@@ -14,6 +14,9 @@ export function testDb() {
   sql.exec(
     "INSERT INTO members(id,email,role) VALUES('fixture_owner','fixture@example.com','admin')",
   );
+  sql.exec(
+    "INSERT INTO model_connections(id,name,kind,provider,key_alias,default_region,binding_verified) VALUES('conn_test','fixture','provider','openai','fixture-key','us',1)",
+  );
   // 旧业务夹具显式使用非流式；流式生产入口套件单独打开并供应真实分块响应。
   sql.exec("INSERT OR REPLACE INTO settings(key,value) VALUES('modelStreamingEnabled','0')");
   class Statement {
@@ -123,6 +126,11 @@ export async function insertTask(db: D1Database, t = task(), userId = "fixture_o
         .bind(t.accountId, secret, JSON.stringify([origin]), dbTime(t.createdAt)),
     ]);
   }
+  await db
+    .prepare(
+      "INSERT OR IGNORE INTO model_connections(id,name,kind,provider,key_alias,default_region,binding_verified) VALUES('conn_test','fixture','provider','openai','fixture-key','us',1)",
+    )
+    .run();
   if (
     !(await db
       .prepare("SELECT id FROM model_profile_versions WHERE id=? AND version=?")
@@ -131,9 +139,9 @@ export async function insertTask(db: D1Database, t = task(), userId = "fixture_o
   )
     await db
       .prepare(
-        "INSERT INTO model_profile_versions(id,version,config,secret,capabilities,created_at) VALUES(?,?,?,?,?,?)",
+        "INSERT INTO model_profile_versions(id,version,config,connection_id,effective_region,capabilities,created_at) VALUES(?,?,?,'conn_test','us',?,?)",
       )
-      .bind(t.modelId, t.modelVersion, "{}", "fixture", "{}", dbTime(t.createdAt))
+      .bind(t.modelId, t.modelVersion, "{}", "{}", dbTime(t.createdAt))
       .run();
   await db.batch([
     db

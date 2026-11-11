@@ -20,7 +20,7 @@ function routes(kind: "accounts" | "models") {
         const id = c.req.param("id");
         const token = crypto.randomUUID();
         const update = c.env.DB.prepare(
-          `UPDATE ${kind} SET enabled=?,management_token=?,management_version=management_version+1 WHERE id=? AND management_version=? ${kind === "accounts" ? "AND user_id=?" : ""}`,
+          `UPDATE ${kind} SET enabled=?,management_token=?,management_version=management_version+1 WHERE id=? AND management_version=? ${kind === "accounts" ? "AND user_id=?" : "AND owner_user_id IS NULL AND EXISTS(SELECT 1 FROM model_profile_versions v WHERE v.id=models.id AND v.version=models.current_version AND v.connection_id IS NOT NULL)"}`,
         ).bind(
           Number(enabled),
           token,
@@ -118,7 +118,10 @@ function routes(kind: "accounts" | "models") {
       async (c) => {
         const id = c.req.param("id"),
           { expectedVersion } = c.req.valid("json");
-        const owner = kind === "accounts" ? "AND user_id=?" : "";
+        const owner =
+          kind === "accounts"
+            ? "AND user_id=?"
+            : "AND owner_user_id IS NULL AND EXISTS(SELECT 1 FROM model_profile_versions v WHERE v.id=models.id AND v.version=models.current_version AND v.connection_id IS NOT NULL)";
         const args = [id, expectedVersion, ...(kind === "accounts" ? [c.get("userId")] : [])];
         const row = await c.env.DB.prepare(
           `SELECT id FROM ${kind} WHERE id=? AND management_version=? ${owner}`,
@@ -147,7 +150,9 @@ function routes(kind: "accounts" | "models") {
           const results = await c.env.DB.batch([
             // 延迟外键允许在同一事务删除版本和空资源；其他引用存在时整笔回滚。
             c.env.DB.prepare(`DELETE FROM ${versions} WHERE ${key} IN(${eligible})`).bind(...args),
-            c.env.DB.prepare(`DELETE FROM ${kind} WHERE id IN(${eligible})`).bind(...args),
+            kind === "models"
+              ? c.env.DB.prepare("DELETE FROM models WHERE id=? AND changes()>0").bind(id)
+              : c.env.DB.prepare(`DELETE FROM ${kind} WHERE id IN(${eligible})`).bind(...args),
           ]);
           if (!results[1].meta.changes) return c.json({ error: "RESOURCE_IN_USE" }, 409);
         } catch (error) {

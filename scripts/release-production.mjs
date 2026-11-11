@@ -1,12 +1,13 @@
 /** GitHub production 作业唯一发布入口。D1 保存 CAS 日志与原开关；任何异常都留在可核验阶段，不自动恢复领取。 */
 import { execFileSync } from "node:child_process";
-import { readFileSync, readdirSync, createReadStream, appendFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, createReadStream, appendFileSync } from "node:fs";
 import path from "node:path";
 import { cp, rm } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { verifyBundle, sourceArtifact } from "./release-artifacts.mjs";
 import { validateSigning } from "./signing-policy.mjs";
 import { createHash } from "node:crypto";
+import { checkGateway } from "./prepare-model-gateway.mjs";
 import { runRelease, phases } from "./release-core.mjs";
 import {
   query,
@@ -151,6 +152,26 @@ if (mode === "resume") {
     await sourceArtifact(releasePlan.sources[kind].artifactId, built, qualityRunId, runId);
   }
   if (desktop) await loadDesktop();
+  // 首次切换会清理旧模型密钥。先检查真实网关和 Worker Secret 名称，失败时不暂停领取或执行迁移。
+  const gatewayCutover =
+    cloud &&
+    existsSync("apps/cloud/migrations/0007_model_gateway.sql") &&
+    !(
+      await query("SELECT name FROM sqlite_master WHERE type='table' AND name='model_connections'")
+    )[0].results.length;
+  if (gatewayCutover) {
+    const { account } = await import("./release-api.mjs");
+    await checkGateway();
+    const secrets = await cloudflare(`/accounts/${account}/workers/scripts/taskrelay/secrets`);
+    if (
+      !["AI_GATEWAY_TOKEN", "WORKERS_AI_TOKEN"].every((name) =>
+        secrets.some((entry) => entry.name === name),
+      )
+    )
+      throw Error("MODEL_GATEWAY_SECRETS_REQUIRED");
+    if ((await query("SELECT COUNT(*) n FROM runs WHERE status='queued'"))[0].results[0].n)
+      throw Error("MODEL_GATEWAY_QUEUED_RUNS_REQUIRE_DRAIN");
+  }
   record = {
     sha,
     cloud,
@@ -160,6 +181,7 @@ if (mode === "resume") {
     artifactRunId: runId,
     bundleId: process.env.RELEASE_BUNDLE_ID,
     planHash,
+    gatewayCutover,
     oldClaims: settings.claimsEnabled ?? "0",
     oldMaintenance: settings.maintenance ?? "0",
     createdAt: new Date().toISOString(),
@@ -402,7 +424,10 @@ const io = {
   },
   restore: async (state) => {
     await settings("maintenance", state.oldMaintenance);
-    await settings("claimsEnabled", state.oldClaims);
+    // 新库中平台模型须重新登记和探测；本次部署结束后由管理员实测，再恢复旧领取开关。
+    await settings("claimsEnabled", state.gatewayCutover ? "0" : state.oldClaims);
+    if (state.gatewayCutover)
+      console.log("网关切换完成，领取保持暂停。请重新配置模型并完成部署验收。");
   },
 };
 let result;

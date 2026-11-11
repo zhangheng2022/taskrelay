@@ -11,7 +11,6 @@ import { testDb, task, insertTask } from "./helpers";
 import { claim, enqueue, queueReasons } from "../apps/cloud/src/store";
 import { quotaDay, quotaReset, reserve, quotaSummary } from "../apps/cloud/src/tenancy";
 import { hash } from "../packages/contracts/src/security";
-import { seal } from "../apps/cloud/src/crypto";
 
 async function fixture() {
   const { db, sql } = testDb();
@@ -309,26 +308,29 @@ test("两用户使用同一幂等编号仍各自创建任务；账号、协助�
   s.env.EVIDENCE_STORE = {
     getByName: () => ({ get: async () => new Uint8Array([1, 2, 3]).buffer }),
   } as any;
-  s.sql.prepare("INSERT INTO model_profile_versions VALUES(?,1,?,?,?,?)").run(
-    "model_test",
-    JSON.stringify({
-      name: "shared",
-      baseUrl: "https://provider.example/v1",
-      model: "test",
-      protocol: "chat",
-      inputPrice: 1,
-      outputPrice: 1,
-    }),
-    await seal("key", s.env.MASTER_KEY, "model:model_test:1"),
-    JSON.stringify({
-      connection: true,
-      tools: true,
-      structured: "schema",
-      vision: false,
-      testedAt: null,
-    }),
-    dbTime(new Date().toISOString()),
-  );
+  s.sql
+    .prepare(
+      "INSERT INTO model_profile_versions(id,version,config,connection_id,effective_region,capabilities,created_at) VALUES(?,1,?,'conn_test','us',?,?)",
+    )
+    .run(
+      "model_test",
+      JSON.stringify({
+        name: "shared",
+        region: "inherit",
+        model: "test",
+        protocol: "chat",
+        inputPrice: 1,
+        outputPrice: 1,
+      }),
+      JSON.stringify({
+        connection: true,
+        tools: true,
+        structured: "schema",
+        vision: false,
+        testedAt: null,
+      }),
+      dbTime(new Date().toISOString()),
+    );
   async function create(who: string, input: any, requestId: string) {
     const thread = (await (
       await s.request("/api/user/threads", s.cookies[who], { modelId: "model_test" })

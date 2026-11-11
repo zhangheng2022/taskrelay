@@ -70,6 +70,8 @@
     "ACCESS_TEAM_DOMAIN": "zhangheng.cloudflareaccess.com",
     "ACCESS_AUD": "14ace9836bc55fd84ab8f089c1a35a7361d46ffb0b729c4d47ade7b432a8b194",
     "DEV_MODE": "0",
+    "AI_GATEWAY_ACCOUNT_ID": "b3a410496c5e49e582b4af19d2f2eec6",
+    "AI_GATEWAY_ID": "taskrelay",
     "AUTH_BASE_URL": "https://tr.zhangheng.eu.org",
     "REGISTRATION_OPEN": "1",
     "MAIL_FROM": "noreply@mail.zhangheng.eu.org",

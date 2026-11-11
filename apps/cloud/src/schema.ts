@@ -1400,7 +1400,7 @@ export const messageBodies = sqliteTable(
   ],
 );
 
-/** 不可变模型配置版本；密钥按模型 ID/版本加密，运行固定版本。能力探测可更新同版本的实际能力记录。 任务/聊天/运行仍引用时保留版本身份，不随当前头切换删除。 */
+/** 不可变模型配置版本；连接和区域固定，运行固定版本。能力探测可更新同版本的实际能力记录。 任务/聊天/运行仍引用时保留版本身份，不随当前头切换删除。 */
 export const modelProfileVersions = sqliteTable(
   "model_profile_versions",
   {
@@ -1410,8 +1410,8 @@ export const modelProfileVersions = sqliteTable(
     version: integer("version").notNull(),
     /** 模型配置 JSON，格式 1；modelInputSchema 校验，版本配置权威，不含明文 API Key */
     config: text("config").notNull(),
-    /** 模型 API Key 密文；AAD 为 model:<id>:<version>，仅可信服务端配置/出站适配器读取，不向网页或设备返回密钥 */
-    secret: text("secret").notNull(),
+    connectionId: text("connection_id").references(() => modelConnections.id),
+    effectiveRegion: text("effective_region"),
     /** 模型能力 JSON，格式 1；models 的能力探测/读取入口维护，实际探测结果权威，不暗换模型 */
     capabilities: text("capabilities").notNull(),
     /** 记录创建时点；UTC Unix 毫秒 */
@@ -1424,6 +1424,7 @@ export const modelProfileVersions = sqliteTable(
       sql.raw("created_at IS NULL OR typeof(created_at)='integer'"),
     ),
 
+    check("model_region", sql.raw("effective_region IN ('auto','us','eu')")),
     primaryKey({ columns: [t.id, t.version] }),
     foreignKey({ columns: [t.id], foreignColumns: [models.id] }),
   ],
@@ -1480,10 +1481,11 @@ export const modelUsage = sqliteTable(
   ],
 );
 
-/** 模型配置主表；保存当前版本指针，版本正文和密钥只在 model_profile_versions。 版本仍被任务/聊天引用时拒绝物理删除，当前版本头与正文在同一事务写入。 */
+/** 模型配置主表；保存当前版本指针，版本正文只在 model_profile_versions。 版本仍被任务/聊天引用时拒绝物理删除，当前版本头与正文在同一事务写入。 */
 export const models = sqliteTable(
   "models",
   {
+    ownerUserId: text("owner_user_id"),
     /** 是否启用；停用会失败关联排队与执行任务 */
     enabled: integer("enabled").notNull().default(1),
     /** 管理操作代次 */
@@ -1498,6 +1500,8 @@ export const models = sqliteTable(
     createdAt: integer("created_at").notNull(),
   },
   (t): SQLiteTableExtraConfigValue[] => [
+    foreignKey({ columns: [t.ownerUserId], foreignColumns: [members.id] }),
+    index("models_owner").on(t.ownerUserId),
     check("models_enabled_check", sql.raw("enabled IN (0,1)")),
 
     /** 与 SQL 基线同源的校验约束；不得在 ORM 迁移中放宽。 */
@@ -2076,4 +2080,32 @@ export const executionRecords = sqliteTable(
     createdAt: integer("created_at").notNull(),
   },
   (t) => [primaryKey({ columns: [t.runId, t.callId] })],
+);
+
+/** 供应商连接仅保存网关路由和密钥别名。 */
+export const modelConnections = sqliteTable(
+  "model_connections",
+  {
+    id: text("id").primaryKey(),
+    ownerUserId: text("owner_user_id").references(() => members.id),
+    name: text("name").notNull(),
+    kind: text("kind").notNull(),
+    provider: text("provider").notNull(),
+    upstream: text("upstream"),
+    keyAlias: text("key_alias"),
+    bindingVerified: integer("binding_verified").notNull().default(0),
+    defaultRegion: text("default_region").notNull(),
+  },
+  (t) => [
+    index("model_connections_owner").on(t.ownerUserId),
+    uniqueIndex("model_connections_alias")
+      .on(t.provider, t.keyAlias)
+      .where(sql.raw("key_alias IS NOT NULL")),
+    uniqueIndex("model_custom_routes").on(t.provider).where(sql.raw("kind='custom'")),
+    check("connection_verified", sql.raw("binding_verified IN (0,1)")),
+    check("connection_kind", sql.raw("kind IN ('provider','custom','workers-ai')")),
+    check("connection_region", sql.raw("default_region IN ('auto','us','eu')")),
+    check("connection_alias", sql.raw("(kind='workers-ai')=(key_alias IS NULL)")),
+    check("connection_upstream", sql.raw("(kind='custom')=(upstream IS NOT NULL)")),
+  ],
 );

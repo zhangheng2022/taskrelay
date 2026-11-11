@@ -31,42 +31,50 @@ export function fakeStorage(onDueAlarm?: () => void) {
   return { storage, values, getAlarm: () => alarm };
 }
 export function attachTestEgress(env: AppEnv) {
-  env.MODEL_EGRESS = {
-    jurisdiction(region: string) {
-      if (region !== "us") throw new Error("UNEXPECTED_TEST_JURISDICTION");
-      return {
-        getByName() {
-          const state = new EgressState(
-            fakeStorage(() => {
-              void state.alarm().catch((error) => {
-                queueMicrotask(() => {
-                  throw error;
-                });
-              });
-            }).storage,
-            env.MASTER_KEY,
-            async (value) => {
-              const job = value as EgressJob;
-              if (job.kind !== "inference") throw new Error("TEST_INFERENCE_ONLY");
-              return performInference(
-                env,
-                job.modelId,
-                job.version,
-                job.request,
-                job.runId,
-                job.userId,
-                job.reservationId,
-                job.callId,
-                job.preview,
-              );
-            },
+  Object.assign(env, {
+    AI_GATEWAY_ACCOUNT_ID: "f".repeat(32),
+    AI_GATEWAY_ID: "fixture",
+    AI_GATEWAY_TOKEN: "fixture",
+    WORKERS_AI_TOKEN: "workers-fixture",
+  });
+  const namespace = {
+    getByName() {
+      const state = new EgressState(
+        fakeStorage(() => {
+          void state.alarm().catch((error) => {
+            queueMicrotask(() => {
+              throw error;
+            });
+          });
+        }).storage,
+        env.MASTER_KEY,
+        async (value) => {
+          const job = value as EgressJob;
+          if (job.kind !== "inference") throw new Error("TEST_INFERENCE_ONLY");
+          return performInference(
+            env,
+            job.modelId,
+            job.version,
+            job.request,
+            job.runId,
+            job.userId,
+            job.reservationId,
+            job.callId,
+            job.preview,
           );
-          return {
-            submitAndWait: (id: string, cipher: string) => state.submitAndWait(id, cipher),
-            ack: () => state.ack(),
-          };
         },
+      );
+      return {
+        submitAndWait: (id: string, cipher: string) => state.submitAndWait(id, cipher),
+        ack: () => state.ack(),
       };
+    },
+  };
+  env.MODEL_EGRESS = {
+    ...namespace,
+    jurisdiction(region: string) {
+      if (!["us", "eu"].includes(region)) throw Error("UNEXPECTED_TEST_JURISDICTION");
+      return namespace;
     },
   } as unknown as AppEnv["MODEL_EGRESS"];
 }

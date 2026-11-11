@@ -168,7 +168,7 @@ test("选择账号期间被其他运行占用，不返回可读取凭据的引�
   let inject = true;
   t.mock.method(globalThis, "fetch", async (input: string | URL | Request, init?: RequestInit) => {
     const result = await providerFetch(input, init);
-    if (inject && requestUrl(input).startsWith("https://provider.example/")) {
+    if (inject && requestUrl(input).startsWith("https://gateway.ai.cloudflare.com/")) {
       inject = false;
       s.sql
         .prepare("UPDATE account_locks SET run_id='other_run' WHERE account_key='account_help'")

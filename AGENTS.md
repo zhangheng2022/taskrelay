@@ -50,7 +50,7 @@ CLI 故障按技能处理并说明替代方式，未执行成功不称为 OCR �
 
 ### 模型与出站
 
-- 所有生产模型请求走 `models.invoke → egress → ModelEgress` 的美国 jurisdiction 与 alarm，再调用提供方；各进程和普通请求均不得直连。结构化输出走 `models.generateStructured → invoke`，Zod 只校验适配。
+- 所有生产模型请求走 `models.invoke → egress → ModelEgress` 按固定模型版本选择自动、美国或欧盟，由 alarm 通过平台 AI Gateway 调用提供方；各进程和普通请求均不得直连。结构化输出走 `models.generateStructured → invoke`，Zod 只校验适配。
 - `submitAndWait` 在同次 RPC 内提交并等待；alarm 执行中不再次 RPC 轮询同一对象，取得终态才 ack，避免新请求替换 I/O 上下文。
 - 不绕过 workerd 的 `MODEL_REGION_REQUIRES_DEPLOYMENT`，不改回访客请求链。测试可用隔离 adapter，真实模型及地区证据须来自部署环境。
 - 模型名自由输入，保留 Chat Completions 与 Responses；缺能力即阻止使用，不暗换模型/提供方。运行固定任务快照中的模型配置版本。
@@ -59,7 +59,7 @@ CLI 故障按技能处理并说明替代方式，未执行成功不称为 OCR �
 ### 身份、数据与费用
 
 - 网站用 Better Auth 会话和已验证邮箱，服务端检查用户归属与管理员角色；Cloudflare Access 仅可作外层限制。设备用可吊销 bearer token，不得访问用户/管理员接口。开发绕过仅限本机 `DEV_MODE=1`，生产关闭，开发服务不暴露公网。
-- Main 用系统 `safeStorage` 保存设备令牌；模型密钥、账号凭据及敏感回复按上下文加密。本人聊天可解密已授权回复，清空和保留期同步清理密文。日志/诊断包不含明文秘密、Profile、SQLite 或 API Key。
+- Main 用系统 `safeStorage` 保存设备令牌；模型密钥由 Cloudflare BYOK 托管，账号凭据及敏感回复按上下文加密。本人聊天可解密已授权回复，清空和保留期同步清理密文。日志/诊断包不含明文秘密、Profile、SQLite 或 API Key。
 - **不得重新生成或覆盖现有 `MASTER_KEY`**；密文依赖它，轮换须有迁移与恢复方案。
 - 截图先脱敏再保存，秘密及敏感匹配结果不得传入网页执行环境。聊天图片长期保存，随聊天删除/保留期清理；先关闭聊天、阻止新写入，再清图片。终态可独立收尾，不能把旧消息挂到新聊天。
 - 证据由私有 SQLite DO 分块加密保存，短期协助证据在完成/过期后清理；生产不绑定 R2。Cloudflare 保持 Free，普通 Worker 仅路由、业务进入 DO，长 AI 回合经持久化 outbox 与 alarm；不加项目每日预算或全站模型上限，不自动购买/切换付费服务。

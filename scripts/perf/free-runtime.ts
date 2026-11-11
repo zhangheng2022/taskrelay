@@ -64,19 +64,21 @@ export default {
         .bind(await hash("d".repeat(64)))
         .run();
       await env.DB.prepare(
-        "INSERT INTO model_profile_versions(id,version,config,secret,capabilities,created_at) VALUES(?,1,?,?,?,?)",
+        "INSERT INTO model_connections(id,name,kind,provider,key_alias,default_region,binding_verified) VALUES('conn_test','fixture','provider','openai','fixture-key','us',1)",
+      ).run();
+      await env.DB.prepare(
+        "INSERT INTO model_profile_versions(id,version,config,connection_id,effective_region,capabilities,created_at) VALUES(?,1,?,'conn_test','us',?,?)",
       )
         .bind(
           "fixture",
           JSON.stringify({
             name: "fixture",
-            baseUrl: "https://provider.example/v1",
+            region: "inherit",
             model: "fixture",
             protocol: "chat",
             inputPrice: null,
             outputPrice: null,
           }),
-          await seal("fixture-only", env.MASTER_KEY, "model:fixture:1"),
           JSON.stringify({ connection: true, tools: true, structured: "schema", vision: false }),
           Date.now(),
         )

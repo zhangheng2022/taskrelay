@@ -1,3 +1,5 @@
+import { connectionInputSchema, egressRegionSchema } from "../../../packages/contracts/src/index";
+import { connectionFrom, createConnection, validateEndpoint } from "./model-gateway";
 import { scheduleRoutes } from "./task-schedules";
 import { learningSnapshot } from "./execution-learning";
 import { modelManagement, accountManagement } from "./resource-management";
@@ -24,7 +26,7 @@ import { hash } from "../../../packages/contracts/src/security";
 import { nextOccurrence } from "../../../packages/contracts/src/schedule";
 import type { AppEnv, Variables } from "./env";
 import { now, taskFrom, runFrom, getRun, tick, queueReasons, type Row } from "./store";
-import { modelFrom, getModel, storeModel, probe, probeVision, validateEndpoint } from "./models";
+import { modelFrom, getModelProfile, storeModel, probe, probeVision } from "./models";
 import { seal, unseal } from "./crypto";
 import { accountMatchesDomain, accountSummary, accountRoutes } from "./accounts";
 import { accountCardRoutes } from "./account-cards";
@@ -95,9 +97,11 @@ export const user = userBase
       WHERE r.user_id=? AND r.history_deleted=0 ORDER BY r.created_at DESC,r.id DESC LIMIT 51`,
         )
         .bind(c.get("userId")),
-      db.prepare(
-        "SELECT v.id,v.version,v.config,v.capabilities,m.enabled,m.management_version FROM models m JOIN model_profile_versions v ON v.id=m.id AND v.version=m.current_version ORDER BY m.created_at DESC",
-      ),
+      db
+        .prepare(
+          "SELECT v.id,v.version,v.config,v.capabilities,v.connection_id,v.effective_region,m.owner_user_id,m.enabled,m.management_version FROM models m JOIN model_profile_versions v ON v.id=m.id AND v.version=m.current_version JOIN model_connections c ON c.id=v.connection_id AND c.owner_user_id IS m.owner_user_id WHERE (m.owner_user_id IS NULL OR m.owner_user_id=?) AND (m.enabled=1 OR ?=1) ORDER BY m.created_at DESC",
+        )
+        .bind(c.get("userId"), Number(c.get("actor") === "owner")),
       db
         .prepare(
           `SELECT a.enabled,a.management_version,a.id,a.name,a.origin,a.username_hint,a.created_at,a.assigned_device_id,a.login_reset,a.business_domains,
@@ -119,9 +123,24 @@ export const user = userBase
       nextTasksCursor: r[0].length > 50 ? pageCursor(r[0][49].created_at, r[0][49].id) : null,
       nextRunsCursor: r[1].length > 50 ? pageCursor(r[1][49].created_at, r[1][49].id) : null,
       runs: r[1].slice(0, 50).map((row) => runFrom({ ...row, queue_reason: reasons.get(row.id) })),
+      ...(c.get("actor") === "owner"
+        ? {
+            modelConnections: (
+              await db
+                .prepare(
+                  "SELECT * FROM model_connections WHERE owner_user_id IS NULL ORDER BY name,id",
+                )
+                .all<Row>()
+            ).results.map(connectionFrom),
+          }
+        : {}),
       models: r[2]
         .map(modelFrom)
-        .map((m) => (c.get("actor") === "owner" ? m : { ...m, baseUrl: "", hasKey: false })),
+        .map((m) =>
+          c.get("actor") === "owner"
+            ? m
+            : { ...m, connectionId: undefined, region: undefined, effectiveRegion: undefined },
+        ),
       me: { id: c.get("userId"), role: c.get("member").role, email: c.get("member").email },
       quota: await quotaSummary(db, c.get("userId"), c.get("member")),
       accounts: r[3].map(accountSummary),
@@ -238,7 +257,7 @@ export const user = userBase
       )
         throw Error("CONVERSATION_BUSY");
       const base = taskFrom(row),
-        model = await getModel(c.env, b.modelId);
+        model = await getModelProfile(c.env, b.modelId);
       if (
         !model.profile.capabilities.connection ||
         !model.profile.capabilities.tools ||
@@ -368,7 +387,7 @@ export const user = userBase
       if (!row) throw new Error("TASK_NOT_FOUND");
       if (row.context_withdrawn) throw Error("TASK_CONTEXT_WITHDRAWN");
       const task = taskFrom(row);
-      const model = await getModel(c.env, task.modelId, task.modelVersion);
+      const model = await getModelProfile(c.env, task.modelId, task.modelVersion);
       if (!model.profile.capabilities.tools || model.profile.capabilities.structured === "none")
         throw new Error("MODEL_CAPABILITIES_REQUIRED");
       // A manual invocation does not enable periodic scheduling. It is eligible even if paused.
@@ -486,6 +505,30 @@ export const user = userBase
     },
   );
 export const admin = adminBase
+  .post(
+    "/model-connections",
+    validator("json", (v: z.input<typeof connectionInputSchema>) => connectionInputSchema.parse(v)),
+    async (c) => c.json(await createConnection(c.env, c.req.valid("json")), 201),
+  )
+  .put(
+    "/model-connections/:id/region",
+    validator("json", (v: { defaultRegion: unknown; expectedRegion: unknown }) =>
+      z
+        .object({ defaultRegion: egressRegionSchema, expectedRegion: egressRegionSchema })
+        .strict()
+        .parse(v),
+    ),
+    async (c) => {
+      const { defaultRegion, expectedRegion } = c.req.valid("json");
+      const result = await c.env.DB.prepare(
+        "UPDATE model_connections SET default_region=? WHERE id=? AND owner_user_id IS NULL AND default_region=?",
+      )
+        .bind(defaultRegion, c.req.param("id"), expectedRegion)
+        .run();
+      if (!result.meta.changes) throw Error("RESOURCE_VERSION_CONFLICT");
+      return c.json({ ok: true });
+    },
+  )
   .route("/models", modelManagement)
   .post(
     "/models",
@@ -503,10 +546,13 @@ export const admin = adminBase
     },
   )
   .post("/models/:id/test", async (c) => {
-    const { profile } = await getModel(c.env, c.req.param("id"));
+    const { profile } = await getModelProfile(c.env, c.req.param("id"), undefined, null);
     return c.json(await probe(c.env, profile.id, profile.version));
   })
-  .post("/models/:id/vision", async (c) => c.json(await probeVision(c.env, c.req.param("id"))))
+  .post("/models/:id/vision", async (c) => {
+    await getModelProfile(c.env, c.req.param("id"), undefined, null);
+    return c.json(await probeVision(c.env, c.req.param("id")));
+  })
   .post("/devices/:id/revoke", async (c) => {
     await c.env.DB.prepare("UPDATE devices SET revoked=1 WHERE id=?").bind(c.req.param("id")).run();
     return c.json({ ok: true });
@@ -586,6 +632,7 @@ export const admin = adminBase
       try {
         const result = await egress<Record<string, string>>(c.env, {
           kind: "trace",
+          region: egressRegionSchema.parse(c.req.query("region") ?? "us"),
         });
         for (const [key, value] of Object.entries(result)) checks[`workerEgress_${key}`] = value;
       } catch (error) {

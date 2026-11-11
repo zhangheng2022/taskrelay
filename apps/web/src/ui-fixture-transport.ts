@@ -55,15 +55,29 @@ export function createFixtureTransport(options: URLSearchParams): Transport {
     devices: [],
     challenges: [],
     serverTime: new Date().toISOString(),
+    modelConnections: options.has("admin")
+      ? [
+          {
+            id: "conn_test",
+            name: "演示连接",
+            kind: "provider",
+            provider: "openai",
+            bindingVerified: true,
+            gatewayProvider: "openai",
+            defaultRegion: "us",
+            keyAlias: "preview",
+          },
+        ]
+      : undefined,
     models: [
       {
         id: "fixture_model",
         version: 1,
         name: "演示模型",
-        baseUrl: "https://example.com/v1",
+        connectionId: "conn_test",
         model: "fixture",
         protocol: "chat",
-        hasKey: true,
+        region: "inherit",
         inputPrice: null,
         outputPrice: null,
         capabilities: {
