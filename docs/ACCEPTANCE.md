@@ -6,7 +6,9 @@
 
 源码验收通过 584 项测试，其中共享 UI 86 项。类型、静态检查、Web 构建、仓库结构及工作流检查通过。
 
-部署准备命令在本机返回 `CLOUDFLARE_TOKEN_REQUIRED`。生产 D1、线上领取开关、网关路由和 Worker Secrets 均未变更。本轮待部署验收包括三种后台区域、上游出口与重定向、网关正文日志、免费 Workers AI 额度、真实第三方调用、自定义服务、Stagehand 任务和已安装系统入口。切换步骤见[部署说明](DEPLOYMENT.md#模型出站实现)。
+生产账户已创建认证网关 taskrelay，启用供应商凭据要求，关闭缓存和自动重试，Workers AI 采用标准计费。无令牌的模型列表请求返回 401。生产 Worker 已分别绑定仅限 AI Gateway Run 和 Workers AI Read 的加密 Secret。已核实现网平台模型为 gpt-6.1-sol、Responses、OpenAI 官方 /v1，并登记同一主机用于自定义兼容端点验收。此阶段尚未执行生产 D1 迁移或切换领取。
+
+提交 65c7504 的托管 CI 全部通过，含 Linux 覆盖率、Windows 测试、CodeQL、依赖和密钥扫描、Web 构建、托管 Windows 安装及冒烟。三种后台区域、上游出口与重定向、网关正文日志、免费 Workers AI、真实第三方调用、自定义服务及 Stagehand 任务仍须在网关路径上验收。切换步骤见[部署说明](DEPLOYMENT.md#模型出站实现)。
 
 ## 2026-11-11 Web 端 shadcn 组件复用（本地）
 
