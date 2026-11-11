@@ -128,6 +128,33 @@ test("全部清理固定目标，重复请求不删除之后新建的聊天，�
   );
 });
 
+test("批写统计不能阻塞已清空的队首，也不能提前完成仍有下一批正文的目标", async (t) => {
+  const s = await setup(t);
+  for (let i = 0; i < 105; i++)
+    seedMessage(s.sql, {
+      id: "batch_" + i,
+      thread_id: s.thread,
+      seq: i + 10,
+      role: "user",
+      content: "待清理",
+      turn_id: "turn",
+      at: Date.now(),
+    });
+  const job = await beginCleanup(s.env, s.run.userId, "all", null, "cleanup_progress");
+  const batch = s.env.DB.batch.bind(s.env.DB);
+  t.mock.method(s.env.DB, "batch", async (statements: D1PreparedStatement[]) =>
+    (await batch(statements)).map((r) => ({ ...r, meta: { ...r.meta, changes: 1 } })),
+  );
+  await drain(s);
+  const [done] = await cleanupJobs(s.env, s.run.userId, job.id);
+  assert.equal(done.status, "done");
+  assert.equal(done.completed, done.total);
+  assert.equal(
+    s.sql.prepare("SELECT COUNT(*) n FROM ai_messages WHERE thread_id=?").get(s.thread)?.n,
+    0,
+  );
+});
+
 test("清空保留暂停入口，后台只清旧运行和旧聊天，新消息不受影响", async (t) => {
   const s = await setup(t);
   const response = await s.request("/api/user/history-cleanups", {
