@@ -130,6 +130,7 @@ for (const changingNetworkFacts of [false, true])
     assert.equal(result.finish.status, "succeeded");
     assert.equal(result.clicks, 2);
     assert.equal(result.navigations, 1);
+    assert.equal(result.networkSamples, 1);
     assert.ok(result.browserUrls.includes(longUrl));
     const decisions = result.calls.filter(
       (c) => c.path.endsWith("/model") && c.body.purpose === "decision",
@@ -623,7 +624,15 @@ async function scenario(
       throw Error("RAW_SELECTOR_PATH_MUST_NOT_BE_USED");
     },
   };
+  let networkSamples = 0;
   const port: RuntimePort = {
+    ...(options.networkFacts
+      ? {
+          networkEvent: () => {
+            networkSamples++;
+          },
+        }
+      : {}),
     cancelled: () => cancelled,
     checkpoint: async (state, payload) => {
       checkpoints.push({ state, payload });
@@ -816,32 +825,46 @@ async function scenario(
             }),
           },
         }) as any,
-      startProxy: async () => ({
-        port: 1,
-        ...(options.networkFacts
-          ? {
-              diagnostics: () => {
-                const facts = Array.from({ length: 8 }, () => ({
-                  host: "example.com",
-                  code: "ERR_CONNECTION_RESET",
-                  at: new Date(
-                    Date.UTC(2026, 10, 8) +
-                      (options.changingNetworkFacts ? networkSnapshots.length * 1000 : 0),
-                  ).toISOString(),
-                }));
-                networkSnapshots.push(facts);
-                return facts;
-              },
-            }
-          : {}),
-        close: async () => {
-          closed = true;
-        },
-      }),
+      startProxy: async (logging) => {
+        if (logging) {
+          assert.equal(logging.entryHost, "example.com");
+          logging.event({
+            at: new Date().toISOString(),
+            phase: "dns",
+            query: "A",
+            connection: 1,
+            result: "ok",
+            elapsedMs: 1,
+          });
+        }
+        return {
+          port: 1,
+          ...(options.networkFacts
+            ? {
+                diagnostics: () => {
+                  const facts = Array.from({ length: 8 }, () => ({
+                    host: "example.com",
+                    code: "ERR_CONNECTION_RESET",
+                    at: new Date(
+                      Date.UTC(2026, 10, 8) +
+                        (options.changingNetworkFacts ? networkSnapshots.length * 1000 : 0),
+                    ).toISOString(),
+                  }));
+                  networkSnapshots.push(facts);
+                  return facts;
+                },
+              }
+            : {}),
+          close: async () => {
+            closed = true;
+          },
+        };
+      },
       delay: async () => {},
     },
   );
   return {
+    networkSamples,
     networkSnapshots,
     calls,
     checkpoints,
