@@ -14,6 +14,29 @@ const decision = (start = true) =>
     accountId: null,
     executionOutline: start ? ["打开目标网站", "读取页面内容并反馈"] : [],
   });
+test("普通咨询的矛盾交办标记只修复一次，始终不提交缺少目标的任务", async (t) => {
+  const s = await productionModelFixture(t);
+  const thread = (await s.request("/api/user/threads", { modelId: "model_test" })).data;
+  const send = (requestId: string) =>
+    s.request(`/api/user/threads/${thread.id}/messages`, {
+      requestId,
+      content: "日本的首都是哪里？",
+    });
+  const reply = { ...JSON.parse(decision(false)), reply: "东京。" };
+  const invalid = JSON.stringify({ ...reply, start: true });
+  s.replies(invalid, JSON.stringify(reply));
+  const fixed = await send("repair_handoff");
+  assert.equal(fixed.data.messages.at(-1).content, "东京。");
+  assert.ok(!fixed.data.taskId);
+  assert.equal(s.requests.length, 2);
+  s.replies(invalid, invalid);
+  const failed = await send("invalid_again");
+  assert.equal(failed.data.status, "failed");
+  assert.equal(failed.data.error, "MODEL_INVALID_JSON");
+  assert.ok(!failed.data.taskId);
+  assert.equal(s.requests.length, 4);
+  assert.equal(s.sql.prepare("SELECT count(*) n FROM runs WHERE thread_id=?").get(thread.id)!.n, 0);
+});
 for (const protocol of ["chat", "responses"] as const)
   test(`新交办/${protocol}：意图检查后直接启动，同一会话且重复发送不重复启动`, async (t) => {
     const s = await productionModelFixture(t, protocol),
