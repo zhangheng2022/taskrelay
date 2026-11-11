@@ -10,6 +10,8 @@ export type AppEnv = Omit<
   | "EVIDENCE"
   | "DEV_MODE"
   | "ACCESS_AUD"
+  | "AI_GATEWAY_ACCOUNT_ID"
+  | "AI_GATEWAY_ID"
   | "MODEL_EGRESS"
   | "AUTH_BASE_URL"
   | "REGISTRATION_OPEN"
@@ -24,6 +26,10 @@ export type AppEnv = Omit<
   BROWSER_STATES: DurableObjectNamespace<BrowserStateStore>;
   NOTIFICATIONS: DurableObjectNamespace<NotificationHub>;
   EVIDENCE?: R2Bucket;
+  AI_GATEWAY_ACCOUNT_ID?: string;
+  AI_GATEWAY_ID?: string;
+  AI_GATEWAY_TOKEN?: string;
+  WORKERS_AI_TOKEN?: string;
   MASTER_KEY: string;
   RELEASE_SHA?: string;
   DEV_MODE: string;

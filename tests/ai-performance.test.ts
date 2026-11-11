@@ -6,7 +6,7 @@ import { HumanMessage } from "@langchain/core/messages";
 import { D1Checkpointer } from "../apps/cloud/src/ai/checkpointer";
 import { seal, unseal } from "../apps/cloud/src/crypto";
 import { identity } from "../apps/cloud/src/identity";
-import { getModel, getModelProfile } from "../apps/cloud/src/models";
+import { getModelProfile } from "../apps/cloud/src/models";
 import { productionModelFixture } from "./production-model-fixture";
 import { testDb } from "./helpers";
 import type { AppEnv } from "../apps/cloud/src/env";
@@ -69,15 +69,10 @@ test("认证实例仅复用静态配置，数据库和认证/邮件配置变化�
   assert.notEqual(identity(env), identity({ ...env, MAIL_FROM: "changed@example.com" }));
 });
 
-test("读取模型能力不解密凭据，只有实际提供方路径读取密钥", async (t) => {
+test("能力读取不需要网关运行令牌", async (t) => {
   const s = await productionModelFixture(t);
-  s.sql
-    .prepare(
-      "UPDATE model_profile_versions SET secret='corrupt' WHERE id='model_test' AND version=1",
-    )
-    .run();
+  delete s.env.AI_GATEWAY_TOKEN;
   const { profile } = await getModelProfile(s.env, "model_test", 1);
-  assert.equal(profile.version, 1);
   assert.equal(profile.capabilities.connection, true);
-  await assert.rejects(getModel(s.env, "model_test", 1));
+  assert.equal(profile.effectiveRegion, "us");
 });

@@ -5,7 +5,6 @@ import assert from "node:assert/strict";
 import { app } from "../apps/cloud/src/index";
 import type { AppEnv } from "../apps/cloud/src/env";
 import { claim, enqueue } from "../apps/cloud/src/store";
-import { seal } from "../apps/cloud/src/crypto";
 import { hash } from "../packages/contracts/src/security";
 import { testDb, insertTask } from "./helpers";
 import { attachTestEgress } from "./egress-helpers";
@@ -14,29 +13,39 @@ export async function productionModelFixture(
   t: TestContext,
   protocol: "chat" | "responses" = "chat",
   structured: "schema" | "json" | "none" = "schema",
+  personal = false,
 ) {
   const { db, sql } = testDb();
   t.after(() => sql.close());
   const key = Buffer.alloc(32, 9).toString("base64"),
     token = "c".repeat(64);
   // A newer configuration must never replace the version in the run snapshot.
+  if (personal) {
+    sql.exec("BEGIN");
+    sql.exec(
+      "INSERT INTO model_connections(id,name,owner_user_id,kind,provider,key_alias,default_region,binding_verified) VALUES('private_conn','private','fixture_owner','provider','openai','personal-key','us',1)",
+    );
+    sql.exec(
+      "INSERT INTO models(id,current_version,created_at,owner_user_id) VALUES('model_test',1,1,'fixture_owner')",
+    );
+  }
   for (const version of [1, 2]) {
     await db
       .prepare(
-        "INSERT INTO model_profile_versions(id,version,config,secret,capabilities,created_at) VALUES(?,?,?,?,?,?)",
+        "INSERT INTO model_profile_versions(id,version,config,connection_id,effective_region,capabilities,created_at) VALUES(?,?,?,?,'us',?,?)",
       )
       .bind(
         "model_test",
         version,
         JSON.stringify({
           name: "fixture",
-          baseUrl: "https://provider.example/v1",
+          region: "inherit",
           model: version === 1 ? "vendor/non-gpt" : "do-not-select",
           protocol,
           inputPrice: null,
           outputPrice: null,
         }),
-        await seal("fixture-key", key, `model:model_test:${version}`),
+        personal ? "private_conn" : "conn_test",
         JSON.stringify({
           connection: true,
           tools: true,
@@ -48,6 +57,7 @@ export async function productionModelFixture(
       )
       .run();
   }
+  if (personal) sql.exec("COMMIT");
   const task = await insertTask(db);
   await enqueue(db, task, "model_fixture");
   await db
@@ -74,8 +84,13 @@ export async function productionModelFixture(
         Status: 0,
         Answer: [{ type: 1, data: "8.8.8.8" }],
       });
-    assert.ok(url.startsWith("https://provider.example/v1/"));
+    assert.ok(
+      url.startsWith(
+        "https://gateway.ai.cloudflare.com/v1/ffffffffffffffffffffffffffffffff/fixture/openai/",
+      ),
+    );
     assert.equal(init?.redirect, "manual");
+    if (personal) assert.equal(new Headers(init?.headers).get("cf-aig-byok-alias"), "personal-key");
     requests.push({ url, body: jsonBody(init?.body) });
     let reply = responder ? responder(requests.at(-1)!.body) : replies.shift();
     // This fixture supplies a model answer, including the current conversation decision contract.

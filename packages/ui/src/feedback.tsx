@@ -154,6 +154,12 @@ export function ErrorText({ error }: { error: string }) {
     CANNOT_DISABLE_SELF: "不能停用当前管理员账号。",
     DEVICE_SCOPE_REJECTED: "执行器不能访问任务管理功能。",
 
+    WORKERS_AI_FREE_LIMIT: "Workers AI 当日免费额度已用尽，北京时间 08:00 重置。",
+    WORKERS_AI_PAID_MODEL: "此 Workers AI 模型需要付费计划，请选择免费计划可用的模型。",
+    MODEL_GATEWAY_BINDING_REQUIRED: "请管理员在 Cloudflare 登记该连接的密钥并核验绑定。",
+    MODEL_GATEWAY_NOT_CONFIGURED: "平台网关配置不完整，请管理员检查运行令牌、账户和网关 ID。",
+    MODEL_CONNECTION_NOT_FOUND: "模型连接不可用，请重新选择供应商连接。",
+    WORKERS_AI_MODEL_INVALID: "请填写完整的 @cf/作者/模型 标识。",
     MODEL_HTTP_403_UNSUPPORTED_REGION:
       "请求被模型服务判定来自不支持的地区。请使用支持当前使用地区的兼容服务，或联系服务商确认可用性。",
     MODEL_HTTP_403_PERMISSION: "模型服务拒绝访问。请检查 API Key 所属项目和模型权限。",

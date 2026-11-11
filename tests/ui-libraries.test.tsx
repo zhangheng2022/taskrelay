@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { render, fireEvent, cleanup, waitFor, act } from "@testing-library/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { QueryBoundary, useTransportQuery } from "../packages/ui/src/queries";
+import { ModelConnections } from "../packages/ui/src/model-connections";
 import { ModelDialog } from "../packages/ui/src/model-dialog";
 import { AdminPanel } from "../packages/ui/src/admin-panel";
 import { AuthGate } from "../packages/ui/src/auth-gate";
@@ -119,19 +120,35 @@ test("查询去重、首次读取中通知取消旧请求、用户切换清缓�
   assert.equal(clients[1].getDefaultOptions().mutations?.retry, false);
 });
 
-test("模型表单保留编辑草稿、Zod 阻止无效预算、请求失败清密钥且不重试", async () => {
+test("模型表单保留编辑草稿、Zod 阻止无效预算、使用网关连接且请求失败不重试", async () => {
   let calls = 0;
   const transport = transportWith(async () => {
     calls++;
     throw Error("REQUEST_UNCONFIRMED");
   });
   const original = { ...snapshot.models[0], contextTokens: 16000, outputTokens: 4096 };
-  const props = { transport, onClose: () => {}, onSaved: async () => {} };
+  const props = {
+    connections: [
+      {
+        kind: "provider" as const,
+        provider: "openai" as const,
+        id: "conn_test",
+        name: "OpenAI",
+        defaultRegion: "auto" as const,
+        bindingVerified: true,
+        gatewayProvider: "openai",
+        keyAlias: "test",
+      },
+    ],
+    transport,
+    onClose: () => {},
+    onSaved: async () => {},
+  };
   const view = render(<ModelDialog {...props} value={original} />);
   fireEvent.change(view.getByLabelText("配置名称"), { target: { value: "我的编辑" } });
   view.rerender(<ModelDialog {...props} value={{ ...original, name: "后台版本", version: 2 }} />);
   assert.equal((view.getByLabelText("配置名称") as HTMLInputElement).value, "我的编辑");
-  const url = view.getByLabelText("Base URL") as HTMLInputElement;
+  const url = view.getByLabelText("供应商连接") as HTMLInputElement;
   const originalUrl = url.value;
   fireEvent.change(url, { target: { value: "" } });
   fireEvent.change(view.getByLabelText("输出预留（token）"), { target: { value: "8192" } });
@@ -155,10 +172,9 @@ test("模型表单保留编辑草稿、Zod 阻止无效预算、请求失败清�
   fireEvent.change(view.getByLabelText("上下文预算（token，保守估计）"), {
     target: { value: "32000" },
   });
-  fireEvent.change(view.getByLabelText("API Key"), { target: { value: "test-secret" } });
   fireEvent.submit(view.getByRole("button", { name: "保存配置" }).closest("form")!);
   await waitFor(() => assert.equal(calls, 1));
-  await waitFor(() => assert.equal((view.getByLabelText("API Key") as HTMLInputElement).value, ""));
+  assert.equal(view.queryByLabelText("API Key"), null);
   assert.equal((view.getByLabelText("配置名称") as HTMLInputElement).value, "我的编辑");
   assert.equal(calls, 1);
 });
@@ -258,3 +274,57 @@ async function invalidRpcTypes(transport: Transport) {
   await client.api.admin.models[":id"].$put({ json: {} });
 }
 void invalidRpcTypes;
+
+test("供应商连接表单登记自定义前缀、修改默认区域并保留服务端分配的标识", async () => {
+  const calls: { method: string; path: string; body: unknown }[] = [];
+  let refreshed = 0;
+  const transport = transportWith(async (method, path, body) => {
+    calls.push({ method, path, body });
+    return { ok: true };
+  });
+  const view = render(
+    <ModelConnections
+      transport={transport}
+      refresh={async () => {
+        refreshed++;
+      }}
+      connections={[
+        {
+          id: "conn_test",
+          name: "测试",
+          kind: "custom",
+          upstream: "https://example.com/v1",
+          keyAlias: "alias",
+          gatewayProvider: "custom-demo",
+          defaultRegion: "us",
+          bindingVerified: false,
+        },
+      ]}
+    />,
+  );
+  fireEvent.click(view.getByText("供应商连接"));
+  fireEvent.change(view.getByLabelText("测试 · 请求发起区域"), { target: { value: "eu" } });
+  await waitFor(() => assert.equal(refreshed, 1));
+  assert.deepEqual(calls[0], {
+    method: "PUT",
+    path: "/api/admin/model-connections/conn_test/region",
+    body: { expectedRegion: "us", defaultRegion: "eu" },
+  });
+  fireEvent.change(view.getByLabelText("连接名称"), { target: { value: "接入" } });
+  fireEvent.change(view.getByLabelText("连接类型"), { target: { value: "custom" } });
+  fireEvent.change(view.getByLabelText("公网 HTTPS 服务地址"), {
+    target: { value: "https://new.example/v2" },
+  });
+  fireEvent.submit(view.getByText("创建连接").closest("form")!);
+  await waitFor(() => assert.equal(refreshed, 2));
+  assert.deepEqual(calls[1], {
+    method: "POST",
+    path: "/api/admin/model-connections",
+    body: {
+      name: "接入",
+      kind: "custom",
+      upstream: "https://new.example/v2",
+      defaultRegion: "auto",
+    },
+  });
+});

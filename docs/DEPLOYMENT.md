@@ -47,7 +47,7 @@
 
 当前部署目标以 [Wrangler 配置](../apps/web/wrangler.jsonc) 为准：Worker 为 `taskrelay`，D1 绑定名为 `DB`，数据库为 `taskrelay-v2-20261108`。配置中的数据库 ID、DO 迁移和绑定是结构权威，不在本文复制第二套清单。旧 `taskrelay` 业务 D1 已删除，不能用作当前迁移或回退目标。
 
-Cloudflare 保持 Free，生产不绑定 R2；普通 Worker 负责轻量路由，业务与后台模型调用进入 SQLite DO。模型调用保留美国 jurisdiction 与 alarm，详见[模型出站实现](#模型出站实现)。不得自动切换付费服务。
+Cloudflare 保持 Free，生产不绑定 R2；普通 Worker 负责轻量路由，业务与后台模型调用进入 SQLite DO。模型调用按版本选区并经过 alarm 和 AI Gateway，详见[模型出站实现](#模型出站实现)。不得自动切换付费服务。
 
 主站与 workers.dev 使用应用会话认证；设备 bearer 只访问设备接口。历史 Access 配置标识及当时权限验证收录于[历史补充证据](ACCEPTANCE.md#历史部署补充证据)，不作为当前外部配置的实时保证。故障处理遵循[发布恢复](#发布)，不得更换 MASTER_KEY 或恢复旧设备管理接口。
 
@@ -75,7 +75,7 @@ GitHub [上传接口会改写特殊文件名](https://docs.github.com/en/rest/re
 
 领取事务内再次检查暂停/维护开关，阻止早先读到旧开关的并发领取；管理员不能在未完成发布期间覆盖领取开关。旧结构的 `0028_release_claim_barrier.sql` 是历史迁移，当前基线已包含此保护，不应重复应用旧迁移。
 
-`MASTER_KEY` 已配置为 Workers Secret。**不要再次执行初次密钥生成脚本，不要覆盖现有主密钥。** 现有模型密钥、账号密码和短期回复都依赖它解密。迁移/恢复时必须同时保留该密钥和 D1 数据。仓库及诊断包不保存主密钥；需要持有者从自己的秘密管理设施维护备份和轮换策略。
+`MASTER_KEY` 已配置为 Workers Secret。**不要再次执行初次密钥生成脚本，不要覆盖现有主密钥。** 账号密码、短期回复和历史备份中的旧模型密文依赖它解密。迁移/恢复时必须同时保留该密钥和 D1 数据。仓库及诊断包不保存主密钥；需要持有者从自己的秘密管理设施维护备份和轮换策略。
 
 新部署到另一账号时，先创建空 D1 并配置应用认证，替换 wrangler 配置，保留 SQLite DO 迁移，再对该全新空库执行一次 `node scripts/provision-secret.mjs --initial-empty-database`。Access 仅作为可选外层限制，不创建 R2。脚本通过标准输入传递随机密钥，不输出或落盘。
 
@@ -95,7 +95,14 @@ GitHub [上传接口会改写特殊文件名](https://docs.github.com/en/rest/re
 
 ## 模型出站实现
 
-所有能力测试、任务解析、Stagehand 模型回调及人工协助解析统一经过 `MODEL_EGRESS`，由美国区域 Durable Object 的 alarm 发起上游请求。网页和设备请求只提交加密的推理作业，不转发原始 Request、IP 或地区头。API Key 仍由云端从 D1 解密，网站和客户端均拿不到明文。缺少出站绑定会明确失败，不回退到带访问者上下文的直接请求。
+1. 在已提供管理令牌的环境运行 `node scripts/prepare-model-gateway.mjs --create`，仅创建缺失网关；省略参数即可只读核验。也可在 wrangler.jsonc 指定的账号创建认证网关 `taskrelay`，开启 Require provider credentials（byok_only），使用 Workers AI Standard billing，保持 Free 计划。缓存 TTL 为 0，关闭自动重试、统一计费回退和正文存储。每个运行请求额外发送只保留元数据、跳过缓存、只尝试一次的请求头。
+2. 通过 Workers Secret 为部署服务设置 `AI_GATEWAY_TOKEN`（AI Gateway Run）及 `WORKERS_AI_TOKEN`（账户 Workers AI Read）。`AI_GATEWAY_ACCOUNT_ID` 与 `AI_GATEWAY_ID` 是公开的部署变量。管理网关和 Secrets Store 使用独立管理凭据。不要轮换 MASTER_KEY。网关账号、认证及路由核对完成后才进入数据切换。
+3. 先用同构的隔离部署验收三种区域、两种协议、流式与真实桌面 Stagehand 任务。单次切换的发布预检读取网关配置和 Worker Secret 名称，需赋予生产发布令牌相应的只读权限。先排空队列，再在公共池暂停领取并排空当前执行；确认排队任务已处置、旧调度无需延续。使用现有 Production Release，保留 D1 bookmark。迁移 0007 关闭旧模型和活动调度、移除旧密钥列；该迁移之后旧程序不可直接回滚。需恢复时使用同一恢复点和匹配的旧程序。
+4. 在管理员「设置 → 模型 → 供应商连接」登记连接。第三方在该网关 Provider Keys 按显示的供应商和密钥别名保存 API Key。自定义类型在 Cloudflare 创建 Custom Provider：slug 取界面显示的网关供应商标识去掉 `custom-`，base URL 只填上游 origin；已保存的路径前缀由 TaskRelay 追加。连接发布后不要在 Cloudflare 将该 slug 改指其他主机。变更目的地址或供应商账号须创建新连接。Workers AI 直接使用免费可用的 `@cf/作者/模型`，不需要供应商密钥。
+   第三方与自定义连接登记后，用配置服务凭据运行 `node scripts/prepare-model-gateway.mjs --verify-connection <连接ID>`，核对该网关真实密钥别名、供应商和自定义上游，再允许该连接出站。配置服务需要读取网关、Custom Provider、Provider Keys 并更新 D1 的权限。Workers AI 由账户令牌认证。自定义端点验收使用受控重定向和一次性测试密钥，确认目的域不会收到跨域凭据；Worker 的重定向设置只控制到 Cloudflare 的一跳。
+
+5. 新建模型，选择连接和请求发起区域，测试连接、工具、结构化、视觉及流式能力。已有成功条件卡的任务可以重新选模；其他旧交办可使用新模型重新交办。历史聊天与用量仍绑定原版本。核对网关元数据、无正文、使用量和地区证据，首次切换由发布脚本保持领取暂停，记录中保留 oldClaims。先在隔离部署用同版执行器实测 Stagehand；生产模型探测和聊天通过后，恢复原领取开关并观察首个受控任务。若需先在生产运行唯一验收任务，应在无其他待领任务的受控窗口执行。管理员访问 `/api/admin/settings/check?egress=1&region=eu` 可读取后台对象的 jurisdiction 和到 OpenAI 的诊断结果，依次替换为 auto、us、eu。网关到供应商的实际出口需核对供应商侧记录。
+6. 普通用户只可使用启用的平台模型或本人的私有模型。个人密钥自助登记属于后续交付；先核对 Secrets Store 的账户容量。
 
 普通 Worker 即使指定美国 placement，实际测试仍可能向 OpenAI 保留访问者的地区上下文：2026-11-03 实测执行位置 `remote-IAD`，但 OpenAI trace 的 `loc=HK`，模型返回 `unsupported_country_region_territory`。改为独立 alarm 后，同次诊断分别显示普通请求 `HK/HKG`、后台请求 `US/IAD`（另一次为 `US/ATL`），现有 `gpt-6-luna / Responses` 的连接、工具和严格 Schema 测试全部通过。因此没有保留无效的全站 placement 提示，也没有伪造地区头。
 

@@ -5,14 +5,13 @@ import { infer } from "../packages/model/src/index";
 import { outputSchema } from "../packages/model/src/schema";
 import type { ModelProfile } from "../packages/contracts/src/index";
 import { executorTools, executorArguments } from "../packages/contracts/src/execution";
-const profile: ModelProfile = {
+const profile: ModelProfile & { baseUrl: string } = {
   id: "test",
   version: 1,
   name: "compatible",
   baseUrl: "https://provider.example/v1",
   model: "vendor/non-gpt-model",
   protocol: "chat",
-  hasKey: true,
   inputPrice: null,
   outputPrice: null,
   capabilities: {

@@ -49,7 +49,7 @@ export interface ModelResponse {
 type Fetcher = (input: string | URL, init?: RequestInit) => Promise<Response>;
 class ModelBoundaryError extends Error {}
 export async function infer(
-  profile: Pick<ModelProfile, "baseUrl" | "protocol" | "model"> &
+  profile: { baseUrl: string } & Pick<ModelProfile, "protocol" | "model"> &
     Partial<Pick<ModelProfile, "capabilities">>,
   key: string,
   request: Inference,
@@ -336,8 +336,19 @@ async function boundedResponse(response: Response, signal: AbortSignal): Promise
   }
   // 兼容提供方可能未带 JSON Content-Type；只允许经过大小限制的 JSON 交给 SDK。
   try {
-    JSON.parse(new TextDecoder().decode(bytes));
-  } catch {
+    const body = JSON.parse(new TextDecoder().decode(bytes));
+    // Cloudflare REST 与兼容协议的错误信封不同；仅返回已知分类，避免 SDK 丢失计费错误。
+    if (!response.ok) {
+      const code = Number(body?.errors?.[0]?.code ?? body?.error?.code);
+      if (code === 3036 && response.status === 429)
+        throw new ModelBoundaryError("WORKERS_AI_FREE_LIMIT");
+      if (code === 5035 && response.status === 403)
+        throw new ModelBoundaryError("WORKERS_AI_PAID_MODEL");
+      if (code === 2009 && response.status === 401)
+        throw new ModelBoundaryError("MODEL_HTTP_401_INVALID_KEY");
+    }
+  } catch (error) {
+    if (error instanceof ModelBoundaryError) throw error;
     throw new ModelBoundaryError(
       response.ok ? "MODEL_INVALID_RESPONSE" : `MODEL_HTTP_${response.status}_GATEWAY_DENIED`,
     );

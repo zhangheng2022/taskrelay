@@ -6,7 +6,7 @@
 
 模型侧使用官方 OpenAI SDK 的 Chat Completions / Responses HTTP 流。公网校验、禁止重定向、60 秒整个响应超时、2 MB 上限、固定错误和 `maxRetries:0` 继续由 adapter 负责；成功流逐块读取，只有终止事件完整到达后返回原有 ModelResponse。文字预览独立发送，工具参数及结构化结果仍完整汇总、校验后交给 LangGraph；Stagehand ClientLLM.generate 也保留完整返回约定。内部摘要、推理分片、工具参数及 Stagehand 输出不发布到聊天正文。
 
-生产路径仍为 `models.invoke → egress → ModelEgress.jurisdiction("us") → alarm`。同一 submitAndWait RPC 等待终态并 ack，流期间没有新增 RPC 轮询。alarm 主动向用户的 NotificationHub 发布草稿，网站连接生命周期不影响任务。每个固定模型配置版本分别记录 text/tools/structured 流能力；未知类型先发送不含用户业务的独立探测。仅明确不支持且同格式非流式控制探测通过后，后续业务选用同模型完整响应；网络故障保持未知。业务调用已发送后的超时、断流、未知结果均不重发或切换模型，调用去重先于能力选择和开关读取。
+生产路径仍为 `models.invoke → egress → ModelEgress（版本固定区域）→ alarm → AI Gateway`。同一 submitAndWait RPC 等待终态并 ack，流期间没有新增 RPC 轮询。alarm 主动向用户的 NotificationHub 发布草稿，网站连接生命周期不影响任务。每个固定模型配置版本分别记录 text/tools/structured 流能力；未知类型先发送不含用户业务的独立探测。仅明确不支持且同格式非流式控制探测通过后，后续业务选用同模型完整响应；网络故障保持未知。业务调用已发送后的超时、断流、未知结果均不重发或切换模型，调用去重先于能力选择和开关读取。
 
 云端规划只预览顶层 reply；协助仅在读到完整 askUser=true 后预览 message。词法解析处理跨块转义、Unicode 与嵌套字段，不用正则截取 JSON。格式修复使用新草稿版本替换旧稿。执行器普通回复正文可先预览；最终选择 ask / offerAccountSave / requestAccountUpdate 时撤下前导草稿，正式问题和确认卡仍由原流程发布。不新增报告或润色回合，草稿不进入历史上下文或改变任务状态。
 
@@ -84,7 +84,7 @@ ZIP 解压与 Squirrel 安装不保证带有 Chromium LPAC 文件权限。Main �
 
 本文描述当前源码。部署与安装见 [DEPLOYMENT](DEPLOYMENT.md)，验证证据与未完成项见 [ACCEPTANCE](ACCEPTANCE.md)。旧版本设计从 Git 历史追溯，不与当前流程并列。
 
-模型 HTTP 协议由官方 OpenAI SDK 接管，SDK 仅在 ModelEgress 的美国区域 alarm 内实例化，禁用自动重试与正文日志；平台 adapter 保留公网地址校验、禁止重定向、整次请求超时、响应大小上限与固定公开错误。标准 Zod 经官方结构化输出 helper 生成 wire Schema，再做提供方格式投影；原始规则仍用于最终校验，Stagehand 原始 JSON Schema 与 JSON 模式集中兼容。模型配置版本、身份、租约、用量与未知结果防重仍由云端拥有。
+模型 HTTP 协议由官方 OpenAI SDK 接管，SDK 仅在 ModelEgress 的区域 alarm 内实例化，禁用自动重试与正文日志；平台 adapter 保留公网地址校验、禁止重定向、整次请求超时、响应大小上限与固定公开错误。标准 Zod 经官方结构化输出 helper 生成 wire Schema，再做提供方格式投影；原始规则仍用于最终校验，Stagehand 原始 JSON Schema 与 JSON 模式集中兼容。模型配置版本、身份、租约、用量与未知结果防重仍由云端拥有。
 
 ## 职责与事实归属
 
@@ -147,7 +147,7 @@ conversation_commands 的排队 INSERT 同时校验命令仍为 committed、原�
 
 用户原话、补充及加密协助回复整体进入执行器与 Stagehand，不拆账号、密码或验证码，不提取 target/value 或原文片段。当前任务 AI 可读取用户提供的站点登录信息；平台模型密钥、设备令牌和其他用户数据不在此范围。
 
-历史由官方 summarizationMiddleware 压缩；先扣除完整用户原文、账号、当前现场、工具定义与输出预留，在剩余预算的 80% 触发并保留约 30% 近期历史。摘要采用任务固定模型并走同一美国出站。公开钩子包装禁止默认裁剪，失败、空摘要、停止、租约失效、工具配对破坏或压缩后仍超限时不提交历史替换；不再自写分块和递归合并。
+历史由官方 summarizationMiddleware 压缩；先扣除完整用户原文、账号、当前现场、工具定义与输出预留，在剩余预算的 80% 触发并保留约 30% 近期历史。摘要采用任务固定模型并走同一网关出站。公开钩子包装禁止默认裁剪，失败、空摘要、停止、租约失效、工具配对破坏或压缩后仍超限时不提交历史替换；不再自写分块和递归合并。
 
 主决策只接收网址、标题、标签页、加载状态及工具反馈，页面内容通过 observe/extract 按需读取。Stagehand 原生页面树、控件编号和 Schema 不经过聊天摘要；动作后仍要求实际读取页面，不能仅凭 URL 清除未知操作。用户原文、账号和现场保存在运行闭包中，在每次模型调用完整注入。云端规划、协助保留业务 StateGraph，其推理节点使用 createAgent 和同一摘要适配；模型转发接口只转发，区分 decision/summary 并返回任务固定的预算元数据。
 
@@ -221,13 +221,15 @@ utilityProcess 创建同步失败也进入 Host 收尾，持久化未启动失�
 
 执行器先脱敏，再对超过 1,500,000 字节的 PNG 等比例缩小，并生成不超过 640×360／160,000 字节的聊天缩略图；不裁剪、不改变遮蔽范围。Main 用 multipart 二进制上传原图与缩略图，旧 Base64 JSON 上传仍可用。云端检查 PNG 结构、CRC、1600 万像素上限、完整压缩流及扫描行，原图和缩略图在同一 Evidence DO 中原子加密保存。相同 captureId 的重传校验运行、代次、用途和原图摘要；仅图片上传遇到暂时网络错误可重试一次，绝不重放浏览器动作或模型推理。截图失败返回固定原因并尝试写入聊天，最终回复保留最终截图失败说明。
 
-Stagehand 视觉输入上传为 `purpose=vision` 的私有临时图片，后续 `/stagehand` 请求及加密模型作业只携带 `imageArtifactId`／`imageRef`，不携带图片 Base64。美国 ModelEgress alarm 在提供方调用前检查用户、运行、聊天、租约代次及有效期，读取并再次校验后展开为 Data URL；Chat Completions、Responses 和结构化修复均沿用该路径。临时图片不允许作为聊天附件或经用户图片接口读取，10 分钟到期，并在运行终态维护时清理；聊天图片仍随聊天保留／删除。没有公开图片链接、R2 或提供方直接拉取私有图片；提供方最后一跳仍使用 Data URL，存储加密内部编码也保留。
+Stagehand 视觉输入上传为 `purpose=vision` 的私有临时图片，后续 `/stagehand` 请求及加密模型作业只携带 `imageArtifactId`／`imageRef`，不携带图片 Base64。ModelEgress alarm 在提供方调用前检查用户、运行、聊天、租约代次及有效期，读取并再次校验后展开为 Data URL；Chat Completions、Responses 和结构化修复均沿用该路径。临时图片不允许作为聊天附件或经用户图片接口读取，10 分钟到期，并在运行终态维护时清理；聊天图片仍随聊天保留／删除。没有公开图片链接、R2 或提供方直接拉取私有图片；提供方最后一跳仍使用 Data URL，存储加密内部编码也保留。
 
 并发上传同一 captureId 时每次请求拥有独立暂存对象，由 D1 图片索引确定唯一发布者；落败请求只清自己的对象。暂存到期由 Evidence alarm 核对发布索引，永久图片不会被重复 alarm 删除；回收孤儿前在 D1 写退休墓碑，索引发布同样检查该墓碑，阻止迟到请求引用已回收对象。D1 提交结果未知时保留对象供后续核对，不直接删除可能已发布的内容。
 
 ## 模型链路与平台 adapter
 
-所有生产模型请求统一为 models.invoke → egress → ModelEgress 的 us jurisdiction 与 alarm → 提供方。结构化输出集中于 models.generateStructured，Zod adapter 负责校验适配；传输或结果未知不进入格式修复重试。
+所有生产模型请求统一为 models.invoke → egress → ModelEgress 的分区与 alarm → Cloudflare AI Gateway → 提供方。结构化输出集中于 models.generateStructured，Zod adapter 负责校验适配；传输或结果未知不进入格式修复重试。
+
+平台与私有模型分别由空或具体 owner_user_id 标识。连接不可变地绑定供应商、上游及托管密钥别名，模型版本保存 connection_id 和发布时解析的 effective_region。自动直接从命名空间创建对象，美国和欧盟通过 jurisdiction 创建。连接默认区域与模型的显式自动值互相独立；只有新发布且选择继承的版本会采用修改后的默认区域。普通用户列表和出站均按可信用户检查归属。设备租约决定运行身份。配置服务读取 Cloudflare 的供应商及密钥记录，比对自定义上游 origin 和托管别名，核验成功的连接才允许出站。网关以专属端点和托管别名调用第三方；Workers AI 使用账户 REST 端点并显式选择同一网关。正文日志、响应缓存和重试关闭。区域约束只适用于本项目的后台对象。
 
 submitAndWait 一次 RPC 完成提交与等待，循环在对象内部。alarm 期间不能新建读取 RPC 替换入站 I/O 上下文，终态才 ack。作业与结果短期加密，未确认记录过期清理。上游调用前持久化 running；中断保持 MODEL_CALL_OUTCOME_UNKNOWN，不重放。workerd 的 MODEL_REGION_REQUIRES_DEPLOYMENT 不得绕过，地区和真实模型证据必须来自部署环境。
 
@@ -268,7 +270,7 @@ D1 负责业务事实；本轮采用独立基线 `apps/cloud/migrations/0001_sto
 | 数据域    | 权威与关联                                                                                   | 正文和安全身份的生命周期                                                                   |
 | --------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
 | 身份      | Better Auth 认证表 → members.auth_id；业务成员显式关联认证用户                               | 新登录只创建自己的成员；旧未绑定成员必须由离线转换显式绑定，不能首次登录接管               |
-| 任务/模型 | tasks.version → task_versions；models.current_version → model_profile_versions               | 主表仅拥有展示/调度或当前指针；版本固化定义和密钥，运行引用固定任务/模型版本               |
+| 任务/模型 | tasks.version → task_versions；models.current_version → model_profile_versions               | 主表仅拥有展示/调度或当前指针；版本固化定义、连接与执行区域，运行引用固定任务/模型版本     |
 | 运行      | runs 以复合外键关联同用户任务版本、聊天与账号                                                | run_snapshots、run_results 可回收；状态、租约、停止、unknown 和浏览器清理事实保留          |
 | 账号      | accounts 拥有账号身份和状态发布指针；account_credential_versions 是凭据唯一权威              | 旧凭据不覆盖；状态候选按原运行、设备和租约发布；退休墓碑与 unknown 锁不随正文清理          |
 | 聊天      | ai_threads → ai_messages → message_bodies；一个 seq 消息流                                   | inbox 串行接收，commands outbox 保证交办提交后投递，ai_dispatch 保证图唤醒，三者不合并职责 |
@@ -313,4 +315,4 @@ Scheduler 每分钟调用 tickSchedules，先检查用户输入处理、资源�
 
 执行协议 19 保持兼容，通过 supportsScheduling 能力扩展登记 devices.schedule_capable；旧执行器不获得新增确认工具，也不能领取 requires_scheduling 运行。新执行器的 context 登记 learning_enabled，逐个工具结果经过 Main 加密 outbox 可靠上报。executionRecordCount 与收到的记录比较；异常、停止、断线及缺少记录均标记不完整。
 
-每次终态由持久化 execution_learning 作业交给独立 AiTurn alarm 和 LangGraph 总结图，使用原运行模型快照与统一美国出站。原最终回复、浏览器释放不等待总结。输入只包含本次截止终态前已收到的操作记录、结果与固定旧经验；模型结果未知不自动重发。总结和改进加密保存，按账号选择最新适用版本，运行入队后固定经验 ID。网页和历史经验不是授权；只能优化方法，不能改变目标、账号、模型或频率。新需求不会被迟到旧总结覆盖。总结列表按每页 50 项加载；清空、删除、撤回和保留期清理同步清除记录及经验，失效原图防止迟到写回。
+每次终态由持久化 execution_learning 作业交给独立 AiTurn alarm 和 LangGraph 总结图，使用原运行模型快照与统一网关出站。原最终回复、浏览器释放不等待总结。输入只包含本次截止终态前已收到的操作记录、结果与固定旧经验；模型结果未知不自动重发。总结和改进加密保存，按账号选择最新适用版本，运行入队后固定经验 ID。网页和历史经验不是授权；只能优化方法，不能改变目标、账号、模型或频率。新需求不会被迟到旧总结覆盖。总结列表按每页 50 项加载；清空、删除、撤回和保留期清理同步清除记录及经验，失效原图防止迟到写回。

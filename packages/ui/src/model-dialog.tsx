@@ -7,6 +7,7 @@ import { z } from "zod";
 import {
   modelInputSchema,
   type ModelInput,
+  type ModelConnection,
   type ModelProfile,
   type Transport,
 } from "../../contracts/src/index";
@@ -25,19 +26,15 @@ import { Field } from "./form-field";
 import { ErrorText } from "./feedback";
 import { createApi, rpcData } from "./api";
 
-const presets = {
-  openai: { name: "OpenAI", baseUrl: "https://api.openai.com/v1" },
-  deepseek: { name: "DeepSeek", baseUrl: "https://api.deepseek.com/v1" },
-  bailian: { name: "百炼", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1" },
-  custom: { name: "", baseUrl: "" },
-};
 export function ModelDialog({
   value,
+  connections,
   transport,
   onClose,
   onSaved,
 }: {
   value: ModelProfile | null;
+  connections: ModelConnection[];
   transport: Transport;
   onClose: () => void;
   onSaved: () => Promise<void>;
@@ -48,10 +45,10 @@ export function ModelDialog({
     resolver: zodResolver(modelInputSchema),
     defaultValues: {
       name: value?.name ?? "",
-      baseUrl: value?.baseUrl ?? "",
+      connectionId: value?.connectionId ?? connections[0]?.id ?? "",
+      region: value?.region ?? "inherit",
       protocol: value?.protocol ?? "chat",
       model: value?.model ?? "",
-      apiKey: "",
       contextTokens: value?.contextTokens ?? 16000,
       outputTokens: value?.outputTokens ?? 4096,
       inputPrice: value?.inputPrice ?? null,
@@ -71,22 +68,15 @@ export function ModelDialog({
     setError("");
     try {
       if (!navigator.onLine) throw Error("NETWORK_OFFLINE");
-      if (!value && !input.apiKey) {
-        form.setError("apiKey", { message: "请填写 API Key" });
-        return;
-      }
       const models = createApi(transport).api.admin.models;
       await rpcData(
         value
           ? models[":id"].$put({ param: { id: value.id }, json: { ...input, expectedVersion } })
           : models.$post({ json: input }),
       );
-      form.setValue("apiKey", "");
       await onSaved();
     } catch (e) {
       setError((e as Error).message);
-    } finally {
-      form.setValue("apiKey", "");
     }
   });
   const price = { setValueAs: (value: string) => (value === "" ? null : Number(value)) };
@@ -103,7 +93,9 @@ export function ModelDialog({
       <DialogContent className="max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{value ? "编辑模型服务" : "添加模型服务"}</DialogTitle>
-          <DialogDescription>保存后请运行能力测试。服务地址必须是公网 HTTPS。</DialogDescription>
+          <DialogDescription>
+            保存后请运行能力测试。区域和供应商连接会保存在此模型版本中。
+          </DialogDescription>
         </DialogHeader>
         {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- 表单捕获输入法 Enter 冒泡，避免中文组合输入误提交。 */}
         <form
@@ -116,23 +108,31 @@ export function ModelDialog({
           }}
         >
           <FieldGroup>
-            <Field label="服务商">
-              <NativeSelect
-                disabled={busy}
-                defaultValue="custom"
-                onChange={(event) => {
-                  const preset = presets[event.target.value as keyof typeof presets];
-                  form.setValue("name", preset.name, { shouldDirty: true });
-                  form.setValue("baseUrl", preset.baseUrl, { shouldDirty: true });
-                }}
-              >
-                {Object.entries(presets).map(([id, preset]) => (
-                  <option key={id} value={id}>
-                    {preset.name || "自定义兼容服务"}
+            <Field
+              label="供应商连接"
+              hint="选择已登记到平台网关的连接。"
+              error={errors.connectionId?.message}
+            >
+              <NativeSelect disabled={busy} required {...form.register("connectionId")}>
+                <option value="">请选择连接</option>
+                {connections.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
                   </option>
                 ))}
               </NativeSelect>
             </Field>
+            <details>
+              <summary>高级设置</summary>
+              <Field label="请求发起区域">
+                <NativeSelect disabled={busy} {...form.register("region")}>
+                  <option value="inherit">跟随连接</option>
+                  <option value="auto">自动</option>
+                  <option value="us">美国</option>
+                  <option value="eu">欧盟</option>
+                </NativeSelect>
+              </Field>
+            </details>
             <FieldGroup className="grid grid-cols-1 gap-5 sm:grid-cols-2">
               <Field label="配置名称" error={errors.name?.message}>
                 <Input disabled={busy} required {...form.register("name")} />
@@ -144,19 +144,6 @@ export function ModelDialog({
                 </NativeSelect>
               </Field>
             </FieldGroup>
-            <Field
-              label="Base URL"
-              hint="例如 https://api.openai.com/v1。也可粘贴与协议对应的完整接口地址。"
-              error={errors.baseUrl?.message}
-            >
-              <Input
-                disabled={busy}
-                required
-                type="url"
-                placeholder="https://api.example.com/v1"
-                {...form.register("baseUrl")}
-              />
-            </Field>
             <Field label="上下文预算（token，保守估计）" error={errors.contextTokens?.message}>
               <Input
                 disabled={busy}
@@ -181,23 +168,6 @@ export function ModelDialog({
                 required
                 placeholder="填写服务商提供的模型标识"
                 {...form.register("model")}
-              />
-            </Field>
-            <Field
-              label="API Key"
-              hint={
-                value
-                  ? "留空保留现有密钥。更新配置会创建新版本。"
-                  : "密钥只会提交到你的 Workers，保存后不会显示明文。"
-              }
-              error={errors.apiKey?.message}
-            >
-              <Input
-                disabled={busy}
-                type="password"
-                autoComplete="new-password"
-                required={!value}
-                {...form.register("apiKey")}
               />
             </Field>
             <FieldGroup className="grid grid-cols-1 gap-5 sm:grid-cols-2">

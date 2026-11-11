@@ -26,7 +26,10 @@ globalThis.fetch = async (input) => {
   const url = input instanceof Request ? input.url : input.toString();
   if (url.startsWith("https://cloudflare-dns.com/dns-query"))
     return Response.json({ Status: 0, Answer: [{ type: 1, data: "8.8.8.8" }] });
-  if (url === "https://provider.example/v1/chat/completions")
+  if (
+    url ===
+    "https://gateway.ai.cloudflare.com/v1/ffffffffffffffffffffffffffffffff/fixture/openai/chat/completions"
+  )
     return Response.json({
       choices: [{ message: { content: JSON.stringify(reply) } }],
       usage: { prompt_tokens: 11, completion_tokens: 7 },
@@ -39,6 +42,9 @@ function profileEnv(bindings: AppEnv) {
   const env = {
     ...bindings,
     DB: applicationDb(bindings.DB),
+    AI_GATEWAY_ACCOUNT_ID: "f".repeat(32),
+    AI_GATEWAY_ID: "fixture",
+    AI_GATEWAY_TOKEN: "fixture",
     DEV_MODE: "0",
     AUTH_SECRET: "isolated-profiling-secret-at-least-32-characters",
     AUTH_BASE_URL: "http://localhost",
@@ -74,21 +80,23 @@ export default {
         env.DB.prepare(
           "INSERT INTO members(id,auth_id,email,role) VALUES('profiler','profiler','profile@example.com','admin')",
         ),
+        env.DB.prepare(
+          "INSERT INTO model_connections(id,name,kind,provider,key_alias,default_region,binding_verified) VALUES('conn_test','fixture','provider','openai','fixture-key','us',1)",
+        ),
         env.DB.prepare("UPDATE members SET daily_models=10000,daily_chat=10000"),
         env.DB.prepare(
-          "INSERT INTO model_profile_versions(id,version,config,secret,capabilities,created_at) VALUES(?,?,?,?,?,?)",
+          "INSERT INTO model_profile_versions(id,version,config,connection_id,effective_region,capabilities,created_at) VALUES(?,?,?,'conn_test','us',?,?)",
         ).bind(
           "model_test",
           1,
           JSON.stringify({
             name: "fixture",
-            baseUrl: "https://provider.example/v1",
+            region: "inherit",
             model: "fixture",
             protocol: "chat",
             inputPrice: null,
             outputPrice: null,
           }),
-          await seal("fixture-only", env.MASTER_KEY, "model:model_test:1"),
           JSON.stringify({
             connection: true,
             tools: true,

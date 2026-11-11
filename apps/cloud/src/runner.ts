@@ -129,7 +129,7 @@ runner.post("/runs/:id/context", async (c) => {
   const current = await getRun(c.env.DB, run.id);
   const profile =
     b.after === 0
-      ? (await getModelProfile(c.env, run.task.modelId, run.task.modelVersion)).profile
+      ? (await getModelProfile(c.env, run.task.modelId, run.task.modelVersion, run.userId)).profile
       : null;
   return c.json({
     messages,
@@ -197,7 +197,12 @@ runner.post("/runs/:id/model", async (c) => {
     })
     .parse(await c.req.json());
   const run = await requireLease(c.env.DB, c.req.param("id"), c.get("deviceId"), b.epoch);
-  const { profile } = await getModelProfile(c.env, run.task.modelId, run.task.modelVersion);
+  const { profile } = await getModelProfile(
+    c.env,
+    run.task.modelId,
+    run.task.modelVersion,
+    run.userId,
+  );
   const images =
     b.purpose === "decision"
       ? await c.env.DB.prepare(
@@ -233,7 +238,7 @@ runner.post("/runs/:id/model", async (c) => {
   )
     throw Error("MODEL_CONTEXT_TOO_LARGE");
   const model = new RelayChatModel(
-    c.env,
+    { ...c.env, requestUserId: run.userId },
     run.task.modelId,
     run.task.modelVersion,
     `execute_${run.id}_${b.requestId}`,
@@ -295,7 +300,12 @@ runner.post("/runs/:id/stagehand", async (c) => {
     })
     .parse(await c.req.json());
   const run = await requireLease(c.env.DB, c.req.param("id"), c.get("deviceId"), b.epoch);
-  const { profile } = await getModelProfile(c.env, run.task.modelId, run.task.modelVersion);
+  const { profile } = await getModelProfile(
+    c.env,
+    run.task.modelId,
+    run.task.modelVersion,
+    run.userId,
+  );
   if (b.image && b.imageArtifactId) throw Error("IMAGE_REFERENCE_INVALID");
   if (b.imageArtifactId)
     await imageReference(c.env, b.imageArtifactId, run.id, run.userId, b.epoch);
@@ -303,7 +313,7 @@ runner.post("/runs/:id/stagehand", async (c) => {
     throw Error("VISION_NOT_SUPPORTED");
   const operation = `stagehand_${run.id}_${b.requestId}`;
   const model = new RelayChatModel(
-    c.env,
+    { ...c.env, requestUserId: run.userId },
     run.task.modelId,
     run.task.modelVersion,
     operation,

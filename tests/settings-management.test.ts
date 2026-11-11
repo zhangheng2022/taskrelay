@@ -119,10 +119,9 @@ test("模型配置编辑 CAS 保留固定版本，并拒绝过期表单", async 
     .get()!.v;
   const input = {
     name: "新版",
-    baseUrl: "https://provider.example/v1",
+    connectionId: "conn_test",
     model: "test",
     protocol: "chat",
-    apiKey: "",
     contextTokens: 16000,
     outputTokens: 4096,
     inputPrice: null,
@@ -408,4 +407,24 @@ test("过量记忆在首次模型请求前失败，保留用户原文与完整�
   const row = s.sql.prepare("SELECT id FROM preference_snapshots WHERE thread_id=?").get(th.id)!;
   assert.equal((await readPreferences(s.env, "fixture_owner", row.id as string)).length, 30);
   assert.ok(JSON.stringify(result.data.messages).includes("我的原话不能被覆盖"));
+});
+
+test("管理员可删除未使用的平台网关模型及版本", async (t) => {
+  const s = await productionModelFixture(t);
+  const model = await s.request("/api/admin/models", {
+    name: "unused",
+    model: "unused",
+    protocol: "chat",
+    connectionId: "conn_test",
+  });
+  assert.equal(model.status, 201);
+  assert.equal(
+    (await s.request(`/api/admin/models/${model.data.id}`, { expectedVersion: 1 }, "DELETE"))
+      .status,
+    200,
+  );
+  assert.equal(
+    s.sql.prepare("SELECT id FROM model_profile_versions WHERE id=?").get(model.data.id),
+    undefined,
+  );
 });

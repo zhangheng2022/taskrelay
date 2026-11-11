@@ -4,8 +4,8 @@ import { stagehandModel } from "../apps/desktop/src/executor/stagehand-model";
 import { productionModelFixture } from "./production-model-fixture";
 
 for (const protocol of ["chat", "responses"] as const)
-  test(`Stagehand ClientLLM 经生产 ${protocol} 入口保留树编号/schema，固定运行模型及美国出站`, async (t) => {
-    const s = await productionModelFixture(t, protocol);
+  test(`Stagehand ClientLLM 经生产 ${protocol} 入口保留树编号/schema，固定运行模型版本、归属与出站`, async (t) => {
+    const s = await productionModelFixture(t, protocol, "schema", protocol === "responses");
     const schema = {
       type: "object",
       properties: { elementId: { type: "string" } },
