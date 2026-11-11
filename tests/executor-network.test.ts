@@ -51,7 +51,8 @@ test(
 );
 
 // Real TCP on both sides; only DNS and the pinned destination are replaced.
-async function tunnelFixture(t: import("node:test").TestContext) {
+async function tunnelFixture(t: import("node:test").TestContext, resetPrimary = false) {
+  const dialed: string[] = [];
   const received: string[] = [],
     targets: net.Socket[] = [],
     origins: net.Socket[] = [],
@@ -66,17 +67,21 @@ async function tunnelFixture(t: import("node:test").TestContext) {
   });
   await new Promise<void>((resolve) => origin.listen(0, "127.0.0.1", resolve));
   const connect = net.connect;
-  t.mock.method(globalThis, "fetch", async (input: unknown) =>
-    Response.json({
+  t.mock.method(globalThis, "fetch", async (input: unknown) => {
+    const url = new URL(requestUrl(input));
+    if (resetPrimary && url.hostname === "cloudflare-dns.com")
+      throw new TypeError("reset", { cause: { code: "ECONNRESET" } });
+    return Response.json({
       Status: 0,
       Answer:
         new URL(requestUrl(input)).searchParams.get("type") === "A"
           ? [{ type: 1, data: "1.1.1.1" }]
           : [],
-    }),
-  );
+    });
+  });
   t.mock.method(net, "connect", (options: any, ...args: any[]) => {
     if (options?.port !== 443) return (connect as any).call(net, options, ...args);
+    dialed.push(options.host);
     const socket = connect({ host: "127.0.0.1", port: (origin.address() as net.AddressInfo).port });
     targets.push(socket);
     return socket;
@@ -88,13 +93,13 @@ async function tunnelFixture(t: import("node:test").TestContext) {
     await proxy.close();
     await new Promise<void>((resolve) => origin.close(() => resolve()));
   });
-  const open = () =>
+  const open = (host = "login.example.com") =>
     new Promise<net.Socket>((resolve, reject) => {
       const req = http.request({
         host: "127.0.0.1",
         port: proxy.port,
         method: "CONNECT",
-        path: "login.example.com:443",
+        path: host + ":443",
       });
       req.on("connect", (res, socket) => {
         clients.push(socket);
@@ -113,7 +118,7 @@ async function tunnelFixture(t: import("node:test").TestContext) {
     socket.write(text);
     assert.equal(String((await response)[0]), "ack");
   };
-  return { events, proxy, open, send, received, targets, origins };
+  return { dialed, events, proxy, open, send, received, targets, origins };
 }
 
 test(
@@ -204,7 +209,7 @@ test("执行器使用固定 HTTPS DNS 并拒绝所有非公网答案，不信任
   assert.deepEqual(await resolvePublicHost("example.com"), [
     { address: "104.20.23.154", family: 4 },
   ]);
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 1);
   for (const address of [
     "198.18.1.19",
     "127.0.0.1",
@@ -284,55 +289,107 @@ test("DNS 仅重试一次传输重置；成功答案仍全量校验，拒绝项�
   await assert.rejects(resolvePublicHost("example.com"), /DNS_LOOKUP_FAILED/);
   assert.equal(counts.get("A"), 1);
 });
-test("入口 A 成功而 AAAA 连续重置时记录每次结果，其他主机和响应正文不进入日志", async (t) => {
-  const events: NetworkEvent[] = [];
+test(
+  "生产 CONNECT 在主解析器重置后使用备用公网 IPv4，不等待 AAAA，仅导出入口查询",
+  { timeout: 5000 },
+  async (t) => {
+    const f = await tunnelFixture(t, true);
+    await f.send(await f.open("other.example.com"), "other");
+    await f.send(await f.open(), "entry");
+    assert.deepEqual(f.dialed, ["1.1.1.1", "1.1.1.1"]);
+    assert.ok(f.events.every((e) => e.connection === 2));
+    assert.deepEqual(
+      f.events
+        .filter((e) => e.phase === "dns")
+        .map((e) => [e.resolver, e.query, e.attempt, e.result, e.reason]),
+      [
+        ["cloudflare", "A", 1, "error", "ECONNRESET"],
+        ["alidns", "A", 2, "ok", undefined],
+      ],
+    );
+  },
+);
+
+test("A 超时或无地址时仍能使用 IPv6，记录真实解析器和 DOM 超时分类", async (t) => {
+  let primaryAEmpty = false;
+  const path: string[] = [];
+  t.mock.method(globalThis, "fetch", async (input: unknown, init: RequestInit) => {
+    const url = new URL(requestUrl(input));
+    const type = url.searchParams.get("type");
+    const primary = url.hostname === "cloudflare-dns.com";
+    assert.equal(url.pathname, primary ? "/dns-query" : "/resolve");
+    assert.equal(url.searchParams.get("name"), "example.com");
+    assert.equal(init.redirect, "error");
+    path.push(url.hostname + "/" + type);
+    if (primaryAEmpty && primary && type === "A") return Response.json({ Status: 0 });
+    if (primary || type === "A") throw new DOMException("timed out", "TimeoutError");
+    return Response.json({ Status: 0, Answer: [{ type: 28, data: "2606:4700:4700::1111" }] });
+  });
+  for (const empty of [false, true]) {
+    primaryAEmpty = empty;
+    path.length = 0;
+    const reasons: string[] = [];
+    assert.deepEqual(
+      await resolvePublicHost("example.com", (e) => {
+        if (e.reason) reasons.push(e.reason);
+      }),
+      [{ address: "2606:4700:4700::1111", family: 6 }],
+    );
+    assert.deepEqual(path, [
+      "cloudflare-dns.com/A",
+      ...(empty ? [] : ["dns.alidns.com/A"]),
+      "cloudflare-dns.com/AAAA",
+      "dns.alidns.com/AAAA",
+    ]);
+    assert.deepEqual(reasons, Array(empty ? 1 : 3).fill("TimeoutError"));
+  }
+});
+
+test("成功时优先公网 IPv4；主备答案夹带私网、协议错误或证书错误立即阻挡", async (t) => {
+  let fallback = false;
+  let mode = "ok";
+  const calls: string[] = [];
   t.mock.method(globalThis, "fetch", async (input: unknown) => {
-    if (new URL(requestUrl(input)).searchParams.get("type") === "AAAA")
-      throw new TypeError("sensitive upstream", { cause: { code: "ECONNRESET" } });
+    const url = new URL(requestUrl(input));
+    calls.push(url.hostname);
+    assert.equal(url.searchParams.get("type"), "A");
+    if (fallback && url.hostname === "cloudflare-dns.com")
+      throw Object.assign(Error(), { code: "ETIMEDOUT" });
+    if (mode === "cert") throw new TypeError("TLS", { cause: { code: "CERT_HAS_EXPIRED" } });
+    if (mode === "malformed") return Response.json({ Status: 0, Answer: [{}] });
+    if (mode === "nxdomain") return Response.json({ Status: 3 });
+    if (mode === "http") return new Response(null, { status: 503 });
+    if (mode === "tc") return Response.json({ Status: 0, TC: true });
     return Response.json({
       Status: 0,
       Answer: [
-        { type: 5, data: "internal.alias" },
         { type: 1, data: "1.1.1.1" },
+        ...(mode === "mixed" ? [{ type: 28, data: "::1" }] : []),
       ],
     });
   });
-  const proxy = await startProxy({ entryHost: "www.baidu.com", event: (e) => events.push(e) });
-  t.after(() => proxy.close());
-  for (const host of ["other.example", "www.baidu.com"]) {
-    const req = http.request({
-      hostname: "127.0.0.1",
-      port: proxy.port,
-      method: "CONNECT",
-      path: host + ":443",
-    });
-    const result = once(req, "connect");
-    req.end();
-    const [res, socket] = await result;
-    socket.destroy();
-    assert.equal(res.statusCode, 403);
+  for (const backup of [false, true]) {
+    fallback = backup;
+    for (const outcome of ["ok", "mixed", "cert", "malformed", "nxdomain", "http", "tc"]) {
+      mode = outcome;
+      calls.length = 0;
+      if (mode === "ok")
+        assert.deepEqual(await resolvePublicHost("example.com"), [
+          { address: "1.1.1.1", family: 4 },
+        ]);
+      else
+        await assert.rejects(
+          resolvePublicHost("example.com"),
+          mode === "mixed"
+            ? /PRIVATE_NETWORK_BLOCKED/
+            : mode === "cert"
+              ? /TLS/
+              : /DNS_LOOKUP_FAILED/,
+        );
+      assert.deepEqual(
+        calls,
+        backup ? ["cloudflare-dns.com", "dns.alidns.com"] : ["cloudflare-dns.com"],
+      );
+    }
   }
-  assert.equal(events.length, 3);
-  assert.ok(
-    events.every(
-      (e) =>
-        e.phase === "dns" &&
-        e.connection === 2 &&
-        e.elapsedMs >= 0 &&
-        !Number.isNaN(Date.parse(e.at)),
-    ),
-  );
-  const a = events.find((e) => e.query === "A")!;
-  assert.deepEqual(
-    [a.attempt, a.result, a.httpStatus, a.dnsStatus, a.answers],
-    [1, "ok", 200, 0, 1],
-  );
-  assert.deepEqual(
-    events.filter((e) => e.query === "AAAA").map((e) => [e.attempt, e.result, e.reason]),
-    [
-      [1, "error", "ECONNRESET"],
-      [2, "error", "ECONNRESET"],
-    ],
-  );
-  assert.doesNotMatch(JSON.stringify(events), /internal.alias|sensitive|1\.1\.1\.1|other\.example/);
 });

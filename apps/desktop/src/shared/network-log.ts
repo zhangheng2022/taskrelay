@@ -20,6 +20,8 @@ const reasons = z.enum([
 ]);
 export function networkReason(error: unknown): z.infer<typeof reasons> {
   const e = error as { cause?: { code?: unknown }; code?: unknown; name?: unknown } | null;
+  // AbortSignal.timeout 的 DOMException 同时带有数值 code 与 TimeoutError 名称。
+  if (e?.name === "TimeoutError") return "TimeoutError";
   return reasons.safeParse(e?.cause?.code ?? e?.code ?? e?.name).data ?? "OTHER";
 }
 export const networkEventSchema = z
@@ -30,6 +32,7 @@ export const networkEventSchema = z
     result: z.enum(["ok", "error", "timeout", "closed", "blocked"]),
     elapsedMs: z.number().int().nonnegative(),
     query: z.enum(["A", "AAAA"]).optional(),
+    resolver: z.enum(["cloudflare", "alidns"]).optional(),
     attempt: z.union([z.literal(1), z.literal(2)]).optional(),
     httpStatus: z.number().int().min(100).max(599).optional(),
     dnsStatus: z.number().int().min(0).max(4095).optional(),
