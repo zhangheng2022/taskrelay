@@ -106,12 +106,12 @@ export function useThread(
     (async () => {
       const list = await rpcData(
         createApi(transport).api.user.threads.$get({
-          query: { modelId, ...(taskId ? { taskId } : { unattached: "true" as const }) },
+          query: taskId ? { taskId } : { modelId, unattached: "true" as const },
         }),
       );
       if (generation.current !== g) return;
       const found = list.items.find(
-        (t) => t.model_id === modelId && (t.task_id ?? undefined) === taskId,
+        (t) => (taskId ? t.task_id === taskId : t.model_id === modelId && !t.task_id),
       );
       const p = found
         ? await rpcData(
@@ -298,6 +298,34 @@ export function useThread(
       }
     }
   }
+  async function changeModel(modelId: string) {
+    const p = current.current;
+    if (!p || writing.current) throw Error("THREAD_MODEL_CONFLICT");
+    if (attempt.current) throw Error("请先重试上一条消息以确认结果，再切换模型");
+    const g = generation.current;
+    writing.current = true;
+    revision.current++;
+    try {
+      const next = await rpcData(
+        createApi(transport).api.user.threads[":id"].model.$put({
+          param: { id: p.id },
+          json: { modelId, expectedVersion: p.version },
+        }),
+      );
+      if (g === generation.current) {
+        accept(mergeLatest(current.current!, next));
+        setError("");
+      }
+    } finally {
+      if (g === generation.current) {
+        writing.current = false;
+        revision.current++;
+        void refresh().catch((e) => {
+          if (g === generation.current) setError(e.message);
+        });
+      }
+    }
+  }
   async function older() {
     const p = current.current;
     if (!p || loadingOlder.current || !p.nextCursor) return;
@@ -345,5 +373,5 @@ export function useThread(
         if (g === generation.current) setLoading(false);
       });
   }
-  return { page, error, loading, sending, retry, send, refresh, older };
+  return { page, error, loading, sending, retry, send, refresh, older, changeModel };
 }

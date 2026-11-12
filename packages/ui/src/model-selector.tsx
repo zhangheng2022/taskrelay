@@ -61,7 +61,9 @@ export function ModelSelector({
                     ? m.capabilities.structured === "schema"
                       ? "工具调用 / JSON Schema"
                       : "工具调用 / JSON 校验"
-                    : "必需能力未通过"}
+                    : m.enabled === false
+                      ? "已停用"
+                      : "必需能力未通过"}
                 </span>
               </div>
             </DropdownMenuRadioItem>

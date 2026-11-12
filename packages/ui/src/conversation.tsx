@@ -2,7 +2,8 @@ import { createApi, rpcData } from "./api";
 import { DraftMessages } from "./chat-parts";
 import { ChatMarkdown } from "./chat-markdown";
 import { useState, useRef } from "react";
-import type { TaskDefinition, TaskRun, Transport } from "../../contracts/src/index";
+import type { ModelProfile, TaskDefinition, TaskRun, Transport } from "../../contracts/src/index";
+import { canUseModel, ModelSelector } from "./model-selector";
 import { useThread } from "./use-thread";
 import { Thread, Composer, ChatMessage, ThreadActivity, SendingMessage } from "./chat-parts";
 import { MessageScrollerItem } from "./components/ui/message-scroller";
@@ -18,6 +19,7 @@ export function Conversation({
   task,
   run,
   runs = [],
+  models,
   offline,
   refresh,
 }: {
@@ -25,6 +27,7 @@ export function Conversation({
   task: TaskDefinition;
   run: TaskRun | null;
   runs?: TaskRun[];
+  models?: ModelProfile[];
   refresh: () => Promise<void>;
   offline: boolean;
 }) {
@@ -33,6 +36,7 @@ export function Conversation({
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const [stopping, setStopping] = useState(false);
+  const [switching, setSwitching] = useState(false);
   const sending = useRef(false);
   const active =
     run &&
@@ -41,6 +45,27 @@ export function Conversation({
       run.dispatchGroupActive);
   const runLabels = new Map(runs.map((item) => [item.id, item.accountName]));
   if (run?.accountName) runLabels.set(run.id, run.accountName);
+  const modelId = thread.page?.modelId ?? task.modelId;
+  const modelUnavailable = !!models && !models.some((m) => m.id === modelId && canUseModel(m));
+  const modelLocked =
+    !!active ||
+    run?.status === "unknown" ||
+    !!thread.page?.activeTurn ||
+    !!thread.page?.queued?.length;
+  async function changeModel(id: string) {
+    if (sending.current || switching || modelLocked || id === modelId) return;
+    sending.current = true;
+    setSwitching(true);
+    setError("");
+    try {
+      await thread.changeModel(id);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      sending.current = false;
+      setSwitching(false);
+    }
+  }
   let activity: string | null = null;
   if (thread.sending) activity = "正在发送…";
   else if (thread.page?.activeTurn) activity = "云端助手正在处理…";
@@ -55,7 +80,7 @@ export function Conversation({
   }
   const messages = [...(thread.page?.messages ?? [])].sort((a, b) => a.seq - b.seq);
   async function send() {
-    if (sending.current || !text.trim() || offline) return;
+    if (sending.current || !text.trim() || offline || (modelUnavailable && !active)) return;
     sending.current = true;
     setBusy(true);
     setError("");
@@ -160,10 +185,26 @@ export function Conversation({
         setText={setText}
         onSend={() => void send()}
         busy={busy}
-        disabled={offline || !thread.page}
+        disabled={offline || !thread.page || switching || (modelUnavailable && !active)}
         label="消息"
         placeholder={thread.page?.waiting ? "在这里回复，执行器会继续…" : "发送消息或补充要求…"}
       >
+        {models && (
+          <ModelSelector
+            models={models}
+            value={modelId}
+            onChange={(id) => void changeModel(id)}
+            disabled={offline || !thread.page || busy || switching || modelLocked}
+          />
+        )}
+        {switching && (
+          <span className="text-xs text-muted-foreground" role="status">
+            正在切换模型…
+          </span>
+        )}
+        {modelUnavailable && !modelLocked && (
+          <span className="text-xs text-muted-foreground">当前模型不可用，请选择可用模型</span>
+        )}
         {active && run.accountName && (
           <span className="text-xs text-muted-foreground">
             {run.accountName}

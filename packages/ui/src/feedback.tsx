@@ -87,7 +87,8 @@ export function ErrorText({ error }: { error: string }) {
       "仍有任务、历史、登录状态或其他数据引用，不能删除。请先停用；登录状态可单独清除。",
     MEMORY_VERSION_CONFLICT: "这条记忆已被修改或删除，草稿已保留，请刷新后核对。",
     MODEL_PROTOCOL_RETIRED: "此模型版本已停止提供服务，请选择可用模型重新交办。",
-    MODEL_DISABLED: "模型已停用，相关任务已失败。请选择可用模型重新交办。",
+    MODEL_DISABLED: "本次使用的模型已停用。请在输入区选择可用模型后重新发送。",
+    THREAD_MODEL_CONFLICT: "暂时无法切换模型：会话状态已更新或任务尚未结束。请刷新后重试。",
     ACCOUNT_DISABLED: "站点账号已停用，相关任务已失败。恢复账号后可重新交办。",
     PREFERENCES_TOO_LARGE:
       "启用的记忆与本次内容超过模型上下文预算，请精简记忆或更换更大上下文的模型。",
