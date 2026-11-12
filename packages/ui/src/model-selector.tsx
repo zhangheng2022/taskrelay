@@ -50,7 +50,15 @@ export function ModelSelector({
         <DropdownMenuLabel>模型服务</DropdownMenuLabel>
         <DropdownMenuRadioGroup value={value} onValueChange={onChange}>
           {models.map((m) => (
-            <DropdownMenuRadioItem key={m.id} value={m.id} disabled={!canUseModel(m)}>
+            <DropdownMenuRadioItem
+              key={m.id}
+              value={m.id}
+              disabled={!canUseModel(m)}
+              onSelect={() => {
+                // 相同 ID 也可能已有新配置版本；明确重选时交由宿主重新绑定。
+                if (m.id === value) onChange(m.id);
+              }}
+            >
               <div className="flex min-w-0 flex-col gap-1">
                 <span className="break-all">
                   {m.name} · {m.model}
@@ -61,7 +69,9 @@ export function ModelSelector({
                     ? m.capabilities.structured === "schema"
                       ? "工具调用 / JSON Schema"
                       : "工具调用 / JSON 校验"
-                    : "必需能力未通过"}
+                    : m.enabled === false
+                      ? "已停用"
+                      : "必需能力未通过"}
                 </span>
               </div>
             </DropdownMenuRadioItem>

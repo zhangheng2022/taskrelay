@@ -780,6 +780,7 @@ function Workspace({ transport }: { transport: Transport }) {
             task={task}
             run={activeRun}
             runs={taskRuns}
+            models={data.models}
             refresh={refresh}
             offline={offline}
           />

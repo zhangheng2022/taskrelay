@@ -518,6 +518,53 @@ export const conversations = conversationsBase
     ),
     async (c) => c.json(await threadPage(c.env, c.req.param("id"), c.req.valid("query").before)),
   )
+  .put(
+    "/threads/:id/model",
+    validator("json", (value) =>
+      z
+        .object({ modelId: idSchema, expectedVersion: z.number().int().nonnegative() })
+        .strict()
+        .parse(value),
+    ),
+    async (c) => {
+      const t = await ownedThread(c.env, c.req.param("id"));
+      const b = c.req.valid("json");
+      const { profile } = await getModelProfile(c.env, b.modelId);
+      if (
+        !profile.capabilities.connection ||
+        !profile.capabilities.tools ||
+        profile.capabilities.structured === "none"
+      )
+        throw Error("MODEL_CAPABILITIES_REQUIRED");
+      // 仅切换空闲会话的后续模型；任务、运行和定时快照保持原样，不重放旧消息。
+      // 同一条件写复查队列、批次及模型状态，防止读取之后出现交办或停用。
+      const changed = await c.env.DB.prepare(
+        `UPDATE ai_threads SET model_id=?,model_version=?,version=version+1,updated_at=?
+         WHERE id=? AND user_id=? AND version=? AND closed=0 AND active_turn IS NULL
+         AND NOT EXISTS(SELECT 1 FROM conversation_inbox WHERE thread_id=ai_threads.id AND status IN ('pending','queued','processing'))
+         AND NOT EXISTS(SELECT 1 FROM conversation_commands WHERE thread_id=ai_threads.id AND state IN ('pending','committed'))
+         AND NOT EXISTS(SELECT 1 FROM runs WHERE task_id=ai_threads.task_id AND (status IN ('queued','running','waiting_user','verifying','unknown') OR cleanup_pending=1))
+         AND NOT EXISTS(SELECT 1 FROM account_dispatch_groups WHERE task_id=ai_threads.task_id AND state IN ('active','paused'))
+         AND EXISTS(SELECT 1 FROM models WHERE id=? AND enabled=1 AND deleted_at IS NULL AND current_version=? AND management_version=? AND (owner_user_id IS NULL OR owner_user_id=?))`,
+      )
+        .bind(
+          profile.id,
+          profile.version,
+          dbTime(now()),
+          t.id,
+          t.user_id,
+          b.expectedVersion,
+          profile.id,
+          profile.version,
+          profile.managementVersion,
+          t.user_id,
+        )
+        .run();
+      if (!changed.meta.changes) throw Error("THREAD_MODEL_CONFLICT");
+      await notifyUser(c.env, t.user_id);
+      return c.json(await threadPage(c.env, t.id));
+    },
+  )
   .post("/threads/:id/messages/:messageId/private", async (c) => {
     // 原文仍可本人查看，但从未来模型上下文撤回；已送出的远端请求无法追回。
     const t = await ownedThread(c.env, c.req.param("id"));
