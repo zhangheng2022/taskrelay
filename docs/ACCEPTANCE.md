@@ -4,6 +4,18 @@
 
 源码回归覆盖配置省略协议、拒绝旧协议、固定版本、旧队列终态、定时暂停、历史聊天读取、跨用户模型隔离、自定义路径和流式中断。全量 574 项测试、其中 86 项 UI 测试通过，类型检查和 Web 构建通过。下方保留切换前的生产验收记录。
 
+生产健康接口确认提交 `5e69b73d7071349372c0de29e40f838c128fb634`、协议 19。Windows 打包与安装 smoke 通过，生产更新目录已发布 0.26.0。切换前后逐一比对 5 个旧模型的 6 个配置版本，旧配置正文由 6 降为 0，关联的 414 条用量、22 个任务版本和 12 个聊天数量一致，D1 外键检查为零。生产没有需要结束的旧排队任务或启用的旧定时计划；相应迁移行为已在有此类数据的回归中验证。[协议切换](https://github.com/zhangheng2022/taskrelay/pull/65) · [旧模型清理](https://github.com/zhangheng2022/taskrelay/pull/66) · [主分支 CI](https://github.com/zhangheng2022/taskrelay/actions/runs/43142856842) · [生产发布](https://github.com/zhangheng2022/taskrelay/actions/runs/43143462517)
+
+| 发布后验证              | 实际结果                                                                                                                                                        |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 原生 OpenAI，美国，v1   | 网页回答 23 减 6，终态为 `17`。网关 HTTP 200，端点 `responses`。                                                                                                |
+| 自定义 OpenAI，欧盟，v1 | 网页回答 19 加 7，终态为 `26`。网关 HTTP 200，端点 `v1/responses`。                                                                                             |
+| Workers AI，自动，v1    | `@cf/openai/gpt-oss-20b` 的连接、工具、JSON Schema 通过。切换前后两次独立网页问答均返回 `MODEL_STREAM_INCOMPLETE`，调用账本为 unknown。已停用该配置并保留错误。 |
+
+三类网关样本的请求和响应正文均显示“不可用”。Workers AI 的网关日志用模型名标识终结点；应用由固定的账户级 `/ai/v1/responses` 发送。美国与欧盟样本的网关详情均显示 Oregon，未取得提供方侧出口或推理地区的独立证据。应用用量的调用人和固定版本在三条连接上均匹配。
+
+欧盟自定义模型运行 `run_e8fc983d2b534a07b5cd796caf4c8df2` 读取 [Selenium 的公开测试页](https://www.selenium.dev/selenium/web/web-form.html)，最终答复为 `Web form`。执行过程显示一次读取页面，D1 有 2 次已完成的 Stagehand 模型调用，4 条模型用量均匹配该运行的用户、模型和版本。终态为 succeeded，浏览器清理已确认。恢复原领取开关时仅此验收任务在队列，最终领取为 1、维护为 0，排队、在途及待清理运行均为 0。管理员表单实查已移除协议选择。生产更新目录与 CI 安装记录可核对；本次线上桌面运行使用协议 19，没有独立读取该执行设备的已安装文件版本。
+
 ## 2026-11-11 自定义 OpenAI、Llama 3.3 与 Stagehand 生产复验
 
 生产健康检查已确认提交 `53f2657d03b8bd6831699333ab40125669d71684`、协议 19。首次发布停在部署阶段，在主站确认目标提交后，沿用原发布记录恢复成功。D1 确认发布阶段为 complete，维护关闭，领取恢复为 1。本次仅发布云端，桌面沿用 0.25.0。全量 587 项测试通过。PR 的 Windows 首轮有一项聊天通知 UI 测试超时，本机定向复测、远端重跑和主分支检查均通过。[第一次修复](https://github.com/zhangheng2022/taskrelay/pull/62) · [第二次修复](https://github.com/zhangheng2022/taskrelay/pull/63) · [主分支 CI](https://github.com/zhangheng2022/taskrelay/actions/runs/43035622251) · [生产发布](https://github.com/zhangheng2022/taskrelay/actions/runs/43036496395) · [完成恢复](https://github.com/zhangheng2022/taskrelay/actions/runs/43037038748)
