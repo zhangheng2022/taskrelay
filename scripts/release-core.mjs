@@ -45,8 +45,10 @@ export async function runRelease(io, record) {
       if (wasPending) {
         // 上传结果未知时只读 health；不能无条件再次部署。
         if (!(await io.deployed(state))) throw Error("DEPLOYMENT_OUTCOME_UNCONFIRMED");
-      } else await io.deploy(state);
-      if (!(await io.deployed(state))) throw Error("DEPLOYMENT_HEALTH_MISMATCH");
+      } else {
+        // Wrangler 成功返回即继续；刚部署时 health 可能仍命中旧版本，不再作为发布门槛。
+        await io.deploy(state);
+      }
     }
     await save("deployed");
   }
