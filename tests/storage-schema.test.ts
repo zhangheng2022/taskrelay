@@ -139,7 +139,7 @@ test("当前迁移的全部表/列/主键/外键与 Drizzle 对齐，并完整�
         assert.match(
           table![2] + "\n" + migrations.replaceAll(`ALTER TABLE ${config.name} ADD COLUMN `, ""),
           new RegExp(
-            `-- [^\\n]*[\\u4e00-\\u9fff][^\\n]*\\n\\s*${c.name as string} (?:TEXT|INTEGER)`,
+            `-- [^\\n]*[\\u4e00-\\u9fff][^\\n]*\\n\\s*${c.name as string} ${c.type as string}`,
           ),
           config.name + "." + c.name + " 字段注释",
         );
