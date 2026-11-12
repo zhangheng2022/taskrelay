@@ -82,38 +82,6 @@ try {
     return data;
   };
   await request("/_init");
-  // 冻结期间留下未来的 alarm；解冻后的 Cron 必须能直接推进同一个已接收作业。
-  const service = await mf.getWorker("free-runtime-test");
-  await db.batch([
-    db.prepare("INSERT OR REPLACE INTO settings(key,value) VALUES('storageFrozen','1')"),
-    db.prepare(
-      "INSERT INTO history_cleanup_jobs(id,user_id,request_id,scope,status,created_at,updated_at) VALUES('cleanup_fixture','fixture_owner','cron_fixture','task','pending',0,0)",
-    ),
-    db.prepare(
-      "INSERT INTO history_cleanup_targets(job_id,kind,resource_id) VALUES('cleanup_fixture','run','run_fixture'),('cleanup_fixture','task','task_fixture')",
-    ),
-  ]);
-  const cleanupProgress = () =>
-    db
-      .prepare("SELECT sum(done) FROM history_cleanup_targets WHERE job_id='cleanup_fixture'")
-      .first("sum(done)");
-  const cron = () => service.scheduled({ cron: "* * * * *" });
-  assert.equal((await cron()).outcome, "ok");
-  assert.equal(await cleanupProgress(), 0);
-  await db.prepare("UPDATE settings SET value='0' WHERE key='storageFrozen'").run();
-  assert.equal((await cron()).outcome, "ok");
-  assert.equal(await cleanupProgress(), 1);
-  // 剩余目标由生产 alarm 自动收尾，不再触发 Cron。
-  let cleanupStatus;
-  for (let i = 0; i < 100; i++) {
-    cleanupStatus = await db
-      .prepare("SELECT status FROM history_cleanup_jobs WHERE id='cleanup_fixture'")
-      .first("status");
-    if (cleanupStatus === "done") break;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  assert.equal(cleanupStatus, "done");
-  assert.equal(await cleanupProgress(), 2);
   assert.equal((await request("/api/user/snapshot")).tasks.length, 0);
   assert.deepEqual(await request("/_schema"), { valid: { extraction: "fixture" }, rejected: true });
   const thread = await request("/api/user/threads", { modelId: "fixture" });

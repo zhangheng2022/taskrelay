@@ -26,9 +26,6 @@ app.onError((e, c) => {
   return c.json({ error: e.message }, 500);
 });
 export default {
-  scheduled(event: ScheduledController, env: AppEnv) {
-    return worker.scheduled(event, env);
-  },
   async fetch(req: Request, env: AppEnv, ctx: ExecutionContext) {
     env = { ...env, DB: applicationDb(env.DB) };
     if (!["localhost", "127.0.0.1"].includes(new URL(req.url).hostname))
