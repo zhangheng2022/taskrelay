@@ -31,8 +31,9 @@ export class RequestCoordinator extends DurableObject<AppEnv> {
   }
 }
 
-/** The scheduling atom is the single global task queue, not all HTTP traffic. */
+/** 全局队列由同一个对象维护。alarm 加速积压处理，Cron 每分钟独立推进一轮。 */
 export class Scheduler extends DurableObject<AppEnv> {
+  private running = false;
   constructor(ctx: DurableObjectState, env: AppEnv) {
     super(ctx, { ...env, DB: applicationDb(env.DB) });
   }
@@ -40,7 +41,20 @@ export class Scheduler extends DurableObject<AppEnv> {
     if ((await this.ctx.storage.getAlarm()) === null)
       await this.ctx.storage.setAlarm(Date.now() + 1);
   }
-  async alarm() {
+  alarm() {
+    return this.runMaintenance();
+  }
+  async runMaintenance() {
+    // Cron 和 alarm 可以在等待 D1 时相遇；正在执行的一轮负责安排后续处理。
+    if (this.running) return;
+    this.running = true;
+    try {
+      await this.processQueue();
+    } finally {
+      this.running = false;
+    }
+  }
+  private async processQueue() {
     if (
       (
         await this.env.DB.prepare("SELECT value FROM settings WHERE key='storageFrozen'").first<{
