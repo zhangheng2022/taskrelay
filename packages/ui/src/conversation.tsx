@@ -53,7 +53,7 @@ export function Conversation({
     !!thread.page?.activeTurn ||
     !!thread.page?.queued?.length;
   async function changeModel(id: string) {
-    if (sending.current || switching || modelLocked || id === modelId) return;
+    if (sending.current || switching || modelLocked) return;
     sending.current = true;
     setSwitching(true);
     setError("");

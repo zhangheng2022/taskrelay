@@ -116,3 +116,32 @@ test("切换拒绝运行中、收尾中、未知结果、活动回合及越权�
   );
   assert.equal(device.status, 403);
 });
+
+test("旧协议会话可明确采用同一模型的当前 Responses 版本", async (t) => {
+  const s = await productionModelFixture(t);
+  const created = await s.request("/api/user/threads", {
+    modelId: "model_test",
+    taskId: s.run.taskId,
+  });
+  assert.equal(created.status, 200);
+  const page = created.data;
+  s.sql.exec("UPDATE runs SET status='succeeded',cleanup_pending=0");
+  s.sql.exec(
+    "UPDATE model_profile_versions SET config=json_set(config,'$.protocol','retired') WHERE id='model_test' AND version=1",
+  );
+  s.sql.exec("UPDATE models SET current_version=2 WHERE id='model_test'");
+  const snapshots = s.sql.prepare("SELECT * FROM run_snapshots").all();
+  const result = await s.request(
+    `/api/user/threads/${page.id}/model`,
+    { modelId: "model_test", expectedVersion: page.version },
+    "PUT",
+  );
+  assert.equal(result.status, 200, JSON.stringify(result.data));
+  assert.equal(result.data.id, page.id);
+  assert.equal(result.data.modelId, "model_test");
+  assert.equal(
+    s.sql.prepare("SELECT model_version FROM ai_threads WHERE id=?").get(page.id)!.model_version,
+    2,
+  );
+  assert.deepEqual(s.sql.prepare("SELECT * FROM run_snapshots").all(), snapshots);
+});

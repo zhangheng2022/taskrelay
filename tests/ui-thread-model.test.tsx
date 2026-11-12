@@ -89,3 +89,38 @@ test("执行中和离线禁用模型切换；切换失败保留当前模型和�
   assert.match(trigger().textContent!, /自定义/);
   assert.equal((v.getByRole("textbox") as HTMLTextAreaElement).value, "保留草稿");
 });
+
+test("重新选择当前模型仍提交一次切换以采用最新配置", async () => {
+  let page = { ...threadPage };
+  let writes = 0;
+  const transport = transportWith(async (method, path, body) => {
+    if (path.split("?")[0] === "/api/user/threads")
+      return {
+        items: [{ id: page.id, model_id: page.modelId, task_id: task.id }],
+        nextCursor: null,
+      };
+    if (method === "PUT") {
+      writes++;
+      assert.deepEqual(body, { modelId: page.modelId, expectedVersion: 0 });
+      page = { ...page, version: 1 };
+    }
+    return page;
+  });
+  const v = render(
+    <Conversation
+      transport={transport}
+      task={task}
+      models={snapshot.models}
+      run={null}
+      offline={false}
+      refresh={async () => {}}
+    />,
+  );
+  const trigger = v.getByRole("button", { name: "使用的模型" });
+  await waitFor(() => assert.equal((trigger as HTMLButtonElement).disabled, false));
+  fireEvent.keyDown(trigger, { key: "ArrowDown" });
+  const menu = await within(document.body).findByRole("menu");
+  fireEvent.click(within(menu).getByRole("menuitemradio", { name: /自定义/ }));
+  await waitFor(() => assert.equal(writes, 1));
+  assert.match(trigger.textContent!, /自定义/);
+});
