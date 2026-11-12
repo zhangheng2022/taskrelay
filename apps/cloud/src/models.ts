@@ -672,7 +672,9 @@ export async function storeModel(
     effective_region: import("../../../packages/contracts/src/index").EgressRegion;
   }>([
     env.DB.prepare(
-      `INSERT INTO models(id,current_version,created_at,enabled) SELECT ?,?,?,0 WHERE ?=0 OR EXISTS(SELECT 1 FROM models WHERE id=? AND current_version=?)
+      // 连接可能在表单读取后被删除；创建/更新模型和插入版本必须共同满足连接仍存在。
+      `INSERT INTO models(id,current_version,created_at,enabled) SELECT ?,?,?,0 WHERE (?=0 OR EXISTS(SELECT 1 FROM models WHERE id=? AND current_version=?))
+      AND EXISTS(SELECT 1 FROM model_connections WHERE id=? AND owner_user_id IS NULL)
     ON CONFLICT(id) DO UPDATE SET current_version=excluded.current_version WHERE models.owner_user_id IS NULL AND models.current_version=? AND (? IS NULL OR models.management_version=?)`,
     ).bind(
       id,
@@ -681,6 +683,7 @@ export async function storeModel(
       prior?.version ?? 0,
       id,
       prior?.version ?? 0,
+      parsed.connectionId,
       prior?.version ?? 0,
       expectedVersion ?? null,
       expectedVersion ?? null,

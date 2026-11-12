@@ -1,5 +1,10 @@
 import { connectionInputSchema, egressRegionSchema } from "../../../packages/contracts/src/index";
-import { connectionFrom, createConnection, validateEndpoint } from "./model-gateway";
+import {
+  connectionFrom,
+  createConnection,
+  connectionDeletionPreview,
+  validateEndpoint,
+} from "./model-gateway";
 import { scheduleRoutes } from "./task-schedules";
 import { learningSnapshot } from "./execution-learning";
 import { modelManagement, accountManagement } from "./resource-management";
@@ -508,6 +513,30 @@ export const user = userBase
     },
   );
 export const admin = adminBase
+  .get("/model-connections/:id/deletion", async (c) =>
+    c.json(await connectionDeletionPreview(c.env, idSchema.parse(c.req.param("id")))),
+  )
+  .delete("/model-connections/:id", async (c) => {
+    const id = idSchema.parse(c.req.param("id"));
+    // 预览不授予删除权；同一条写入重新检查所有历史版本，避免检查与删除间新增引用。
+    const result = await c.env.DB.prepare(
+      `DELETE FROM model_connections WHERE id=? AND owner_user_id IS NULL
+        AND NOT EXISTS(SELECT 1 FROM model_profile_versions WHERE connection_id=model_connections.id)`,
+    )
+      .bind(id)
+      .run();
+    if (!result.meta.changes) {
+      const exists = await c.env.DB.prepare(
+        "SELECT id FROM model_connections WHERE id=? AND owner_user_id IS NULL",
+      )
+        .bind(id)
+        .first();
+      if (!exists) return c.json({ error: "MODEL_CONNECTION_NOT_FOUND" }, 404);
+      return c.json({ error: "MODEL_CONNECTION_IN_USE" }, 409);
+    }
+    // 仅移除 TaskRelay 的连接登记，Cloudflare 中的网关、密钥及自定义提供方保持原样。
+    return c.json({ ok: true });
+  })
   .post(
     "/model-connections",
     validator("json", (v: z.input<typeof connectionInputSchema>) => connectionInputSchema.parse(v)),

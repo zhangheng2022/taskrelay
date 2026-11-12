@@ -1,5 +1,21 @@
 # TaskRelay 验收记录
 
+## 2026-11-12 服务连接删除（源码，未发布）
+
+- 管理服务增加删除入口、引用预览和明确确认。后端仅允许管理员删除未被任何历史模型版本引用的平台连接，原子检查避免过期预览误删；模型保存事务同步检查连接存在，避免竞争留下空模型。删除不调用 Cloudflare 管理 API，不删除上游密钥或网关，无数据库迁移。
+- `npm run typecheck`、`npm run test:ui`（90/90）、`npm run build`、`npm run check:repo` 通过。构建仍有既有 chunk 体积及动态/静态混合导入提示。新增 API/UI 定向用例 6/6 通过，覆盖引用、权限、竞态、取消焦点、重复提交、错误重查与迟到响应；真实管理员会话删除另在 multiuser 回归通过。
+- 模型、结构化输出、egress、API、可靠性、设置管理及多用户共 57 项定向回归，56 通过；真实 D1 用例在 Miniflare 初始化时因 `connect EACCES 127.0.0.1` 失败，新增连接竞争断言未执行，不用 SQLite adapter 代替该证据。`npm test` 全量尝试长期无新输出后终止，没有取得完整通过结果。
+- Edge 访问本机隔离演示页面 `ERR_CONNECTION_TIMED_OUT`，本轮未完成真实浏览器深浅主题、窄屏和键盘布局检查。未删除生产服务、未部署、未制作 Windows 安装包；此前发布记录不证明此功能上线。
+- OCR 确定性 preview/rule 已执行，宿主审查本次全部差异与相关源码，补审默认排除的测试和文档；14 个文件均已审，`total_files=14`、`reviewed_files=14`、`skipped_files=0`、`coverage_rate=100%`，无未解决代码审查发现。图更新完成；41 个 SQL 缺 `tree_sitter_sql`，`tests/settings-management.test.ts` 未提取符号，13 个不支持扩展名文件未分类，不算图覆盖。
+
+## 2026-11-12 界面组件统一发布（0.26.3）
+
+生产发布已完成，范围包含云端与 Windows 执行器 0.26.3；复用主分支 CI 的 Web 与 Windows 产物，发布流程核验来源和文件哈希。主域 `/api/health` 返回协议 19、提交 `c56019ca73149dd7f292ae222276f1c53ec1d255`。[界面与项目规则](https://github.com/zhangheng2022/taskrelay/pull/74) · [主分支 CI](https://github.com/zhangheng2022/taskrelay/actions/runs/43174647061) · [生产发布](https://github.com/zhangheng2022/taskrelay/actions/runs/43176793958)
+
+发布后在已登录的生产 Edge 桌面深色界面复查「添加模型 → 选择服务」「管理服务 → 请求发起区域」「运行维护 → 领取任务」，展开菜单的文字与选中状态清晰可读。服务区域用方向键移动到欧盟后按 Esc，字段仍为美国；公共池当前显示允许领取。模型高级设置使用 Enter 和空格展开、收起，显示名称草稿保留；验收草稿已放弃，未提交模型测试或修改生产配置。
+
+本次接续仅补生产发布核验与上述交互抽查，没有重复执行此前源码测试，也没有重新验证生产浅色、窄屏、手机真机或本机 Windows 安装。此前隔离浏览器覆盖范围见 [UI 检查](UI-REVIEW.md#2026-11-12-全项目交互组件检查)，不能等同于本次生产全量验收。
+
 ## 2026-11-12 模型设置与手动启用
 
 生产版本 0.26.2，健康接口提交 `57d96c2d257e0ff8da4cbfe34a256628a24a08fb`。管理员通过现有 OpenAI 服务新建独立验收配置，使用 `gpt-6.1-sol`。一次保存完成实际问答、工具及结构化输出测试，页面显示「测试通过，待启用」。普通用户在独立登录会话中刷新，选项仅含原有「OpenAI · 美国」。管理员手动启用后，普通用户刷新并实际选中了验收配置；切回原模型、停用验收配置后，该选项再次消失。按用户确认删除该临时配置后，管理员列表仅余已启用的美国 OpenAI 和已停用的 GPT-OSS 20B。整个过程未向普通用户聊天发送消息。[修复](https://github.com/zhangheng2022/taskrelay/pull/72) · [主分支 CI](https://github.com/zhangheng2022/taskrelay/actions/runs/43168326677) · [生产发布](https://github.com/zhangheng2022/taskrelay/actions/runs/43169064237)

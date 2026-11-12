@@ -163,6 +163,7 @@ export function ErrorText({ error }: { error: string }) {
     MODEL_TEST_REQUIRED: "请先通过当前版本的问答、工具和结构化输出测试。",
     MODEL_ANSWER_INCORRECT: "问答测试未通过，模型未返回预期答案。",
     MODEL_CONNECTION_NOT_FOUND: "模型连接不可用，请重新选择供应商连接。",
+    MODEL_CONNECTION_IN_USE: "此服务仍被模型版本引用。请先删除关联模型配置，再重新检查。",
     WORKERS_AI_MODEL_INVALID: "请填写完整的 @cf/作者/模型 标识。",
     MODEL_HTTP_403_UNSUPPORTED_REGION:
       "请求被模型服务判定来自不支持的地区。请使用支持当前使用地区的兼容服务，或联系服务商确认可用性。",
