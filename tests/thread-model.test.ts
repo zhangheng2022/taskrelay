@@ -40,7 +40,9 @@ test("停用模型的旧会话可切换，保留消息、任务和运行快照",
   assert.equal(switched.status, 200, JSON.stringify(switched.data));
   assert.equal(switched.data.id, page.id);
   assert.equal(switched.data.modelId, "model_next");
-  assert.ok(switched.data.messages.some((m: { content: string }) => m.content === "保留旧会话内容"));
+  assert.ok(
+    switched.data.messages.some((m: { content: string }) => m.content === "保留旧会话内容"),
+  );
   assert.equal(
     s.sql.prepare("SELECT model_version FROM ai_threads WHERE id=?").get(page.id)!.model_version,
     2,
