@@ -32,8 +32,8 @@ export default {
     );
     return env.REQUESTS.getByName(`session-${digest[0] % 8}`).fetch(request);
   },
-  scheduled(_event: ScheduledController, env: AppEnv, ctx: ExecutionContext) {
-    ctx.waitUntil(env.SCHEDULER.getByName("queue").wake());
+  async scheduled(_event: ScheduledController, env: AppEnv) {
+    await env.SCHEDULER.getByName("queue").runMaintenance();
   },
 };
 export { ModelEgress } from "./model-egress";
