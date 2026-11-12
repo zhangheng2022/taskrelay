@@ -70,7 +70,9 @@ export async function recordUsage(
 ) {
   await env.DB.prepare(
     `INSERT INTO model_usage(id,run_id,model_id,model_version,input_tokens,output_tokens,at,user_id,
-      call_id,inference_started_at,provider_started_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+      call_id,inference_started_at,provider_started_at,retired_cost) VALUES(?,?,?,?,?,?,?,?,?,?,?,
+        CASE WHEN NOT EXISTS(SELECT 1 FROM model_profile_versions WHERE id=? AND version=? AND connection_id IS NOT NULL)
+        THEN (? * ? + ? * ?) / 1000000.0 END)`,
   )
     .bind(
       uid("usage"),
@@ -84,6 +86,12 @@ export async function recordUsage(
       timing.callId,
       dbTime(timing.inferenceStartedAt),
       dbTime(timing.providerStartedAt),
+      profile.id,
+      profile.version,
+      response.usage.input,
+      profile.inputPrice ?? null,
+      response.usage.output,
+      profile.outputPrice ?? null,
     )
     .run();
 }
@@ -472,7 +480,7 @@ async function ensureStreaming(
     state = "unsupported";
   }
   await env.DB.prepare(
-    "UPDATE model_profile_versions SET capabilities=json_set(capabilities,?,?) WHERE id=? AND version=?",
+    "UPDATE model_profile_versions SET capabilities=json_set(capabilities,?,?) WHERE id=? AND version=? AND connection_id IS NOT NULL",
   )
     .bind(`$.streaming.${kind}`, state, id, version)
     .run();
@@ -538,7 +546,7 @@ export async function probe(env: AppEnv, id: string, version: number): Promise<M
     });
     caps.connection = true;
     await env.DB.prepare(
-      "UPDATE model_profile_versions SET capabilities=? WHERE id=? AND version=?",
+      "UPDATE model_profile_versions SET capabilities=? WHERE id=? AND version=? AND connection_id IS NOT NULL",
     )
       .bind(JSON.stringify(caps), id, version)
       .run();
@@ -596,7 +604,9 @@ export async function probe(env: AppEnv, id: string, version: number): Promise<M
       }
   }
   if (errors.length) caps.error = errors.join(",");
-  await env.DB.prepare("UPDATE model_profile_versions SET capabilities=? WHERE id=? AND version=?")
+  await env.DB.prepare(
+    "UPDATE model_profile_versions SET capabilities=? WHERE id=? AND version=? AND connection_id IS NOT NULL",
+  )
     .bind(JSON.stringify(caps), id, version)
     .run();
   return caps;
@@ -694,7 +704,9 @@ export async function probeVision(env: AppEnv, id: string) {
     vision,
     visionTestedAt: now(),
   };
-  await env.DB.prepare("UPDATE model_profile_versions SET capabilities=? WHERE id=? AND version=?")
+  await env.DB.prepare(
+    "UPDATE model_profile_versions SET capabilities=? WHERE id=? AND version=? AND connection_id IS NOT NULL",
+  )
     .bind(JSON.stringify(capabilities), id, profile.version)
     .run();
   return capabilities;

@@ -118,41 +118,47 @@ function routes(kind: "accounts" | "models") {
       async (c) => {
         const id = c.req.param("id"),
           { expectedVersion } = c.req.valid("json");
-        const owner =
-          kind === "accounts"
-            ? "AND user_id=?"
-            : "AND owner_user_id IS NULL AND EXISTS(SELECT 1 FROM model_profile_versions v WHERE v.id=models.id AND v.version=models.current_version AND v.connection_id IS NOT NULL)";
-        const args = [id, expectedVersion, ...(kind === "accounts" ? [c.get("userId")] : [])];
+        if (kind === "models") {
+          try {
+            const removed = await c.env.DB.prepare(
+              `UPDATE models SET enabled=0,deleted_at=?,management_version=management_version+1
+               WHERE id=? AND management_version=? AND owner_user_id IS NULL AND deleted_at IS NULL
+               AND EXISTS(SELECT 1 FROM model_profile_versions v WHERE v.id=models.id AND v.version=models.current_version AND v.connection_id IS NOT NULL)
+               RETURNING id`,
+            )
+              .bind(dbTime(Date.now()), id, expectedVersion)
+              .first();
+            if (!removed) return c.json({ error: "RESOURCE_VERSION_CONFLICT" }, 409);
+            return c.json({ ok: true });
+          } catch (error) {
+            if (String(error).includes("MODEL_DISABLE_BEFORE_DELETE"))
+              return c.json({ error: "MODEL_DISABLE_BEFORE_DELETE" }, 409);
+            throw error;
+          }
+        }
+        const args = [id, expectedVersion, c.get("userId")];
         const row = await c.env.DB.prepare(
-          `SELECT id FROM ${kind} WHERE id=? AND management_version=? ${owner}`,
+          "SELECT id FROM accounts WHERE id=? AND management_version=? AND user_id=?",
         )
           .bind(...args)
           .first();
         if (!row) return c.json({ error: "RESOURCE_VERSION_CONFLICT" }, 409);
-        // 非外键引用（任务 JSON、账号锁、浏览器状态）也必须保留；外键另防住新出现的关系。
-        const available =
-          kind === "accounts"
-            ? `NOT EXISTS(SELECT 1 FROM task_versions t WHERE json_extract(t.definition,'$.accountId')=accounts.id OR EXISTS(SELECT 1 FROM json_each(t.definition,'$.accountIds') WHERE value=accounts.id))
+        // 账号的任务、登录态和锁仍按原归属检查；新出现的引用由同一事务与外键裁决。
+        const eligible = `SELECT id FROM accounts WHERE id=? AND management_version=? AND user_id=?
+          AND NOT EXISTS(SELECT 1 FROM task_versions t WHERE json_extract(t.definition,'$.accountId')=accounts.id OR EXISTS(SELECT 1 FROM json_each(t.definition,'$.accountIds') WHERE value=accounts.id))
           AND NOT EXISTS(SELECT 1 FROM runs WHERE account_id=accounts.id)
           AND NOT EXISTS(SELECT 1 FROM account_dispatch_members WHERE account_id=accounts.id)
           AND NOT EXISTS(SELECT 1 FROM account_cards WHERE account_id=accounts.id OR result_account_id=accounts.id)
           AND NOT EXISTS(SELECT 1 FROM account_locks WHERE account_key=accounts.id)
           AND state_object_key IS NULL AND previous_state_object_key IS NULL
-          AND NOT EXISTS(SELECT 1 FROM browser_state_candidates WHERE account_id=accounts.id)`
-            : `NOT EXISTS(SELECT 1 FROM model_usage WHERE model_id=models.id)
-          AND NOT EXISTS(SELECT 1 FROM task_versions WHERE model_id=models.id)
-          AND NOT EXISTS(SELECT 1 FROM ai_threads WHERE model_id=models.id)`;
-        const eligible = `SELECT id FROM ${kind} WHERE id=? AND management_version=? ${owner} AND ${available}`;
-        const versions =
-          kind === "accounts" ? "account_credential_versions" : "model_profile_versions";
-        const key = kind === "accounts" ? "account_id" : "id";
+          AND NOT EXISTS(SELECT 1 FROM browser_state_candidates WHERE account_id=accounts.id)`;
         try {
           const results = await c.env.DB.batch([
             // 延迟外键允许在同一事务删除版本和空资源；其他引用存在时整笔回滚。
-            c.env.DB.prepare(`DELETE FROM ${versions} WHERE ${key} IN(${eligible})`).bind(...args),
-            kind === "models"
-              ? c.env.DB.prepare("DELETE FROM models WHERE id=? AND changes()>0").bind(id)
-              : c.env.DB.prepare(`DELETE FROM ${kind} WHERE id IN(${eligible})`).bind(...args),
+            c.env.DB.prepare(
+              `DELETE FROM account_credential_versions WHERE account_id IN(${eligible})`,
+            ).bind(...args),
+            c.env.DB.prepare(`DELETE FROM accounts WHERE id IN(${eligible})`).bind(...args),
           ]);
           if (!results[1].meta.changes) return c.json({ error: "RESOURCE_IN_USE" }, 409);
         } catch (error) {
