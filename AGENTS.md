@@ -108,6 +108,8 @@ CLI 故障按技能处理并说明替代方式，未执行成功不称为 OCR �
 
 改 UI 前读技能与对应 pattern，核对 `packages/ui/components.json` 和已安装组件，通过 CLI 查文档及更新差异，选择一致的原语库。按现有 `Transport` 适配示例，不因 AI SDK/Next.js/演示 transport 改宿主架构。
 
+- **优先使用 shadcn/ui 组件。** 网站、Windows Renderer 和共享 UI 新增或修改交互控件时，先复用 `packages/ui` 中已安装的 shadcn 组件或基于它们的业务组件。缺少合适组件时，先查官方组件及组合方式；只有现有方案无法满足具体交互或平台要求时，才使用原生或自定义控件。
+- 表单单选下拉复用 [FormSelect](packages/ui/src/form-select.tsx)，操作菜单使用 `DropdownMenu`。验收时实际展开菜单，检查深浅主题、窄屏、选中项和键盘焦点。
 - 聊天使用 `MessageScroller`、`Message`、`Bubble` 和稳定消息标识；跟随、上翻、回到最新由官方滚动组件负责。
 - 输入用 `InputGroup`：Enter 发送、Shift+Enter 换行、中文组合态不发送；只追问缺失信息，详细表单为次级入口。
 - Model Selector 展示真实配置/能力；Tool/Task/Plan 用 `Trace` 展示实际步骤、状态及可展开的脱敏输入输出/错误；确认在原聊天中提供具体操作与明确选择，并遵守后端绑定校验。
