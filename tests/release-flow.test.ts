@@ -67,6 +67,9 @@ test("桌面版本必须递增，不能以旧版本绕过公开版本保护", ()
 });
 test("发布按排空、备份、迁移、部署、公开、下载验证、启用的顺序运行", async () => {
   const s = fixture();
+  s.io.deployed = async () => {
+    throw Error("新部署成功后不应读取尚未传播的 health");
+  };
   const result = await runRelease(s.io, s.state());
   assert.equal(result.phase, "complete");
   assert.deepEqual(
@@ -107,12 +110,23 @@ test("中途失败不恢复领取；部分迁移显式恢复复用原备份", as
 test("部署未知仅核验，不重发；错误下载哈希不切换通道", async () => {
   const s = fixture();
   s.io.deploy = async () => {
+    s.calls.push("deploy");
     throw Error("lost response");
   };
   await assert.rejects(runRelease(s.io, s.state()));
   s.io.deployed = async () => false;
   await assert.rejects(runRelease(s.io, s.state()), /UNCONFIRMED/);
   assert.equal(s.state().phase, "deploying");
+  assert.equal(s.calls.includes("publish"), false);
+  assert.equal(s.calls.includes("restore"), false);
+  let confirmations = 0;
+  s.io.deployed = async () => {
+    confirmations++;
+    return true;
+  };
+  assert.equal((await runRelease(s.io, s.state())).phase, "complete");
+  assert.equal(confirmations, 1);
+  assert.equal(s.calls.filter((name) => name === "deploy").length, 1);
   const h = fixture();
   h.io.verifyDownload = async () => {
     throw Error("hash mismatch");
