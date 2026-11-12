@@ -158,6 +158,7 @@ for (const host of ["compose", "conversation"] as const) {
     );
     assert.equal((await view.findByText("助手回复")).tagName, "STRONG");
     assert.ok(view.getByText("**用户原文**"));
+    fireEvent.click(view.getByRole("button", { name: "操作反馈" }));
     assert.ok(view.getByText("**附件原文**"));
     let draft: ChatDraft = {
       id: "draft",

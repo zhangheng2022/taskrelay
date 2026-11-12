@@ -1,3 +1,4 @@
+import { Disclosure } from "./disclosure";
 import { useConfirmation, useSettingsDirty } from "./settings-support";
 /** 模型表单由 RHF 持有编辑草稿，Zod 校验与服务端保持一致；后台刷新不能覆盖正在编辑的值。 */
 import { useState } from "react";
@@ -142,8 +143,7 @@ export function ModelDialog({
                 {...form.register("model")}
               />
             </Field>
-            <details>
-              <summary>高级设置</summary>
+            <Disclosure label="高级设置" keepMounted>
               <Field label="请求发起区域">
                 <FormSelect
                   name={region.name}
@@ -201,7 +201,7 @@ export function ModelDialog({
                   />
                 </Field>
               </FieldGroup>
-            </details>
+            </Disclosure>
             {errors.root?.message && <p role="alert">{errors.root.message}</p>}
             {error && <ErrorText error={error} />}
           </FieldGroup>

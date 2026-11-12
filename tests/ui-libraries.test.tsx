@@ -340,7 +340,12 @@ test("供应商连接表单登记自定义前缀、修改默认区域并保留�
     body: { expectedRegion: "us", defaultRegion: "eu" },
   });
   fireEvent.click(view.getByText("添加服务"));
+  const advanced = view.getByRole("button", { name: "高级设置" });
+  fireEvent.click(advanced);
+  await chooseOption(view.getByLabelText("默认请求发起区域"), "欧盟");
   fireEvent.change(view.getByLabelText("服务名称"), { target: { value: "接入" } });
+  fireEvent.click(advanced);
+  assert.equal(advanced.getAttribute("aria-expanded"), "false");
   fireEvent.keyDown(view.getByRole("combobox", { name: "服务提供方" }), { key: "ArrowDown" });
   fireEvent.keyDown(await view.findByRole("option", { name: "自定义服务" }), { key: "Enter" });
   fireEvent.change(view.getByLabelText("公网 HTTPS 服务地址"), {
@@ -355,7 +360,7 @@ test("供应商连接表单登记自定义前缀、修改默认区域并保留�
       name: "接入",
       kind: "custom",
       upstream: "https://new.example/v2",
-      defaultRegion: "auto",
+      defaultRegion: "eu",
     },
   });
 });

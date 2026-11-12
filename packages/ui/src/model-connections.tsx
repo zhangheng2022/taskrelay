@@ -1,4 +1,5 @@
 /** 服务页只在接入和排错时展示网关登记信息；配置状态来自服务端核验。 */
+import { Disclosure } from "./disclosure";
 import { useRef, useState } from "react";
 import {
   connectionInputSchema,
@@ -12,6 +13,7 @@ import { Input } from "./components/ui/input";
 import { FormSelect } from "./form-select";
 import { SelectItem } from "./components/ui/select";
 import { Field } from "./form-field";
+import { FieldSet } from "./components/ui/field";
 import { ErrorText } from "./feedback";
 
 const labels = {
@@ -130,13 +132,12 @@ export function ModelConnections({
                   {regions}
                 </FormSelect>
               </Field>
-              <details>
-                <summary>技术详情</summary>
+              <Disclosure label="技术详情">
                 <p>连接 ID：{c.id}</p>
                 <p>网关标识：{c.gatewayProvider}</p>
                 {c.keyAlias && <p>密钥别名：{c.keyAlias}</p>}
                 {c.kind === "custom" && <p>接口地址：{c.upstream}</p>}
-              </details>
+              </Disclosure>
             </div>
           )}
         </article>
@@ -169,7 +170,7 @@ export function ModelConnections({
             }).catch((e: Error) => setError(e.message));
           }}
         >
-          <fieldset disabled={busy} className="flex flex-col gap-3">
+          <FieldSet disabled={busy} className="flex flex-col gap-3">
             <Field label="服务提供方">
               <FormSelect
                 disabled={busy}
@@ -188,8 +189,7 @@ export function ModelConnections({
                 <Input type="url" name="upstream" required />
               </Field>
             )}
-            <details>
-              <summary>高级设置</summary>
+            <Disclosure label="高级设置" keepMounted>
               <Field label="服务名称">
                 <Input name="name" maxLength={80} placeholder="默认使用提供方或网站名称" />
               </Field>
@@ -198,14 +198,14 @@ export function ModelConnections({
                   {regions}
                 </FormSelect>
               </Field>
-            </details>
+            </Disclosure>
             <div className="flex gap-2">
               <Button type="submit">保存服务</Button>
               <Button type="button" variant="ghost" onClick={() => setAdding(false)}>
                 取消
               </Button>
             </div>
-          </fieldset>
+          </FieldSet>
         </form>
       )}
       {error && <ErrorText error={error} />}
