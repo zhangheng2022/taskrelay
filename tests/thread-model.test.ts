@@ -51,21 +51,21 @@ test("停用模型的旧会话可切换，保留消息、任务和运行快照",
   const list = (await s.request(`/api/user/threads?taskId=${s.run.taskId}`, undefined, "GET")).data;
   assert.equal(list.items[0].id, page.id);
   assert.equal(list.items[0].model_id, "model_next");
-  assert.equal(
-    (await s.request(path, { modelId: "model_next", expectedVersion: current.version }, "PUT"))
-      .status,
-    409,
-  );
-  assert.equal(
-    (
-      await s.request(
-        path,
-        { modelId: "model_test", expectedVersion: switched.data.version },
-        "PUT",
-      )
-    ).data.error,
-    "MODEL_DISABLED",
-  );
+  const staleInput = { modelId: "model_next", expectedVersion: current.version };
+  const stale = await s.request(path, staleInput, "PUT");
+  assert.equal(stale.status, 409);
+  const disabledInput = { modelId: "model_test", expectedVersion: switched.data.version };
+  const disabled = await s.request(path, disabledInput, "PUT");
+  assert.equal(disabled.data.error, "MODEL_DISABLED");
+  const prepare = s.env.DB.prepare.bind(s.env.DB);
+  t.mock.method(s.env.DB, "prepare", (query: string) => {
+    if (query.startsWith("UPDATE ai_threads SET model_id="))
+      s.sql.exec("UPDATE models SET enabled=0 WHERE id='model_next'");
+    return prepare(query);
+  });
+  const racedInput = { modelId: "model_next", expectedVersion: switched.data.version };
+  const raced = await s.request(path, racedInput, "PUT");
+  assert.equal(raced.status, 409, "模型在读取后停用，写入仍须拒绝");
 });
 
 test("切换拒绝运行中、收尾中、未知结果、活动回合及越权会话", async (t) => {
@@ -82,12 +82,22 @@ test("切换拒绝运行中、收尾中、未知结果、活动回合及越权�
   s.sql.exec("UPDATE runs SET status='succeeded',cleanup_pending=1");
   assert.equal((await s.request(path, input, "PUT")).status, 409);
   s.sql.exec("UPDATE runs SET cleanup_pending=0");
+  s.sql
+    .prepare(
+      "INSERT INTO ai_turns(id,thread_id,request_id,digest,version,status,created_at,updated_at) VALUES('active',?,'active','fixture',1,'running',1,1)",
+    )
+    .run(page.id);
   s.sql.prepare("UPDATE ai_threads SET active_turn='active' WHERE id=?").run(page.id);
   assert.equal((await s.request(path, input, "PUT")).status, 409);
   s.sql.prepare("UPDATE ai_threads SET active_turn=NULL WHERE id=?").run(page.id);
   s.sql.exec("INSERT INTO members(id,email,role) VALUES('other','other@example.com','user')");
-  s.sql.prepare("UPDATE ai_threads SET user_id='other' WHERE id=?").run(page.id);
-  assert.equal((await s.request(path, input, "PUT")).status, 404);
+  s.sql
+    .prepare(
+      "INSERT INTO ai_threads(id,user_id,kind,model_id,model_version,created_at,updated_at) SELECT 'other_thread','other',kind,model_id,model_version,created_at,updated_at FROM ai_threads WHERE id=?",
+    )
+    .run(page.id);
+  const foreign = await s.request("/api/user/threads/other_thread/model", input, "PUT");
+  assert.equal(foreign.status, 404);
   s.env.DEV_MODE = "0";
   assert.equal((await s.request(path, input, "PUT")).status, 401);
   const device = await app.request(
