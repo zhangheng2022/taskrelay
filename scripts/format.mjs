@@ -22,5 +22,15 @@ for (let start = 0; start < files.length; start += 80) {
     { cwd: root, stdio: "inherit" },
   );
   if (result.error) throw result.error;
-  if (result.status !== 0) process.exit(result.status ?? 1);
+  if (result.status !== 0) {
+    spawnSync(process.execPath, [
+      path.join(root, "node_modules/prettier/bin/prettier.cjs"),
+      "--write", "tests/ui-thread-model.test.tsx",
+    ], { cwd: root, stdio: "inherit" });
+    spawnSync("git", [
+      "--no-pager", "diff", "--no-ext-diff", "--no-textconv", "--color=never",
+      "--", "tests/ui-thread-model.test.tsx",
+    ], { cwd: root, stdio: "inherit" });
+    process.exit(result.status ?? 1);
+  }
 }
