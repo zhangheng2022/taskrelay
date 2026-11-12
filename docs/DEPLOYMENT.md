@@ -104,7 +104,7 @@ GitHub [上传接口会改写特殊文件名](https://docs.github.com/en/rest/re
 5. 新建模型，选择连接和请求发起区域，测试连接、工具、结构化、视觉及流式能力。已有成功条件卡的任务可以重新选模；其他旧交办可使用新模型重新交办。历史聊天与用量仍绑定原版本。核对网关元数据、无正文、使用量和地区证据，首次切换由发布脚本保持领取暂停，记录中保留 oldClaims。先在隔离部署用同版执行器实测 Stagehand；生产模型探测和聊天通过后，恢复原领取开关并观察首个受控任务。若需先在生产运行唯一验收任务，应在无其他待领任务的受控窗口执行。管理员访问 `/api/admin/settings/check?egress=1&region=eu` 可读取后台对象的 jurisdiction 和到 OpenAI 的诊断结果，依次替换为 auto、us、eu。网关到供应商的实际出口需核对供应商侧记录。
 6. 普通用户只可使用启用的平台模型或本人的私有模型。个人密钥自助登记属于后续交付；先核对 Secrets Store 的账户容量。
 
-迁移 0008 后仅登记支持 Responses 的服务。发布会排空在途调用，退休旧协议队列并暂停对应定时计划，领取保持关闭直到核验。对照发布记录中的 oldClaims 恢复原状态。Workers AI 使用账户级 `/ai/v1/responses` 和网关 ID；单独探测 `@cf/openai/gpt-oss-20b` 的结构化输出、工具及真实问答，通过后提供给用户。原生和自定义连接按各自的 Responses 路径验证。
+迁移 0009 清除旧协议和网关接入前的模型配置，移除旧路由、能力及区域。仅被用量引用的模型可以整行删除，历史任务和聊天的外键标识保留。迁移 0008 后仅登记支持 Responses 的服务。发布会排空在途调用，退休旧协议队列并暂停对应定时计划，领取保持关闭直到核验。对照发布记录中的 oldClaims 恢复原状态。Workers AI 使用账户级 `/ai/v1/responses` 和网关 ID；单独探测 `@cf/openai/gpt-oss-20b` 的结构化输出、工具及真实问答，通过后提供给用户。原生和自定义连接按各自的 Responses 路径验证。
 
 普通 Worker 即使指定美国 placement，实际测试仍可能向 OpenAI 保留访问者的地区上下文：2026-11-03 实测执行位置 `remote-IAD`，但 OpenAI trace 的 `loc=HK`，模型返回 `unsupported_country_region_territory`。改为独立 alarm 后，同次诊断分别显示普通请求 `HK/HKG`、后台请求 `US/IAD`（另一次为 `US/ATL`），现有 `gpt-6-luna / Responses` 的连接、工具和严格 Schema 测试全部通过。因此没有保留无效的全站 placement 提示，也没有伪造地区头。
 
