@@ -28,11 +28,13 @@ globalThis.fetch = async (input) => {
     return Response.json({ Status: 0, Answer: [{ type: 1, data: "8.8.8.8" }] });
   if (
     url ===
-    "https://gateway.ai.cloudflare.com/v1/ffffffffffffffffffffffffffffffff/fixture/openai/chat/completions"
+    "https://gateway.ai.cloudflare.com/v1/ffffffffffffffffffffffffffffffff/fixture/openai/responses"
   )
     return Response.json({
-      choices: [{ message: { content: JSON.stringify(reply) } }],
-      usage: { prompt_tokens: 11, completion_tokens: 7 },
+      output: [
+        { type: "message", content: [{ type: "output_text", text: JSON.stringify(reply) }] },
+      ],
+      usage: { input_tokens: 11, output_tokens: 7 },
     });
   throw new Error("PROFILE_NETWORK_FORBIDDEN");
 };
@@ -93,7 +95,7 @@ export default {
             name: "fixture",
             region: "inherit",
             model: "fixture",
-            protocol: "chat",
+            protocol: "responses",
             inputPrice: null,
             outputPrice: null,
           }),

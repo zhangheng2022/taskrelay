@@ -1,7 +1,6 @@
 /** 模型流传输：官方 SDK 解析协议，收齐结束事件后才交付工具与结果；正文预览不代表执行成功。
  * 网络包装逐块计量并传播取消，禁止先缓存整段响应。 */
 import type OpenAI from "openai";
-import type { ChatCompletionCreateParamsStreaming } from "openai/resources/chat/completions";
 import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses";
 import type { ModelResponse } from "./index";
 
@@ -64,49 +63,10 @@ export function boundedStream(
 
 export async function readModelStream(
   client: OpenAI,
-  protocol: "chat" | "responses",
   body: Record<string, unknown>,
   onText?: (text: string) => Promise<void>,
 ): Promise<ModelResponse> {
   let text = "";
-  const usage: ModelResponse["usage"] = { input: null, output: null };
-  if (protocol === "chat") {
-    const stream = await client.chat.completions.create(
-      body as unknown as ChatCompletionCreateParamsStreaming,
-    );
-    const calls = new Map<number, ModelResponse["calls"][number]>();
-    let finished = false;
-    for await (const chunk of stream) {
-      if (chunk.usage) {
-        usage.input = chunk.usage.prompt_tokens ?? null;
-        usage.output = chunk.usage.completion_tokens ?? null;
-      }
-      const choice = chunk.choices.find((item) => item.index === 0);
-      if (!choice) continue;
-      if (choice.delta.content) {
-        if (finished) throw Error("MODEL_STREAM_INVALID");
-        text += choice.delta.content;
-        await onText?.(text);
-      }
-      for (const part of choice.delta.tool_calls ?? []) {
-        if (finished) throw Error("MODEL_STREAM_INVALID");
-        const call = calls.get(part.index) ?? { id: "", name: "", arguments: "" };
-        call.id += part.id ?? "";
-        call.name += part.function?.name ?? "";
-        call.arguments += part.function?.arguments ?? "";
-        calls.set(part.index, call);
-      }
-      if (choice.finish_reason) {
-        if (!["stop", "tool_calls"].includes(choice.finish_reason))
-          throw Error("MODEL_STREAM_INCOMPLETE");
-        finished = true;
-      }
-    }
-    if (!finished) throw Error("MODEL_STREAM_INCOMPLETE");
-    const ordered = [...calls].sort(([a], [b]) => a - b).map(([, call]) => call);
-    if (ordered.some((call) => !call.id || !call.name)) throw Error("MODEL_STREAM_INVALID");
-    return { text, calls: ordered, usage };
-  }
   const stream = await client.responses.create(body as unknown as ResponseCreateParamsStreaming);
   let result: ModelResponse | undefined;
   for await (const event of stream) {

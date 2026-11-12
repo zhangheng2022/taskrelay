@@ -1,5 +1,9 @@
 # TaskRelay 验收记录
 
+## 2026-11-12 Responses 单协议切换
+
+源码回归覆盖配置省略协议、拒绝旧协议、固定版本、旧队列终态、定时暂停、历史聊天读取、跨用户模型隔离、自定义路径和流式中断。全量 574 项测试、其中 86 项 UI 测试通过，类型检查和 Web 构建通过。下方保留切换前的生产验收记录。
+
 ## 2026-11-11 自定义 OpenAI、Llama 3.3 与 Stagehand 生产复验
 
 生产健康检查已确认提交 `53f2657d03b8bd6831699333ab40125669d71684`、协议 19。首次发布停在部署阶段，在主站确认目标提交后，沿用原发布记录恢复成功。D1 确认发布阶段为 complete，维护关闭，领取恢复为 1。本次仅发布云端，桌面沿用 0.25.0。全量 587 项测试通过。PR 的 Windows 首轮有一项聊天通知 UI 测试超时，本机定向复测、远端重跑和主分支检查均通过。[第一次修复](https://github.com/zhangheng2022/taskrelay/pull/62) · [第二次修复](https://github.com/zhangheng2022/taskrelay/pull/63) · [主分支 CI](https://github.com/zhangheng2022/taskrelay/actions/runs/43035622251) · [生产发布](https://github.com/zhangheng2022/taskrelay/actions/runs/43036496395) · [完成恢复](https://github.com/zhangheng2022/taskrelay/actions/runs/43037038748)

@@ -56,7 +56,7 @@ export function ModelSelector({
                   {m.name} · {m.model}
                 </span>
                 <span className="text-xs text-muted-foreground">
-                  {m.protocol === "responses" ? "Responses" : "Chat Completions"} · v{m.version} ·{" "}
+                  Responses · v{m.version} ·{" "}
                   {canUseModel(m)
                     ? m.capabilities.structured === "schema"
                       ? "工具调用 / JSON Schema"

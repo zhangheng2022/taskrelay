@@ -11,7 +11,7 @@ const profile: ModelProfile & { baseUrl: string } = {
   name: "compatible",
   baseUrl: "https://provider.example/v1",
   model: "vendor/non-gpt-model",
-  protocol: "chat",
+  protocol: "responses",
   inputPrice: null,
   outputPrice: null,
   capabilities: {
@@ -28,42 +28,38 @@ test("模型地址只去除尾部斜杠，长内部斜杠不会引起正则回�
     profile.baseUrl + "/".repeat(100_000) + "tail///",
   ]) {
     const expected = baseUrl.endsWith("tail///")
-      ? profile.baseUrl + "/".repeat(100_000) + "tail/chat/completions"
-      : profile.baseUrl + "/chat/completions";
+      ? profile.baseUrl + "/".repeat(100_000) + "tail/responses"
+      : profile.baseUrl + "/responses";
     await infer({ ...profile, baseUrl }, "key", { messages: [] }, async (url) => {
       assert.equal(requestUrl(url), expected);
-      return Response.json({ choices: [{ message: { content: "完成" } }] });
+      return Response.json({
+        output: [{ type: "message", content: [{ type: "output_text", text: "完成" }] }],
+      });
     });
   }
 });
-for (const protocol of ["chat", "responses"] as const)
-  test(`${protocol} 正式执行工具经过提供方格式投影，本机仍保留完整 Zod 校验`, async () => {
-    const original = structuredClone(executorTools);
-    await infer(
-      { ...profile, protocol },
-      "key",
-      { messages: [{ role: "user", content: "只读测试" }], tools: executorTools },
-      async (_url, init) => {
-        const body = jsonBody(init?.body);
-        const tools =
-          protocol === "chat"
-            ? body.tools.map((item: { function: unknown }) => item.function)
-            : body.tools;
-        assert.equal(tools.length, 12);
-        assert.doesNotMatch(JSON.stringify(tools), /"format":"uri"|"minLength"|"maxLength"/);
-        for (const item of tools)
-          assert.deepEqual(item.parameters.required, Object.keys(item.parameters.properties));
-        return Response.json(
-          protocol === "chat"
-            ? { choices: [{ message: { content: "完成" } }] }
-            : { output: [{ type: "message", content: [{ type: "output_text", text: "完成" }] }] },
-        );
-      },
-    );
-    assert.deepEqual(executorTools, original);
-    assert.equal(executorArguments.navigate.safeParse({ url: "invalid" }).success, false);
-    assert.equal(executorArguments.act.safeParse({ instruction: "" }).success, false);
-  });
+test(`Responses 正式执行工具经过提供方格式投影，本机仍保留完整 Zod 校验`, async () => {
+  const original = structuredClone(executorTools);
+  await infer(
+    profile,
+    "key",
+    { messages: [{ role: "user", content: "只读测试" }], tools: executorTools },
+    async (_url, init) => {
+      const body = jsonBody(init?.body);
+      const tools = body.tools;
+      assert.equal(tools.length, 12);
+      assert.doesNotMatch(JSON.stringify(tools), /"format":"uri"|"minLength"|"maxLength"/);
+      for (const item of tools)
+        assert.deepEqual(item.parameters.required, Object.keys(item.parameters.properties));
+      return Response.json({
+        output: [{ type: "message", content: [{ type: "output_text", text: "完成" }] }],
+      });
+    },
+  );
+  assert.deepEqual(executorTools, original);
+  assert.equal(executorArguments.navigate.safeParse({ url: "invalid" }).success, false);
+  assert.equal(executorArguments.act.safeParse({ instruction: "" }).success, false);
+});
 test("严格输出投影不修改原 Schema，也不把同名业务字段当作关键字删除", () => {
   const schema = {
     type: "object",
@@ -83,7 +79,7 @@ test("严格输出投影不修改原 Schema，也不把同名业务字段当作�
     enum: ["value"],
   });
 });
-test("Chat Completions 保留任意模型名、工具调用及未知用量", async () => {
+test("Responses 保留任意模型名、工具调用及未知用量", async () => {
   const result = await infer(
     profile,
     "key",
@@ -92,25 +88,13 @@ test("Chat Completions 保留任意模型名、工具调用及未知用量", asy
       tools: [{ name: "check", description: "test", parameters: { type: "object" } }],
     },
     async (url, init) => {
-      assert.equal(requestUrl(url), "https://provider.example/v1/chat/completions");
+      assert.equal(requestUrl(url), "https://provider.example/v1/responses");
       assert.equal(init?.redirect, "manual");
       const b = jsonBody(init?.body);
       assert.equal(b.model, "vendor/non-gpt-model");
-      assert.equal(b.tools[0].function.name, "check");
+      assert.equal(b.tools[0].name, "check");
       return Response.json({
-        choices: [
-          {
-            message: {
-              content: null,
-              tool_calls: [
-                {
-                  id: "1",
-                  function: { name: "check", arguments: '{"value":7}' },
-                },
-              ],
-            },
-          },
-        ],
+        output: [{ type: "function_call", call_id: "1", name: "check", arguments: '{"value":7}' }],
       });
     },
   );
@@ -276,7 +260,9 @@ test("SDK 不继承环境组织凭据；未配置密钥的兼容端点不发送 
       const headers = new Headers(init?.headers);
       for (const name of ["authorization", "openai-organization", "openai-project"])
         assert.equal(headers.get(name), null);
-      return Response.json({ choices: [{ message: { content: "ok" } }] });
+      return Response.json({
+        output: [{ type: "message", content: [{ type: "output_text", text: "ok" }] }],
+      });
     },
   );
 });

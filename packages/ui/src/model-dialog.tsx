@@ -47,7 +47,7 @@ export function ModelDialog({
       name: value?.name ?? "",
       connectionId: value?.connectionId ?? connections[0]?.id ?? "",
       region: value?.region ?? "inherit",
-      protocol: value?.protocol ?? "chat",
+      protocol: "responses",
       model: value?.model ?? "",
       contextTokens: value?.contextTokens ?? 16000,
       outputTokens: value?.outputTokens ?? 4096,
@@ -133,17 +133,9 @@ export function ModelDialog({
                 </NativeSelect>
               </Field>
             </details>
-            <FieldGroup className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-              <Field label="配置名称" error={errors.name?.message}>
-                <Input disabled={busy} required {...form.register("name")} />
-              </Field>
-              <Field label="API 协议" error={errors.protocol?.message}>
-                <NativeSelect disabled={busy} {...form.register("protocol")}>
-                  <option value="chat">Chat Completions</option>
-                  <option value="responses">Responses</option>
-                </NativeSelect>
-              </Field>
-            </FieldGroup>
+            <Field label="配置名称" error={errors.name?.message}>
+              <Input disabled={busy} required {...form.register("name")} />
+            </Field>
             <Field label="上下文预算（token，保守估计）" error={errors.contextTokens?.message}>
               <Input
                 disabled={busy}

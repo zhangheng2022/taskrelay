@@ -121,8 +121,7 @@ export function gatewayTransport(env: AppEnv, connection: ModelConnection, model
   return {
     baseUrl,
     fetch: (input: string | URL, init?: RequestInit) => {
-      if (![baseUrl + "/chat/completions", baseUrl + "/responses"].includes(String(input)))
-        throw Error("MODEL_GATEWAY_ROUTE_INVALID");
+      if (String(input) !== baseUrl + "/responses") throw Error("MODEL_GATEWAY_ROUTE_INVALID");
       const headers = new Headers(init?.headers);
       headers.delete("authorization");
       headers.set("cf-aig-collect-log-payload", "false");

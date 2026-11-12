@@ -229,7 +229,9 @@ export async function tickSchedules(env: AppEnv) {
           );
         } catch (error) {
           if (
-            /MODEL_DISABLED|ACCOUNT_DISABLED|ACCOUNT_ORIGIN_MISMATCH/.test((error as Error).message)
+            /MODEL_PROTOCOL_RETIRED|MODEL_DISABLED|ACCOUNT_DISABLED|ACCOUNT_ORIGIN_MISMATCH/.test(
+              (error as Error).message,
+            )
           ) {
             await env.DB.prepare(
               "UPDATE task_schedules SET state='paused',next_run_at=NULL,version=version+1 WHERE task_id=? AND version=?",

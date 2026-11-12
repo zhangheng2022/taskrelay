@@ -121,7 +121,7 @@ test("模型配置编辑 CAS 保留固定版本，并拒绝过期表单", async 
     name: "新版",
     connectionId: "conn_test",
     model: "test",
-    protocol: "chat",
+    protocol: "responses",
     contextTokens: 16000,
     outputTokens: 4096,
     inputPrice: null,
@@ -414,7 +414,7 @@ test("管理员可删除未使用的平台网关模型及版本", async (t) => {
   const model = await s.request("/api/admin/models", {
     name: "unused",
     model: "unused",
-    protocol: "chat",
+    protocol: "responses",
     connectionId: "conn_test",
   });
   assert.equal(model.status, 201);

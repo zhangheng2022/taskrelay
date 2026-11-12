@@ -20,7 +20,7 @@ function routes(kind: "accounts" | "models") {
         const id = c.req.param("id");
         const token = crypto.randomUUID();
         const update = c.env.DB.prepare(
-          `UPDATE ${kind} SET enabled=?,management_token=?,management_version=management_version+1 WHERE id=? AND management_version=? ${kind === "accounts" ? "AND user_id=?" : "AND owner_user_id IS NULL AND EXISTS(SELECT 1 FROM model_profile_versions v WHERE v.id=models.id AND v.version=models.current_version AND v.connection_id IS NOT NULL)"}`,
+          `UPDATE ${kind} SET enabled=?,management_token=?,management_version=management_version+1 WHERE id=? AND management_version=? ${kind === "accounts" ? "AND user_id=?" : "AND owner_user_id IS NULL AND EXISTS(SELECT 1 FROM model_profile_versions v WHERE v.id=models.id AND v.version=models.current_version AND v.connection_id IS NOT NULL AND json_extract(v.config,'$.protocol')='responses')"}`,
         ).bind(
           Number(enabled),
           token,

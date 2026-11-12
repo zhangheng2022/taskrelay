@@ -4,7 +4,7 @@
 
 聊天展示由共享 `ChatMarkdown` 使用 Streamdown 解析助手正文，新交办、任务会话和云端/执行器草稿共用；用户原文、来源状态、Trace 和附件独立展示。草稿只在视图中补全未闭合语法，pending/interrupted 不表示继续生成；正式消息静态解析保存的原文，不改协议或存储。代码块沿用 shadcn CodeBlock；HTML 不执行，图片语法只显示替代文字，链接只开放完整、不带凭据的 HTTP/HTTPS 地址并在新标签页打开。原始附件仍使用受鉴权的图片链路；滚动、去重和草稿交接仍由既有 MessageScroller/useThread 负责。
 
-模型侧使用官方 OpenAI SDK 的 Chat Completions / Responses HTTP 流。公网校验、禁止重定向、60 秒整个响应超时、2 MB 上限、固定错误和 `maxRetries:0` 继续由 adapter 负责；成功流逐块读取，只有终止事件完整到达后返回原有 ModelResponse。文字预览独立发送，工具参数及结构化结果仍完整汇总、校验后交给 LangGraph；Stagehand ClientLLM.generate 也保留完整返回约定。内部摘要、推理分片、工具参数及 Stagehand 输出不发布到聊天正文。
+模型侧使用官方 OpenAI SDK 的 Responses HTTP 流。公网校验、禁止重定向、60 秒整个响应超时、2 MB 上限、固定错误和 `maxRetries:0` 继续由 adapter 负责；成功流逐块读取，只有终止事件完整到达后返回原有 ModelResponse。文字预览独立发送，工具参数及结构化结果仍完整汇总、校验后交给 LangGraph；Stagehand ClientLLM.generate 也保留完整返回约定。内部摘要、推理分片、工具参数及 Stagehand 输出不发布到聊天正文。
 
 生产路径仍为 `models.invoke → egress → ModelEgress（版本固定区域）→ alarm → AI Gateway`。同一 submitAndWait RPC 等待终态并 ack，流期间没有新增 RPC 轮询。alarm 主动向用户的 NotificationHub 发布草稿，网站连接生命周期不影响任务。每个固定模型配置版本分别记录 text/tools/structured 流能力；未知类型先发送不含用户业务的独立探测。仅明确不支持且同格式非流式控制探测通过后，后续业务选用同模型完整响应；网络故障保持未知。业务调用已发送后的超时、断流、未知结果均不重发或切换模型，调用去重先于能力选择和开关读取。
 
@@ -221,7 +221,7 @@ utilityProcess 创建同步失败也进入 Host 收尾，持久化未启动失�
 
 执行器先脱敏，再对超过 1,500,000 字节的 PNG 等比例缩小，并生成不超过 640×360／160,000 字节的聊天缩略图；不裁剪、不改变遮蔽范围。Main 用 multipart 二进制上传原图与缩略图，旧 Base64 JSON 上传仍可用。云端检查 PNG 结构、CRC、1600 万像素上限、完整压缩流及扫描行，原图和缩略图在同一 Evidence DO 中原子加密保存。相同 captureId 的重传校验运行、代次、用途和原图摘要；仅图片上传遇到暂时网络错误可重试一次，绝不重放浏览器动作或模型推理。截图失败返回固定原因并尝试写入聊天，最终回复保留最终截图失败说明。
 
-Stagehand 视觉输入上传为 `purpose=vision` 的私有临时图片，后续 `/stagehand` 请求及加密模型作业只携带 `imageArtifactId`／`imageRef`，不携带图片 Base64。ModelEgress alarm 在提供方调用前检查用户、运行、聊天、租约代次及有效期，读取并再次校验后展开为 Data URL；Chat Completions、Responses 和结构化修复均沿用该路径。临时图片不允许作为聊天附件或经用户图片接口读取，10 分钟到期，并在运行终态维护时清理；聊天图片仍随聊天保留／删除。没有公开图片链接、R2 或提供方直接拉取私有图片；提供方最后一跳仍使用 Data URL，存储加密内部编码也保留。
+Stagehand 视觉输入上传为 `purpose=vision` 的私有临时图片，后续 `/stagehand` 请求及加密模型作业只携带 `imageArtifactId`／`imageRef`，不携带图片 Base64。ModelEgress alarm 在提供方调用前检查用户、运行、聊天、租约代次及有效期，读取并再次校验后展开为 Data URL；Responses 普通调用和结构化修复均沿用该路径。临时图片不允许作为聊天附件或经用户图片接口读取，10 分钟到期，并在运行终态维护时清理；聊天图片仍随聊天保留／删除。没有公开图片链接、R2 或提供方直接拉取私有图片；提供方最后一跳仍使用 Data URL，存储加密内部编码也保留。
 
 并发上传同一 captureId 时每次请求拥有独立暂存对象，由 D1 图片索引确定唯一发布者；落败请求只清自己的对象。暂存到期由 Evidence alarm 核对发布索引，永久图片不会被重复 alarm 删除；回收孤儿前在 D1 写退休墓碑，索引发布同样检查该墓碑，阻止迟到请求引用已回收对象。D1 提交结果未知时保留对象供后续核对，不直接删除可能已发布的内容。
 
@@ -231,11 +231,11 @@ Stagehand 视觉输入上传为 `purpose=vision` 的私有临时图片，后续 
 
 平台与私有模型分别由空或具体 owner_user_id 标识。连接不可变地绑定供应商、上游及托管密钥别名，模型版本保存 connection_id 和发布时解析的 effective_region。自动直接从命名空间创建对象，美国和欧盟通过 jurisdiction 创建。连接默认区域与模型的显式自动值互相独立；只有新发布且选择继承的版本会采用修改后的默认区域。普通用户列表和出站均按可信用户检查归属。设备租约决定运行身份。配置服务读取 Cloudflare 的供应商及密钥记录，比对自定义上游 origin 和托管别名，核验成功的连接才允许出站。网关以专属端点和托管别名调用第三方；Workers AI 使用账户 REST 端点并显式选择同一网关。正文日志、响应缓存和重试关闭。区域约束只适用于本项目的后台对象。
 
-桌面执行器使用自动工具选择。能力探测与相应的流式探测发送相同的选择方式，并检查返回的函数名与实参。Workers AI 的 Llama 3.3 70B FP8 Fast 在 Chat Completions 下使用非流式 JSON Mode 处理结构化输出，旧的流式探测结果也遵循此限制。普通文本和工具调用分别使用各自的探测结果。参见 [Workers AI JSON Mode](https://developers.cloudflare.com/workers-ai/features/json-mode/)。
+桌面执行器使用自动工具选择。能力探测与相应的流式探测发送相同的选择方式，并检查返回的函数名与实参。文本、工具及结构化流式分开探测。版本读取与最终出站均检查固定版本协议，历史 Chat 配置保留供追溯。
 
 submitAndWait 一次 RPC 完成提交与等待，循环在对象内部。alarm 期间不能新建读取 RPC 替换入站 I/O 上下文，终态才 ack。作业与结果短期加密，未确认记录过期清理。上游调用前持久化 running；中断保持 MODEL_CALL_OUTCOME_UNKNOWN，不重放。workerd 的 MODEL_REGION_REQUIRES_DEPLOYMENT 不得绕过，地区和真实模型证据必须来自部署环境。
 
-模型名自由输入，支持 Chat Completions 与 Responses。缺少必需能力时拒绝使用，不暗换模型或提供方。自定义服务仅允许校验后的公网 HTTPS，拒绝跨域重定向传递凭据；上游错误映射公开分类，不返回响应正文。用量来自实际响应，缺少 token 或价格显示“未知”。
+模型名自由输入，统一使用 Responses API。缺少必需能力时拒绝使用，不暗换模型或提供方。自定义服务仅允许校验后的公网 HTTPS，拒绝跨域重定向传递凭据；上游错误映射公开分类，不返回响应正文。用量来自实际响应，缺少 token 或价格显示“未知”。
 
 LangChain 的 `RelayChatModel` 提供 `bindTools`、`withStructuredOutput` 和标准消息转换；LangGraph 实际负责云端规划/协助与桌面执行。RelayChatModel、D1Checkpointer 和 SessionCheckpointer 隔离模型出站、加密持久化及同代状态知识，保留这些平台 adapter。没有引入顶层 langchain 聚合包，也不允许默认外部 tracing 或框架隐式网络重试。
 

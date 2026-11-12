@@ -100,7 +100,7 @@ export function SettingsModels({
               {snapshot.models.length ? "没有匹配的模型" : "先连接一个模型服务"}
             </EmptyTitle>
             <EmptyDescription>
-              支持 Chat Completions 和 Responses。供应商密钥由 Cloudflare 托管。
+              模型服务须支持 Responses API。供应商密钥由 Cloudflare 托管。
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
@@ -119,9 +119,7 @@ export function SettingsModels({
                   <small>v{m.version}</small>{" "}
                   <Badge variant="outline">{m.enabled === false ? "已停用" : "已启用"}</Badge>
                 </h3>
-                <p>
-                  {m.model} · {m.protocol === "chat" ? "Chat Completions" : "Responses"}
-                </p>
+                <p>{m.model} · Responses</p>
                 <div className="capabilities mt-3">
                   <Badge variant="secondary">
                     连接 {m.capabilities.connection ? "通过" : "未通过"}

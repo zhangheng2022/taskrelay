@@ -3,55 +3,54 @@ import assert from "node:assert/strict";
 import { stagehandModel } from "../apps/desktop/src/executor/stagehand-model";
 import { productionModelFixture } from "./production-model-fixture";
 
-for (const protocol of ["chat", "responses"] as const)
-  test(`Stagehand ClientLLM 经生产 ${protocol} 入口保留树编号/schema，固定运行模型版本、归属与出站`, async (t) => {
-    const s = await productionModelFixture(t, protocol, "schema", protocol === "responses");
-    const schema = {
-      type: "object",
-      properties: { elementId: { type: "string" } },
-      required: ["elementId"],
-      additionalProperties: false,
-    };
-    const tree = "[1-77] button 无 id 的嵌套按钮\n" + "[1-78] text 页面内容\n".repeat(1200);
-    const result = { elementId: "1-77" };
-    s.replies(JSON.stringify(result));
-    let input: any;
-    const model = stagehandModel({
-      guard: () => {},
-      redact: (text) => text,
-      image: async () => {
-        throw Error("unexpected image");
-      },
-      request: async (body) => {
-        input = body;
-        const r = await s.request(`/api/runner/runs/${s.run.id}/stagehand`, {
-          epoch: s.run.leaseEpoch,
-          ...body,
-        });
-        assert.equal(r.status, 200, JSON.stringify(r.data));
-        return r.data;
-      },
-    });
-    const reply = await model.generate({
-      systemPrompt: "Stagehand observe",
-      messages: [{ role: "user", content: { type: "text", text: tree } }],
-      responseFormat: { type: "json_schema", name: "Observation", schema },
-    });
-    assert.equal(reply.outputFormat, "json_schema");
-    assert.deepEqual((reply as any).structuredContent, result);
-    assert.equal(s.jobs(), 1);
-    const body = s.requests[0].body;
-    assert.equal(body.model, "vendor/non-gpt");
-    assert.ok(JSON.stringify(body).includes("[1-77]"));
-    const messages = protocol === "chat" ? body.messages : body.input;
-    assert.equal(messages[1].content, tree);
-    const duplicate = await s.request(`/api/runner/runs/${s.run.id}/stagehand`, {
-      epoch: s.run.leaseEpoch,
-      ...input,
-    });
-    assert.equal(duplicate.status, 200);
-    assert.equal(s.jobs(), 1);
+test(`Stagehand ClientLLM 经生产 Responses 入口保留树编号/schema，固定运行模型版本、归属与出站`, async (t) => {
+  const s = await productionModelFixture(t, "responses", "schema", true);
+  const schema = {
+    type: "object",
+    properties: { elementId: { type: "string" } },
+    required: ["elementId"],
+    additionalProperties: false,
+  };
+  const tree = "[1-77] button 无 id 的嵌套按钮\n" + "[1-78] text 页面内容\n".repeat(1200);
+  const result = { elementId: "1-77" };
+  s.replies(JSON.stringify(result));
+  let input: any;
+  const model = stagehandModel({
+    guard: () => {},
+    redact: (text) => text,
+    image: async () => {
+      throw Error("unexpected image");
+    },
+    request: async (body) => {
+      input = body;
+      const r = await s.request(`/api/runner/runs/${s.run.id}/stagehand`, {
+        epoch: s.run.leaseEpoch,
+        ...body,
+      });
+      assert.equal(r.status, 200, JSON.stringify(r.data));
+      return r.data;
+    },
   });
+  const reply = await model.generate({
+    systemPrompt: "Stagehand observe",
+    messages: [{ role: "user", content: { type: "text", text: tree } }],
+    responseFormat: { type: "json_schema", name: "Observation", schema },
+  });
+  assert.equal(reply.outputFormat, "json_schema");
+  assert.deepEqual((reply as any).structuredContent, result);
+  assert.equal(s.jobs(), 1);
+  const body = s.requests[0].body;
+  assert.equal(body.model, "vendor/non-gpt");
+  assert.ok(JSON.stringify(body).includes("[1-77]"));
+  const messages = body.input;
+  assert.equal(messages[1].content, tree);
+  const duplicate = await s.request(`/api/runner/runs/${s.run.id}/stagehand`, {
+    epoch: s.run.leaseEpoch,
+    ...input,
+  });
+  assert.equal(duplicate.status, 200);
+  assert.equal(s.jobs(), 1);
+});
 
 test("Stagehand 图片只转发脱敏截图，取消时不交回可执行的定位结果", async () => {
   let sent: any,
@@ -149,7 +148,7 @@ test("执行推理收到本次聊天截图事实，截图交付与模型视觉�
   assert.equal(r.status, 200, JSON.stringify(r.data));
   assert.equal(r.data.response.text, decision);
   assert.equal(r.data.memory, undefined);
-  const facts = s.requests[0].body.messages.find((m: any) =>
+  const facts = s.requests[0].body.input.find((m: any) =>
     m.content.includes("运行能力与聊天附件反馈"),
   ).content;
   assert.match(facts, /截图数量=1/);

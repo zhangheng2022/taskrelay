@@ -36,7 +36,7 @@ export const snapshot: Snapshot = {
       name: "自定义",
       model: "non-gpt",
       connectionId: "conn_test",
-      protocol: "chat",
+      protocol: "responses",
       region: "inherit",
       inputPrice: null,
       outputPrice: null,

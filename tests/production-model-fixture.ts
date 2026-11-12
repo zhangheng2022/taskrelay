@@ -11,7 +11,7 @@ import { attachTestEgress } from "./egress-helpers";
 
 export async function productionModelFixture(
   t: TestContext,
-  protocol: "chat" | "responses" = "chat",
+  protocol: "responses" = "responses",
   structured: "schema" | "json" | "none" = "schema",
   personal = false,
 ) {
@@ -135,49 +135,27 @@ export async function productionModelFixture(
     try {
       native = JSON.parse(reply as string).__model;
     } catch {}
-    return Response.json(
-      protocol === "chat"
-        ? {
-            choices: [
-              {
-                message: {
-                  content: native?.text ?? reply,
-                  ...(native
-                    ? {
-                        tool_calls: native.calls.map((c) => ({
-                          id: c.id,
-                          type: "function",
-                          function: { name: c.name, arguments: c.arguments },
-                        })),
-                      }
-                    : {}),
-                },
-              },
-            ],
-            usage: { prompt_tokens: 11, completion_tokens: 7 },
-          }
-        : {
-            output: native
-              ? [
-                  ...(native.text
-                    ? [{ type: "message", content: [{ type: "output_text", text: native.text }] }]
-                    : []),
-                  ...native.calls.map((c) => ({
-                    type: "function_call",
-                    call_id: c.id,
-                    name: c.name,
-                    arguments: c.arguments,
-                  })),
-                ]
-              : [
-                  {
-                    type: "message",
-                    content: [{ type: "output_text", text: reply }],
-                  },
-                ],
-            usage: { input_tokens: 11, output_tokens: 7 },
-          },
-    );
+    return Response.json({
+      output: native
+        ? [
+            ...(native.text
+              ? [{ type: "message", content: [{ type: "output_text", text: native.text }] }]
+              : []),
+            ...native.calls.map((c) => ({
+              type: "function_call",
+              call_id: c.id,
+              name: c.name,
+              arguments: c.arguments,
+            })),
+          ]
+        : [
+            {
+              type: "message",
+              content: [{ type: "output_text", text: reply }],
+            },
+          ],
+      usage: { input_tokens: 11, output_tokens: 7 },
+    });
   });
   return {
     db,
