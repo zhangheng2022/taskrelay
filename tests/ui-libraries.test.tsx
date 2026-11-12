@@ -303,7 +303,21 @@ test("供应商连接表单登记自定义前缀、修改默认区域并保留�
     />,
   );
   fireEvent.click(view.getByText("查看配置步骤"));
-  fireEvent.change(view.getByLabelText("测试 · 请求发起区域"), { target: { value: "eu" } });
+  fireEvent.keyDown(view.getByRole("combobox", { name: "测试 · 请求发起区域" }), {
+    key: "ArrowDown",
+  });
+  assert.deepEqual(
+    view.getAllByRole("option").map((item) => item.textContent),
+    ["自动", "美国", "欧盟"],
+  );
+  assert.equal(view.getByRole("option", { name: "美国" }).getAttribute("data-state"), "checked");
+  fireEvent.keyDown(view.getByRole("listbox"), { key: "Escape" });
+  await waitFor(() => assert.equal(view.queryByRole("listbox"), null));
+  assert.equal(calls.length, 0);
+  fireEvent.keyDown(view.getByRole("combobox", { name: "测试 · 请求发起区域" }), {
+    key: "ArrowDown",
+  });
+  fireEvent.keyDown(await view.findByRole("option", { name: "欧盟" }), { key: "Enter" });
   await waitFor(() => assert.equal(refreshed, 1));
   assert.deepEqual(calls[0], {
     method: "PUT",
@@ -312,7 +326,8 @@ test("供应商连接表单登记自定义前缀、修改默认区域并保留�
   });
   fireEvent.click(view.getByText("添加服务"));
   fireEvent.change(view.getByLabelText("服务名称"), { target: { value: "接入" } });
-  fireEvent.change(view.getByLabelText("服务提供方"), { target: { value: "custom" } });
+  fireEvent.keyDown(view.getByRole("combobox", { name: "服务提供方" }), { key: "ArrowDown" });
+  fireEvent.keyDown(await view.findByRole("option", { name: "自定义服务" }), { key: "Enter" });
   fireEvent.change(view.getByLabelText("公网 HTTPS 服务地址"), {
     target: { value: "https://new.example/v2" },
   });

@@ -185,7 +185,8 @@ test("未配置服务时引导接入，添加模型只填模型名，问答失�
   fireEvent.click(view.getByRole("button", { name: "添加模型" }));
   await view.findByText(/先添加一个服务/);
   fireEvent.click(view.getByRole("button", { name: "添加服务" }));
-  fireEvent.change(view.getByLabelText("服务提供方"), { target: { value: "workers-ai" } });
+  fireEvent.keyDown(view.getByRole("combobox", { name: "服务提供方" }), { key: "ArrowDown" });
+  fireEvent.keyDown(await view.findByRole("option", { name: "Workers AI" }), { key: "Enter" });
   fireEvent.click(view.getByRole("button", { name: "保存服务" }));
   fireEvent.click(await view.findByRole("button", { name: "继续添加模型" }));
   assert.equal(
