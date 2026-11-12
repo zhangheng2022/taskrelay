@@ -15,6 +15,9 @@ import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 import { applicationDb } from "../apps/cloud/src/database";
 import { insertTask } from "./helpers";
 import { createAccount } from "../apps/cloud/src/accounts";
+import { createConnection } from "../apps/cloud/src/model-gateway";
+import { storeModel } from "../apps/cloud/src/models";
+import { app } from "../apps/cloud/src/index";
 
 for (const kind of ["accounts", "models"] as const) {
   test(`${kind} 停用原子失败排队与执行，保留未知操作锁；恢复不重试且冲突不再停止`, async (t) => {
@@ -292,7 +295,7 @@ test("启用偏好进入规划、实际运行上下文与协助，同一交办�
   );
 });
 
-test("真实 D1 删除与任务版本提交竞争不留下 JSON 悬空账号", { timeout: 60000 }, async (t) => {
+test("真实 D1 删除与版本提交竞争不留下悬空账号或模型连接", { timeout: 60000 }, async (t) => {
   const mf = new Miniflare(
     convertV4MiniflareOptions({
       cf: false,
@@ -376,6 +379,54 @@ test("真实 D1 删除与任务版本提交竞争不留下 JSON 悬空账号", {
       assert.ok(account);
       assert.ok(saved);
       assert.equal(submission.status, "fulfilled");
+    }
+  }
+  // 连接删除与模型保存也必须在 D1 事务边界内互斥，不能留下没有当前版本的模型。
+  for (let i = 0; i < 3; i++) {
+    const connection = await createConnection(env, {
+      kind: "workers-ai",
+      name: "删除竞争",
+      defaultRegion: "auto",
+    });
+    const id = `connection_race_${i}`;
+    const submit = () =>
+      storeModel(
+        env,
+        { name: "竞争模型", connectionId: connection.id, model: "@cf/test/model" },
+        id,
+      );
+    const remove = async () =>
+      app.request(
+        `http://localhost/api/admin/model-connections/${connection.id}`,
+        { method: "DELETE" },
+        { ...env, DEV_MODE: "1" },
+      );
+    const operations = await Promise.allSettled(
+      i % 2 ? [submit(), remove()] : [remove(), submit()],
+    );
+    const deletion = operations[i % 2 ? 1 : 0],
+      submission = operations[i % 2 ? 0 : 1];
+    assert.equal(deletion.status, "fulfilled");
+    const model = await db.prepare("SELECT id FROM models WHERE id=?").bind(id).first();
+    const version = await db
+      .prepare("SELECT id FROM model_profile_versions WHERE id=?")
+      .bind(id)
+      .first();
+    const remaining = await db
+      .prepare("SELECT id FROM model_connections WHERE id=?")
+      .bind(connection.id)
+      .first();
+    if (deletion.status === "fulfilled" && (deletion.value as Response).status === 200) {
+      assert.equal(remaining, null);
+      assert.equal(model, null);
+      assert.equal(version, null);
+      assert.equal(submission.status, "rejected");
+    } else {
+      assert.equal(deletion.status === "fulfilled" && (deletion.value as Response).status, 409);
+      assert.equal(submission.status, "fulfilled");
+      assert.ok(remaining);
+      assert.ok(model);
+      assert.ok(version);
     }
   }
   // 在实际 D1 上确认触发器错误映射、RETURNING 和外键在管理删除事务中一致。

@@ -86,6 +86,31 @@ async function fixture() {
   return { db, sql, env, request, cookies, ownedTask };
 }
 
+test("服务删除与引用预览只允许管理员会话，拒绝普通用户、匿名和设备令牌", async (t) => {
+  const s = await fixture();
+  t.after(() => s.sql.close());
+  for (const [method, suffix] of [
+    ["GET", "/deletion"],
+    ["DELETE", ""],
+  ]) {
+    const path = "/api/admin/model-connections/conn_test" + suffix;
+    assert.equal((await s.request(path, s.cookies.alice, undefined, method)).status, 403);
+    assert.equal((await s.request(path, "", undefined, method)).status, 401);
+    assert.equal(
+      (
+        await app.request(
+          "http://localhost" + path,
+          { method, headers: { Authorization: "Bearer " + "a".repeat(64) } },
+          s.env,
+        )
+      ).status,
+      403,
+    );
+    assert.ok(s.sql.prepare("SELECT id FROM model_connections WHERE id='conn_test'").get());
+    assert.equal((await s.request(path, s.cookies.owner, undefined, method)).status, 200);
+  }
+});
+
 test("发布恢复记录拥有领取开关，管理员不能覆盖进行中的暂停", async (context) => {
   const s = await fixture();
   context.after(() => s.sql.close());

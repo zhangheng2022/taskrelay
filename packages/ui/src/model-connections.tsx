@@ -15,6 +15,7 @@ import { SelectItem } from "./components/ui/select";
 import { Field } from "./form-field";
 import { FieldSet } from "./components/ui/field";
 import { ErrorText } from "./feedback";
+import { ModelConnectionDelete } from "./model-connection-delete";
 
 const labels = {
   openai: "OpenAI",
@@ -46,6 +47,9 @@ export function ModelConnections({
   const [expanded, setExpanded] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [deleting, setDeleting] = useState<ModelConnection | null>(null);
+  const deleteTrigger = useRef<HTMLButtonElement | null>(null);
+  const addButton = useRef<HTMLButtonElement | null>(null);
   const lock = useRef(false);
   const api = createApi(transport).api.admin["model-connections"];
   async function save(action?: () => Promise<void>) {
@@ -67,7 +71,7 @@ export function ModelConnections({
     <section className="flex min-w-0 flex-col gap-4">
       <div className="section-heading">
         <h2>管理服务</h2>
-        <Button disabled={adding} onClick={() => setAdding(true)}>
+        <Button ref={addButton} disabled={adding} onClick={() => setAdding(true)}>
           添加服务
         </Button>
       </div>
@@ -83,6 +87,17 @@ export function ModelConnections({
               onClick={() => setExpanded(expanded === c.id ? "" : c.id)}
             >
               {c.bindingVerified ? "服务设置" : "查看配置步骤"}
+            </Button>
+            <Button
+              variant="ghost"
+              disabled={busy}
+              aria-label={`删除服务：${c.name}`}
+              onClick={(event) => {
+                deleteTrigger.current = event.currentTarget;
+                setDeleting(c);
+              }}
+            >
+              删除
             </Button>
           </div>
           {expanded === c.id && (
@@ -209,6 +224,23 @@ export function ModelConnections({
         </form>
       )}
       {error && <ErrorText error={error} />}
+      {deleting && (
+        <ModelConnectionDelete
+          key={deleting.id}
+          connection={deleting}
+          transport={transport}
+          onClose={() => {
+            setDeleting(null);
+          }}
+          restoreFocus={(deleted) => {
+            (deleted ? addButton.current : deleteTrigger.current)?.focus();
+          }}
+          onDeleted={async () => {
+            setDeleting(null);
+            await save().catch((e: Error) => setError(e.message));
+          }}
+        />
+      )}
     </section>
   );
 }

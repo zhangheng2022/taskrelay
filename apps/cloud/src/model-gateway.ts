@@ -46,6 +46,28 @@ export function connectionFrom(row: Row): ModelConnection {
   return { ...shared, kind: "provider", provider: row.provider };
 }
 
+/** 删除预览只返回平台连接及其模型版本引用；密钥和上游配置不进入确认数据。 */
+export async function connectionDeletionPreview(env: AppEnv, id: string) {
+  const connection = await env.DB.prepare(
+    "SELECT name FROM model_connections WHERE id=? AND owner_user_id IS NULL",
+  )
+    .bind(id)
+    .first<{ name: string }>();
+  if (!connection) throw Error("MODEL_CONNECTION_NOT_FOUND");
+  const { results } = await env.DB.prepare(
+    `SELECT id AS modelId,version,COALESCE(json_extract(config,'$.name'),id) AS name,
+      COUNT(*) OVER() AS total FROM model_profile_versions WHERE connection_id=?
+      ORDER BY id,version LIMIT 20`,
+  )
+    .bind(id)
+    .all<{ modelId: string; version: number; name: string; total: number }>();
+  return {
+    name: connection.name,
+    referenceCount: results[0]?.total ?? 0,
+    references: results.map(({ modelId, version, name }) => ({ modelId, version, name })),
+  };
+}
+
 export async function createConnection(env: AppEnv, input: unknown) {
   const config = connectionInputSchema.parse(input);
   const id = crypto.randomUUID();

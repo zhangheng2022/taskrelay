@@ -227,6 +227,8 @@ Stagehand 视觉输入上传为 `purpose=vision` 的私有临时图片，后续 
 
 ## 模型链路与平台 adapter
 
+管理员可以删除未被任何模型版本引用的平台服务连接。`GET /api/admin/model-connections/:id/deletion` 返回引用总数和前 20 个模型版本；`DELETE /api/admin/model-connections/:id` 在同一条条件删除中重新检查全部引用，存在引用返回 `MODEL_CONNECTION_IN_USE`。停用模型或将当前版本切换到另一连接不会清除历史引用，须先通过既有模型配置删除流程解除引用。删除仅移除 TaskRelay 连接登记，不调用 Cloudflare 删除密钥、网关或自定义提供方。模型保存事务也检查连接存在，防止读取连接后发生删除而留下空模型或前移版本指针。
+
 平台模型创建时停用。管理员探测调用固定到保存返回的版本，通过服务端标记进入同一条加密网关出站链，出站时复核管理员身份及平台模型归属。问答、工具和结构化探测结果按版本记录；图像和流式结果独立更新。启用操作在同一条件写入中检查管理版本及当前模型版本的测试结果。
 
 所有生产模型请求统一为 models.invoke → egress → ModelEgress 的分区与 alarm → Cloudflare AI Gateway → 提供方。结构化输出集中于 models.generateStructured，Zod adapter 负责校验适配；传输或结果未知不进入格式修复重试。

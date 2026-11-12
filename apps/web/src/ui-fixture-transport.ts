@@ -90,6 +90,17 @@ export function createFixtureTransport(options: URLSearchParams): Transport {
       },
     ],
   };
+  if (options.has("connection-delete") && snapshot.modelConnections) {
+    snapshot.modelConnections.push({
+      id: "conn_unused",
+      name: "待删除的演示服务",
+      kind: "workers-ai",
+      gatewayProvider: "workers-ai",
+      keyAlias: null,
+      bindingVerified: true,
+      defaultRegion: "auto",
+    });
+  }
   if (options.has("batch"))
     definition.verification = {
       kind: "batch",
@@ -269,7 +280,26 @@ export function createFixtureTransport(options: URLSearchParams): Transport {
       )
         throw new Error("OFFLINE");
       let result: unknown;
-      if (path.includes("/schedule")) {
+      if (path.startsWith("/api/admin/model-connections/")) {
+        const id = path.split("/")[4];
+        const connection = snapshot.modelConnections?.find((value) => value.id === id);
+        if (!connection) throw Error("MODEL_CONNECTION_NOT_FOUND");
+        const references = snapshot.models
+          .filter((model) => model.connectionId === id)
+          .map((model) => ({
+            modelId: model.id,
+            name: model.name,
+            version: model.version,
+          }));
+        if (method === "GET" && path.endsWith("/deletion")) {
+          result = { name: connection.name, referenceCount: references.length, references };
+        } else if (method === "DELETE") {
+          if (references.length || options.has("delete-conflict"))
+            throw Error("MODEL_CONNECTION_IN_USE");
+          snapshot.modelConnections = snapshot.modelConnections!.filter((value) => value.id !== id);
+          result = { ok: true };
+        } else throw Error("FIXTURE_ROUTE_UNSUPPORTED");
+      } else if (path.includes("/schedule")) {
         if (path.endsWith("/preview"))
           result = {
             times: [1, 2, 3].map((days) => new Date(Date.now() + days * 86400000).toISOString()),
