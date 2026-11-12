@@ -43,7 +43,9 @@ test("旧会话按任务查找，选择可用模型后保留历史与草稿，�
   fireEvent.keyDown(trigger, { key: "ArrowDown" });
   const menu = await within(document.body).findByRole("menu");
   assert.equal(
-    within(menu).getByRole("menuitemradio", { name: /旧模型/ }).getAttribute("aria-disabled"),
+    within(menu)
+      .getByRole("menuitemradio", { name: /旧模型/ })
+      .getAttribute("aria-disabled"),
     "true",
   );
   fireEvent.click(within(menu).getByRole("menuitemradio", { name: /可用模型/ }));
@@ -61,10 +63,7 @@ test("旧会话按任务查找，选择可用模型后保留历史与草稿，�
 
 test("执行中和离线禁用模型切换；切换失败保留当前模型和输入草稿", async () => {
   const page = { ...threadPage };
-  const models = [
-    snapshot.models[0],
-    { ...snapshot.models[0], id: "new-model", name: "另一模型" },
-  ];
+  const models = [snapshot.models[0], { ...snapshot.models[0], id: "new-model", name: "另一模型" }];
   const transport = transportWith(async (method, path) => {
     if (path.split("?")[0] === "/api/user/threads")
       return {
