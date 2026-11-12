@@ -1,11 +1,10 @@
 /**
- * 模型协议适配：官方 OpenAI SDK 承接 Chat Completions／Responses，集中处理兼容服务差异。
+ * 模型协议适配：官方 OpenAI SDK 承接 Responses，集中处理兼容服务差异。
  * 仅由区域出站入口调用，SDK 不重试、不记录正文；边界负责禁止重定向、超时、大小限制与固定错误。
  */
 import type { ModelProfile } from "../../contracts/src/index";
 import { outputSchema } from "./schema";
 import OpenAI from "openai";
-import type { ChatCompletionCreateParamsNonStreaming } from "openai/resources/chat/completions";
 import type { ResponseCreateParamsNonStreaming } from "openai/resources/responses/responses";
 import { readModelStream, boundedStream } from "./stream";
 
@@ -36,7 +35,6 @@ export interface Inference {
   schema?: Record<string, unknown>;
   jsonMode?: boolean;
   maxTokens?: number;
-  tokenParameter?: "max_tokens" | "max_completion_tokens";
   /** 仅内部能力探测指定；普通调用由固定配置版本的能力决定。 */
   stream?: boolean;
 }
@@ -56,6 +54,7 @@ export async function infer(
   fetcher: Fetcher = fetch,
   onText?: (text: string) => Promise<void>,
 ): Promise<ModelResponse> {
+  if (profile.protocol !== "responses") throw Error("MODEL_PROTOCOL_RETIRED");
   if (request.imageRef) throw Error("IMAGE_REFERENCE_UNRESOLVED");
   // 从尾部单次扫描，避免未匹配的长斜杠序列触发正则反复回溯。
   let end = profile.baseUrl.length;
@@ -63,114 +62,70 @@ export async function infer(
   const root = profile.baseUrl.slice(0, end);
   const streaming =
     request.stream ?? profile.capabilities?.streaming?.[streamKind(request)] === "supported";
-  const tools = request.tools?.map((t) => ({
-    type: "function",
-    function: { ...t, parameters: outputSchema(t.parameters), strict: true },
-  }));
-  let body: Record<string, unknown>;
-  if (profile.protocol === "chat") {
-    body = {
-      model: profile.model,
-      messages: request.messages.map(({ content_blocks, ...message }) => ({
-        ...message,
-        content: content_blocks ?? message.content,
-      })),
-      [request.tokenParameter ?? profile.capabilities?.tokenParameter ?? "max_completion_tokens"]:
-        request.maxTokens ?? 4096,
-      stream: false,
-    };
-    if (request.image)
-      body.messages = [
-        ...(body.messages as unknown[]),
-        {
-          role: "user",
-          content: [{ type: "image_url", image_url: { url: request.image } }],
-        },
-      ];
-    if (tools?.length) {
-      body.tools = tools;
-      body.tool_choice = request.toolChoice ?? "required";
-      body.parallel_tool_calls = false;
-    }
-    if (request.schema)
-      body.response_format = {
-        type: "json_schema",
-        json_schema: {
-          name: "result",
-          strict: true,
-          schema: outputSchema(request.schema),
-        },
-      };
-    else if (request.jsonMode) body.response_format = { type: "json_object" };
-  } else {
-    const input: unknown[] = [];
-    for (const m of request.messages) {
-      if (m.role === "tool")
-        input.push({
-          type: "function_call_output",
-          call_id: m.tool_call_id,
-          output: m.content,
-        });
-      else if (m.role === "assistant" && m.tool_calls?.length) {
-        if (m.content) input.push({ role: "assistant", content: m.content });
-        for (const t of m.tool_calls as {
-          id: string;
-          function: { name: string; arguments: string };
-        }[])
-          input.push({
-            type: "function_call",
-            call_id: t.id,
-            name: t.function.name,
-            arguments: t.function.arguments,
-          });
-      } else
-        input.push({
-          role: m.role,
-          content:
-            m.content_blocks?.map((part) =>
-              part.type === "text"
-                ? { type: m.role === "assistant" ? "output_text" : "input_text", text: part.text }
-                : { type: "input_image", image_url: part.image_url.url, detail: "low" },
-            ) ?? m.content,
-        });
-    }
-    body = {
-      model: profile.model,
-      input,
-      store: false,
-      max_output_tokens: request.maxTokens ?? 4096,
-    };
-    if (request.image)
+  const input: unknown[] = [];
+  for (const m of request.messages) {
+    if (m.role === "tool")
       input.push({
-        role: "user",
-        content: [{ type: "input_image", image_url: request.image, detail: "low" }],
+        type: "function_call_output",
+        call_id: m.tool_call_id,
+        output: m.content,
       });
-    if (request.tools?.length) {
-      body.tools = request.tools.map((t) => ({
-        type: "function",
-        ...t,
-        parameters: outputSchema(t.parameters),
+    else if (m.role === "assistant" && m.tool_calls?.length) {
+      if (m.content) input.push({ role: "assistant", content: m.content });
+      for (const t of m.tool_calls as {
+        id: string;
+        function: { name: string; arguments: string };
+      }[])
+        input.push({
+          type: "function_call",
+          call_id: t.id,
+          name: t.function.name,
+          arguments: t.function.arguments,
+        });
+    } else
+      input.push({
+        role: m.role,
+        content:
+          m.content_blocks?.map((part) =>
+            part.type === "text"
+              ? { type: m.role === "assistant" ? "output_text" : "input_text", text: part.text }
+              : { type: "input_image", image_url: part.image_url.url, detail: "low" },
+          ) ?? m.content,
+      });
+  }
+  const body: Record<string, unknown> = {
+    model: profile.model,
+    input,
+    store: false,
+    max_output_tokens: request.maxTokens ?? 4096,
+  };
+  if (request.image)
+    input.push({
+      role: "user",
+      content: [{ type: "input_image", image_url: request.image, detail: "low" }],
+    });
+  if (request.tools?.length) {
+    body.tools = request.tools.map((t) => ({
+      type: "function",
+      ...t,
+      parameters: outputSchema(t.parameters),
+      strict: true,
+    }));
+    body.tool_choice = request.toolChoice ?? "required";
+    body.parallel_tool_calls = false;
+  }
+  if (request.schema)
+    body.text = {
+      format: {
+        type: "json_schema",
+        name: "result",
         strict: true,
-      }));
-      body.tool_choice = request.toolChoice ?? "required";
-      body.parallel_tool_calls = false;
-    }
-    if (request.schema)
-      body.text = {
-        format: {
-          type: "json_schema",
-          name: "result",
-          strict: true,
-          schema: outputSchema(request.schema),
-        },
-      };
-    else if (request.jsonMode) body.text = { format: { type: "json_object" } };
-  }
+        schema: outputSchema(request.schema),
+      },
+    };
+  else if (request.jsonMode) body.text = { format: { type: "json_object" } };
   // SDK 只在 ModelEgress 的 alarm 内创建；禁用环境默认账号与日志，避免额外凭据和正文外流。
-  if (streaming) {
-    body.stream = true;
-    if (profile.protocol === "chat") body.stream_options = { include_usage: true };
-  }
+  if (streaming) body.stream = true;
   // fetch 边界同时覆盖响应正文读取，SDK 的连接超时不能代替整个请求的时间限制。
   let transportFailure: string | undefined;
   // SDK 要求非空凭据；无密钥兼容端点使用占位值，并在网络边界删除整个 Authorization。
@@ -218,28 +173,7 @@ export async function infer(
     },
   });
   try {
-    if (streaming) return await readModelStream(client, profile.protocol, body, onText);
-    // DTO 由上方集中适配，兼容提供方仍允许自定义模型名和 token 参数；SDK 负责 HTTP 与标准解析。
-    if (profile.protocol === "chat") {
-      const data = await client.chat.completions.create(
-        body as unknown as ChatCompletionCreateParamsNonStreaming,
-      );
-      const message = data?.choices?.[0]?.message;
-      if (!message) throw new ModelBoundaryError("MODEL_EMPTY_RESPONSE");
-      return {
-        text: typeof message.content === "string" ? message.content : "",
-        calls: (message.tool_calls ?? [])
-          .filter((call) => call.type === "function" || (!call.type && "function" in call))
-          .map((call) => {
-            if (!("function" in call)) throw new ModelBoundaryError("MODEL_INVALID_RESPONSE");
-            return { id: call.id, name: call.function.name, arguments: call.function.arguments };
-          }),
-        usage: {
-          input: data.usage?.prompt_tokens ?? null,
-          output: data.usage?.completion_tokens ?? null,
-        },
-      };
-    }
+    if (streaming) return await readModelStream(client, body, onText);
     const data = await client.responses.create(body as unknown as ResponseCreateParamsNonStreaming);
     if (!data || !Array.isArray(data.output)) throw new ModelBoundaryError("MODEL_EMPTY_RESPONSE");
     // 部分兼容服务省略 object:'response'，SDK 不生成 output_text；集中保留这一个兼容分支。

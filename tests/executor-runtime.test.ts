@@ -22,12 +22,9 @@ test("正式 execute 等待流式工具参数完整再执行，并关联最终�
   const result = await scenario([], {
     firstModel: async (clicks) => {
       let controller!: ReadableStreamDefaultController<Uint8Array>;
-      const frame = (delta: unknown, finish: string | null = null) =>
-        enc.encode(
-          `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`,
-        );
+      const frame = (event: unknown) => enc.encode(`data: ${JSON.stringify(event)}\n\n`);
       return infer(
-        { baseUrl: "https://provider.example/v1", protocol: "chat", model: "fixture" },
+        { baseUrl: "https://provider.example/v1", protocol: "responses", model: "fixture" },
         "key",
         { messages: [], stream: true },
         async () =>
@@ -37,16 +34,11 @@ test("正式 execute 等待流式工具参数完整再执行，并关联最终�
                 controller = c;
                 c.enqueue(
                   frame({
-                    tool_calls: [
-                      {
-                        index: 0,
-                        id: "partial",
-                        function: { name: "act", arguments: '{"instruction":"' },
-                      },
-                    ],
+                    type: "response.function_call_arguments.delta",
+                    delta: '{"instruction":"',
                   }),
                 );
-                c.enqueue(frame({ content: "正在处理" }));
+                c.enqueue(frame({ type: "response.output_text.delta", delta: "正在处理" }));
               },
             }),
             { headers: { "content-type": "text/event-stream" } },
@@ -55,12 +47,20 @@ test("正式 execute 等待流式工具参数完整再执行，并关联最终�
           assert.equal(clicks(), 0);
           observedPartial = true;
           controller.enqueue(
-            frame(
-              { tool_calls: [{ index: 0, function: { arguments: '点击按钮"}' } }] },
-              "tool_calls",
-            ),
+            frame({
+              type: "response.completed",
+              response: {
+                output: [
+                  {
+                    type: "function_call",
+                    call_id: "partial",
+                    name: "act",
+                    arguments: '{"instruction":"点击按钮"}',
+                  },
+                ],
+              },
+            }),
           );
-          controller.enqueue(enc.encode("data: [DONE]\n\n"));
           controller.close();
         },
       );

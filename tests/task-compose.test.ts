@@ -37,41 +37,40 @@ test("普通咨询的矛盾交办标记只修复一次，始终不提交缺少�
   assert.equal(s.requests.length, 4);
   assert.equal(s.sql.prepare("SELECT count(*) n FROM runs WHERE thread_id=?").get(thread.id)!.n, 0);
 });
-for (const protocol of ["chat", "responses"] as const)
-  test(`新交办/${protocol}：意图检查后直接启动，同一会话且重复发送不重复启动`, async (t) => {
-    const s = await productionModelFixture(t, protocol),
-      th = (await s.request("/api/user/threads", { modelId: "model_test" })).data;
-    s.replies(decision());
-    const b = { requestId: "start_one", content: "查看 example.com" };
-    const r = await s.request(`/api/user/threads/${th.id}/messages`, b);
-    assert.equal(r.status, 202, JSON.stringify(r.data));
-    assert.ok(r.data.taskId, JSON.stringify(r.data));
-    assert.match(r.data.messages.at(-1).content, /执行步骤/);
-    assert.equal(r.data.scheduleCard.state, "off");
-    assert.equal(r.data.scheduleCard.ready, true);
-    assert.equal(r.data.scheduleCard.nextRunAt, null);
-    assert.equal(r.data.scheduleCard.frequency, null);
-    const schedule = await s.request(`/api/user/tasks/${r.data.taskId}/schedule`, null, "GET");
-    assert.deepEqual(schedule.data.card, r.data.scheduleCard);
-    const retry = await s.request(`/api/user/threads/${th.id}/messages`, b);
-    assert.equal(retry.data.id, th.id);
-    assert.deepEqual(retry.data.scheduleCard, r.data.scheduleCard);
-    assert.equal(s.jobs(), 1);
-    assert.equal(
-      retry.data.messages.filter((m: { role: string }) => m.role === "user").length,
-      1,
-      "重试已启动交办不能再追加一条执行中补充",
-    );
-    assert.equal(
-      s.sql.prepare("SELECT COUNT(*) n FROM runs WHERE task_id=?").get(r.data.taskId)!.n,
-      1,
-    );
-    assert.equal(
-      s.sql.prepare("SELECT execution_protocol FROM runs WHERE task_id=?").get(r.data.taskId)!
-        .execution_protocol,
-      19,
-    );
-  });
+test(`新交办/Responses：意图检查后直接启动，同一会话且重复发送不重复启动`, async (t) => {
+  const s = await productionModelFixture(t, "responses"),
+    th = (await s.request("/api/user/threads", { modelId: "model_test" })).data;
+  s.replies(decision());
+  const b = { requestId: "start_one", content: "查看 example.com" };
+  const r = await s.request(`/api/user/threads/${th.id}/messages`, b);
+  assert.equal(r.status, 202, JSON.stringify(r.data));
+  assert.ok(r.data.taskId, JSON.stringify(r.data));
+  assert.match(r.data.messages.at(-1).content, /执行步骤/);
+  assert.equal(r.data.scheduleCard.state, "off");
+  assert.equal(r.data.scheduleCard.ready, true);
+  assert.equal(r.data.scheduleCard.nextRunAt, null);
+  assert.equal(r.data.scheduleCard.frequency, null);
+  const schedule = await s.request(`/api/user/tasks/${r.data.taskId}/schedule`, null, "GET");
+  assert.deepEqual(schedule.data.card, r.data.scheduleCard);
+  const retry = await s.request(`/api/user/threads/${th.id}/messages`, b);
+  assert.equal(retry.data.id, th.id);
+  assert.deepEqual(retry.data.scheduleCard, r.data.scheduleCard);
+  assert.equal(s.jobs(), 1);
+  assert.equal(
+    retry.data.messages.filter((m: { role: string }) => m.role === "user").length,
+    1,
+    "重试已启动交办不能再追加一条执行中补充",
+  );
+  assert.equal(
+    s.sql.prepare("SELECT COUNT(*) n FROM runs WHERE task_id=?").get(r.data.taskId)!.n,
+    1,
+  );
+  assert.equal(
+    s.sql.prepare("SELECT execution_protocol FROM runs WHERE task_id=?").get(r.data.taskId)!
+      .execution_protocol,
+    19,
+  );
+});
 test("意图不明只追问，不创建运行", async (t) => {
   const s = await productionModelFixture(t),
     th = (await s.request("/api/user/threads", { modelId: "model_test" })).data;

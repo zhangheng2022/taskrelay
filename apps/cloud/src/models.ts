@@ -27,15 +27,7 @@ import { callResultStatements, unpackCallCipher } from "./call-cache";
 export function modelFrom(row: Row): ModelProfile {
   const config = JSON.parse(row.config);
   const capabilities: ModelCapabilities = JSON.parse(row.capabilities);
-  // Workers AI 的这款 Llama 能流式返回文本，但 JSON Mode 只在非流式请求中执行约束。
-  // 旧版本可能已缓存简单 JSON 流探测的假阳性。按真实连接修正，保留文本和工具的独立探测。
-  if (
-    row.connection_kind === "workers-ai" &&
-    config.protocol === "chat" &&
-    config.model === "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
-  ) {
-    capabilities.streaming = { ...capabilities.streaming, structured: "unsupported" };
-  }
+  if (config.protocol !== "responses") throw Error("MODEL_PROTOCOL_RETIRED");
   return {
     ...config,
     id: row.id,
@@ -56,7 +48,7 @@ export async function getModelProfile(
   userId: string | null | undefined = env.requestUserId,
 ) {
   const row = await env.DB.prepare(
-    `SELECT v.id,v.version,v.config,v.connection_id,v.effective_region,v.capabilities,c.kind AS connection_kind,m.owner_user_id,m.enabled,m.management_version
+    `SELECT v.id,v.version,v.config,v.connection_id,v.effective_region,v.capabilities,m.owner_user_id,m.enabled,m.management_version
      FROM model_profile_versions v JOIN models m ON m.id=v.id JOIN model_connections c
      ON c.id=v.connection_id AND c.owner_user_id IS m.owner_user_id WHERE v.id=? AND (m.owner_user_id IS NULL OR m.owner_user_id=?)
      AND v.version=COALESCE(?,m.current_version)`,
@@ -64,8 +56,9 @@ export async function getModelProfile(
     .bind(id, userId ?? null, version ?? null)
     .first<Row>();
   if (!row) throw Error("MODEL_NOT_FOUND");
+  const profile = modelFrom(row);
   if (!row.enabled) throw Error("MODEL_DISABLED");
-  return { profile: modelFrom(row) };
+  return { profile };
 }
 export async function recordUsage(
   env: AppEnv,
@@ -537,23 +530,12 @@ export async function probe(env: AppEnv, id: string, version: number): Promise<M
     testedAt: now(),
   };
   const errors: string[] = [];
-  const { profile } = await getModelProfile(env, id, version);
-  caps.tokenParameter = profile.capabilities.tokenParameter ?? "max_completion_tokens";
+  await getModelProfile(env, id, version);
   try {
-    try {
-      await probeInference(env, id, version, {
-        messages: [{ role: "user", content: "Reply OK." }],
-        maxTokens: 512,
-      });
-    } catch (error) {
-      if (profile.protocol !== "chat" || (error as Error).message !== "MODEL_HTTP_400") throw error;
-      caps.tokenParameter = "max_tokens";
-      await probeInference(env, id, version, {
-        messages: [{ role: "user", content: "Reply OK." }],
-        maxTokens: 512,
-        tokenParameter: "max_tokens",
-      });
-    }
+    await probeInference(env, id, version, {
+      messages: [{ role: "user", content: "Reply OK." }],
+      maxTokens: 512,
+    });
     caps.connection = true;
     await env.DB.prepare(
       "UPDATE model_profile_versions SET capabilities=? WHERE id=? AND version=?",

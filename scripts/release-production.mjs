@@ -172,7 +172,16 @@ if (mode === "resume") {
     if ((await query("SELECT COUNT(*) n FROM runs WHERE status='queued'"))[0].results[0].n)
       throw Error("MODEL_GATEWAY_QUEUED_RUNS_REQUIRE_DRAIN");
   }
+  const responsesCutover =
+    cloud &&
+    existsSync("apps/cloud/migrations/0008_responses_only.sql") &&
+    !(
+      await query(
+        "SELECT name FROM sqlite_master WHERE type='view' AND name='retired_model_versions'",
+      )
+    )[0].results.length;
   record = {
+    responsesCutover,
     sha,
     cloud,
     desktop,
@@ -425,8 +434,11 @@ const io = {
   restore: async (state) => {
     await settings("maintenance", state.oldMaintenance);
     // 新库中平台模型须重新登记和探测；本次部署结束后由管理员实测，再恢复旧领取开关。
-    await settings("claimsEnabled", state.gatewayCutover ? "0" : state.oldClaims);
-    if (state.gatewayCutover)
+    await settings(
+      "claimsEnabled",
+      state.gatewayCutover || state.responsesCutover ? "0" : state.oldClaims,
+    );
+    if (state.gatewayCutover || state.responsesCutover)
       console.log("网关切换完成，领取保持暂停。请重新配置模型并完成部署验收。");
   },
 };

@@ -416,7 +416,7 @@ export const conversations = conversationsBase
       const query = c.req.valid("query"),
         before = pageKey(query.before);
       const rows = await c.env.DB.prepare(
-        `SELECT id,kind,task_id,model_id,version,updated_at FROM ai_threads WHERE user_id=? AND closed=0 ${query.modelId ? "AND model_id=?" : ""} ${query.taskId ? "AND task_id=?" : query.unattached ? "AND task_id IS NULL" : ""} ${before ? "AND (updated_at,id)<(?,?)" : ""} ORDER BY updated_at DESC,id DESC LIMIT 51`,
+        `SELECT id,kind,task_id,model_id,version,updated_at FROM ai_threads WHERE user_id=? AND closed=0 ${query.modelId ? "AND model_id=?" : ""} ${query.taskId ? "AND task_id=?" : query.unattached ? "AND task_id IS NULL AND EXISTS(SELECT 1 FROM model_profile_versions v WHERE v.id=ai_threads.model_id AND v.version=ai_threads.model_version AND json_extract(v.config,'$.protocol')='responses')" : ""} ${before ? "AND (updated_at,id)<(?,?)" : ""} ORDER BY updated_at DESC,id DESC LIMIT 51`,
       )
         .bind(
           c.get("userId"),

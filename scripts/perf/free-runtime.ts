@@ -75,7 +75,7 @@ export default {
             name: "fixture",
             region: "inherit",
             model: "fixture",
-            protocol: "chat",
+            protocol: "responses",
             inputPrice: null,
             outputPrice: null,
           }),

@@ -75,11 +75,8 @@ test("Main 生产请求使用 multipart 原始字节和自动 boundary，网关�
   );
 });
 
-async function setup(
-  t: Parameters<typeof productionModelFixture>[0],
-  protocol: "chat" | "responses" = "chat",
-) {
-  const s = await productionModelFixture(t, protocol);
+async function setup(t: Parameters<typeof productionModelFixture>[0]) {
+  const s = await productionModelFixture(t, "responses");
   const images = new Map<string, { original: ArrayBuffer; thumbnail?: ArrayBuffer }>();
   s.env.EVIDENCE_STORE = {
     getByName: (key: string) => ({
@@ -204,101 +201,100 @@ test("上传拒绝文件头、截断、CRC 损坏、超体积和超尺寸缩略�
   assert.equal(s.images.size, 0);
 });
 
-for (const protocol of ["chat", "responses"] as const)
-  test(`模型 ${protocol} 只传图片引用到美国出站，结构化修复保留引用，临时图不进入聊天`, async (t) => {
-    const s = await setup(t, protocol);
-    s.sql
-      .prepare(
-        "UPDATE model_profile_versions SET capabilities=json_set(capabilities,'$.vision',json('true'))",
-      )
-      .run();
-    const saved = await s.upload("vision");
-    assert.equal(saved.status, 200, JSON.stringify(saved.data));
-    const artifactId = saved.data.id;
-    assert.ok(Date.parse(saved.data.expiresAt) <= Date.now() + imageLimits.visionTtlMs);
-    assert.equal(
-      (await app.request(`http://127.0.0.1/api/user/artifacts/${artifactId}`, {}, s.env)).status,
-      404,
-    );
-    const attach = await s.request(`/api/runner/runs/${s.run.id}/messages`, {
-      epoch: s.run.leaseEpoch,
-      id: "cannot-publish-vision",
-      content: "临时图片",
-      parts: [{ type: "image", artifactId, alt: "临时" }],
-    });
-    assert.notEqual(attach.status, 200);
-    const jurisdiction = s.env.MODEL_EGRESS.jurisdiction.bind(s.env.MODEL_EGRESS);
-    let refJobs = 0;
-    t.mock.method(s.env.MODEL_EGRESS, "jurisdiction", (region: "us") => {
-      const ns = jurisdiction(region),
-        get = ns.getByName.bind(ns);
-      return {
-        getByName: (name: string) => {
-          const stub = get(name),
-            submit = stub.submitAndWait.bind(stub);
-          return {
-            submitAndWait: async (id: string, cipher: string) => {
-              const job = await unseal<EgressJob>(cipher, s.env.MASTER_KEY, `egress:${id}:request`);
-              assert.equal(job.kind, "inference");
-              if (job.kind === "inference") {
-                assert.deepEqual(job.request.imageRef, { artifactId, epoch: s.run.leaseEpoch });
-                assert.equal(job.request.image, undefined);
-                refJobs++;
-              }
-              return submit(id, cipher);
-            },
-            ack: stub.ack.bind(stub),
-          };
-        },
-      } as typeof ns;
-    });
-    s.replies("invalid JSON", '{"value":"seen"}');
-    const body = {
-      epoch: s.run.leaseEpoch,
-      requestId: "reference",
-      imageArtifactId: artifactId,
-      messages: [{ role: "user", content: "读取图片" }],
-      schema: {
-        type: "object",
-        properties: { value: { type: "string" } },
-        required: ["value"],
-        additionalProperties: false,
-      },
-    };
-    const result = await s.request(`/api/runner/runs/${s.run.id}/stagehand`, body);
-    assert.equal(result.status, 200, JSON.stringify(result.data));
-    assert.equal(refJobs, 2);
-    for (const request of s.requests) {
-      assert.ok(
-        JSON.stringify(request.body).includes(
-          `data:image/png;base64,${fixturePng.toString("base64")}`,
-        ),
-      );
-      assert.ok(!JSON.stringify(request.body).includes(artifactId));
-    }
-    assert.equal((await s.request(`/api/runner/runs/${s.run.id}/stagehand`, body)).status, 200);
-    assert.equal(refJobs, 2, "同次推理不得重放");
-    s.sql.prepare("UPDATE artifacts SET lease_epoch=99 WHERE id=?").run(artifactId);
-    assert.equal(
-      (
-        await s.request(`/api/runner/runs/${s.run.id}/stagehand`, {
-          ...body,
-          requestId: "other-epoch",
-        })
-      ).data.error,
-      "IMAGE_REFERENCE_INVALID",
-    );
-    s.sql
-      .prepare("UPDATE artifacts SET lease_epoch=?,expires_at=946684800000 WHERE id=?")
-      .run(s.run.leaseEpoch, artifactId);
-    assert.equal(
-      (await s.request(`/api/runner/runs/${s.run.id}/stagehand`, { ...body, requestId: "expired" }))
-        .data.error,
-      "IMAGE_REFERENCE_INVALID",
-    );
-    await maintenance(s.env);
-    assert.equal(s.images.size, 0);
+test(`模型 Responses 只传图片引用到美国出站，结构化修复保留引用，临时图不进入聊天`, async (t) => {
+  const s = await setup(t);
+  s.sql
+    .prepare(
+      "UPDATE model_profile_versions SET capabilities=json_set(capabilities,'$.vision',json('true'))",
+    )
+    .run();
+  const saved = await s.upload("vision");
+  assert.equal(saved.status, 200, JSON.stringify(saved.data));
+  const artifactId = saved.data.id;
+  assert.ok(Date.parse(saved.data.expiresAt) <= Date.now() + imageLimits.visionTtlMs);
+  assert.equal(
+    (await app.request(`http://127.0.0.1/api/user/artifacts/${artifactId}`, {}, s.env)).status,
+    404,
+  );
+  const attach = await s.request(`/api/runner/runs/${s.run.id}/messages`, {
+    epoch: s.run.leaseEpoch,
+    id: "cannot-publish-vision",
+    content: "临时图片",
+    parts: [{ type: "image", artifactId, alt: "临时" }],
   });
+  assert.notEqual(attach.status, 200);
+  const jurisdiction = s.env.MODEL_EGRESS.jurisdiction.bind(s.env.MODEL_EGRESS);
+  let refJobs = 0;
+  t.mock.method(s.env.MODEL_EGRESS, "jurisdiction", (region: "us") => {
+    const ns = jurisdiction(region),
+      get = ns.getByName.bind(ns);
+    return {
+      getByName: (name: string) => {
+        const stub = get(name),
+          submit = stub.submitAndWait.bind(stub);
+        return {
+          submitAndWait: async (id: string, cipher: string) => {
+            const job = await unseal<EgressJob>(cipher, s.env.MASTER_KEY, `egress:${id}:request`);
+            assert.equal(job.kind, "inference");
+            if (job.kind === "inference") {
+              assert.deepEqual(job.request.imageRef, { artifactId, epoch: s.run.leaseEpoch });
+              assert.equal(job.request.image, undefined);
+              refJobs++;
+            }
+            return submit(id, cipher);
+          },
+          ack: stub.ack.bind(stub),
+        };
+      },
+    } as typeof ns;
+  });
+  s.replies("invalid JSON", '{"value":"seen"}');
+  const body = {
+    epoch: s.run.leaseEpoch,
+    requestId: "reference",
+    imageArtifactId: artifactId,
+    messages: [{ role: "user", content: "读取图片" }],
+    schema: {
+      type: "object",
+      properties: { value: { type: "string" } },
+      required: ["value"],
+      additionalProperties: false,
+    },
+  };
+  const result = await s.request(`/api/runner/runs/${s.run.id}/stagehand`, body);
+  assert.equal(result.status, 200, JSON.stringify(result.data));
+  assert.equal(refJobs, 2);
+  for (const request of s.requests) {
+    assert.ok(
+      JSON.stringify(request.body).includes(
+        `data:image/png;base64,${fixturePng.toString("base64")}`,
+      ),
+    );
+    assert.ok(!JSON.stringify(request.body).includes(artifactId));
+  }
+  assert.equal((await s.request(`/api/runner/runs/${s.run.id}/stagehand`, body)).status, 200);
+  assert.equal(refJobs, 2, "同次推理不得重放");
+  s.sql.prepare("UPDATE artifacts SET lease_epoch=99 WHERE id=?").run(artifactId);
+  assert.equal(
+    (
+      await s.request(`/api/runner/runs/${s.run.id}/stagehand`, {
+        ...body,
+        requestId: "other-epoch",
+      })
+    ).data.error,
+    "IMAGE_REFERENCE_INVALID",
+  );
+  s.sql
+    .prepare("UPDATE artifacts SET lease_epoch=?,expires_at=946684800000 WHERE id=?")
+    .run(s.run.leaseEpoch, artifactId);
+  assert.equal(
+    (await s.request(`/api/runner/runs/${s.run.id}/stagehand`, { ...body, requestId: "expired" }))
+      .data.error,
+    "IMAGE_REFERENCE_INVALID",
+  );
+  await maintenance(s.env);
+  assert.equal(s.images.size, 0);
+});
 
 test("高复杂度截图按字节预算缩放并生成独立缩略图", async () => {
   const original = await sharp(randomBytes(1200 * 900 * 4), {

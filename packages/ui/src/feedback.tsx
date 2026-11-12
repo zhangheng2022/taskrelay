@@ -85,6 +85,7 @@ export function ErrorText({ error }: { error: string }) {
     RESOURCE_IN_USE:
       "仍有任务、历史、登录状态或其他数据引用，不能删除。请先停用；登录状态可单独清除。",
     MEMORY_VERSION_CONFLICT: "这条记忆已被修改或删除，草稿已保留，请刷新后核对。",
+    MODEL_PROTOCOL_RETIRED: "此模型版本使用的协议已停用，请选择 Responses 模型重新交办。",
     MODEL_DISABLED: "模型已停用，相关任务已失败。请选择可用模型重新交办。",
     ACCOUNT_DISABLED: "站点账号已停用，相关任务已失败。恢复账号后可重新交办。",
     PREFERENCES_TOO_LARGE:

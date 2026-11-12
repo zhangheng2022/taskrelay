@@ -318,7 +318,7 @@ test("两用户使用同一幂等编号仍各自创建任务；账号、协助�
         name: "shared",
         region: "inherit",
         model: "test",
-        protocol: "chat",
+        protocol: "responses",
         inputPrice: 1,
         outputPrice: 1,
       }),

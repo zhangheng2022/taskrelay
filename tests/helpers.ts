@@ -4,11 +4,11 @@ import { DatabaseSync } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
 import type { TaskDefinition } from "../packages/contracts/src/index";
 import { seal } from "../apps/cloud/src/crypto";
-export function testDb() {
+export function testDb(beforeMigration?: string) {
   const sql = new DatabaseSync(":memory:");
   const migrations = new URL("../apps/cloud/migrations/", import.meta.url);
   for (const file of readdirSync(migrations)
-    .filter((name) => name.endsWith(".sql"))
+    .filter((name) => name.endsWith(".sql") && (!beforeMigration || name < beforeMigration))
     .sort())
     sql.exec(readFileSync(new URL(file, migrations), "utf8"));
   sql.exec(
@@ -141,7 +141,7 @@ export async function insertTask(db: D1Database, t = task(), userId = "fixture_o
       .prepare(
         "INSERT INTO model_profile_versions(id,version,config,connection_id,effective_region,capabilities,created_at) VALUES(?,?,?,'conn_test','us',?,?)",
       )
-      .bind(t.modelId, t.modelVersion, "{}", "{}", dbTime(t.createdAt))
+      .bind(t.modelId, t.modelVersion, '{"protocol":"responses"}', "{}", dbTime(t.createdAt))
       .run();
   await db.batch([
     db

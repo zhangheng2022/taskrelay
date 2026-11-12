@@ -76,7 +76,7 @@ export function createFixtureTransport(options: URLSearchParams): Transport {
         name: "演示模型",
         connectionId: "conn_test",
         model: "fixture",
-        protocol: "chat",
+        protocol: "responses",
         region: "inherit",
         inputPrice: null,
         outputPrice: null,

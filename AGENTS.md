@@ -53,7 +53,7 @@ CLI 故障按技能处理并说明替代方式，未执行成功不称为 OCR �
 - 所有生产模型请求走 `models.invoke → egress → ModelEgress` 按固定模型版本选择自动、美国或欧盟，由 alarm 通过平台 AI Gateway 调用提供方；各进程和普通请求均不得直连。结构化输出走 `models.generateStructured → invoke`，Zod 只校验适配。
 - `submitAndWait` 在同次 RPC 内提交并等待；alarm 执行中不再次 RPC 轮询同一对象，取得终态才 ack，避免新请求替换 I/O 上下文。
 - 不绕过 workerd 的 `MODEL_REGION_REQUIRES_DEPLOYMENT`，不改回访客请求链。测试可用隔离 adapter，真实模型及地区证据须来自部署环境。
-- 模型名自由输入，保留 Chat Completions 与 Responses；缺能力即阻止使用，不暗换模型/提供方。运行固定任务快照中的模型配置版本。
+- 模型名自由输入，仅使用 Responses API；缺能力即阻止使用，不暗换模型/提供方。运行固定任务快照中的模型配置版本。
 - 自定义地址仅接受校验后的公网 HTTPS，不携带凭据跨域重定向；错误仅返回固定公开分类，不透传上游正文。用量来自实际响应，缺 token 或单价显示“未知”。
 
 ### 身份、数据与费用

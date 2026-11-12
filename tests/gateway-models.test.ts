@@ -1,74 +1,82 @@
+import { readFileSync } from "node:fs";
+import { enqueue } from "../apps/cloud/src/store";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { testDb, insertTask, task } from "./helpers";
 import { attachTestEgress } from "./egress-helpers";
-import {
-  generateStructured,
-  getModelProfile,
-  invoke,
-  storeModel,
-  probe,
-} from "../apps/cloud/src/models";
-import { createConnection } from "../apps/cloud/src/model-gateway";
+import { invoke, storeModel, probe } from "../apps/cloud/src/models";
+import { createConnection, gatewayTransport } from "../apps/cloud/src/model-gateway";
 import type { AppEnv } from "../apps/cloud/src/env";
 import { app } from "../apps/cloud/src/index";
 
-test("Workers AI Llama 的旧结构化流式探测不能覆盖非流式 JSON 约束", async (t) => {
-  const { db, sql } = testDb();
+test("移除 Chat 协议只退休固定到旧版本的运行，保留历史和同模型新版本", async (t) => {
+  const migration = "0008_responses_only.sql";
+  const { db, sql } = testDb(migration);
   t.after(() => sql.close());
   const env = {
     DB: db,
-    MASTER_KEY: Buffer.alloc(32, 8).toString("base64"),
+    DEV_MODE: "1",
     requestUserId: "fixture_owner",
+    MASTER_KEY: Buffer.alloc(32, 4).toString("base64"),
   } as AppEnv;
   attachTestEgress(env);
-  const connection = await createConnection(env, {
-    kind: "workers-ai",
-    name: "WA",
-    defaultRegion: "auto",
-  });
-  const config = {
-    name: "Llama",
-    model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-    protocol: "chat",
-  };
-  const workers = await storeModel(env, { ...config, connectionId: connection.id });
-  const other = await storeModel(env, { ...config, connectionId: "conn_test" });
-  sql.prepare("UPDATE settings SET value='1' WHERE key='modelStreamingEnabled'").run();
-  for (const id of [workers.id, other.id]) {
+  const input = { name: "fixture", connectionId: "conn_test", model: "same" };
+  await assert.rejects(storeModel(env, { ...input, protocol: "chat" }));
+  const old = await storeModel(env, input);
+  const mixed = await storeModel(env, input);
+  const current = await storeModel(env, input, mixed.id, 1);
+  assert.equal(current.protocol, "responses");
+  const retired = task({ id: "old_task", modelId: mixed.id, accountId: null });
+  const kept = task({ id: "new_task", modelId: mixed.id, modelVersion: 2, accountId: null });
+  for (const snapshot of [retired, kept]) {
+    await insertTask(db, snapshot);
+    await enqueue(db, snapshot, snapshot.id);
     sql
       .prepare(
-        "UPDATE model_profile_versions SET capabilities=json_set(capabilities,'$.structured','schema','$.streaming.text','supported','$.streaming.structured','supported') WHERE id=?",
+        "INSERT INTO task_schedules(task_id,task_version,state,ready) VALUES(?,1,'enabled',1)",
       )
-      .run(id);
+      .run(snapshot.id);
   }
-  assert.deepEqual((await getModelProfile(env, workers.id)).profile.capabilities.streaming, {
-    text: "supported",
-    structured: "unsupported",
-  });
+  sql
+    .prepare(
+      "INSERT INTO ai_threads(id,user_id,kind,model_id,model_version,created_at,updated_at) VALUES('historic','fixture_owner','chat',?,1,1,1)",
+    )
+    .run(mixed.id);
+  sql
+    .prepare(
+      "UPDATE model_profile_versions SET config=json_set(config,'$.protocol','chat') WHERE id IN (?,?) AND version=1",
+    )
+    .run(old.id, mixed.id);
+  sql.exec(readFileSync(new URL("../apps/cloud/migrations/" + migration, import.meta.url), "utf8"));
+  assert.equal(sql.prepare("SELECT enabled FROM models WHERE id=?").get(old.id)!.enabled, 0);
+  assert.equal(sql.prepare("SELECT enabled FROM models WHERE id=?").get(mixed.id)!.enabled, 1);
   assert.equal(
-    (await getModelProfile(env, other.id)).profile.capabilities.streaming?.structured,
-    "supported",
+    sql.prepare("SELECT status FROM runs WHERE task_id=?").get(retired.id)!.status,
+    "failed",
   );
-  const fetch = t.mock.method(globalThis, "fetch", async (_url: unknown, init?: RequestInit) => {
-    assert.ok(typeof init?.body === "string");
-    const body = JSON.parse(init.body);
-    assert.equal(body.stream, false);
-    assert.equal(body.response_format.type, "json_schema");
-    return Response.json({ choices: [{ message: { content: '{"answer":"Paris"}' } }] });
-  });
-  const format = {
-    type: "object",
-    properties: { answer: { type: "string" } },
-    required: ["answer"],
-  };
-  const result = await generateStructured(env, workers.id, 1, format, (value) => value, [
-    { role: "user", content: "Capital of France?" },
-  ]);
-  assert.deepEqual(result.data, { answer: "Paris" });
-  assert.equal(fetch.mock.callCount(), 1);
+  assert.equal(
+    sql.prepare("SELECT state FROM task_schedules WHERE task_id=?").get(retired.id)!.state,
+    "paused",
+  );
+  assert.equal(
+    sql.prepare("SELECT status FROM runs WHERE task_id=?").get(kept.id)!.status,
+    "queued",
+  );
+  assert.equal(
+    sql.prepare("SELECT state FROM task_schedules WHERE task_id=?").get(kept.id)!.state,
+    "enabled",
+  );
+  assert.match(
+    String(sql.prepare("SELECT result FROM run_results").get()!.result),
+    /MODEL_PROTOCOL_RETIRED/,
+  );
+  await assert.rejects(enqueue(db, retired, "again"), /MODEL_PROTOCOL_RETIRED/);
+  await assert.rejects(invoke(env, mixed.id, 1, { messages: [] }), /MODEL_PROTOCOL_RETIRED/);
+  assert.equal(sql.prepare("SELECT count(*) n FROM ai_calls").get()!.n, 0);
+  const page = await app.request("http://localhost/api/user/threads/historic", {}, env);
+  assert.equal(page.status, 200);
+  assert.equal(((await page.json()) as { id: string }).id, "historic");
 });
-
 test("发布模型固定连接和有效区域，原生网关、托管密钥、Workers AI 请求边界", async (t) => {
   const { db, sql } = testDb();
   t.after(() => sql.close());
@@ -88,8 +96,8 @@ test("发布模型固定连接和有效区域，原生网关、托管密钥、Wo
   const sent: { url: string; headers: Headers }[] = [];
   let reply = () =>
     Response.json({
-      choices: [{ message: { content: "ok" } }],
-      usage: { prompt_tokens: 2, completion_tokens: 1 },
+      output: [{ type: "message", content: [{ type: "output_text", text: "ok" }] }],
+      usage: { input_tokens: 2, output_tokens: 1 },
     });
   t.mock.method(globalThis, "fetch", async (input: string | URL, init?: RequestInit) => {
     if (String(input).startsWith("https://cloudflare-dns.com/"))
@@ -99,7 +107,12 @@ test("发布模型固定连接和有效区域，原生网关、托管密钥、Wo
     return reply();
   });
   const messages = { messages: [{ role: "user" as const, content: "hello" }], stream: false };
-  const config = { name: "test", connectionId: "conn_test", model: "my-model", protocol: "chat" };
+  const config = {
+    name: "test",
+    connectionId: "conn_test",
+    model: "my-model",
+    protocol: "responses",
+  };
   const v1 = await storeModel(env, config);
   sql.prepare("UPDATE model_connections SET default_region='eu' WHERE id='conn_test'").run();
   const v2 = await storeModel(env, config, v1.id, 1);
@@ -114,7 +127,7 @@ test("发布模型固定连接和有效区域，原生网关、托管密钥、Wo
   for (const { url, headers } of sent) {
     assert.equal(
       url,
-      "https://gateway.ai.cloudflare.com/v1/" + "f".repeat(32) + "/fixture/openai/chat/completions",
+      "https://gateway.ai.cloudflare.com/v1/" + "f".repeat(32) + "/fixture/openai/responses",
     );
     assert.equal(headers.get("authorization"), null);
     assert.equal(headers.get("cf-aig-byok-alias"), "fixture-key");
@@ -145,6 +158,11 @@ test("发布模型固定连接和有效区域，原生网关、托管密钥、Wo
     /IMMUTABLE/,
   );
   const w = await createConnection(env, { kind: "workers-ai", name: "WA", defaultRegion: "auto" });
+  const transport = gatewayTransport(env, w, "@cf/vendor/example");
+  assert.throws(
+    () => transport.fetch(transport.baseUrl + "/chat/completions"),
+    /MODEL_GATEWAY_ROUTE_INVALID/,
+  );
   const model = await storeModel(env, {
     ...config,
     connectionId: w.id,
@@ -197,7 +215,7 @@ test("个人模型按可信用户隔离，探测、选模、任务与最终调�
       )
       .run(
         "m_" + owner,
-        JSON.stringify({ name: owner, protocol: "chat", model: "same" }),
+        JSON.stringify({ name: owner, protocol: "responses", model: "same" }),
         JSON.stringify({ connection: true, tools: true, structured: "schema" }),
         "c_" + owner,
       );
@@ -206,7 +224,9 @@ test("个人模型按可信用户隔离，探测、选模、任务与最终调�
   const aliases: string[] = [];
   t.mock.method(globalThis, "fetch", async (_url: unknown, init?: RequestInit) => {
     aliases.push(new Headers(init?.headers).get("cf-aig-byok-alias")!);
-    return Response.json({ choices: [{ message: { content: "ok" } }] });
+    return Response.json({
+      output: [{ type: "message", content: [{ type: "output_text", text: "ok" }] }],
+    });
   });
   const msg = { messages: [{ role: "user" as const, content: "ok" }], stream: false };
   for (const owner of ["fixture_owner", "bob"]) {

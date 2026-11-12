@@ -206,7 +206,7 @@ export const modelInputSchema = z
     name: z.string().min(1).max(80),
     connectionId: idSchema,
     region: z.enum(["inherit", "auto", "us", "eu"]).default("inherit"),
-    protocol: z.enum(["chat", "responses"]).default("chat"),
+    protocol: z.literal("responses").default("responses"),
     model: z.string().min(1).max(200),
     contextTokens: z.number().int().min(8192).max(200000).optional(),
     outputTokens: z.number().int().min(512).max(8192).optional(),
@@ -227,7 +227,6 @@ export interface ModelCapabilities {
   vision: boolean;
   visionTestedAt?: string;
   testedAt: string | null;
-  tokenParameter?: "max_tokens" | "max_completion_tokens";
   error?: string;
 }
 export interface ModelProfile extends Omit<ModelInput, "connectionId" | "region"> {

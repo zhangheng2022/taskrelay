@@ -11,18 +11,16 @@ import { generateStructured } from "../apps/cloud/src/models";
 
 const profile = {
   baseUrl: "https://provider.example/v1",
-  protocol: "chat" as const,
+  protocol: "responses" as const,
   model: "test",
 };
 const enc = new TextEncoder();
 const event = (value: unknown) => enc.encode(`data: ${JSON.stringify(value)}\n\n`);
-function completion(content: string, finish: string | null = null) {
-  return {
-    id: "chat",
-    object: "chat.completion.chunk",
-    choices: [{ index: 0, delta: { content }, finish_reason: finish }],
-  };
-}
+const delta = (text: string) => ({ type: "response.output_text.delta", delta: text });
+const completedText = (text: string) => ({
+  type: "response.completed",
+  response: { output: [{ type: "message", content: [{ type: "output_text", text }] }] },
+});
 function sse(events: unknown[], done = true) {
   return new Response(
     new ReadableStream({
@@ -36,7 +34,7 @@ function sse(events: unknown[], done = true) {
   );
 }
 
-test("Chat 流在终态之前交付中文正文，工具分片完整汇总并保留真实用量", async () => {
+test("Responses 流在终态之前交付中文正文，工具分片完整汇总并保留真实用量", async () => {
   let controller!: ReadableStreamDefaultController<Uint8Array>;
   let first!: () => void;
   const seen = new Promise<void>((r) => {
@@ -71,39 +69,22 @@ test("Chat 流在终态之前交付中文正文，工具分片完整汇总并保
     return value;
   });
   await new Promise((r) => setTimeout(r, 0));
-  const chinese = event(completion("你好"));
+  const chinese = event(delta("你好"));
   for (const byte of chinese) controller.enqueue(new Uint8Array([byte]));
   await seen;
   assert.equal(completed, false);
   assert.deepEqual(texts, ["你好"]);
   controller.enqueue(
     event({
-      choices: [
-        {
-          index: 0,
-          delta: {
-            tool_calls: [
-              { index: 0, id: "call", function: { name: "check", arguments: '{"ok":' } },
-            ],
-          },
-          finish_reason: null,
-        },
-      ],
+      type: "response.completed",
+      response: {
+        output: [
+          { type: "function_call", call_id: "call", name: "check", arguments: '{"ok":true}' },
+        ],
+        usage: { input_tokens: 8, output_tokens: 6 },
+      },
     }),
   );
-  controller.enqueue(
-    event({
-      choices: [
-        {
-          index: 0,
-          delta: { tool_calls: [{ index: 0, function: { arguments: "true}" } }] },
-          finish_reason: "tool_calls",
-        },
-      ],
-    }),
-  );
-  controller.enqueue(event({ choices: [], usage: { prompt_tokens: 8, completion_tokens: 6 } }));
-  controller.enqueue(enc.encode("data: [DONE]\n\n"));
   controller.close();
   const full = await result;
   assert.deepEqual(full.calls, [{ id: "call", name: "check", arguments: '{"ok":true}' }]);
@@ -145,23 +126,17 @@ test("Responses 仅公开 output_text，完成事件汇总工具与用量", asyn
   assert.deepEqual(result.usage, { input: 10, output: 3 });
 });
 
-for (const protocol of ["chat", "responses"] as const)
-  test(`${protocol} 提前断流不能成功且不重发`, async () => {
-    let requests = 0;
-    await assert.rejects(
-      infer({ ...profile, protocol }, "key", { messages: [], stream: true }, async () => {
-        requests++;
-        return sse(
-          protocol === "chat"
-            ? [completion("半句")]
-            : [{ type: "response.output_text.delta", delta: "半句" }],
-          false,
-        );
-      }),
-      /MODEL_STREAM_INCOMPLETE/,
-    );
-    assert.equal(requests, 1);
-  });
+test(`Responses 提前断流不能成功且不重发`, async () => {
+  let requests = 0;
+  await assert.rejects(
+    infer(profile, "key", { messages: [], stream: true }, async () => {
+      requests++;
+      return sse([{ type: "response.output_text.delta", delta: "半句" }], false);
+    }),
+    /MODEL_STREAM_INCOMPLETE/,
+  );
+  assert.equal(requests, 1);
+});
 
 test("流式大小限制取消底层读取，HTTP 错误不泄露供应商正文", async () => {
   let cancelled = false;
@@ -229,7 +204,7 @@ test("生产入口使用固定配置流式并推送正文，重复请求不受�
       drafts: async () => [],
     }),
   } as unknown as AppEnv["NOTIFICATIONS"];
-  f.replies(sse([completion("正在查看"), completion("", "stop")]));
+  f.replies(sse([delta("正在查看"), completedText("正在查看")]));
   const body = {
     epoch: f.run.leaseEpoch,
     requestId: "stream_request",
@@ -271,7 +246,7 @@ test("未知流式能力先做独立探测，仅明确不支持且控制探测�
     ["auto", "auto", "auto"],
   );
   assert.deepEqual(
-    f.requests.map((r) => r.body.stream),
+    f.requests.map((r) => r.body.stream ?? false),
     [true, false, false],
   );
   assert.ok(!JSON.stringify(f.requests.slice(0, 2)).includes("用户业务只允许发送一次"));
@@ -357,8 +332,14 @@ test("结构化修复生成新草稿版本，内部字段不会进入预览", as
     }),
   } as unknown as AppEnv["NOTIFICATIONS"];
   f.replies(
-    sse([completion('{"reply":"首稿","internal":"secret"}'), completion("", "stop")]),
-    sse([completion('{"reply":"修复正文","valid":true}'), completion("", "stop")]),
+    sse([
+      delta('{"reply":"首稿","internal":"secret"}'),
+      completedText('{"reply":"首稿","internal":"secret"}'),
+    ]),
+    sse([
+      delta('{"reply":"修复正文","valid":true}'),
+      completedText('{"reply":"修复正文","valid":true}'),
+    ]),
   );
   const result = await generateStructured(
     { ...f.env, requestUserId: "fixture_owner" },

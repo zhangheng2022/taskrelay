@@ -4,8 +4,8 @@ import assert from "node:assert/strict";
 import { productionModelFixture } from "./production-model-fixture";
 import { seal } from "../apps/cloud/src/crypto";
 
-async function setup(t: TestContext, protocol: "chat" | "responses" = "chat") {
-  const s = await productionModelFixture(t, protocol),
+async function setup(t: TestContext) {
+  const s = await productionModelFixture(t, "responses"),
     thread = (await s.request("/api/user/threads", { modelId: "model_test", taskId: s.run.taskId }))
       .data;
   s.sql.prepare("UPDATE runs SET thread_id=? WHERE id=?").run(thread.id, s.run.id);
@@ -54,60 +54,59 @@ const selected = JSON.stringify({
   accountId: "account_help",
 });
 
-for (const protocol of ["chat", "responses"] as const)
-  test(`云端协助/${protocol}：已有账号整体交给执行器，不选择单个字段`, async (t) => {
-    const s = await setup(t, protocol);
-    s.replies(selected);
-    const result = await s.request(s.root + "/help", s.help);
-    assert.deepEqual(result.data, {
-      ready: true,
-      message: "已有适用账号，交给执行器判断使用。",
-      accountId: "account_help",
-    });
-    assert.doesNotMatch(JSON.stringify(s.requests), /Secret!001/);
-    const credentials = await s.request(s.root + "/credentials", {
-      epoch: s.run.leaseEpoch,
-      helpId: s.help.id,
-      url: "https://example.com/login",
-    });
-    assert.equal(credentials.status, 200, JSON.stringify(credentials.data));
-    assert.deepEqual(credentials.data, {
-      account: s.account,
-      origin: "https://example.com",
-      accountId: "account_help",
-      credentialVersion: 1,
-      stateEpoch: 1,
-    });
-    assert.equal(
-      (
-        await s.request(s.root + "/credentials", {
-          epoch: s.run.leaseEpoch,
-          helpId: s.help.id,
-          url: "https://different.example/login",
-        })
-      ).data.error,
-      "CREDENTIAL_ORIGIN_MISMATCH",
-    );
-    // 账号由领取绑定，可主动读取已授权版本；不再要求先发一次无意义的协助。
-    assert.equal(
-      (
-        await s.request(s.root + "/credentials", {
-          epoch: s.run.leaseEpoch,
-          url: "https://example.com/login",
-        })
-      ).status,
-      200,
-    );
-    assert.equal(
-      (
-        await s.request(s.root + "/credentials", {
-          epoch: s.run.leaseEpoch + 1,
-          url: "https://example.com/login",
-        })
-      ).data.error,
-      "LEASE_EXPIRED",
-    );
+test(`云端协助/Responses：已有账号整体交给执行器，不选择单个字段`, async (t) => {
+  const s = await setup(t);
+  s.replies(selected);
+  const result = await s.request(s.root + "/help", s.help);
+  assert.deepEqual(result.data, {
+    ready: true,
+    message: "已有适用账号，交给执行器判断使用。",
+    accountId: "account_help",
   });
+  assert.doesNotMatch(JSON.stringify(s.requests), /Secret!001/);
+  const credentials = await s.request(s.root + "/credentials", {
+    epoch: s.run.leaseEpoch,
+    helpId: s.help.id,
+    url: "https://example.com/login",
+  });
+  assert.equal(credentials.status, 200, JSON.stringify(credentials.data));
+  assert.deepEqual(credentials.data, {
+    account: s.account,
+    origin: "https://example.com",
+    accountId: "account_help",
+    credentialVersion: 1,
+    stateEpoch: 1,
+  });
+  assert.equal(
+    (
+      await s.request(s.root + "/credentials", {
+        epoch: s.run.leaseEpoch,
+        helpId: s.help.id,
+        url: "https://different.example/login",
+      })
+    ).data.error,
+    "CREDENTIAL_ORIGIN_MISMATCH",
+  );
+  // 账号由领取绑定，可主动读取已授权版本；不再要求先发一次无意义的协助。
+  assert.equal(
+    (
+      await s.request(s.root + "/credentials", {
+        epoch: s.run.leaseEpoch,
+        url: "https://example.com/login",
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await s.request(s.root + "/credentials", {
+        epoch: s.run.leaseEpoch + 1,
+        url: "https://example.com/login",
+      })
+    ).data.error,
+    "LEASE_EXPIRED",
+  );
+});
 
 for (const unavailable of ["owner", "origin", "device", "locked"] as const)
   test(`云端协助不会暴露或授权不可用账号：${unavailable}`, async (t) => {
@@ -146,7 +145,7 @@ for (const unavailable of ["owner", "origin", "device", "locked"] as const)
       unavailable === "device" ? "LEASE_EXPIRED" : "CREDENTIAL_NOT_AUTHORIZED",
     );
     if (unavailable !== "device") {
-      const payload = JSON.parse(s.requests.at(-1)!.body.messages.at(-1).content);
+      const payload = JSON.parse(s.requests.at(-1)!.body.input.at(-1).content);
       assert.deepEqual(payload.accounts, []);
       assert.equal(
         s.sql.prepare("SELECT response FROM execution_help WHERE id=?").get(s.help.id)!.response,

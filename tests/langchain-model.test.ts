@@ -72,7 +72,7 @@ test("失效help图不能读取旧操作缓存或发起新模型操作", async (
 test("官方 Agent 摘要保留图归属与 generation，并完整注入用户原文", async (t) => {
   const s = await productionModelFixture(t);
   helpGraphFixture(s);
-  s.respond((body) => (body.response_format ? '{"answer":"已读取"}' : "旧执行事实"));
+  s.respond((body) => (body.text?.format ? '{"answer":"已读取"}' : "旧执行事实"));
   const model = new RelayChatModel(s.env, "model_test", 1, "lc_agent", s.run.id, "lc_graph", 7);
   const protectedInput: Message[] = [
     { role: "system", content: "规划" },
@@ -98,60 +98,55 @@ test("官方 Agent 摘要保留图归属与 generation，并完整注入用户�
   );
 });
 
-for (const protocol of ["chat", "responses"] as const)
-  test(`LangChain ${protocol} 工具消息、用量和稳定操作编号贯穿实际出站`, async (t) => {
-    const s = await productionModelFixture(t, protocol);
-    const model = new RelayChatModel(s.env, "model_test", 1, "lc_first", s.run.id);
-    const read = tool(async () => "unused", {
-      name: "read",
-      description: "读取页面",
-      schema: z.object({ query: z.string() }),
-    });
-    s.replies(
-      JSON.stringify({
-        __model: {
-          text: "先读取页面",
-          calls: [{ id: "call_1", name: "read", arguments: '{"query":"订单"}' }],
-        },
-      }),
-    );
-    const first = await model.bindTools([read]).invoke([new HumanMessage("查询订单")]);
-    assert.deepEqual(first.tool_calls, [
-      { id: "call_1", name: "read", args: { query: "订单" }, type: "tool_call" },
-    ]);
-    assert.deepEqual(first.usage_metadata, {
-      input_tokens: 11,
-      output_tokens: 7,
-      total_tokens: 18,
-    });
-    s.replies("订单已发货");
-    const messages = [
-      new HumanMessage("查询订单"),
-      first,
-      new ToolMessage({ tool_call_id: "call_1", content: "已发货" }),
-    ];
-    const second = await model.invoke(messages, { operationId: "lc_second" });
-    assert.equal(second.content, "订单已发货");
-    await model.invoke(messages, { operationId: "lc_second" });
-    assert.equal(s.jobs(), 2);
-    const body = s.requests[1].body;
-    if (protocol === "chat") {
-      assert.equal(body.messages[1].tool_calls[0].id, "call_1");
-      assert.equal(body.messages[2].tool_call_id, "call_1");
-    } else {
-      assert.ok(body.input.some((v: any) => v.role === "assistant" && v.content === "先读取页面"));
-      assert.ok(
-        body.input.some(
-          (v: any) =>
-            v.type === "function_call_output" && v.call_id === "call_1" && v.output === "已发货",
-        ),
-      );
-    }
+test(`LangChain Responses 工具消息、用量和稳定操作编号贯穿实际出站`, async (t) => {
+  const s = await productionModelFixture(t, "responses");
+  const model = new RelayChatModel(s.env, "model_test", 1, "lc_first", s.run.id);
+  const read = tool(async () => "unused", {
+    name: "read",
+    description: "读取页面",
+    schema: z.object({ query: z.string() }),
   });
+  s.replies(
+    JSON.stringify({
+      __model: {
+        text: "先读取页面",
+        calls: [{ id: "call_1", name: "read", arguments: '{"query":"订单"}' }],
+      },
+    }),
+  );
+  const first = await model.bindTools([read]).invoke([new HumanMessage("查询订单")]);
+  assert.deepEqual(first.tool_calls, [
+    { id: "call_1", name: "read", args: { query: "订单" }, type: "tool_call" },
+  ]);
+  assert.deepEqual(first.usage_metadata, {
+    input_tokens: 11,
+    output_tokens: 7,
+    total_tokens: 18,
+  });
+  s.replies("订单已发货");
+  const messages = [
+    new HumanMessage("查询订单"),
+    first,
+    new ToolMessage({ tool_call_id: "call_1", content: "已发货" }),
+  ];
+  const second = await model.invoke(messages, { operationId: "lc_second" });
+  assert.equal(second.content, "订单已发货");
+  await model.invoke(messages, { operationId: "lc_second" });
+  assert.equal(s.jobs(), 2);
+  const body = s.requests[1].body;
+
+  assert.ok(body.input.some((v: any) => v.role === "assistant" && v.content === "先读取页面"));
+  assert.ok(
+    body.input.some(
+      (v: any) =>
+        v.type === "function_call_output" && v.call_id === "call_1" && v.output === "已发货",
+    ),
+  );
+});
 
 for (const mode of ["schema", "json"] as const)
   test(`LangChain structured ${mode} 使用统一修复入口和 includeRaw`, async (t) => {
-    const s = await productionModelFixture(t, "chat", mode),
+    const s = await productionModelFixture(t, "responses", mode),
       model = new RelayChatModel(s.env, "model_test", 1, "lc_structured", s.run.id);
     s.replies('{"value":"wrong"}', '{"value":7}');
     const result = await model
@@ -163,7 +158,7 @@ for (const mode of ["schema", "json"] as const)
     assert.ok(result.raw instanceof AIMessage);
     assert.equal(s.jobs(), 2);
     assert.equal(
-      s.requests[0].body.response_format.type,
+      s.requests[0].body.text.format.type,
       mode === "schema" ? "json_schema" : "json_object",
     );
     const repeated = await model
@@ -182,24 +177,20 @@ test("LangChain 模型中断结果未知不自动重试，重复操作不重新�
   assert.equal(s.jobs(), 1);
 });
 
-for (const protocol of ["chat", "responses"] as const)
-  test(`官方 Zod helper/${protocol} 格式投影后仍按原 Schema 修复无效网址`, async (t) => {
-    const s = await productionModelFixture(t, protocol),
-      model = new RelayChatModel(s.env, "model_test", 1, "lc_zod_helper", s.run.id);
-    s.replies('{"url":"invalid","tags":[]}', '{"url":"https://example.com","tags":[]}');
-    const result = await model
-      .withStructuredOutput(z.object({ url: z.url(), tags: z.array(z.string()).default([]) }))
-      .invoke("读取网址");
-    assert.deepEqual(result, { url: "https://example.com", tags: [] });
-    assert.equal(s.jobs(), 2);
-    const format =
-      protocol === "chat"
-        ? s.requests[0].body.response_format.json_schema
-        : s.requests[0].body.text.format;
-    assert.equal(format.strict, true);
-    assert.deepEqual(format.schema.required, ["url", "tags"]);
-    assert.equal(format.schema.properties.url.format, undefined);
-  });
+test(`官方 Zod helper/Responses 格式投影后仍按原 Schema 修复无效网址`, async (t) => {
+  const s = await productionModelFixture(t, "responses"),
+    model = new RelayChatModel(s.env, "model_test", 1, "lc_zod_helper", s.run.id);
+  s.replies('{"url":"invalid","tags":[]}', '{"url":"https://example.com","tags":[]}');
+  const result = await model
+    .withStructuredOutput(z.object({ url: z.url(), tags: z.array(z.string()).default([]) }))
+    .invoke("读取网址");
+  assert.deepEqual(result, { url: "https://example.com", tags: [] });
+  assert.equal(s.jobs(), 2);
+  const format = s.requests[0].body.text.format;
+  assert.equal(format.strict, true);
+  assert.deepEqual(format.schema.required, ["url", "tags"]);
+  assert.equal(format.schema.properties.url.format, undefined);
+});
 
 test("非法工具参数保留原始编号与顺序，缺用量保持未知", () => {
   const response = {
@@ -232,30 +223,24 @@ test("LangChain 标准图片块在普通与结构化调用中都检查模型视�
   assert.equal(s.jobs(), 0);
 });
 
-for (const protocol of ["chat", "responses"] as const)
-  test(`LangChain ${protocol} 标准图片内容块保留在原消息位置`, async (t) => {
-    const s = await productionModelFixture(t, protocol),
-      model = new RelayChatModel(s.env, "model_test", 1, "lc_image", s.run.id);
-    s.sql
-      .prepare(
-        "UPDATE model_profile_versions SET capabilities=json_set(capabilities,'$.vision',json('true')) WHERE id='model_test' AND version=1",
-      )
-      .run();
-    s.replies("red");
-    await model.invoke([
-      new HumanMessage({
-        content: [
-          { type: "text", text: "颜色？" },
-          { type: "image_url", image_url: { url: "data:image/png;base64,cGl4ZWw=" } },
-        ],
-      }),
-    ]);
-    const message = (
-      protocol === "chat" ? s.requests[0].body.messages : s.requests[0].body.input
-    )[0];
-    assert.equal(message.content[0].text, "颜色？");
-    assert.equal(
-      protocol === "chat" ? message.content[1].image_url.url : message.content[1].image_url,
-      "data:image/png;base64,cGl4ZWw=",
-    );
-  });
+test(`LangChain Responses 标准图片内容块保留在原消息位置`, async (t) => {
+  const s = await productionModelFixture(t, "responses"),
+    model = new RelayChatModel(s.env, "model_test", 1, "lc_image", s.run.id);
+  s.sql
+    .prepare(
+      "UPDATE model_profile_versions SET capabilities=json_set(capabilities,'$.vision',json('true')) WHERE id='model_test' AND version=1",
+    )
+    .run();
+  s.replies("red");
+  await model.invoke([
+    new HumanMessage({
+      content: [
+        { type: "text", text: "颜色？" },
+        { type: "image_url", image_url: { url: "data:image/png;base64,cGl4ZWw=" } },
+      ],
+    }),
+  ]);
+  const message = s.requests[0].body.input[0];
+  assert.equal(message.content[0].text, "颜色？");
+  assert.equal(message.content[1].image_url, "data:image/png;base64,cGl4ZWw=");
+});
