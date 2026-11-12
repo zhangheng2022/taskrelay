@@ -28,7 +28,11 @@ test("模型管理区分连接与任务能力，确认停用和恢复，删除�
   const writes: { method: string; path: string; body: unknown }[] = [];
   const transport = transportWith(async (method, path, body) => {
     writes.push({ method, path, body });
-    if (method === "DELETE") throw Error("RESOURCE_IN_USE");
+    if (method === "DELETE") {
+      if (state.models[0].enabled) throw Error("MODEL_DISABLE_BEFORE_DELETE");
+      state.models = [];
+      return { ok: true };
+    }
     if (path.endsWith("/state")) {
       assert.equal(body.expectedVersion, state.models[0].managementVersion);
       state.models[0] = {
@@ -88,7 +92,7 @@ test("模型管理区分连接与任务能力，确认停用和恢复，删除�
   fireEvent.click(view.getByRole("button", { name: "删除" }));
   dialog = await view.findByRole("alertdialog");
   fireEvent.click(within(dialog).getByRole("button", { name: "永久删除模型" }));
-  await view.findByRole("alert");
+  await view.findByText(/请先停用，再删除模型配置/);
   assert.equal(writes.filter((w) => w.method === "DELETE").length, 1);
   assert.ok(view.getByRole("button", { name: "编辑" }));
   fireEvent.change(view.getByLabelText("搜索名称或模型"), { target: { value: "不存在" } });
@@ -96,6 +100,18 @@ test("模型管理区分连接与任务能力，确认停用和恢复，删除�
   fireEvent.change(view.getByLabelText("搜索名称或模型"), { target: { value: "" } });
   fireEvent.change(view.getByLabelText("筛选状态"), { target: { value: "disabled" } });
   await view.findByText("没有匹配的模型");
+  fireEvent.change(view.getByLabelText("筛选状态"), { target: { value: "all" } });
+  fireEvent.click(view.getByRole("button", { name: "停用" }));
+  fireEvent.click(
+    within(await view.findByRole("alertdialog")).getByRole("button", { name: "停用模型" }),
+  );
+  await view.findByRole("button", { name: "启用" });
+  fireEvent.click(view.getByRole("button", { name: "删除" }));
+  dialog = await view.findByRole("alertdialog");
+  assert.match(dialog.textContent!, /历史聊天、运行和用量记录会保留/);
+  fireEvent.click(within(dialog).getByRole("button", { name: "永久删除模型" }));
+  await view.findByText("先连接一个模型服务");
+  assert.equal(view.queryByRole("button", { name: "编辑" }), null);
 });
 
 test("成员管理禁止停用自己，筛选后独立提交状态并按需读取使用量", async () => {

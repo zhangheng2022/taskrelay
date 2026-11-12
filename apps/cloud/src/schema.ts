@@ -1488,6 +1488,8 @@ export const modelUsage = sqliteTable(
 export const models = sqliteTable(
   "models",
   {
+    /** 模型配置删除时点；被历史引用的身份继续保留。 */
+    deletedAt: integer("deleted_at"),
     ownerUserId: text("owner_user_id"),
     /** 是否启用；停用会失败关联排队与执行任务 */
     enabled: integer("enabled").notNull().default(1),
