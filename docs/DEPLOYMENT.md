@@ -187,6 +187,8 @@ README 负责使用入口与状态，CHANGELOG 记录客户端版本的变更，
 
 ### 自动更新通道（0.4.7 起）
 
+更新说明通常只写 2–4 条用户能感知的变化，每条一句，并保留必要的升级提醒。以 [RELEASE-NOTES](RELEASE-NOTES.md) 为发布文案，同步当前版本的 [CHANGELOG](../CHANGELOG.md)、GitHub Release 正文和线上更新目录的 `notes`；历史版本保持原样。技术细节和测试证据分别维护在架构、部署及验收文档中。仅修订已发布版本的说明时，先核对原记录，再条件更新目录，保持版本、附件、哈希、发布时间和 `latest` 不变，无需重建安装包或重新部署。
+
 公开更新版本以 D1 settings 的 `desktopReleaseCatalog` 为准；`apps/cloud/src/desktop-releases.json` 仅在首次没有目录时初始化。存在但损坏的目录拒绝服务，不回退复活旧版本。不能用源码版本或本机安装版本推断公开版本。历史预览不代表当前版本已发布，也不代表长期运行验收完成。
 
 - 执行器启动后立即检查，收到设备 WebSocket 的 update.available 通知、重连或系统恢复时补查，每 60 秒兜底检查；未配对时同样执行 HTTP 补查，也可从窗口或托盘“检查更新”。更新地址固定为 `https://tr.zhangheng.eu.org/api/updates/windows-x64/latest.json`，不随配对的工作空间地址变化。只有 Windows x64 Squirrel 安装版启用；开发及解压运行明确显示不可用。
