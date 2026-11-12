@@ -1,4 +1,5 @@
 /** 会话定时卡片：服务端预览与版本化保存；编辑草稿不随后台刷新覆盖。 */
+import { Disclosure } from "./disclosure";
 import { useId, useRef, useState } from "react";
 import { CalendarClock } from "lucide-react";
 import type { Transport } from "../../contracts/src/index";
@@ -12,7 +13,8 @@ import { useTransportQuery } from "./queries";
 import { Button } from "./components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "./components/ui/toggle-group";
 import { Input } from "./components/ui/input";
-import { NativeSelect, NativeSelectOption } from "./components/ui/native-select";
+import { FormSelect } from "./form-select";
+import { SelectItem } from "./components/ui/select";
 import {
   Field,
   FieldGroup,
@@ -277,23 +279,24 @@ function ScheduleEditor({
           </Button>
         </div>
       ) : (
-        <fieldset disabled={busy || offline}>
+        <FieldSet disabled={busy || offline}>
           <FieldGroup onChange={dirty}>
             <Field>
               <FieldLabel htmlFor={`${id}-kind`}>执行频率</FieldLabel>
-              <NativeSelect
+              <FormSelect
                 id={`${id}-kind`}
                 value={kind}
-                onChange={(e) => {
-                  setKind(e.target.value as Frequency["kind"]);
+                disabled={busy || offline}
+                onValueChange={(value) => {
+                  setKind(value as Frequency["kind"]);
                   dirty();
                 }}
               >
-                <NativeSelectOption value="once">指定时间执行一次</NativeSelectOption>
-                <NativeSelectOption value="daily">每天</NativeSelectOption>
-                <NativeSelectOption value="weekly">每周</NativeSelectOption>
-                <NativeSelectOption value="monthly">每月</NativeSelectOption>
-              </NativeSelect>
+                <SelectItem value="once">指定时间执行一次</SelectItem>
+                <SelectItem value="daily">每天</SelectItem>
+                <SelectItem value="weekly">每周</SelectItem>
+                <SelectItem value="monthly">每月</SelectItem>
+              </FormSelect>
             </Field>
             {kind === "weekly" && (
               <FieldSet>
@@ -376,7 +379,7 @@ function ScheduleEditor({
               </div>
             )}
           </FieldGroup>
-        </fieldset>
+        </FieldSet>
       )}
       {invalidated && (
         <p role="alert" className="text-sm">
@@ -411,10 +414,7 @@ function ScheduleEditor({
       {error !== undefined && (
         <ErrorText error={error instanceof Error ? error.message : "保存失败，请重试"} />
       )}
-      <details>
-        <summary className="cursor-pointer text-sm font-medium">
-          执行总结与流程优化（{combined.length}）
-        </summary>
+      <Disclosure label={`执行总结与流程优化（${combined.length}）`}>
         <div className="mt-3 flex flex-col gap-4">
           {!combined.length && (
             <p className="text-sm text-muted-foreground">每次执行结束后自动总结，供下一次参考。</p>
@@ -454,7 +454,7 @@ function ScheduleEditor({
             </Button>
           )}
         </div>
-      </details>
+      </Disclosure>
     </div>
   );
 }

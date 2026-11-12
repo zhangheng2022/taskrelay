@@ -1,4 +1,5 @@
 import "./ui-dom";
+import { chooseOption } from "./ui-select";
 import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { render, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
@@ -111,9 +112,9 @@ test("模型管理区分连接与任务能力，确认停用和恢复，删除�
   fireEvent.change(view.getByLabelText("搜索名称或模型"), { target: { value: "不存在" } });
   await view.findByText("没有匹配的模型");
   fireEvent.change(view.getByLabelText("搜索名称或模型"), { target: { value: "" } });
-  fireEvent.change(view.getByLabelText("筛选状态"), { target: { value: "disabled" } });
+  await chooseOption(view.getByLabelText("筛选状态"), "已停用");
   await view.findByText("没有匹配的模型");
-  fireEvent.change(view.getByLabelText("筛选状态"), { target: { value: "all" } });
+  await chooseOption(view.getByLabelText("筛选状态"), "全部状态");
   await menu("停用");
   fireEvent.click(
     within(await view.findByRole("alertdialog")).getByRole("button", { name: "停用模型" }),
@@ -185,13 +186,11 @@ test("未配置服务时引导接入，添加模型只填模型名，问答失�
   fireEvent.click(view.getByRole("button", { name: "添加模型" }));
   await view.findByText(/先添加一个服务/);
   fireEvent.click(view.getByRole("button", { name: "添加服务" }));
-  fireEvent.change(view.getByLabelText("服务提供方"), { target: { value: "workers-ai" } });
+  fireEvent.keyDown(view.getByRole("combobox", { name: "服务提供方" }), { key: "ArrowDown" });
+  fireEvent.keyDown(await view.findByRole("option", { name: "Workers AI" }), { key: "Enter" });
   fireEvent.click(view.getByRole("button", { name: "保存服务" }));
   fireEvent.click(await view.findByRole("button", { name: "继续添加模型" }));
-  assert.equal(
-    (view.getByLabelText("选择服务") as unknown as HTMLSelectElement).value,
-    "conn_fixture",
-  );
+  assert.equal(view.getByLabelText("选择服务").textContent, "Workers AI");
   fireEvent.change(view.getByLabelText("模型名"), { target: { value: "@cf/openai/example" } });
   fireEvent.click(view.getByRole("button", { name: "保存并测试" }));
   await view.findByText("测试失败");
@@ -227,7 +226,7 @@ test("成员管理禁止停用自己，筛选后独立提交状态并按需读�
   const self = await view.findByRole("button", { name: "当前用户" });
   assert.equal((self as HTMLButtonElement).disabled, true);
   assert.equal(usages, 0);
-  fireEvent.change(view.getByLabelText("角色"), { target: { value: "user" } });
+  await chooseOption(view.getByLabelText("角色"), "普通用户");
   assert.equal(view.queryByText("admin@example.com"), null);
   const usageToggle = view.getByRole("button", { name: "查看今日使用量" });
   assert.equal(usageToggle.getAttribute("aria-expanded"), "false");
@@ -244,13 +243,13 @@ test("成员管理禁止停用自己，筛选后独立提交状态并按需读�
   fireEvent.click(within(dialog).getByRole("button", { name: "停用用户" }));
   await view.findByRole("button", { name: "恢复用户" });
   assert.deepEqual(writes, [{ disabled: true }]);
-  fireEvent.change(view.getByLabelText("筛选状态"), { target: { value: "disabled" } });
+  await chooseOption(view.getByLabelText("筛选状态"), "已停用");
   fireEvent.click(view.getByRole("button", { name: "恢复用户" }));
   dialog = await view.findByRole("alertdialog");
   fireEvent.click(within(dialog).getByRole("button", { name: "恢复用户" }));
   await view.findByText("没有匹配的结果");
   assert.deepEqual(writes, [{ disabled: true }, { disabled: false }]);
-  fireEvent.change(view.getByLabelText("筛选状态"), { target: { value: "all" } });
+  await chooseOption(view.getByLabelText("筛选状态"), "全部状态");
   fireEvent.change(view.getByLabelText("搜索用户邮箱"), { target: { value: "other" } });
   assert.ok(view.getByText("没有匹配的结果"));
 });
@@ -304,20 +303,22 @@ test("设备管理只允许兼容设备迁移，要求停止确认，锁冲突�
   const select = await view.findByLabelText("优先设备");
   assert.ok(view.getByText("需要升级客户端"));
   assert.ok(view.getByText("run_active"));
-  assert.equal(within(select).queryByRole("option", { name: "旧设备" }), null);
-  fireEvent.change(select, { target: { value: "ready" } });
+  fireEvent.keyDown(select, { key: "ArrowDown" });
+  const menu = within(await view.findByRole("listbox"));
+  assert.equal(menu.queryByRole("option", { name: "旧设备" }), null);
+  fireEvent.keyDown(menu.getByRole("option", { name: "新设备" }), { key: "Enter" });
   const save = view.getByRole("button", { name: "设置优先设备" });
   assert.equal((save as HTMLButtonElement).disabled, true);
   fireEvent.click(view.getByLabelText("已确认旧设备停止该账号的执行"));
   fireEvent.click(save);
   await view.findByRole("alert");
-  assert.equal((select as unknown as HTMLSelectElement).value, "ready");
+  assert.equal(select.textContent, "新设备");
   assert.equal(writes.length, 1);
   locked = false;
   fireEvent.click(save);
   await view.findByText("当前：新设备");
   assert.deepEqual(writes[1].body, { deviceId: "ready", oldExecutionStopped: true });
-  await waitFor(() => assert.equal((select as unknown as HTMLSelectElement).value, ""));
+  await waitFor(() => assert.equal(select.textContent, "选择设备"));
   fireEvent.click(view.getAllByRole("button", { name: "吊销授权" })[0]);
   const dialog = await view.findByRole("alertdialog");
   assert.match(dialog.textContent!, /新设备/);

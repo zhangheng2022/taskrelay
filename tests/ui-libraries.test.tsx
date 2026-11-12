@@ -1,5 +1,6 @@
 import { requestUrl, jsonBody } from "./http-fixture";
 import "./ui-dom";
+import { chooseOption } from "./ui-select";
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { render, fireEvent, cleanup, waitFor, act } from "@testing-library/react";
@@ -122,11 +123,18 @@ test("查询去重、首次读取中通知取消旧请求、用户切换清缓�
 
 test("模型表单保留编辑草稿、Zod 阻止无效预算、使用网关连接且请求失败不重试", async () => {
   let calls = 0;
-  const transport = transportWith(async () => {
+  let submitted: unknown;
+  const transport = transportWith(async (_method, _path, body) => {
     calls++;
+    submitted = body;
     throw Error("REQUEST_UNCONFIRMED");
   });
-  const original = { ...snapshot.models[0], contextTokens: 16000, outputTokens: 4096 };
+  const original = {
+    ...snapshot.models[0],
+    connectionId: "",
+    contextTokens: 16000,
+    outputTokens: 4096,
+  };
   const props = {
     connections: [
       {
@@ -148,9 +156,8 @@ test("模型表单保留编辑草稿、Zod 阻止无效预算、使用网关连�
   fireEvent.change(view.getByLabelText("显示名称"), { target: { value: "我的编辑" } });
   view.rerender(<ModelDialog {...props} value={{ ...original, name: "后台版本", version: 2 }} />);
   assert.equal((view.getByLabelText("显示名称") as HTMLInputElement).value, "我的编辑");
-  const url = view.getByLabelText("选择服务") as HTMLInputElement;
-  const originalUrl = url.value;
-  fireEvent.change(url, { target: { value: "" } });
+  const service = view.getByLabelText("选择服务");
+  assert.equal(service.textContent, "请选择服务");
   fireEvent.change(view.getByLabelText("输出预留（token）"), { target: { value: "8192" } });
   fireEvent.change(view.getByLabelText("上下文预算（token，保守估计）"), {
     target: { value: "8192" },
@@ -163,17 +170,27 @@ test("模型表单保留编辑草稿、Zod 阻止无效预算、使用网关连�
     ),
   );
   assert.equal(calls, 0);
-  const description = url
+  const description = service
     .getAttribute("aria-describedby")!
     .split(" ")
     .map((id) => document.getElementById(id)?.dataset.slot);
   assert.deepEqual(description, ["field-error"]);
-  fireEvent.change(url, { target: { value: originalUrl } });
+  await chooseOption(service, "OpenAI");
+  fireEvent.click(view.getByText("高级设置"));
+  await chooseOption(view.getByLabelText("请求发起区域"), "欧盟");
   fireEvent.change(view.getByLabelText("上下文预算（token，保守估计）"), {
     target: { value: "32000" },
   });
   fireEvent.submit(view.getByRole("button", { name: "保存并测试" }).closest("form")!);
   await waitFor(() => assert.equal(calls, 1));
+  assert.ok(
+    typeof submitted === "object" &&
+      submitted !== null &&
+      "connectionId" in submitted &&
+      "region" in submitted,
+  );
+  assert.equal(submitted.connectionId, "conn_test");
+  assert.equal(submitted.region, "eu");
   assert.equal(view.queryByLabelText("API Key"), null);
   assert.equal((view.getByLabelText("显示名称") as HTMLInputElement).value, "我的编辑");
   assert.equal(calls, 1);
@@ -195,16 +212,14 @@ test("公共池刷新保留草稿，用户管理不再显示未启用的配额�
   };
   const view = render(<AdminPanel transport={transport} />);
   await view.findByLabelText("领取任务");
-  fireEvent.change(view.getByLabelText("领取任务"), { target: { value: "0" } });
+  await chooseOption(view.getByLabelText("领取任务"), "暂停领取");
   await act(async () => notify());
-  assert.equal((view.getByLabelText("领取任务") as unknown as HTMLSelectElement).value, "0");
+  assert.equal(view.getByLabelText("领取任务").textContent, "暂停领取");
   fireEvent.click(view.getByRole("button", { name: "撤销修改" }));
-  assert.equal((view.getByLabelText("领取任务") as unknown as HTMLSelectElement).value, "1");
+  assert.equal(view.getByLabelText("领取任务").textContent, "允许领取");
   claims = "0";
   await act(async () => notify());
-  await waitFor(() =>
-    assert.equal((view.getByLabelText("领取任务") as unknown as HTMLSelectElement).value, "0"),
-  );
+  await waitFor(() => assert.equal(view.getByLabelText("领取任务").textContent, "暂停领取"));
   view.rerender(<AdminPanel transport={transport} section="users" />);
   await view.findByText("test@example.com");
   assert.equal(view.queryByLabelText("每日启动"), null);
@@ -303,7 +318,21 @@ test("供应商连接表单登记自定义前缀、修改默认区域并保留�
     />,
   );
   fireEvent.click(view.getByText("查看配置步骤"));
-  fireEvent.change(view.getByLabelText("测试 · 请求发起区域"), { target: { value: "eu" } });
+  fireEvent.keyDown(view.getByRole("combobox", { name: "测试 · 请求发起区域" }), {
+    key: "ArrowDown",
+  });
+  assert.deepEqual(
+    view.getAllByRole("option").map((item) => item.textContent),
+    ["自动", "美国", "欧盟"],
+  );
+  assert.equal(view.getByRole("option", { name: "美国" }).getAttribute("data-state"), "checked");
+  fireEvent.keyDown(view.getByRole("listbox"), { key: "Escape" });
+  await waitFor(() => assert.equal(view.queryByRole("listbox"), null));
+  assert.equal(calls.length, 0);
+  fireEvent.keyDown(view.getByRole("combobox", { name: "测试 · 请求发起区域" }), {
+    key: "ArrowDown",
+  });
+  fireEvent.keyDown(await view.findByRole("option", { name: "欧盟" }), { key: "Enter" });
   await waitFor(() => assert.equal(refreshed, 1));
   assert.deepEqual(calls[0], {
     method: "PUT",
@@ -311,8 +340,14 @@ test("供应商连接表单登记自定义前缀、修改默认区域并保留�
     body: { expectedRegion: "us", defaultRegion: "eu" },
   });
   fireEvent.click(view.getByText("添加服务"));
+  const advanced = view.getByRole("button", { name: "高级设置" });
+  fireEvent.click(advanced);
+  await chooseOption(view.getByLabelText("默认请求发起区域"), "欧盟");
   fireEvent.change(view.getByLabelText("服务名称"), { target: { value: "接入" } });
-  fireEvent.change(view.getByLabelText("服务提供方"), { target: { value: "custom" } });
+  fireEvent.click(advanced);
+  assert.equal(advanced.getAttribute("aria-expanded"), "false");
+  fireEvent.keyDown(view.getByRole("combobox", { name: "服务提供方" }), { key: "ArrowDown" });
+  fireEvent.keyDown(await view.findByRole("option", { name: "自定义服务" }), { key: "Enter" });
   fireEvent.change(view.getByLabelText("公网 HTTPS 服务地址"), {
     target: { value: "https://new.example/v2" },
   });
@@ -325,7 +360,7 @@ test("供应商连接表单登记自定义前缀、修改默认区域并保留�
       name: "接入",
       kind: "custom",
       upstream: "https://new.example/v2",
-      defaultRegion: "auto",
+      defaultRegion: "eu",
     },
   });
 });

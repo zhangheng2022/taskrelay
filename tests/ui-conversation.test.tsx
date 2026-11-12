@@ -345,6 +345,9 @@ test("执行过程稳定合并八次读取，刷新不重复，展开保留全�
   fireEvent.click(v.getByRole("button", { name: /执行过程\s*8 次调用/ }));
   assert.equal(v.getAllByText("已读取当前页面信息。").length, 8);
   fireEvent.click(v.getAllByRole("button", { name: "已读取当前页面信息。" })[7]);
+  const feedback = v.getByRole("button", { name: "操作反馈" });
+  assert.equal(feedback.getAttribute("aria-expanded"), "false");
+  fireEvent.click(feedback);
   assert.ok(v.getByText("第 8 次的真实反馈"));
   await act(async () => notify());
   await waitFor(() => assert.equal(v.getAllByText("已读取当前页面信息。").length, 8));

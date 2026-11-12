@@ -11,7 +11,8 @@ import { SettingsModels } from "./settings-models";
 import { RetentionSettings } from "./settings-retention";
 import { SettingsDrafts, useConfirmation } from "./settings-support";
 import { Button } from "./components/ui/button";
-import { NativeSelect } from "./components/ui/native-select";
+import { FormSelect } from "./form-select";
+import { SelectItem } from "./components/ui/select";
 import { Field, FieldGroup, FieldLabel } from "./components/ui/field";
 import { ErrorText } from "./feedback";
 import { cn } from "./lib/utils";
@@ -179,15 +180,15 @@ function SettingsContent({
               <FieldGroup>
                 <Field>
                   <FieldLabel htmlFor="settings-theme">外观</FieldLabel>
-                  <NativeSelect
+                  <FormSelect
                     id="settings-theme"
                     value={theme}
-                    onChange={(e) => setTheme?.(e.target.value as Theme)}
+                    onValueChange={(value) => setTheme?.(value as Theme)}
                   >
-                    <option value="system">跟随系统</option>
-                    <option value="light">浅色</option>
-                    <option value="dark">深色</option>
-                  </NativeSelect>
+                    <SelectItem value="system">跟随系统</SelectItem>
+                    <SelectItem value="light">浅色</SelectItem>
+                    <SelectItem value="dark">深色</SelectItem>
+                  </FormSelect>
                   <p className="text-sm text-muted-foreground">立即生效，仅保存在当前浏览器。</p>
                 </Field>
               </FieldGroup>

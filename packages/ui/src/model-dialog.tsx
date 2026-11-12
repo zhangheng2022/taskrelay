@@ -1,7 +1,8 @@
+import { Disclosure } from "./disclosure";
 import { useConfirmation, useSettingsDirty } from "./settings-support";
 /** 模型表单由 RHF 持有编辑草稿，Zod 校验与服务端保持一致；后台刷新不能覆盖正在编辑的值。 */
 import { useState } from "react";
-import { useForm } from "react-hook-form";
+import { useController, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
@@ -19,7 +20,8 @@ import {
   DialogDescription,
 } from "./components/ui/dialog";
 import { Input } from "./components/ui/input";
-import { NativeSelect } from "./components/ui/native-select";
+import { FormSelect } from "./form-select";
+import { SelectItem } from "./components/ui/select";
 import { Button } from "./components/ui/button";
 import { FieldGroup } from "./components/ui/field";
 import { Field } from "./form-field";
@@ -58,6 +60,8 @@ export function ModelDialog({
       outputPrice: value?.outputPrice ?? null,
     },
   });
+  const { field: service } = useController({ control: form.control, name: "connectionId" });
+  const { field: region } = useController({ control: form.control, name: "region" });
   const { errors, isSubmitting: busy, isDirty } = form.formState;
   useSettingsDirty(isDirty);
   const { ask, confirmation } = useConfirmation();
@@ -114,14 +118,22 @@ export function ModelDialog({
               hint={connections.length ? undefined : "请先添加一个服务。"}
               error={errors.connectionId?.message}
             >
-              <NativeSelect disabled={busy} required {...form.register("connectionId")}>
-                <option value="">请选择服务</option>
+              <FormSelect
+                name={service.name}
+                value={service.value}
+                onValueChange={service.onChange}
+                onBlur={service.onBlur}
+                ref={service.ref}
+                disabled={busy}
+                required
+                placeholder="请选择服务"
+              >
                 {connections.map((c) => (
-                  <option key={c.id} value={c.id}>
+                  <SelectItem key={c.id} value={c.id}>
                     {c.name}
-                  </option>
+                  </SelectItem>
                 ))}
-              </NativeSelect>
+              </FormSelect>
             </Field>
             <Field label="模型名" error={errors.model?.message}>
               <Input
@@ -131,15 +143,21 @@ export function ModelDialog({
                 {...form.register("model")}
               />
             </Field>
-            <details>
-              <summary>高级设置</summary>
+            <Disclosure label="高级设置" keepMounted>
               <Field label="请求发起区域">
-                <NativeSelect disabled={busy} {...form.register("region")}>
-                  <option value="inherit">跟随连接</option>
-                  <option value="auto">自动</option>
-                  <option value="us">美国</option>
-                  <option value="eu">欧盟</option>
-                </NativeSelect>
+                <FormSelect
+                  name={region.name}
+                  value={region.value}
+                  onValueChange={region.onChange}
+                  onBlur={region.onBlur}
+                  ref={region.ref}
+                  disabled={busy}
+                >
+                  <SelectItem value="inherit">跟随连接</SelectItem>
+                  <SelectItem value="auto">自动</SelectItem>
+                  <SelectItem value="us">美国</SelectItem>
+                  <SelectItem value="eu">欧盟</SelectItem>
+                </FormSelect>
               </Field>
 
               <Field label="显示名称" error={errors.name?.message}>
@@ -183,7 +201,7 @@ export function ModelDialog({
                   />
                 </Field>
               </FieldGroup>
-            </details>
+            </Disclosure>
             {errors.root?.message && <p role="alert">{errors.root.message}</p>}
             {error && <ErrorText error={error} />}
           </FieldGroup>

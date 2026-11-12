@@ -1,4 +1,5 @@
 /** 服务页只在接入和排错时展示网关登记信息；配置状态来自服务端核验。 */
+import { Disclosure } from "./disclosure";
 import { useRef, useState } from "react";
 import {
   connectionInputSchema,
@@ -9,8 +10,10 @@ import {
 import { createApi, rpcData } from "./api";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
-import { NativeSelect } from "./components/ui/native-select";
+import { FormSelect } from "./form-select";
+import { SelectItem } from "./components/ui/select";
 import { Field } from "./form-field";
+import { FieldSet } from "./components/ui/field";
 import { ErrorText } from "./feedback";
 
 const labels = {
@@ -24,9 +27,9 @@ const labels = {
 };
 const regionNames = { auto: "自动", us: "美国", eu: "欧盟" };
 const regions = Object.entries(regionNames).map(([key, name]) => (
-  <option key={key} value={key}>
+  <SelectItem key={key} value={key}>
     {name}
-  </option>
+  </SelectItem>
 ));
 
 export function ModelConnections({
@@ -111,11 +114,11 @@ export function ModelConnections({
                 </Button>
               )}
               <Field label={c.name + " · 请求发起区域"}>
-                <NativeSelect
+                <FormSelect
                   disabled={busy}
                   value={c.defaultRegion}
-                  onChange={(e) => {
-                    const defaultRegion = e.target.value as EgressRegion;
+                  onValueChange={(region) => {
+                    const defaultRegion = region as EgressRegion;
                     void save(async () => {
                       await rpcData(
                         api[":id"].region.$put({
@@ -127,15 +130,14 @@ export function ModelConnections({
                   }}
                 >
                   {regions}
-                </NativeSelect>
+                </FormSelect>
               </Field>
-              <details>
-                <summary>技术详情</summary>
+              <Disclosure label="技术详情">
                 <p>连接 ID：{c.id}</p>
                 <p>网关标识：{c.gatewayProvider}</p>
                 {c.keyAlias && <p>密钥别名：{c.keyAlias}</p>}
                 {c.kind === "custom" && <p>接口地址：{c.upstream}</p>}
-              </details>
+              </Disclosure>
             </div>
           )}
         </article>
@@ -168,42 +170,42 @@ export function ModelConnections({
             }).catch((e: Error) => setError(e.message));
           }}
         >
-          <fieldset disabled={busy} className="flex flex-col gap-3">
+          <FieldSet disabled={busy} className="flex flex-col gap-3">
             <Field label="服务提供方">
-              <NativeSelect
+              <FormSelect
+                disabled={busy}
                 value={source}
-                onChange={(e) => setSource(e.target.value as keyof typeof labels)}
+                onValueChange={(value) => setSource(value as keyof typeof labels)}
               >
                 {Object.entries(labels).map(([key, label]) => (
-                  <option key={key} value={key}>
+                  <SelectItem key={key} value={key}>
                     {label}
-                  </option>
+                  </SelectItem>
                 ))}
-              </NativeSelect>
+              </FormSelect>
             </Field>
             {source === "custom" && (
               <Field label="公网 HTTPS 服务地址" hint="包含接口前缀，例如 https://example.com/v1。">
                 <Input type="url" name="upstream" required />
               </Field>
             )}
-            <details>
-              <summary>高级设置</summary>
+            <Disclosure label="高级设置" keepMounted>
               <Field label="服务名称">
                 <Input name="name" maxLength={80} placeholder="默认使用提供方或网站名称" />
               </Field>
               <Field label="默认请求发起区域">
-                <NativeSelect name="region" defaultValue="auto">
+                <FormSelect name="region" defaultValue="auto" disabled={busy}>
                   {regions}
-                </NativeSelect>
+                </FormSelect>
               </Field>
-            </details>
+            </Disclosure>
             <div className="flex gap-2">
               <Button type="submit">保存服务</Button>
               <Button type="button" variant="ghost" onClick={() => setAdding(false)}>
                 取消
               </Button>
             </div>
-          </fieldset>
+          </FieldSet>
         </form>
       )}
       {error && <ErrorText error={error} />}

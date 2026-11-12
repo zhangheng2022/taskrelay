@@ -1,4 +1,5 @@
 import "./ui-dom";
+import { chooseOption } from "./ui-select";
 import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { render, cleanup, fireEvent, waitFor } from "@testing-library/react";
@@ -49,7 +50,7 @@ test("需求明确后才显示入口，预览后启用；频率没有工作日�
       false,
     ),
   );
-  fireEvent.change(view.getByLabelText("执行频率"), { target: { value: "weekly" } });
+  await chooseOption(view.getByLabelText("执行频率"), "每周");
   const friday = view.getByRole("button", { name: "周五" });
   fireEvent.click(friday);
   assert.equal(friday.getAttribute("aria-pressed"), "true");
@@ -134,7 +135,7 @@ test("保存失败重试复用身份，重新打开恢复服务端配置，离�
   fireEvent.keyDown(view.getByRole("dialog"), { key: "Escape" });
   await waitFor(() => assert.equal(view.queryByRole("dialog"), null));
   fireEvent.click(view.getByRole("button", { name: "定时任务：已开启" }));
-  assert.equal((view.getByLabelText("执行频率") as unknown as HTMLSelectElement).value, "daily");
+  assert.equal(view.getByLabelText("执行频率").textContent, "每天");
   view.rerender(screen(true));
   assert.equal(
     (view.getByRole("button", { name: "保存并启用" }) as HTMLButtonElement).disabled,

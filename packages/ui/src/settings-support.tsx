@@ -12,7 +12,8 @@ import {
 } from "./components/ui/alert-dialog";
 import { Alert, AlertDescription } from "./components/ui/alert";
 import { Input } from "./components/ui/input";
-import { NativeSelect } from "./components/ui/native-select";
+import { FormSelect } from "./form-select";
+import { SelectItem } from "./components/ui/select";
 import { Field, FieldGroup, FieldLabel } from "./components/ui/field";
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription } from "./components/ui/empty";
 import { ErrorText } from "./feedback";
@@ -164,13 +165,13 @@ export function SettingsSearch({
       </Field>
       <Field>
         <FieldLabel htmlFor={id + "state"}>筛选状态</FieldLabel>
-        <NativeSelect id={id + "state"} value={state} onChange={(e) => onState(e.target.value)}>
+        <FormSelect id={id + "state"} value={state} onValueChange={onState}>
           {options.map(([key, name]) => (
-            <option key={key} value={key}>
+            <SelectItem key={key} value={key}>
               {name}
-            </option>
+            </SelectItem>
           ))}
-        </NativeSelect>
+        </FormSelect>
       </Field>
     </FieldGroup>
   );
