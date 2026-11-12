@@ -12,7 +12,8 @@ import { useTransportQuery } from "./queries";
 import { Button } from "./components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "./components/ui/toggle-group";
 import { Input } from "./components/ui/input";
-import { NativeSelect, NativeSelectOption } from "./components/ui/native-select";
+import { FormSelect } from "./form-select";
+import { SelectItem } from "./components/ui/select";
 import {
   Field,
   FieldGroup,
@@ -281,19 +282,20 @@ function ScheduleEditor({
           <FieldGroup onChange={dirty}>
             <Field>
               <FieldLabel htmlFor={`${id}-kind`}>执行频率</FieldLabel>
-              <NativeSelect
+              <FormSelect
                 id={`${id}-kind`}
                 value={kind}
-                onChange={(e) => {
-                  setKind(e.target.value as Frequency["kind"]);
+                disabled={busy || offline}
+                onValueChange={(value) => {
+                  setKind(value as Frequency["kind"]);
                   dirty();
                 }}
               >
-                <NativeSelectOption value="once">指定时间执行一次</NativeSelectOption>
-                <NativeSelectOption value="daily">每天</NativeSelectOption>
-                <NativeSelectOption value="weekly">每周</NativeSelectOption>
-                <NativeSelectOption value="monthly">每月</NativeSelectOption>
-              </NativeSelect>
+                <SelectItem value="once">指定时间执行一次</SelectItem>
+                <SelectItem value="daily">每天</SelectItem>
+                <SelectItem value="weekly">每周</SelectItem>
+                <SelectItem value="monthly">每月</SelectItem>
+              </FormSelect>
             </Field>
             {kind === "weekly" && (
               <FieldSet>

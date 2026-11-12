@@ -9,14 +9,8 @@ import {
 import { createApi, rpcData } from "./api";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "./components/ui/select";
+import { FormSelect } from "./form-select";
+import { SelectItem } from "./components/ui/select";
 import { Field } from "./form-field";
 import { ErrorText } from "./feedback";
 
@@ -117,30 +111,25 @@ export function ModelConnections({
                   刷新状态
                 </Button>
               )}
-              <Select
-                disabled={busy}
-                value={c.defaultRegion}
-                onValueChange={(region) => {
-                  const defaultRegion = region as EgressRegion;
-                  void save(async () => {
-                    await rpcData(
-                      api[":id"].region.$put({
-                        param: { id: c.id },
-                        json: { defaultRegion, expectedRegion: c.defaultRegion },
-                      }),
-                    );
-                  }).catch((e: Error) => setError(e.message));
-                }}
-              >
-                <Field label={c.name + " · 请求发起区域"}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                </Field>
-                <SelectContent position="popper" align="start">
-                  <SelectGroup>{regions}</SelectGroup>
-                </SelectContent>
-              </Select>
+              <Field label={c.name + " · 请求发起区域"}>
+                <FormSelect
+                  disabled={busy}
+                  value={c.defaultRegion}
+                  onValueChange={(region) => {
+                    const defaultRegion = region as EgressRegion;
+                    void save(async () => {
+                      await rpcData(
+                        api[":id"].region.$put({
+                          param: { id: c.id },
+                          json: { defaultRegion, expectedRegion: c.defaultRegion },
+                        }),
+                      );
+                    }).catch((e: Error) => setError(e.message));
+                  }}
+                >
+                  {regions}
+                </FormSelect>
+              </Field>
               <details>
                 <summary>技术详情</summary>
                 <p>连接 ID：{c.id}</p>
@@ -181,26 +170,19 @@ export function ModelConnections({
           }}
         >
           <fieldset disabled={busy} className="flex flex-col gap-3">
-            <Select
-              disabled={busy}
-              value={source}
-              onValueChange={(value) => setSource(value as keyof typeof labels)}
-            >
-              <Field label="服务提供方">
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-              </Field>
-              <SelectContent position="popper" align="start">
-                <SelectGroup>
-                  {Object.entries(labels).map(([key, label]) => (
-                    <SelectItem key={key} value={key}>
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
+            <Field label="服务提供方">
+              <FormSelect
+                disabled={busy}
+                value={source}
+                onValueChange={(value) => setSource(value as keyof typeof labels)}
+              >
+                {Object.entries(labels).map(([key, label]) => (
+                  <SelectItem key={key} value={key}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </FormSelect>
+            </Field>
             {source === "custom" && (
               <Field label="公网 HTTPS 服务地址" hint="包含接口前缀，例如 https://example.com/v1。">
                 <Input type="url" name="upstream" required />
@@ -211,16 +193,11 @@ export function ModelConnections({
               <Field label="服务名称">
                 <Input name="name" maxLength={80} placeholder="默认使用提供方或网站名称" />
               </Field>
-              <Select name="region" defaultValue="auto" disabled={busy}>
-                <Field label="默认请求发起区域">
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                </Field>
-                <SelectContent position="popper" align="start">
-                  <SelectGroup>{regions}</SelectGroup>
-                </SelectContent>
-              </Select>
+              <Field label="默认请求发起区域">
+                <FormSelect name="region" defaultValue="auto" disabled={busy}>
+                  {regions}
+                </FormSelect>
+              </Field>
             </details>
             <div className="flex gap-2">
               <Button type="submit">保存服务</Button>

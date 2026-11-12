@@ -8,7 +8,8 @@ import { Item, ItemContent, ItemActions } from "./components/ui/item";
 import { Button } from "./components/ui/button";
 import { Checkbox } from "./components/ui/checkbox";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "./components/ui/collapsible";
-import { NativeSelect } from "./components/ui/native-select";
+import { FormSelect } from "./form-select";
+import { SelectItem } from "./components/ui/select";
 import { Field, FieldGroup, FieldLabel } from "./components/ui/field";
 import { Badge } from "./components/ui/badge";
 import { LoadFeedback, Status, formatDate } from "./feedback";
@@ -97,11 +98,11 @@ function OperationsPanel({ transport, section = "operations", currentUserId }: P
           />
           <Field>
             <FieldLabel htmlFor="member-role">角色</FieldLabel>
-            <NativeSelect id="member-role" value={role} onChange={(e) => setRole(e.target.value)}>
-              <option value="all">全部角色</option>
-              <option value="user">普通用户</option>
-              <option value="admin">管理员</option>
-            </NativeSelect>
+            <FormSelect id="member-role" value={role} onValueChange={setRole}>
+              <SelectItem value="all">全部角色</SelectItem>
+              <SelectItem value="user">普通用户</SelectItem>
+              <SelectItem value="admin">管理员</SelectItem>
+            </FormSelect>
           </Field>
           {!users.length && <SettingsEmpty />}
           {users.map((u) => (
@@ -332,15 +333,15 @@ function PoolSettings({
       <FieldGroup>
         <Field>
           <FieldLabel htmlFor="pool-claims">领取任务</FieldLabel>
-          <NativeSelect
+          <FormSelect
             id="pool-claims"
             disabled={busy}
             value={draft ?? claims}
-            onChange={(e) => setDraft(e.target.value)}
+            onValueChange={setDraft}
           >
-            <option value="1">允许领取</option>
-            <option value="0">暂停领取</option>
-          </NativeSelect>
+            <SelectItem value="1">允许领取</SelectItem>
+            <SelectItem value="0">暂停领取</SelectItem>
+          </FormSelect>
         </Field>
         <div className="flex gap-2">
           <Button disabled={busy || draft === null}>保存公共池设置</Button>
@@ -396,24 +397,22 @@ function Migration({
         </p>
         <Field>
           <FieldLabel htmlFor={a.id + "device"}>优先设备</FieldLabel>
-          <NativeSelect
+          <FormSelect
             id={a.id + "device"}
             disabled={busy}
             required
+            placeholder="选择设备"
             value={device}
-            onChange={(e) => setDevice(e.target.value)}
+            onValueChange={setDevice}
           >
-            <option value="" disabled>
-              选择设备
-            </option>
             {data.devices
               .filter((d) => !d.revoked && d.protocol_version === PROTOCOL_VERSION)
               .map((d) => (
-                <option key={d.id} value={d.id}>
+                <SelectItem key={d.id} value={d.id}>
                   {d.name}
-                </option>
+                </SelectItem>
               ))}
-          </NativeSelect>
+          </FormSelect>
         </Field>
         <Field orientation="horizontal">
           <Checkbox
