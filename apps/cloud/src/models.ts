@@ -47,17 +47,19 @@ export async function getModelProfile(
   version?: number,
   userId: string | null | undefined = env.requestUserId,
 ) {
+  const adminProbe = env.adminProbeModelId === id;
   const row = await env.DB.prepare(
     `SELECT v.id,v.version,v.config,v.connection_id,v.effective_region,v.capabilities,m.owner_user_id,m.enabled,m.management_version
      FROM model_profile_versions v JOIN models m ON m.id=v.id LEFT JOIN model_connections c
      ON c.id=v.connection_id AND c.owner_user_id IS m.owner_user_id WHERE v.id=? AND (m.owner_user_id IS NULL OR m.owner_user_id=?)
-     AND (c.id IS NOT NULL OR (v.connection_id IS NULL AND v.config='{}')) AND v.version=COALESCE(?,m.current_version)`,
+     AND (c.id IS NOT NULL OR (v.connection_id IS NULL AND v.config='{}')) AND v.version=COALESCE(?,m.current_version)
+     ${adminProbe ? "AND c.id IS NOT NULL AND m.owner_user_id IS NULL AND EXISTS(SELECT 1 FROM members WHERE id=? AND role='admin' AND disabled=0)" : ""}`,
   )
-    .bind(id, userId ?? null, version ?? null)
+    .bind(id, userId ?? null, version ?? null, ...(adminProbe ? [userId ?? null] : []))
     .first<Row>();
   if (!row) throw Error("MODEL_NOT_FOUND");
   const profile = modelFrom(row);
-  if (!row.enabled) throw Error("MODEL_DISABLED");
+  if (!row.enabled && !adminProbe) throw Error("MODEL_DISABLED");
   return { profile };
 }
 export async function recordUsage(
@@ -199,6 +201,7 @@ export async function invoke(
       {
         kind: "inference",
         region: pinned.effectiveRegion!,
+        adminProbe: env.adminProbeModelId === id,
         userId,
         reservationId,
         modelId: id,
@@ -540,16 +543,12 @@ export async function probe(env: AppEnv, id: string, version: number): Promise<M
   const errors: string[] = [];
   await getModelProfile(env, id, version);
   try {
-    await probeInference(env, id, version, {
-      messages: [{ role: "user", content: "Reply OK." }],
+    const answer = await probeInference(env, id, version, {
+      messages: [{ role: "user", content: "What is 17 + 25? Reply with just the number." }],
       maxTokens: 512,
     });
+    if (answer.text.trim() !== "42") throw Error("MODEL_ANSWER_INCORRECT");
     caps.connection = true;
-    await env.DB.prepare(
-      "UPDATE model_profile_versions SET capabilities=? WHERE id=? AND version=? AND connection_id IS NOT NULL",
-    )
-      .bind(JSON.stringify(caps), id, version)
-      .run();
   } catch (e) {
     errors.push((e as Error).message);
   }
@@ -603,11 +602,20 @@ export async function probe(env: AppEnv, id: string, version: number): Promise<M
         errors.push("STRUCTURED_OUTPUT_UNSUPPORTED");
       }
   }
+  caps.questionAnswered = caps.connection;
+  if (caps.connection && !caps.tools && !errors.includes("TOOLS_UNSUPPORTED"))
+    errors.push("TOOLS_UNSUPPORTED");
+  if (
+    caps.connection &&
+    caps.structured === "none" &&
+    !errors.includes("STRUCTURED_OUTPUT_UNSUPPORTED")
+  )
+    errors.push("STRUCTURED_OUTPUT_UNSUPPORTED");
   if (errors.length) caps.error = errors.join(",");
   await env.DB.prepare(
-    "UPDATE model_profile_versions SET capabilities=? WHERE id=? AND version=? AND connection_id IS NOT NULL",
+    "UPDATE model_profile_versions SET capabilities=json_patch(capabilities,?) WHERE id=? AND version=? AND connection_id IS NOT NULL",
   )
-    .bind(JSON.stringify(caps), id, version)
+    .bind(JSON.stringify({ ...caps, vision: undefined, error: caps.error ?? null }), id, version)
     .run();
   return caps;
 }
@@ -649,7 +657,7 @@ export async function storeModel(
     effective_region: import("../../../packages/contracts/src/index").EgressRegion;
   }>([
     env.DB.prepare(
-      `INSERT INTO models(id,current_version,created_at) SELECT ?,?,? WHERE ?=0 OR EXISTS(SELECT 1 FROM models WHERE id=? AND current_version=?)
+      `INSERT INTO models(id,current_version,created_at,enabled) SELECT ?,?,?,0 WHERE ?=0 OR EXISTS(SELECT 1 FROM models WHERE id=? AND current_version=?)
     ON CONFLICT(id) DO UPDATE SET current_version=excluded.current_version WHERE models.owner_user_id IS NULL AND models.current_version=? AND (? IS NULL OR models.management_version=?)`,
     ).bind(
       id,
@@ -680,8 +688,8 @@ export async function storeModel(
   if (!writes[0].meta.changes || !stored) throw Error("RESOURCE_VERSION_CONFLICT");
   return { id, version, ...config, effectiveRegion: stored.effective_region, capabilities };
 }
-export async function probeVision(env: AppEnv, id: string) {
-  const { profile } = await getModelProfile(env, id);
+export async function probeVision(env: AppEnv, id: string, version?: number) {
+  const { profile } = await getModelProfile(env, id, version);
   let vision = false;
   try {
     const r = await probeInference(env, id, profile.version, {
@@ -705,9 +713,13 @@ export async function probeVision(env: AppEnv, id: string) {
     visionTestedAt: now(),
   };
   await env.DB.prepare(
-    "UPDATE model_profile_versions SET capabilities=? WHERE id=? AND version=? AND connection_id IS NOT NULL",
+    "UPDATE model_profile_versions SET capabilities=json_patch(capabilities,?) WHERE id=? AND version=? AND connection_id IS NOT NULL",
   )
-    .bind(JSON.stringify(capabilities), id, profile.version)
+    .bind(
+      JSON.stringify({ vision, visionTestedAt: capabilities.visionTestedAt }),
+      id,
+      profile.version,
+    )
     .run();
   return capabilities;
 }

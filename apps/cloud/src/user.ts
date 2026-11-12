@@ -64,6 +64,9 @@ const taskConditionsInput = z
   .strict();
 const taskStateInput = z.object({ enabled: z.boolean() });
 const runRequestInput = z.object({ requestId: idSchema });
+const probeVersion = validator("query", (v: { version?: string }) =>
+  z.object({ version: z.coerce.number().int().positive().optional() }).parse(v),
+);
 const modelEditInput = modelInputSchema.extend({
   expectedVersion: z.number().int().positive().optional(),
 });
@@ -545,13 +548,17 @@ export const admin = adminBase
       );
     },
   )
-  .post("/models/:id/test", async (c) => {
-    const { profile } = await getModelProfile(c.env, c.req.param("id"), undefined, null);
-    return c.json(await probe(c.env, profile.id, profile.version));
+  .post("/models/:id/test", probeVersion, async (c) => {
+    const id = c.req.param("id");
+    const env = { ...c.env, adminProbeModelId: id };
+    const { profile } = await getModelProfile(env, id, c.req.valid("query").version);
+    return c.json(await probe(env, id, profile.version));
   })
-  .post("/models/:id/vision", async (c) => {
-    await getModelProfile(c.env, c.req.param("id"), undefined, null);
-    return c.json(await probeVision(c.env, c.req.param("id")));
+  .post("/models/:id/vision", probeVersion, async (c) => {
+    const id = c.req.param("id");
+    return c.json(
+      await probeVision({ ...c.env, adminProbeModelId: id }, id, c.req.valid("query").version),
+    );
   })
   .post("/devices/:id/revoke", async (c) => {
     await c.env.DB.prepare("UPDATE devices SET revoked=1 WHERE id=?").bind(c.req.param("id")).run();

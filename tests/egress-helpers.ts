@@ -52,7 +52,7 @@ export function attachTestEgress(env: AppEnv) {
           const job = value as EgressJob;
           if (job.kind !== "inference") throw new Error("TEST_INFERENCE_ONLY");
           return performInference(
-            env,
+            { ...env, adminProbeModelId: job.adminProbe ? job.modelId : undefined },
             job.modelId,
             job.version,
             job.request,

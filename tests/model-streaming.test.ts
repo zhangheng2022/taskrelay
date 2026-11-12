@@ -259,7 +259,7 @@ test("未知流式能力先做独立探测，仅明确不支持且控制探测�
 test("工具能力探测采用执行器的自动选择并验证真实函数及参数", async (t) => {
   const f = await productionModelFixture(t);
   f.replies(
-    "OK",
+    "42",
     JSON.stringify({
       __model: { text: "", calls: [{ id: "call", name: "check", arguments: '{"value":7}' }] },
     }),
@@ -269,10 +269,52 @@ test("工具能力探测采用执行器的自动选择并验证真实函数及�
   assert.equal(status, 200);
   assert.equal(f.requests[1].body.tool_choice, "auto");
   assert.equal(capabilities.tools, true);
-  f.replies("OK", "check with value 7", '{"ok":true}');
+  f.replies("42", "check with value 7", '{"ok":true}');
   assert.equal((await f.request("/api/admin/models/model_test/test", {})).data.tools, false);
 });
 
+test("新模型先停用，管理员按固定版本试答，答错、旧版通过及并发编辑均不能开放新版本", async (t) => {
+  const f = await productionModelFixture(t);
+  const input = { name: "验收配置", connectionId: "conn_test", model: "test" };
+  const created = await f.request("/api/admin/models", input);
+  assert.equal(created.status, 201);
+  const id = created.data.id;
+  const path = "/api/admin/models/" + id;
+  const enable = (expectedVersion: number) =>
+    f.request(path + "/state", { expectedVersion, enabled: true }, "PUT");
+  assert.equal(
+    (await f.request("/api/user/threads", { modelId: id })).data.error,
+    "MODEL_DISABLED",
+  );
+  assert.equal((await enable(1)).data.error, "MODEL_TEST_REQUIRED");
+  f.replies("no answer");
+  const bad = await f.request(path + "/test?version=1", {});
+  assert.equal(bad.data.error, "MODEL_ANSWER_INCORRECT");
+  assert.equal((await enable(1)).data.error, "MODEL_TEST_REQUIRED");
+  assert.equal((await f.request(path, { ...input, expectedVersion: 1 }, "PUT")).data.version, 2);
+  const good = () =>
+    f.replies(
+      "42",
+      JSON.stringify({
+        __model: { text: "", calls: [{ id: "check", name: "check", arguments: '{"value":7}' }] },
+      }),
+      '{"ok":true}',
+    );
+  good();
+  assert.equal((await f.request(path + "/test?version=1", {})).data.questionAnswered, true);
+  assert.equal((await enable(1)).data.error, "RESOURCE_VERSION_CONFLICT");
+  assert.equal((await enable(2)).data.error, "MODEL_TEST_REQUIRED");
+  good();
+  assert.equal((await f.request(path + "/test?version=2", {})).data.tools, true);
+  assert.equal(
+    (await f.request("/api/user/threads", { modelId: id })).data.error,
+    "MODEL_DISABLED",
+  );
+  f.replies("red");
+  assert.equal((await f.request(path + "/vision?version=2", {})).data.vision, true);
+  assert.equal((await enable(2)).status, 200);
+  assert.ok((await f.request("/api/user/threads", { modelId: id })).data.id);
+});
 test("能力探测网络故障不降级、不提交用户业务、不标记不支持", async (t) => {
   const f = await productionModelFixture(t);
   await f.db.prepare("UPDATE settings SET value='1' WHERE key='modelStreamingEnabled'").run();

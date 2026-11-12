@@ -160,6 +160,8 @@ export function ErrorText({ error }: { error: string }) {
     WORKERS_AI_PAID_MODEL: "此 Workers AI 模型需要付费计划，请选择免费计划可用的模型。",
     MODEL_GATEWAY_BINDING_REQUIRED: "请管理员在 Cloudflare 登记该连接的密钥并核验绑定。",
     MODEL_GATEWAY_NOT_CONFIGURED: "平台网关配置不完整，请管理员检查运行令牌、账户和网关 ID。",
+    MODEL_TEST_REQUIRED: "请先通过当前版本的问答、工具和结构化输出测试。",
+    MODEL_ANSWER_INCORRECT: "问答测试未通过，模型未返回预期答案。",
     MODEL_CONNECTION_NOT_FOUND: "模型连接不可用，请重新选择供应商连接。",
     WORKERS_AI_MODEL_INVALID: "请填写完整的 @cf/作者/模型 标识。",
     MODEL_HTTP_403_UNSUPPORTED_REGION:

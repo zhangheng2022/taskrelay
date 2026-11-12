@@ -1,4 +1,4 @@
-/** 管理员只登记不可变的供应商路由。显示服务端分配的标识，供管理员在 Cloudflare 绑定凭据。 */
+/** 服务页只在接入和排错时展示网关登记信息；配置状态来自服务端核验。 */
 import { useRef, useState } from "react";
 import {
   connectionInputSchema,
@@ -13,13 +13,22 @@ import { NativeSelect } from "./components/ui/native-select";
 import { Field } from "./form-field";
 import { ErrorText } from "./feedback";
 
-const regions = (
-  <>
-    <option value="auto">自动</option>
-    <option value="us">美国</option>
-    <option value="eu">欧盟</option>
-  </>
-);
+const labels = {
+  openai: "OpenAI",
+  deepseek: "DeepSeek",
+  groq: "Groq",
+  openrouter: "OpenRouter",
+  grok: "xAI",
+  "workers-ai": "Workers AI",
+  custom: "自定义服务",
+};
+const regionNames = { auto: "自动", us: "美国", eu: "欧盟" };
+const regions = Object.entries(regionNames).map(([key, name]) => (
+  <option key={key} value={key}>
+    {name}
+  </option>
+));
+
 export function ModelConnections({
   connections,
   transport,
@@ -29,123 +38,175 @@ export function ModelConnections({
   transport: Transport;
   refresh: () => Promise<void>;
 }) {
-  const [kind, setKind] = useState("provider");
+  const [adding, setAdding] = useState(false);
+  const [source, setSource] = useState<keyof typeof labels>("openai");
+  const [expanded, setExpanded] = useState("");
   const [busy, setBusy] = useState(false);
-  const saving = useRef(false);
   const [error, setError] = useState("");
+  const lock = useRef(false);
   const api = createApi(transport).api.admin["model-connections"];
-  async function save(action: () => Promise<unknown>) {
-    if (saving.current) return;
-    saving.current = true;
+  async function save(action?: () => Promise<void>) {
+    if (lock.current) return;
+    lock.current = true;
     setBusy(true);
     setError("");
     try {
-      await action();
+      await action?.();
       await refresh();
+    } catch (e) {
+      setError((e as Error).message);
     } finally {
-      saving.current = false;
+      lock.current = false;
       setBusy(false);
     }
   }
   return (
-    <details>
-      <summary>供应商连接</summary>
+    <section className="flex min-w-0 flex-col gap-4">
+      <div className="section-heading">
+        <h2>管理服务</h2>
+        <Button disabled={adding} onClick={() => setAdding(true)}>
+          添加服务
+        </Button>
+      </div>
       {connections.map((c) => (
-        <div key={c.id} className="my-3 flex min-w-0 flex-col gap-2 break-all">
-          <strong>{c.name}</strong>
-          <span>网关供应商：{c.gatewayProvider}</span>
-          {c.kind !== "workers-ai" && (
-            <span>
-              {c.bindingVerified ? "凭据绑定已核验" : "等待配置服务核验"} · 连接 ID：{c.id}
-            </span>
-          )}
-          {c.kind === "custom" && (
-            <span>上游：{c.upstream}（在 Cloudflare 登记主机，路径由 TaskRelay 追加）</span>
-          )}
-          {c.keyAlias && <span>Cloudflare 密钥别名：{c.keyAlias}</span>}
-          <Field label={c.name + " · 请求发起区域"}>
-            <NativeSelect
-              disabled={busy}
-              value={c.defaultRegion}
-              onChange={(e) => {
-                const defaultRegion = e.target.value as EgressRegion;
-                void save(() =>
-                  rpcData(
-                    api[":id"].region.$put({
-                      param: { id: c.id },
-                      json: { defaultRegion, expectedRegion: c.defaultRegion },
-                    }),
-                  ),
-                ).catch((e: Error) => setError(e.message));
-              }}
+        <article key={c.id} className="flex min-w-0 flex-col gap-2 border-b pb-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <strong className="break-all">{c.name}</strong>
+            <span>{regionNames[c.defaultRegion]}</span>
+            <span>{c.bindingVerified ? "已配置" : "待配置"}</span>
+            <Button
+              variant="ghost"
+              aria-expanded={expanded === c.id}
+              onClick={() => setExpanded(expanded === c.id ? "" : c.id)}
             >
-              {regions}
-            </NativeSelect>
-          </Field>
-        </div>
+              {c.bindingVerified ? "服务设置" : "查看配置步骤"}
+            </Button>
+          </div>
+          {expanded === c.id && (
+            <div className="flex min-w-0 flex-col gap-3 break-all">
+              {!c.bindingVerified && c.kind !== "workers-ai" && (
+                <ol className="list-decimal pl-5">
+                  {c.kind === "custom" && (
+                    <li>
+                      在 Cloudflare 的 AI Gateway → Custom Providers 添加服务。标识填{" "}
+                      <code>{c.gatewayProvider.replace(/^custom-/, "")}</code>，地址填{" "}
+                      <code>{new URL(c.upstream).origin}</code>。TaskRelay 会追加接口路径。
+                    </li>
+                  )}
+                  <li>
+                    在 AI Gateway 的 taskrelay 网关打开 Provider Keys，选择{" "}
+                    <code>{c.gatewayProvider}</code>，录入服务商密钥，别名填{" "}
+                    <code>{c.keyAlias}</code>。
+                  </li>
+                  <li>
+                    在已配置管理权限的项目目录运行{" "}
+                    <code>node scripts/prepare-model-gateway.mjs --verify-connection {c.id}</code>
+                    ，再点「刷新状态」。
+                  </li>
+                </ol>
+              )}
+              {!c.bindingVerified && (
+                <Button variant="outline" disabled={busy} onClick={() => void save()}>
+                  刷新状态
+                </Button>
+              )}
+              <Field label={c.name + " · 请求发起区域"}>
+                <NativeSelect
+                  disabled={busy}
+                  value={c.defaultRegion}
+                  onChange={(e) => {
+                    const defaultRegion = e.target.value as EgressRegion;
+                    void save(async () => {
+                      await rpcData(
+                        api[":id"].region.$put({
+                          param: { id: c.id },
+                          json: { defaultRegion, expectedRegion: c.defaultRegion },
+                        }),
+                      );
+                    }).catch((e: Error) => setError(e.message));
+                  }}
+                >
+                  {regions}
+                </NativeSelect>
+              </Field>
+              <details>
+                <summary>技术详情</summary>
+                <p>连接 ID：{c.id}</p>
+                <p>网关标识：{c.gatewayProvider}</p>
+                {c.keyAlias && <p>密钥别名：{c.keyAlias}</p>}
+                {c.kind === "custom" && <p>接口地址：{c.upstream}</p>}
+              </details>
+            </div>
+          )}
+        </article>
       ))}
-      <form
-        className="my-4 flex flex-col gap-3"
-        onSubmit={(e) => {
-          e.preventDefault();
-          const form = e.currentTarget;
-          const fields = new window.FormData(form);
-          void save(async () => {
-            const input = connectionInputSchema.parse({
-              name: fields.get("name"),
-              defaultRegion: fields.get("region"),
-              kind,
-              ...(kind === "provider"
-                ? { provider: fields.get("provider") }
-                : kind === "custom"
-                  ? { upstream: fields.get("upstream") }
-                  : {}),
-            });
-            await rpcData(api.$post({ json: input }));
-            form.reset();
-            setKind("provider");
-          }).catch((e: Error) => setError(e.message));
-        }}
-      >
-        <fieldset disabled={busy} className="flex flex-col gap-3">
-          <Field label="连接名称">
-            <Input name="name" required maxLength={80} />
-          </Field>
-          <Field label="连接类型">
-            <NativeSelect value={kind} onChange={(e) => setKind(e.target.value)}>
-              <option value="provider">第三方供应商</option>
-              <option value="custom">自定义兼容服务</option>
-              <option value="workers-ai">Workers AI</option>
-            </NativeSelect>
-          </Field>
-          {kind === "provider" && (
-            <Field label="供应商">
-              <NativeSelect name="provider">
-                {["openai", "deepseek", "groq", "openrouter", "grok"].map((p) => (
-                  <option key={p} value={p}>
-                    {p === "grok" ? "xAI" : p}
+      {adding && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const data = new window.FormData(e.currentTarget);
+            void save(async () => {
+              const urlField = data.get("upstream"),
+                nameField = data.get("name");
+              const upstream = typeof urlField === "string" ? urlField.trim() : "";
+              const name =
+                (typeof nameField === "string" ? nameField.trim() : "") ||
+                (source === "custom" ? new URL(upstream).hostname : labels[source]);
+              const input = connectionInputSchema.parse({
+                name,
+                defaultRegion: data.get("region"),
+                ...(source === "custom"
+                  ? { kind: "custom", upstream }
+                  : source === "workers-ai"
+                    ? { kind: "workers-ai" }
+                    : { kind: "provider", provider: source }),
+              });
+              const created = await rpcData(api.$post({ json: input }));
+              setExpanded(created.id);
+              setAdding(false);
+              setSource("openai");
+            }).catch((e: Error) => setError(e.message));
+          }}
+        >
+          <fieldset disabled={busy} className="flex flex-col gap-3">
+            <Field label="服务提供方">
+              <NativeSelect
+                value={source}
+                onChange={(e) => setSource(e.target.value as keyof typeof labels)}
+              >
+                {Object.entries(labels).map(([key, label]) => (
+                  <option key={key} value={key}>
+                    {label}
                   </option>
                 ))}
               </NativeSelect>
             </Field>
-          )}
-          {kind === "custom" && (
-            <Field
-              label="公网 HTTPS 服务地址"
-              hint="包含供应商的接口前缀，例如 https://example.com/v1。"
-            >
-              <Input required type="url" name="upstream" />
-            </Field>
-          )}
-          <Field label="默认请求发起区域">
-            <NativeSelect name="region">{regions}</NativeSelect>
-          </Field>
-          <Button type="submit" disabled={busy}>
-            创建连接
-          </Button>
-        </fieldset>
-      </form>
+            {source === "custom" && (
+              <Field label="公网 HTTPS 服务地址" hint="包含接口前缀，例如 https://example.com/v1。">
+                <Input type="url" name="upstream" required />
+              </Field>
+            )}
+            <details>
+              <summary>高级设置</summary>
+              <Field label="服务名称">
+                <Input name="name" maxLength={80} placeholder="默认使用提供方或网站名称" />
+              </Field>
+              <Field label="默认请求发起区域">
+                <NativeSelect name="region" defaultValue="auto">
+                  {regions}
+                </NativeSelect>
+              </Field>
+            </details>
+            <div className="flex gap-2">
+              <Button type="submit">保存服务</Button>
+              <Button type="button" variant="ghost" onClick={() => setAdding(false)}>
+                取消
+              </Button>
+            </div>
+          </fieldset>
+        </form>
+      )}
       {error && <ErrorText error={error} />}
-    </details>
+    </section>
   );
 }
