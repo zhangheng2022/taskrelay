@@ -188,7 +188,10 @@ test("未配置服务时引导接入，添加模型只填模型名，问答失�
   fireEvent.change(view.getByLabelText("服务提供方"), { target: { value: "workers-ai" } });
   fireEvent.click(view.getByRole("button", { name: "保存服务" }));
   fireEvent.click(await view.findByRole("button", { name: "继续添加模型" }));
-  assert.equal((view.getByLabelText("选择服务") as HTMLSelectElement).value, "conn_fixture");
+  assert.equal(
+    (view.getByLabelText("选择服务") as unknown as HTMLSelectElement).value,
+    "conn_fixture",
+  );
   fireEvent.change(view.getByLabelText("模型名"), { target: { value: "@cf/openai/example" } });
   fireEvent.click(view.getByRole("button", { name: "保存并测试" }));
   await view.findByText("测试失败");

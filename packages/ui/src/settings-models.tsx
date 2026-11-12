@@ -135,10 +135,10 @@ export function SettingsModels({
           >
             筛选
           </Button>
-          <Button variant="outline" onClick={() => setServices("manage")}>
+          <Button disabled={!!busy} variant="outline" onClick={() => setServices("manage")}>
             管理服务
           </Button>
-          <Button onClick={add}>
+          <Button disabled={!!busy} onClick={add}>
             <Plus />
             添加模型
           </Button>

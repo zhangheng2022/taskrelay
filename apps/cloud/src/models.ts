@@ -612,12 +612,27 @@ export async function probe(env: AppEnv, id: string, version: number): Promise<M
   )
     errors.push("STRUCTURED_OUTPUT_UNSUPPORTED");
   if (errors.length) caps.error = errors.join(",");
-  await env.DB.prepare(
-    "UPDATE model_profile_versions SET capabilities=json_patch(capabilities,?) WHERE id=? AND version=? AND connection_id IS NOT NULL",
+  return saveProbeResult(env, id, version, {
+    ...caps,
+    vision: undefined,
+    error: caps.error ?? null,
+  });
+}
+
+// 必需测试与图像测试可能同时结束。仅合并本轮字段，并返回这次写入后的真实状态。
+async function saveProbeResult(
+  env: AppEnv,
+  id: string,
+  version: number,
+  patch: Record<string, unknown>,
+): Promise<ModelCapabilities> {
+  const stored = await env.DB.prepare(
+    "UPDATE model_profile_versions SET capabilities=json_patch(capabilities,?) WHERE id=? AND version=? AND connection_id IS NOT NULL RETURNING capabilities",
   )
-    .bind(JSON.stringify({ ...caps, vision: undefined, error: caps.error ?? null }), id, version)
-    .run();
-  return caps;
+    .bind(JSON.stringify(patch), id, version)
+    .first<string>("capabilities");
+  if (!stored) throw Error("MODEL_NOT_FOUND");
+  return JSON.parse(stored);
 }
 export async function storeModel(
   env: AppEnv,
@@ -707,19 +722,5 @@ export async function probeVision(env: AppEnv, id: string, version?: number) {
   } catch {
     /* Independent optional capability; text capabilities remain unchanged. */
   }
-  const capabilities = {
-    ...profile.capabilities,
-    vision,
-    visionTestedAt: now(),
-  };
-  await env.DB.prepare(
-    "UPDATE model_profile_versions SET capabilities=json_patch(capabilities,?) WHERE id=? AND version=? AND connection_id IS NOT NULL",
-  )
-    .bind(
-      JSON.stringify({ vision, visionTestedAt: capabilities.visionTestedAt }),
-      id,
-      profile.version,
-    )
-    .run();
-  return capabilities;
+  return saveProbeResult(env, id, profile.version, { vision, visionTestedAt: now() });
 }
