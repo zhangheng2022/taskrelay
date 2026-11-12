@@ -1,24 +1,23 @@
+import { ScheduleCard } from "./schedule-card";
 import { HistoryCleanup, type CleanupSelection } from "./history-cleanup";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
-  Check,
   Ellipsis,
   MessageSquare,
-  Moon,
   Plus,
   Settings as SettingsIcon,
   Sun,
 } from "lucide-react";
 import type { Snapshot, Transport, TaskDefinition, TaskRun } from "../../contracts/src/index";
 import { Button } from "./components/ui/button";
-import { Input } from "./components/ui/input";
 import { Skeleton } from "./components/ui/skeleton";
 import { TooltipProvider } from "./components/ui/tooltip";
 import {
   SidebarProvider,
   Sidebar,
   SidebarHeader,
+  SidebarInput,
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
@@ -37,6 +36,8 @@ import {
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
 } from "./components/ui/dropdown-menu";
 import {
   Sheet,
@@ -302,6 +303,9 @@ function Workspace({ transport }: { transport: Transport }) {
       selectedTask.data ??
       loadedHistory.tasks.find((t) => t.id === selected) ??
       null;
+  const matchingTasks = data.tasks.filter((t) =>
+    (t.title + " " + t.goal).toLowerCase().includes(search.toLowerCase()),
+  );
   const run =
     data.runs.find((r) => r.id === runId) ??
     (task ? data.runs.find((r) => r.taskId === task.id) : null) ??
@@ -385,7 +389,7 @@ function Workspace({ transport }: { transport: Transport }) {
             <Plus data-icon="inline-start" />
             新建任务
           </Button>
-          <Input
+          <SidebarInput
             aria-label="搜索任务"
             placeholder="搜索任务…"
             value={search}
@@ -396,49 +400,56 @@ function Workspace({ transport }: { transport: Transport }) {
           <SidebarGroup>
             <SidebarGroupLabel>任务</SidebarGroupLabel>
             <SidebarMenu>
-              {data.tasks
-                .filter((t) =>
-                  (t.title + " " + t.goal).toLowerCase().includes(search.toLowerCase()),
-                )
-                .map((t) => {
-                  const waiting = pending.some((c) =>
-                    data.runs.some((r) => r.id === c.runId && r.taskId === t.id),
-                  );
-                  return (
-                    <SidebarMenuItem key={t.id}>
-                      <SidebarMenuButton
-                        isActive={page === "tasks" && selected === t.id}
-                        onClick={() => choose(t.id)}
-                        tooltip={t.title}
-                      >
-                        <MessageSquare />
-                        <span>{t.title}</span>
-                        {waiting && <span className="ml-auto text-xs">待协助</span>}
-                      </SidebarMenuButton>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <SidebarMenuAction aria-label={`操作：${t.title}`}>
-                            <Ellipsis />
-                          </SidebarMenuAction>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuGroup>
-                            <DropdownMenuItem
-                              disabled={offline}
-                              onSelect={() => requestCleanup("task", t)}
-                            >
-                              删除聊天
-                            </DropdownMenuItem>
-                          </DropdownMenuGroup>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </SidebarMenuItem>
-                  );
-                })}
-              {!data.tasks.length && (
-                <p className="px-2 py-4 text-xs text-muted-foreground">
-                  新建一个任务，从一句话开始。
-                </p>
+              {matchingTasks.map((t) => {
+                const waiting = pending.some((c) =>
+                  data.runs.some((r) => r.id === c.runId && r.taskId === t.id),
+                );
+                return (
+                  <SidebarMenuItem key={t.id}>
+                    <SidebarMenuButton
+                      isActive={page === "tasks" && selected === t.id}
+                      onClick={() => choose(t.id)}
+                      tooltip={t.title}
+                    >
+                      <MessageSquare />
+                      <span>{t.title}</span>
+                      {waiting && <span className="ml-auto text-xs">待协助</span>}
+                    </SidebarMenuButton>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <SidebarMenuAction aria-label={`操作：${t.title}`}>
+                          <Ellipsis />
+                        </SidebarMenuAction>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuGroup>
+                          <DropdownMenuItem
+                            disabled={offline}
+                            onSelect={() => requestCleanup("task", t)}
+                          >
+                            删除聊天
+                          </DropdownMenuItem>
+                        </DropdownMenuGroup>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </SidebarMenuItem>
+                );
+              })}
+              {snapshot && !matchingTasks.length && (
+                <SidebarMenuItem>
+                  <Empty className="gap-1 px-2 py-4 md:px-2 md:py-4" role="status">
+                    <EmptyHeader>
+                      <EmptyTitle>{data.tasks.length ? "没有匹配的任务" : "还没有任务"}</EmptyTitle>
+                      <EmptyDescription>
+                        {!data.tasks.length
+                          ? "新建一个任务，从一句话开始。"
+                          : tasksCursor
+                            ? "已加载的任务中没有匹配项，可加载更多任务或更换关键词。"
+                            : "试试其他任务名称或目标关键词。"}
+                      </EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
+                </SidebarMenuItem>
               )}
               {tasksCursor && (
                 <SidebarMenuItem>
@@ -481,15 +492,16 @@ function Workspace({ transport }: { transport: Transport }) {
             </SidebarMenuItem>
           </SidebarMenu>
           <div className="flex items-center justify-between gap-2 px-2 py-1">
-            <button
-              className="text-left text-xs text-muted-foreground hover:text-foreground"
+            <Button
+              variant="ghost"
+              size="xs"
               onClick={() => {
                 setPage("settings");
                 setOpenMobile(false);
               }}
             >
               {data.devices.some((d) => !d.revoked) ? "执行设备已连接" : "连接 Windows 执行器"}
-            </button>
+            </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon-sm" aria-label="切换主题">
@@ -497,7 +509,13 @@ function Workspace({ transport }: { transport: Transport }) {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent>
-                <DropdownMenuGroup>
+                <DropdownMenuRadioGroup
+                  value={theme}
+                  onValueChange={(value) => {
+                    if (value === "system" || value === "light" || value === "dark")
+                      setTheme(value);
+                  }}
+                >
                   {(
                     [
                       ["system", "跟随系统"],
@@ -505,12 +523,11 @@ function Workspace({ transport }: { transport: Transport }) {
                       ["dark", "深色"],
                     ] as const
                   ).map(([v, label]) => (
-                    <DropdownMenuItem key={v} onSelect={() => setTheme(v)}>
-                      {theme === v ? <Check /> : <Moon />}
+                    <DropdownMenuRadioItem key={v} value={v}>
                       {label}
-                    </DropdownMenuItem>
+                    </DropdownMenuRadioItem>
                   ))}
-                </DropdownMenuGroup>
+                </DropdownMenuRadioGroup>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -542,6 +559,12 @@ function Workspace({ transport }: { transport: Transport }) {
           </div>
           {task && page === "tasks" && (
             <>
+              <ScheduleCard
+                key={task.id}
+                transport={transport}
+                taskId={task.id}
+                offline={offline}
+              />
               <Status
                 value={activeRun?.status ?? run?.status ?? task.status}
                 outcome={(activeRun ?? run)?.result?.outcome}
@@ -588,23 +611,6 @@ function Workspace({ transport }: { transport: Transport }) {
                     >
                       立即运行
                     </DropdownMenuItem>
-                    {task.confirmedCondition && (
-                      <>
-                        <DropdownMenuItem
-                          disabled={offline || busy}
-                          onSelect={() =>
-                            void act(() =>
-                              createApi(transport).api.user.tasks[":id"].state.$post({
-                                param: { id: task.id },
-                                json: { enabled: task.status !== "active" },
-                              }),
-                            )
-                          }
-                        >
-                          {task.status === "active" ? "暂停调度" : "启用调度"}
-                        </DropdownMenuItem>
-                      </>
-                    )}
                     <DropdownMenuItem
                       disabled={offline}
                       onSelect={() => requestCleanup("clear", task)}

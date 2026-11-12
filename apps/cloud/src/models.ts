@@ -1,8 +1,9 @@
 import { dbTime } from "./database";
 /**
  * 模型服务入口：管理配置版本、能力探测、调用去重、结构化校验与实际用量。
- * 普通调用只提交加密出站作业；仅美国区域 ModelEgress 的 alarm 可调用提供方适配器。
+ * 普通调用只提交加密出站作业；仅固定模型版本指定区域的 ModelEgress 的 alarm 可调用提供方适配器。
  */
+import { connectionFrom, gatewayTransport, validateEndpoint } from "./model-gateway";
 import { reserve } from "./tenancy";
 import { resolveModelImage } from "./images";
 import { z } from "zod";
@@ -13,7 +14,6 @@ import {
   type ModelResponse,
 } from "../../../packages/model/src/index";
 import { draftPublisher, type DraftTarget } from "./chat-drafts";
-import { publicEndpoint } from "../../../packages/contracts/src/security";
 import type { ModelCapabilities, ModelProfile } from "../../../packages/contracts/src/index";
 import type { AppEnv } from "./env";
 import { seal, unseal } from "./crypto";
@@ -24,62 +24,43 @@ import { hash } from "../../../packages/contracts/src/security";
 import { graphWriteFence } from "./ai/fence";
 import { callResultStatements, unpackCallCipher } from "./call-cache";
 
-export async function validateEndpoint(baseUrl: string) {
-  return publicEndpoint(baseUrl, async (host) => {
-    const results = await Promise.all(
-      ["A", "AAAA"].map(async (type) => {
-        const response = await fetch(
-          `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(host)}&type=${type}`,
-          {
-            headers: { accept: "application/dns-json" },
-            redirect: "manual",
-            signal: AbortSignal.timeout(10000),
-          },
-        );
-        if (!response.ok) throw new Error("DNS_LOOKUP_FAILED");
-        const data = (await response.json()) as {
-          Status: number;
-          Answer?: { type: number; data: string }[];
-        };
-        if (data.Status !== 0) throw new Error("DNS_LOOKUP_FAILED");
-        return (data.Answer ?? []).filter((x) => x.type === 1 || x.type === 28).map((x) => x.data);
-      }),
-    );
-    return results.flat();
-  });
-}
 export function modelFrom(row: Row): ModelProfile {
+  const config = JSON.parse(row.config);
+  const capabilities: ModelCapabilities = JSON.parse(row.capabilities);
+  if (config.protocol !== "responses") throw Error("MODEL_PROTOCOL_RETIRED");
   return {
-    ...JSON.parse(row.config),
+    ...config,
     id: row.id,
     version: row.version,
     enabled: row.enabled !== 0,
     managementVersion: row.management_version ?? 1,
-    hasKey: true,
-    capabilities: JSON.parse(row.capabilities),
+    scope: row.owner_user_id == null ? "platform" : "personal",
+    connectionId: row.connection_id,
+    effectiveRegion: row.effective_region,
+    capabilities,
   };
 }
-export async function getModel(env: AppEnv, id: string, version?: number) {
+// 读能力与真正出站使用同一归属约束。未迁移的历史版本缺少连接，只可查询历史用量。
+export async function getModelProfile(
+  env: AppEnv,
+  id: string,
+  version?: number,
+  userId: string | null | undefined = env.requestUserId,
+) {
+  const adminProbe = env.adminProbeModelId === id;
   const row = await env.DB.prepare(
-    `SELECT v.*,m.enabled,m.management_version FROM model_profile_versions v JOIN models m ON m.id=v.id WHERE v.id=? AND v.version=${version ? "?" : "m.current_version"}`,
+    `SELECT v.id,v.version,v.config,v.connection_id,v.effective_region,v.capabilities,m.owner_user_id,m.enabled,m.management_version
+     FROM model_profile_versions v JOIN models m ON m.id=v.id LEFT JOIN model_connections c
+     ON c.id=v.connection_id AND c.owner_user_id IS m.owner_user_id WHERE v.id=? AND (m.owner_user_id IS NULL OR m.owner_user_id=?)
+     AND (c.id IS NOT NULL OR (v.connection_id IS NULL AND v.config='{}')) AND v.version=COALESCE(?,m.current_version)
+     ${adminProbe ? "AND c.id IS NOT NULL AND m.owner_user_id IS NULL AND EXISTS(SELECT 1 FROM members WHERE id=? AND role='admin' AND disabled=0)" : ""}`,
   )
-    .bind(...(version ? [id, version] : [id]))
+    .bind(id, userId ?? null, version ?? null, ...(adminProbe ? [userId ?? null] : []))
     .first<Row>();
-  if (!row) throw new Error("MODEL_NOT_FOUND");
-  return {
-    profile: modelFrom(row),
-    key: await unseal<string>(row.secret, env.MASTER_KEY, `model:${id}:${row.version}`),
-  };
-}
-/** Configuration checks do not need to read or decrypt provider credentials. */
-export async function getModelProfile(env: AppEnv, id: string, version?: number) {
-  const row = await env.DB.prepare(
-    `SELECT v.id,v.version,v.config,v.capabilities,m.enabled,m.management_version FROM model_profile_versions v JOIN models m ON m.id=v.id WHERE v.id=? AND v.version=${version ? "?" : "m.current_version"}`,
-  )
-    .bind(...(version ? [id, version] : [id]))
-    .first<Row>();
-  if (!row) throw new Error("MODEL_NOT_FOUND");
-  return { profile: modelFrom(row) };
+  if (!row) throw Error("MODEL_NOT_FOUND");
+  const profile = modelFrom(row);
+  if (!row.enabled && !adminProbe) throw Error("MODEL_DISABLED");
+  return { profile };
 }
 export async function recordUsage(
   env: AppEnv,
@@ -91,7 +72,9 @@ export async function recordUsage(
 ) {
   await env.DB.prepare(
     `INSERT INTO model_usage(id,run_id,model_id,model_version,input_tokens,output_tokens,at,user_id,
-      call_id,inference_started_at,provider_started_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+      call_id,inference_started_at,provider_started_at,retired_cost) VALUES(?,?,?,?,?,?,?,?,?,?,?,
+        CASE WHEN NOT EXISTS(SELECT 1 FROM model_profile_versions WHERE id=? AND version=? AND connection_id IS NOT NULL)
+        THEN (? * ? + ? * ?) / 1000000.0 END)`,
   )
     .bind(
       uid("usage"),
@@ -105,6 +88,12 @@ export async function recordUsage(
       timing.callId,
       dbTime(timing.inferenceStartedAt),
       dbTime(timing.providerStartedAt),
+      profile.id,
+      profile.version,
+      response.usage.input,
+      profile.inputPrice ?? null,
+      response.usage.output,
+      profile.outputPrice ?? null,
     )
     .run();
 }
@@ -126,7 +115,10 @@ export async function invoke(
           .first<{ user_id: string }>()
       )?.user_id
     : env.requestUserId;
-  if (!userId) throw new Error("MODEL_ACTOR_REQUIRED");
+  if (!userId || (env.requestUserId && env.requestUserId !== userId))
+    throw new Error("MODEL_ACTOR_REQUIRED");
+  env = { ...env, requestUserId: userId };
+  const { profile: pinned } = await getModelProfile(env, id, version);
   const callId = operationId ?? crypto.randomUUID();
   const digest = await hash(JSON.stringify({ userId, id, version, request, runId }));
   const graphFence = graphId ? graphWriteFence(userId, graphId, graphGeneration) : undefined;
@@ -208,6 +200,8 @@ export async function invoke(
       env,
       {
         kind: "inference",
+        region: pinned.effectiveRegion!,
+        adminProbe: env.adminProbeModelId === id,
         userId,
         reservationId,
         modelId: id,
@@ -240,7 +234,13 @@ export async function invoke(
       "UPDATE ai_calls SET status=?,error=?,updated_at=? WHERE id=? AND status<>'done'",
     )
       .bind(
-        code.includes("QUOTA") || code === "MODEL_REGION_REQUIRES_DEPLOYMENT"
+        code.includes("QUOTA") ||
+          [
+            "WORKERS_AI_FREE_LIMIT",
+            "WORKERS_AI_PAID_MODEL",
+            "MODEL_REGION_REQUIRES_DEPLOYMENT",
+            "MODEL_GATEWAY_NOT_CONFIGURED",
+          ].includes(code)
           ? "failed"
           : "unknown",
         code,
@@ -275,8 +275,16 @@ export async function performInference(
       .first())
   )
     throw new Error("MODEL_RESERVATION_REQUIRED");
-  const { profile, key } = await getModel(env, id, version);
-  await validateEndpoint(profile.baseUrl);
+  const { profile } = await getModelProfile(env, id, version, userId);
+  const row = await env.DB.prepare(
+    "SELECT * FROM model_connections WHERE id=? AND (owner_user_id IS NULL OR owner_user_id=?)",
+  )
+    .bind(profile.connectionId!, userId)
+    .first<Row>();
+  if (!row) throw Error("MODEL_CONNECTION_NOT_FOUND");
+  const connection = connectionFrom(row);
+  if (connection.kind === "custom") await validateEndpoint(connection.upstream);
+  const gateway = gatewayTransport(env, connection, profile.model);
   if (request.imageRef && request.image) throw Error("IMAGE_REFERENCE_INVALID");
   if (request.imageRef && !profile.capabilities.vision) throw Error("VISION_NOT_SUPPORTED");
   const { imageRef, ...wire } = request;
@@ -297,15 +305,21 @@ export async function performInference(
   let result: ModelResponse;
   let first = true;
   try {
-    result = await infer(profile, key, wire, fetch, async (text) => {
-      if (first) {
-        first = false;
-        await env.DB.prepare("UPDATE ai_calls SET first_delta_at=? WHERE id=? AND user_id=?")
-          .bind(dbTime(now()), callId ?? reservationId, userId)
-          .run();
-      }
-      await publisher.text(text);
-    });
+    result = await infer(
+      { ...profile, baseUrl: gateway.baseUrl },
+      "",
+      wire,
+      gateway.fetch,
+      async (text) => {
+        if (first) {
+          first = false;
+          await env.DB.prepare("UPDATE ai_calls SET first_delta_at=? WHERE id=? AND user_id=?")
+            .bind(dbTime(now()), callId ?? reservationId, userId)
+            .run();
+        }
+        await publisher.text(text);
+      },
+    );
     await publisher.end();
   } catch (error) {
     await publisher.end(true);
@@ -319,7 +333,7 @@ export async function performInference(
   return result;
 }
 // Only received, invalid output can spend the repair budget. Transport failures
-// propagate without retry; every attempt retains the US alarm egress and usage path.
+// propagate without retry; every attempt retains the regional alarm egress and usage path.
 export async function generateStructured<T>(
   env: AppEnv,
   id: string,
@@ -425,7 +439,10 @@ async function ensureStreaming(
     ],
     maxTokens: 512,
     ...(kind === "tools"
-      ? { tools: [{ name: "check", description: "Capability test", parameters: shape }] }
+      ? {
+          tools: [{ name: "check", description: "Capability test", parameters: shape }],
+          toolChoice: request.toolChoice,
+        }
       : {}),
     ...(kind === "structured" ? (request.schema ? { schema: shape } : { jsonMode: true }) : {}),
   };
@@ -466,7 +483,7 @@ async function ensureStreaming(
     state = "unsupported";
   }
   await env.DB.prepare(
-    "UPDATE model_profile_versions SET capabilities=json_set(capabilities,?,?) WHERE id=? AND version=?",
+    "UPDATE model_profile_versions SET capabilities=json_set(capabilities,?,?) WHERE id=? AND version=? AND connection_id IS NOT NULL",
   )
     .bind(`$.streaming.${kind}`, state, id, version)
     .run();
@@ -510,7 +527,8 @@ async function probeInference(
     await new RelayChatModel(env, id, version).invoke(toLangChainMessages(messages), {
       ...options,
       capabilityProbe: true,
-      tool_choice: toolChoice ?? (request.tools?.length ? "required" : undefined),
+      // 与桌面工具循环一致，仍由实际返回的函数名和参数决定是否通过。
+      tool_choice: toolChoice ?? (request.tools?.length ? "auto" : undefined),
     }),
   );
 }
@@ -523,29 +541,14 @@ export async function probe(env: AppEnv, id: string, version: number): Promise<M
     testedAt: now(),
   };
   const errors: string[] = [];
-  const { profile } = await getModelProfile(env, id, version);
-  caps.tokenParameter = profile.capabilities.tokenParameter ?? "max_completion_tokens";
+  await getModelProfile(env, id, version);
   try {
-    try {
-      await probeInference(env, id, version, {
-        messages: [{ role: "user", content: "Reply OK." }],
-        maxTokens: 512,
-      });
-    } catch (error) {
-      if (profile.protocol !== "chat" || (error as Error).message !== "MODEL_HTTP_400") throw error;
-      caps.tokenParameter = "max_tokens";
-      await probeInference(env, id, version, {
-        messages: [{ role: "user", content: "Reply OK." }],
-        maxTokens: 512,
-        tokenParameter: "max_tokens",
-      });
-    }
+    const answer = await probeInference(env, id, version, {
+      messages: [{ role: "user", content: "What is 17 + 25? Reply with just the number." }],
+      maxTokens: 512,
+    });
+    if (answer.text.trim() !== "42") throw Error("MODEL_ANSWER_INCORRECT");
     caps.connection = true;
-    await env.DB.prepare(
-      "UPDATE model_profile_versions SET capabilities=? WHERE id=? AND version=?",
-    )
-      .bind(JSON.stringify(caps), id, version)
-      .run();
   } catch (e) {
     errors.push((e as Error).message);
   }
@@ -599,11 +602,37 @@ export async function probe(env: AppEnv, id: string, version: number): Promise<M
         errors.push("STRUCTURED_OUTPUT_UNSUPPORTED");
       }
   }
+  caps.questionAnswered = caps.connection;
+  if (caps.connection && !caps.tools && !errors.includes("TOOLS_UNSUPPORTED"))
+    errors.push("TOOLS_UNSUPPORTED");
+  if (
+    caps.connection &&
+    caps.structured === "none" &&
+    !errors.includes("STRUCTURED_OUTPUT_UNSUPPORTED")
+  )
+    errors.push("STRUCTURED_OUTPUT_UNSUPPORTED");
   if (errors.length) caps.error = errors.join(",");
-  await env.DB.prepare("UPDATE model_profile_versions SET capabilities=? WHERE id=? AND version=?")
-    .bind(JSON.stringify(caps), id, version)
-    .run();
-  return caps;
+  return saveProbeResult(env, id, version, {
+    ...caps,
+    vision: undefined,
+    error: caps.error ?? null,
+  });
+}
+
+// 必需测试与图像测试可能同时结束。仅合并本轮字段，并返回这次写入后的真实状态。
+async function saveProbeResult(
+  env: AppEnv,
+  id: string,
+  version: number,
+  patch: Record<string, unknown>,
+): Promise<ModelCapabilities> {
+  const stored = await env.DB.prepare(
+    "UPDATE model_profile_versions SET capabilities=json_patch(capabilities,?) WHERE id=? AND version=? AND connection_id IS NOT NULL RETURNING capabilities",
+  )
+    .bind(JSON.stringify(patch), id, version)
+    .first<string>("capabilities");
+  if (!stored) throw Error("MODEL_NOT_FOUND");
+  return JSON.parse(stored);
 }
 export async function storeModel(
   env: AppEnv,
@@ -613,33 +642,25 @@ export async function storeModel(
 ) {
   const { modelInputSchema } = await import("../../../packages/contracts/src/index");
   const parsed = modelInputSchema.parse(input);
-  // Accept a pasted endpoint, but store a base URL and never append it twice.
-  const endpoint = new URL(parsed.baseUrl);
-  const suffix = endpoint.pathname.match(/\/(chat\/completions|responses)\/?$/);
-  if (suffix) {
-    if ((suffix[1] === "responses") !== (parsed.protocol === "responses"))
-      throw new Error("MODEL_PROTOCOL_MISMATCH");
-    endpoint.pathname = endpoint.pathname.slice(0, -suffix[0].length) || "/";
-  }
-  if (endpoint.search || endpoint.hash) throw new Error("MODEL_BASE_URL_INVALID");
-  parsed.baseUrl = endpoint.toString().replace(/\/$/, "");
-  try {
-    await validateEndpoint(parsed.baseUrl);
-  } catch (error) {
-    if (/^[A-Z][A-Z0-9_]+$/.test((error as Error).message)) throw error;
-    throw new Error("MODEL_DNS_FAILED");
-  }
+  const connection = await env.DB.prepare(
+    "SELECT * FROM model_connections WHERE id=? AND owner_user_id IS NULL",
+  )
+    .bind(parsed.connectionId)
+    .first<Row>();
+  if (!connection) throw Error("MODEL_CONNECTION_NOT_FOUND");
+  if (
+    connection.kind === "workers-ai" &&
+    !/^@cf\/[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/.test(parsed.model)
+  )
+    throw Error("WORKERS_AI_MODEL_INVALID");
   const prior = await env.DB.prepare(
-    "SELECT version FROM model_profile_versions WHERE id=? ORDER BY version DESC LIMIT 1",
+    "SELECT m.current_version AS version FROM models m JOIN model_profile_versions v ON v.id=m.id AND v.version=m.current_version WHERE m.id=? AND m.owner_user_id IS NULL AND v.connection_id IS NOT NULL",
   )
     .bind(id)
     .first<{ version: number }>();
   if (expectedVersion && !prior) throw Error("RESOURCE_VERSION_CONFLICT");
   const version = (prior?.version ?? 0) + 1;
-  let key = parsed.apiKey;
-  if (!key && prior) key = (await getModel(env, id, prior.version)).key;
-  if (!key) throw new Error("API_KEY_REQUIRED");
-  const { apiKey: _, ...config } = parsed;
+  const config = parsed;
   const capabilities: ModelCapabilities = {
     connection: false,
     tools: false,
@@ -647,10 +668,14 @@ export async function storeModel(
     vision: false,
     testedAt: null,
   };
-  const writes = await env.DB.batch([
+  const writes = await env.DB.batch<{
+    effective_region: import("../../../packages/contracts/src/index").EgressRegion;
+  }>([
     env.DB.prepare(
-      `INSERT INTO models(id,current_version,created_at) SELECT ?,?,? WHERE ?=0 OR EXISTS(SELECT 1 FROM models WHERE id=? AND current_version=?)
-    ON CONFLICT(id) DO UPDATE SET current_version=excluded.current_version WHERE models.current_version=? AND (? IS NULL OR models.management_version=?)`,
+      // 连接可能在表单读取后被删除；创建/更新模型和插入版本必须共同满足连接仍存在。
+      `INSERT INTO models(id,current_version,created_at,enabled) SELECT ?,?,?,0 WHERE (?=0 OR EXISTS(SELECT 1 FROM models WHERE id=? AND current_version=?))
+      AND EXISTS(SELECT 1 FROM model_connections WHERE id=? AND owner_user_id IS NULL)
+    ON CONFLICT(id) DO UPDATE SET current_version=excluded.current_version WHERE models.owner_user_id IS NULL AND models.current_version=? AND (? IS NULL OR models.management_version=?)`,
     ).bind(
       id,
       version,
@@ -658,26 +683,31 @@ export async function storeModel(
       prior?.version ?? 0,
       id,
       prior?.version ?? 0,
+      parsed.connectionId,
       prior?.version ?? 0,
       expectedVersion ?? null,
       expectedVersion ?? null,
     ),
     env.DB.prepare(
-      "INSERT INTO model_profile_versions(id,version,config,secret,capabilities,created_at) SELECT ?,?,?,?,?,? WHERE changes()=1",
+      `INSERT INTO model_profile_versions(id,version,config,connection_id,effective_region,capabilities,created_at)
+       SELECT ?,?,?,id,CASE WHEN ?='inherit' THEN default_region ELSE ? END,?,? FROM model_connections WHERE id=? AND owner_user_id IS NULL AND changes()=1 RETURNING effective_region`,
     ).bind(
       id,
       version,
       JSON.stringify(config),
-      await seal(key, env.MASTER_KEY, `model:${id}:${version}`),
+      parsed.region,
+      parsed.region,
       JSON.stringify(capabilities),
       dbTime(now()),
+      parsed.connectionId,
     ),
   ]);
-  if (!writes[0].meta.changes) throw Error("RESOURCE_VERSION_CONFLICT");
-  return { id, version, ...config, hasKey: true, capabilities };
+  const stored = writes[1].results[0];
+  if (!writes[0].meta.changes || !stored) throw Error("RESOURCE_VERSION_CONFLICT");
+  return { id, version, ...config, effectiveRegion: stored.effective_region, capabilities };
 }
-export async function probeVision(env: AppEnv, id: string) {
-  const { profile } = await getModelProfile(env, id);
+export async function probeVision(env: AppEnv, id: string, version?: number) {
+  const { profile } = await getModelProfile(env, id, version);
   let vision = false;
   try {
     const r = await probeInference(env, id, profile.version, {
@@ -695,13 +725,5 @@ export async function probeVision(env: AppEnv, id: string) {
   } catch {
     /* Independent optional capability; text capabilities remain unchanged. */
   }
-  const capabilities = {
-    ...profile.capabilities,
-    vision,
-    visionTestedAt: now(),
-  };
-  await env.DB.prepare("UPDATE model_profile_versions SET capabilities=? WHERE id=? AND version=?")
-    .bind(JSON.stringify(capabilities), id, profile.version)
-    .run();
-  return capabilities;
+  return saveProbeResult(env, id, profile.version, { vision, visionTestedAt: now() });
 }

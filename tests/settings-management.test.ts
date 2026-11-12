@@ -5,7 +5,7 @@ import { Hono } from "hono";
 import { productionModelFixture } from "./production-model-fixture";
 import { enqueue, tick } from "../apps/cloud/src/store";
 import { task } from "./helpers";
-import { accountManagement } from "../apps/cloud/src/resource-management";
+import { accountManagement, modelManagement } from "../apps/cloud/src/resource-management";
 import { preferences, capturePreferences, readPreferences } from "../apps/cloud/src/ai/preferences";
 import { D1MemoryStore } from "../apps/cloud/src/ai/memory";
 import { drainHistoryCleanups } from "../apps/cloud/src/history-cleanup";
@@ -15,10 +15,19 @@ import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 import { applicationDb } from "../apps/cloud/src/database";
 import { insertTask } from "./helpers";
 import { createAccount } from "../apps/cloud/src/accounts";
+import { createConnection } from "../apps/cloud/src/model-gateway";
+import { storeModel } from "../apps/cloud/src/models";
+import { app } from "../apps/cloud/src/index";
 
 for (const kind of ["accounts", "models"] as const) {
   test(`${kind} 停用原子失败排队与执行，保留未知操作锁；恢复不重试且冲突不再停止`, async (t) => {
     const s = await productionModelFixture(t);
+    if (kind === "models")
+      s.sql
+        .prepare(
+          "UPDATE model_profile_versions SET capabilities=json_set(capabilities,'$.questionAnswered',json('true')) WHERE id='model_test'",
+        )
+        .run();
     await enqueue(s.db, task(), "queued_before_disable");
     s.sql.prepare("UPDATE runs SET write_pending=1,may_have_written=1 WHERE id=?").run(s.run.id);
     const id = kind === "accounts" ? "account_test" : "model_test";
@@ -42,10 +51,12 @@ for (const kind of ["accounts", "models"] as const) {
       s.sql.prepare("SELECT COUNT(*) n FROM account_locks WHERE run_id=?").get(s.run.id)!.n,
       1,
     );
-    assert.equal(
-      (await s.request(path, { expectedVersion: Number(version) + 1 }, "DELETE")).data.error,
-      "RESOURCE_IN_USE",
-    );
+    if (kind === "accounts") {
+      assert.equal(
+        (await s.request(path, { expectedVersion: Number(version) + 1 }, "DELETE")).data.error,
+        "RESOURCE_IN_USE",
+      );
+    }
     await assert.rejects(
       enqueue(s.db, task(), "disabled_new"),
       kind === "accounts" ? /ACCOUNT_DISABLED/ : /MODEL_DISABLED/,
@@ -119,10 +130,9 @@ test("模型配置编辑 CAS 保留固定版本，并拒绝过期表单", async 
     .get()!.v;
   const input = {
     name: "新版",
-    baseUrl: "https://provider.example/v1",
+    connectionId: "conn_test",
     model: "test",
-    protocol: "chat",
-    apiKey: "",
+    protocol: "responses",
     contextTokens: 16000,
     outputTokens: 4096,
     inputPrice: null,
@@ -285,7 +295,7 @@ test("启用偏好进入规划、实际运行上下文与协助，同一交办�
   );
 });
 
-test("真实 D1 删除与任务版本提交竞争不留下 JSON 悬空账号", { timeout: 60000 }, async (t) => {
+test("真实 D1 删除与版本提交竞争不留下悬空账号或模型连接", { timeout: 60000 }, async (t) => {
   const mf = new Miniflare(
     convertV4MiniflareOptions({
       cf: false,
@@ -323,6 +333,7 @@ test("真实 D1 删除与任务版本提交竞争不留下 JSON 悬空账号", {
     await next();
   });
   routes.route("/accounts", accountManagement);
+  routes.route("/models", modelManagement);
   for (let i = 0; i < 3; i++) {
     const { id } = await createAccount(env, "fixture_owner", {
       name: "race",
@@ -370,6 +381,80 @@ test("真实 D1 删除与任务版本提交竞争不留下 JSON 悬空账号", {
       assert.equal(submission.status, "fulfilled");
     }
   }
+  // 连接删除与模型保存也必须在 D1 事务边界内互斥，不能留下没有当前版本的模型。
+  for (let i = 0; i < 3; i++) {
+    const connection = await createConnection(env, {
+      kind: "workers-ai",
+      name: "删除竞争",
+      defaultRegion: "auto",
+    });
+    const id = `connection_race_${i}`;
+    const submit = () =>
+      storeModel(
+        env,
+        { name: "竞争模型", connectionId: connection.id, model: "@cf/test/model" },
+        id,
+      );
+    const remove = async () =>
+      app.request(
+        `http://localhost/api/admin/model-connections/${connection.id}`,
+        { method: "DELETE" },
+        { ...env, DEV_MODE: "1" },
+      );
+    const operations = await Promise.allSettled(
+      i % 2 ? [submit(), remove()] : [remove(), submit()],
+    );
+    const deletion = operations[i % 2 ? 1 : 0],
+      submission = operations[i % 2 ? 0 : 1];
+    assert.equal(deletion.status, "fulfilled");
+    const model = await db.prepare("SELECT id FROM models WHERE id=?").bind(id).first();
+    const version = await db
+      .prepare("SELECT id FROM model_profile_versions WHERE id=?")
+      .bind(id)
+      .first();
+    const remaining = await db
+      .prepare("SELECT id FROM model_connections WHERE id=?")
+      .bind(connection.id)
+      .first();
+    if (deletion.status === "fulfilled" && (deletion.value as Response).status === 200) {
+      assert.equal(remaining, null);
+      assert.equal(model, null);
+      assert.equal(version, null);
+      assert.equal(submission.status, "rejected");
+    } else {
+      assert.equal(deletion.status === "fulfilled" && (deletion.value as Response).status, 409);
+      assert.equal(submission.status, "fulfilled");
+      assert.ok(remaining);
+      assert.ok(model);
+      assert.ok(version);
+    }
+  }
+  // 在实际 D1 上确认触发器错误映射、RETURNING 和外键在管理删除事务中一致。
+  const deleteModel = (expectedVersion: number) =>
+    routes.request(
+      "/models/model_test",
+      {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ expectedVersion }),
+      },
+      env,
+    );
+  const version = await raw
+    .prepare("SELECT management_version FROM models WHERE id='model_test'")
+    .first<number>("management_version");
+  assert.ok(version);
+  const active = await deleteModel(version);
+  assert.deepEqual(await active.json(), { error: "MODEL_DISABLE_BEFORE_DELETE" });
+  await raw.prepare("UPDATE models SET enabled=0 WHERE id='model_test'").run();
+  assert.equal((await deleteModel(version)).status, 200);
+  assert.equal(
+    await raw
+      .prepare("SELECT config FROM model_profile_versions WHERE id='model_test' AND version=1")
+      .first("config"),
+    "{}",
+  );
+  assert.deepEqual((await raw.prepare("PRAGMA foreign_key_check").all()).results, []);
 });
 
 test("停用命中执行中通过账号卡绑定的账号，不依赖旧任务快照", async (t) => {
@@ -408,4 +493,93 @@ test("过量记忆在首次模型请求前失败，保留用户原文与完整�
   const row = s.sql.prepare("SELECT id FROM preference_snapshots WHERE thread_id=?").get(th.id)!;
   assert.equal((await readPreferences(s.env, "fixture_owner", row.id as string)).length, 30);
   assert.ok(JSON.stringify(result.data.messages).includes("我的原话不能被覆盖"));
+});
+
+test("停用后删除曾使用的模型，保留账目、历史聊天和共用连接", async (t) => {
+  const s = await productionModelFixture(t);
+  const path = "/api/admin/models/model_test";
+  const version = Number(
+    s.sql.prepare("SELECT management_version AS v FROM models WHERE id='model_test'").get()!.v,
+  );
+  const thread = (await s.request("/api/user/threads", { modelId: "model_test" })).data;
+  s.sql
+    .prepare(
+      "UPDATE model_profile_versions SET config=json_set(config,'$.inputPrice',2,'$.outputPrice',3) WHERE id='model_test' AND version=1",
+    )
+    .run();
+  const env = { ...s.env, requestUserId: "fixture_owner" };
+  const { getModelProfile, recordUsage } = await import("../apps/cloud/src/models");
+  const { profile } = await getModelProfile(env, "model_test", 1);
+  const record = (callId: string) =>
+    recordUsage(
+      env,
+      profile,
+      { text: "ok", calls: [], usage: { input: 10, output: 5 } },
+      s.run.id,
+      "fixture_owner",
+      {
+        callId,
+        inferenceStartedAt: new Date().toISOString(),
+        providerStartedAt: new Date().toISOString(),
+      },
+    );
+  await record("before_delete");
+  assert.equal(
+    (await s.request(path, { expectedVersion: version }, "DELETE")).data.error,
+    "MODEL_DISABLE_BEFORE_DELETE",
+  );
+  assert.equal(
+    (await s.request(path + "/state", { expectedVersion: version, enabled: false }, "PUT")).status,
+    200,
+  );
+  assert.equal((await s.request(path, { expectedVersion: version }, "DELETE")).status, 409);
+  assert.equal((await s.request(path, { expectedVersion: version + 1 }, "DELETE")).status, 200);
+  assert.equal((await s.request(path, { expectedVersion: version + 1 }, "DELETE")).status, 409);
+  await record("inflight_receipt");
+  assert.deepEqual(
+    s.sql
+      .prepare("SELECT retired_cost FROM model_usage WHERE model_id='model_test' ORDER BY id")
+      .all()
+      .map((r) => r.retired_cost),
+    [0.000035, 0.000035],
+  );
+  assert.equal(
+    s.sql
+      .prepare(
+        "SELECT count(*) n FROM model_profile_versions WHERE id='model_test' AND (config<>'{}' OR capabilities<>'{}' OR connection_id IS NOT NULL OR effective_region IS NOT NULL)",
+      )
+      .get()!.n,
+    0,
+  );
+  assert.ok(s.sql.prepare("SELECT id FROM model_connections WHERE id='conn_test'").get());
+  assert.strictEqual(
+    (await s.request("/api/user/threads/" + thread.id, undefined, "GET")).status,
+    200,
+  );
+  assert.ok(
+    !(await s.request("/api/user/snapshot", undefined, "GET")).data.models.some(
+      (m: { id: string }) => m.id === "model_test",
+    ),
+  );
+  await assert.rejects(getModelProfile(env, "model_test", 1), /MODEL_PROTOCOL_RETIRED/);
+  assert.deepEqual(s.sql.prepare("PRAGMA foreign_key_check").all(), []);
+});
+test("管理员可删除未使用的平台网关模型及版本", async (t) => {
+  const s = await productionModelFixture(t);
+  const model = await s.request("/api/admin/models", {
+    name: "unused",
+    model: "unused",
+    protocol: "responses",
+    connectionId: "conn_test",
+  });
+  assert.equal(model.status, 201);
+  assert.equal(
+    (await s.request(`/api/admin/models/${model.data.id}`, { expectedVersion: 1 }, "DELETE"))
+      .status,
+    200,
+  );
+  assert.equal(
+    s.sql.prepare("SELECT id FROM model_profile_versions WHERE id=?").get(model.data.id),
+    undefined,
+  );
 });

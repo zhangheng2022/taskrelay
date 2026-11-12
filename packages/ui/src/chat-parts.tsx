@@ -1,4 +1,6 @@
 import { ImagePreviewProvider } from "./chat-image";
+import { Spinner } from "./components/ui/spinner";
+import { ChatMarkdown } from "./chat-markdown";
 import { useLayoutEffect, type ReactNode } from "react";
 import { ArrowUp, Loader2, CirclePause } from "lucide-react";
 import {
@@ -34,7 +36,7 @@ export function DraftMessages({ drafts = [] }: { drafts?: ChatDraft[] }) {
               ? "正在确认回复…"
               : "生成中…"}
         </div>
-        {draft.content}
+        <ChatMarkdown content={draft.content} status={draft.status} />
       </ChatMessage>
     </MessageScrollerItem>
   ));
@@ -83,7 +85,7 @@ export function ChatMessage({ speaker: role, children }: { speaker: string; chil
             </BubbleContent>
           </Bubble>
         ) : (
-          <div className="whitespace-pre-wrap break-words text-sm leading-7">{children}</div>
+          <div className="min-w-0 break-words text-sm leading-7">{children}</div>
         )}
       </MessageContent>
     </Message>
@@ -208,7 +210,7 @@ export function Composer({
             disabled={busy || disabled || !text.trim()}
           >
             {busy ? (
-              <Loader2 data-icon="inline-start" className="animate-spin" />
+              <Spinner aria-hidden="true" data-icon="inline-start" />
             ) : (
               <ArrowUp data-icon="inline-start" />
             )}

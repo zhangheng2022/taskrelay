@@ -23,7 +23,7 @@ import { z } from "zod";
 import { zodResponseFormat } from "openai/helpers/zod";
 import type { AppEnv } from "../env";
 import { generateStructured, getModelProfile, invoke } from "../models";
-import type { Inference, Message, Tool } from "../../../../packages/model/src/index";
+import type { Message, Tool } from "../../../../packages/model/src/index";
 import {
   aiMessageToModelResponse,
   fromLangChainMessages,
@@ -39,7 +39,6 @@ export interface RelayModelOptions extends BaseChatModelCallOptions {
   maxTokens?: number;
   image?: string;
   imageRef?: { artifactId: string; epoch: number };
-  tokenParameter?: Inference["tokenParameter"];
   /** Explicit formats are used by capability probes before capabilities are known. */
   schema?: Record<string, unknown>;
   jsonMode?: boolean;
@@ -64,7 +63,7 @@ export class RelayChatModel extends BaseChatModel<RelayModelOptions> {
     assertPrivateAI();
   }
   _llmType() {
-    return "taskrelay-us-egress";
+    return "taskrelay-model-egress";
   }
 
   /** 业务图拥有持久状态；推理与历史摘要交给官方 Agent。结构化校验和已收到响应的
@@ -210,7 +209,6 @@ export class RelayChatModel extends BaseChatModel<RelayModelOptions> {
         ...(options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
         ...(options.image ? { image: options.image } : {}),
         ...(options.imageRef ? { imageRef: options.imageRef } : {}),
-        ...(options.tokenParameter ? { tokenParameter: options.tokenParameter } : {}),
         ...(options.schema ? { schema: options.schema } : {}),
         ...(options.jsonMode ? { jsonMode: true } : {}),
         ...(options.capabilityProbe ? { stream: false } : {}),

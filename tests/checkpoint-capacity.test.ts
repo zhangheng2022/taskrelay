@@ -173,7 +173,7 @@ test("真实规划图在完整历史超过 D1 单值限制时仍可进入摘要�
     return statement;
   });
   s.respond((body) =>
-    body.response_format
+    body.text?.format
       ? JSON.stringify({
           reply: "请明确任务目标。",
           start: false,

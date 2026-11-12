@@ -5,8 +5,8 @@ import { productionModelFixture } from "./production-model-fixture";
 import { appendMessage, conversationContext } from "../apps/cloud/src/chat-messages";
 import { unseal } from "../apps/cloud/src/crypto";
 
-async function setup(t: TestContext, protocol: "chat" | "responses" = "chat") {
-  const s = await productionModelFixture(t, protocol);
+async function setup(t: TestContext) {
+  const s = await productionModelFixture(t, "responses");
   const thread = (
     await s.request("/api/user/threads", { modelId: "model_test", taskId: s.run.taskId })
   ).data;
@@ -63,7 +63,7 @@ test("协助模型尚未发布等待状态时，提前回复也加密并绑定�
   let inject = true;
   t.mock.method(globalThis, "fetch", async (input: string | URL | Request, init?: RequestInit) => {
     const response = await providerFetch(input, init);
-    if (inject && requestUrl(input).startsWith("https://provider.example/")) {
+    if (inject && requestUrl(input).startsWith("https://gateway.ai.cloudflare.com/")) {
       inject = false;
       assert.equal(
         s.sql.prepare("SELECT awaiting_user FROM execution_help WHERE id=?").get(s.help.id)!
@@ -94,7 +94,7 @@ test("协助模型尚未发布等待状态时，提前回复也加密并绑定�
   assert.ok(context.some((m) => m.content === original && m.private && m.origin === s.help.origin));
   s.replies(reply("已收到密码，继续。"));
   assert.equal((await s.request(s.path, s.help)).data.ready, true);
-  const payload = JSON.parse(s.requests.at(-1)!.body.messages.at(-1).content);
+  const payload = JSON.parse(s.requests.at(-1)!.body.input.at(-1).content);
   assert.ok(payload.userMessages.some((m: any) => m.content === original));
 });
 
@@ -144,111 +144,104 @@ for (const invalidation of ["cancel", "expired", "closed"] as const) {
     );
   });
 }
-for (const protocol of ["chat", "responses"] as const) {
-  test(`协助意图/${protocol}：完整回复进入任务上下文，不拆分密码与新要求`, async (t) => {
-    const s = await setup(t, protocol);
-    s.replies(reply("请补充登录信息。", true));
-    assert.equal((await s.request(s.path, s.help)).data.ready, false);
-    const original =
-      "账号 owner@example.com，密码是 00aB! test；先看看有没有短信登录，有就改用短信。";
-    const posted = await s.request(`/api/user/threads/${s.thread.id}/messages`, {
-      requestId: "whole_reply",
-      content: original,
-    });
-    assert.equal(posted.status, 202);
-    const userMessage = posted.data.messages.find((m: any) => m.content === original);
-    assert.equal(userMessage.private, true);
-    s.replies(reply("用户要求优先查看短信登录，请结合原文继续。"));
-    const resolved = await s.request(s.path, s.help);
-    assert.equal(resolved.status, 200, JSON.stringify(resolved.data));
-    assert.deepEqual(resolved.data, {
-      ready: true,
-      message: "用户要求优先查看短信登录，请结合原文继续。",
-    });
-    const body = s.requests.at(-1)!.body,
-      payload = JSON.parse((protocol === "chat" ? body.messages : body.input).at(-1).content);
-    assert.ok(
-      payload.userMessages.some((m: any) => m.id === userMessage.id && m.content === original),
-    );
-    assert.equal(payload.conversation, undefined);
-    assert.ok(
-      (protocol === "chat" ? body.messages : body.input)
-        .slice(0, -1)
-        .every((m: any) => !JSON.stringify(m).includes(original)),
-    );
-    assert.equal(body.model, "vendor/non-gpt");
-    const context = await s.request(`/api/runner/runs/${s.run.id}/context`, {
-      epoch: s.run.leaseEpoch,
-      after: 0,
-    });
-    assert.ok(context.data.messages.some((m: any) => m.content === original && m.private));
-    assert.ok(
-      !JSON.stringify(await conversationContext(s.env, s.thread.id)).includes("00aB! test"),
-    );
-    await assert.rejects(
-      conversationContext(s.env, s.thread.id, 0, { runId: "unrelated_run" }),
-      /THREAD_NOT_FOUND/,
-    );
-    const cursor = context.data.messages.find((m: any) => m.id === userMessage.id).seq;
-    assert.ok(
-      (await conversationContext(s.env, s.thread.id, cursor, { runId: s.run.id })).every(
-        (m) => m.seq > cursor,
-      ),
-    );
-    const calls = s.jobs();
-    assert.deepEqual((await s.request(s.path, s.help)).data, resolved.data);
-    assert.equal(s.jobs(), calls);
+
+test(`协助意图/Responses：完整回复进入任务上下文，不拆分密码与新要求`, async (t) => {
+  const s = await setup(t);
+  s.replies(reply("请补充登录信息。", true));
+  assert.equal((await s.request(s.path, s.help)).data.ready, false);
+  const original =
+    "账号 owner@example.com，密码是 00aB! test；先看看有没有短信登录，有就改用短信。";
+  const posted = await s.request(`/api/user/threads/${s.thread.id}/messages`, {
+    requestId: "whole_reply",
+    content: original,
   });
-  test(`协助意图/${protocol}：云端回复意外复述敏感信息仍加密保存`, async (t) => {
-    const s = await setup(t, protocol);
-    s.replies(reply("请补充信息。", true));
-    await s.request(s.path, s.help);
-    const original = '密码 0012aB! "空 格"';
-    await s.request(`/api/user/threads/${s.thread.id}/messages`, {
-      requestId: "private_reply",
-      content: original,
+  assert.equal(posted.status, 202);
+  const userMessage = posted.data.messages.find((m: any) => m.content === original);
+  assert.equal(userMessage.private, true);
+  s.replies(reply("用户要求优先查看短信登录，请结合原文继续。"));
+  const resolved = await s.request(s.path, s.help);
+  assert.equal(resolved.status, 200, JSON.stringify(resolved.data));
+  assert.deepEqual(resolved.data, {
+    ready: true,
+    message: "用户要求优先查看短信登录，请结合原文继续。",
+  });
+  const body = s.requests.at(-1)!.body,
+    payload = JSON.parse(body.input.at(-1).content);
+  assert.ok(
+    payload.userMessages.some((m: any) => m.id === userMessage.id && m.content === original),
+  );
+  assert.equal(payload.conversation, undefined);
+  assert.ok(body.input.slice(0, -1).every((m: any) => !JSON.stringify(m).includes(original)));
+  assert.equal(body.model, "vendor/non-gpt");
+  const context = await s.request(`/api/runner/runs/${s.run.id}/context`, {
+    epoch: s.run.leaseEpoch,
+    after: 0,
+  });
+  assert.ok(context.data.messages.some((m: any) => m.content === original && m.private));
+  assert.ok(!JSON.stringify(await conversationContext(s.env, s.thread.id)).includes("00aB! test"));
+  await assert.rejects(
+    conversationContext(s.env, s.thread.id, 0, { runId: "unrelated_run" }),
+    /THREAD_NOT_FOUND/,
+  );
+  const cursor = context.data.messages.find((m: any) => m.id === userMessage.id).seq;
+  assert.ok(
+    (await conversationContext(s.env, s.thread.id, cursor, { runId: s.run.id })).every(
+      (m) => m.seq > cursor,
+    ),
+  );
+  const calls = s.jobs();
+  assert.deepEqual((await s.request(s.path, s.help)).data, resolved.data);
+  assert.equal(s.jobs(), calls);
+});
+test(`协助意图/Responses：云端回复意外复述敏感信息仍加密保存`, async (t) => {
+  const s = await setup(t);
+  s.replies(reply("请补充信息。", true));
+  await s.request(s.path, s.help);
+  const original = '密码 0012aB! "空 格"';
+  await s.request(`/api/user/threads/${s.thread.id}/messages`, {
+    requestId: "private_reply",
+    content: original,
+  });
+  s.replies(reply("已收到：" + original));
+  const result = await s.request(s.path, s.help);
+  assert.equal(result.data.message, "已收到：" + original);
+  assert.ok(
+    !JSON.stringify(
+      s.sql
+        .prepare("SELECT content,private_content FROM message_details WHERE thread_id=?")
+        .all(s.thread.id),
+    ).includes("0012aB!"),
+  );
+  const saved = s.sql.prepare("SELECT response FROM execution_help WHERE id=?").get(s.help.id)!;
+  assert.ok(!String(saved.response).includes("0012aB!"));
+  assert.ok(JSON.parse(String(saved.response)).encrypted);
+  assert.deepEqual((await s.request(s.path, s.help)).data, result.data);
+});
+test(`协助意图/Responses：账号更正和旧验证码完整可见，由模型判断适用性`, async (t) => {
+  const s = await setup(t),
+    originals = [
+      "旧账号 old@example.com，验证码 001234",
+      "不要使用旧账号，改用 new@example.com，刚才验证码已失效",
+    ];
+  for (const [index, content] of originals.entries())
+    await appendMessage(s.env, s.thread.id, {
+      id: "history_" + index,
+      role: "user",
+      source: "user",
+      runId: s.run.id,
+      content,
+      private: true,
     });
-    s.replies(reply("已收到：" + original));
-    const result = await s.request(s.path, s.help);
-    assert.equal(result.data.message, "已收到：" + original);
-    assert.ok(
-      !JSON.stringify(
-        s.sql
-          .prepare("SELECT content,private_content FROM message_details WHERE thread_id=?")
-          .all(s.thread.id),
-      ).includes("0012aB!"),
-    );
-    const saved = s.sql.prepare("SELECT response FROM execution_help WHERE id=?").get(s.help.id)!;
-    assert.ok(!String(saved.response).includes("0012aB!"));
-    assert.ok(JSON.parse(String(saved.response)).encrypted);
-    assert.deepEqual((await s.request(s.path, s.help)).data, result.data);
-  });
-  test(`协助意图/${protocol}：账号更正和旧验证码完整可见，由模型判断适用性`, async (t) => {
-    const s = await setup(t, protocol),
-      originals = [
-        "旧账号 old@example.com，验证码 001234",
-        "不要使用旧账号，改用 new@example.com，刚才验证码已失效",
-      ];
-    for (const [index, content] of originals.entries())
-      await appendMessage(s.env, s.thread.id, {
-        id: "history_" + index,
-        role: "user",
-        source: "user",
-        runId: s.run.id,
-        content,
-        private: true,
-      });
-    s.replies(reply("请提供新账号本次有效的验证码。", true));
-    assert.equal((await s.request(s.path, s.help)).data.ready, false);
-    const body = s.requests.at(-1)!.body,
-      payload = JSON.parse((protocol === "chat" ? body.messages : body.input).at(-1).content);
-    for (const content of originals)
-      assert.ok(payload.userMessages.some((m: any) => m.content === content));
-    const calls = s.jobs();
-    assert.deepEqual((await s.request(s.path, s.help)).data, { ready: false, questionRound: 0 });
-    assert.equal(s.jobs(), calls);
-  });
-}
+  s.replies(reply("请提供新账号本次有效的验证码。", true));
+  assert.equal((await s.request(s.path, s.help)).data.ready, false);
+  const body = s.requests.at(-1)!.body,
+    payload = JSON.parse(body.input.at(-1).content);
+  for (const content of originals)
+    assert.ok(payload.userMessages.some((m: any) => m.content === content));
+  const calls = s.jobs();
+  assert.deepEqual((await s.request(s.path, s.help)).data, { ready: false, questionRound: 0 });
+  assert.equal(s.jobs(), calls);
+});
 
 test("等待协助时连续回复均加密，模型结合最后的补充判断", async (t) => {
   const s = await setup(t);
@@ -270,7 +263,7 @@ test("等待协助时连续回复均加密，模型结合最后的补充判断",
   assert.ok(!JSON.stringify(rows).includes("0012"));
   s.replies(reply("用户更正为扫码登录，请重新规划。"));
   assert.equal((await s.request(s.path, s.help)).data.ready, true);
-  const payload = JSON.parse(s.requests.at(-1)!.body.messages.at(-1).content);
+  const payload = JSON.parse(s.requests.at(-1)!.body.input.at(-1).content);
   for (const content of originals)
     assert.ok(payload.userMessages.some((m: any) => m.content === content));
 });
@@ -285,7 +278,7 @@ test("模型判断期间的新补充不会被旧答案覆盖，原回复重试�
   let inject = true;
   t.mock.method(globalThis, "fetch", async (input: string | URL | Request, init?: RequestInit) => {
     const response = await providerFetch(input, init);
-    if (inject && requestUrl(input).startsWith("https://provider.example/")) {
+    if (inject && requestUrl(input).startsWith("https://gateway.ai.cloudflare.com/")) {
       inject = false;
       await s.request(`/api/user/threads/${s.thread.id}/messages`, {
         requestId: "inflight_change",
@@ -333,8 +326,8 @@ test("长执行记录可压缩，用户原文和敏感回复逐字保留且不�
       content: "已观察当前页面".repeat(450),
     });
   s.respond((body) => {
-    if (!body.response_format) return "此前已观察页面。";
-    const payload = JSON.parse(body.messages.at(-1).content),
+    if (!body.text?.format) return "此前已观察页面。";
+    const payload = JSON.parse(body.input.at(-1).content),
       messages = [...(payload.userMessages ?? []), ...(payload.conversation ?? [])];
     for (const content of originals)
       assert.equal(messages.filter((m: any) => m.content === content).length, 1);

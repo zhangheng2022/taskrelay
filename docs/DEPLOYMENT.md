@@ -47,7 +47,7 @@
 
 当前部署目标以 [Wrangler 配置](../apps/web/wrangler.jsonc) 为准：Worker 为 `taskrelay`，D1 绑定名为 `DB`，数据库为 `taskrelay-v2-20261108`。配置中的数据库 ID、DO 迁移和绑定是结构权威，不在本文复制第二套清单。旧 `taskrelay` 业务 D1 已删除，不能用作当前迁移或回退目标。
 
-Cloudflare 保持 Free，生产不绑定 R2；普通 Worker 负责轻量路由，业务与后台模型调用进入 SQLite DO。模型调用保留美国 jurisdiction 与 alarm，详见[模型出站实现](#模型出站实现)。不得自动切换付费服务。
+Cloudflare 保持 Free，生产不绑定 R2；普通 Worker 负责轻量路由，业务与后台模型调用进入 SQLite DO。模型调用按版本选区并经过 alarm 和 AI Gateway，详见[模型出站实现](#模型出站实现)。不得自动切换付费服务。
 
 主站与 workers.dev 使用应用会话认证；设备 bearer 只访问设备接口。历史 Access 配置标识及当时权限验证收录于[历史补充证据](ACCEPTANCE.md#历史部署补充证据)，不作为当前外部配置的实时保证。故障处理遵循[发布恢复](#发布)，不得更换 MASTER_KEY 或恢复旧设备管理接口。
 
@@ -59,7 +59,7 @@ Cloudflare 保持 Free，生产不绑定 R2；普通 Worker 负责轻量路由�
 2. 在 master 运行 Release · 生产发布，通常选择 `scope=auto`、`mode=publish`；可指定完整 `source-sha`。预检核验同 SHA 的 master push，不接受 PR、其他提交或旧门槛；遗漏必要范围、桌面修改未提升版本、已公开版本均拒绝发布。CI 编排修改需要验收，但不会单独要求产品发版。
 3. 优先复用 master 的 Web/Windows 候选；缺失、已过期或当时未生成的产品在生产写入前补建。Windows 始终完成真实 Chromium 状态测试、make、包内 smoke、实际安装、系统快捷方式启动和 ASAR 校验。PR 仍执行完整验收，只是不保存安装包。
 4. Artifacts 作业核验来源、文件哈希和验收后，将选定文件和 release-plan 归档到本次运行。发布前审计一次根依赖和桌面 runtime 锁。production 作业重新校验清单与来源，D1 productionRelease 保存 bundleId、planHash、源 SHA、原开关、恢复点和阶段；恢复禁止重新构建替换。
-5. 先暂停领取并等待清理，保存 Time Travel bookmark，再迁移和部署。GitHub Release 文件不可覆盖；更新目录登记后经 Cloudflare 下载验证大小/哈希才切换 latest。校验完成后恢复发布前的网页维护和领取开关，不等待或查询执行器在线就绪状态。没有可用执行器时任务仍须等待正常调度；设备授权、协议和领取校验保持不变。
+5. 先暂停领取并等待清理。结果待核查的运行仅在浏览器已确认关闭、清理完成且租约已释放时计入已收尾历史；发布保留其原状态和账号锁。排空日志只显示聚合数量。保存 Time Travel bookmark，再迁移和部署。GitHub Release 文件不可覆盖；更新目录登记后经 Cloudflare 下载验证大小/哈希才切换 latest。校验完成后恢复发布前的网页维护和领取开关，不等待或查询执行器在线就绪状态。没有可用执行器时任务仍须等待正常调度；设备授权、协议和领取校验保持不变。
 
 production Environment 仅允许 master。Cloudflare 凭据和 Release 写权限仅授予 production 作业，不读取或覆盖 MASTER_KEY。控制脚本固定本次工作流提交，业务源码和依赖固定 source-sha；两者身份分别核对。
 
@@ -75,7 +75,7 @@ GitHub [上传接口会改写特殊文件名](https://docs.github.com/en/rest/re
 
 领取事务内再次检查暂停/维护开关，阻止早先读到旧开关的并发领取；管理员不能在未完成发布期间覆盖领取开关。旧结构的 `0028_release_claim_barrier.sql` 是历史迁移，当前基线已包含此保护，不应重复应用旧迁移。
 
-`MASTER_KEY` 已配置为 Workers Secret。**不要再次执行初次密钥生成脚本，不要覆盖现有主密钥。** 现有模型密钥、账号密码和短期回复都依赖它解密。迁移/恢复时必须同时保留该密钥和 D1 数据。仓库及诊断包不保存主密钥；需要持有者从自己的秘密管理设施维护备份和轮换策略。
+`MASTER_KEY` 已配置为 Workers Secret。**不要再次执行初次密钥生成脚本，不要覆盖现有主密钥。** 账号密码、短期回复和历史备份中的旧模型密文依赖它解密。迁移/恢复时必须同时保留该密钥和 D1 数据。仓库及诊断包不保存主密钥；需要持有者从自己的秘密管理设施维护备份和轮换策略。
 
 新部署到另一账号时，先创建空 D1 并配置应用认证，替换 wrangler 配置，保留 SQLite DO 迁移，再对该全新空库执行一次 `node scripts/provision-secret.mjs --initial-empty-database`。Access 仅作为可选外层限制，不创建 R2。脚本通过标准输入传递随机密钥，不输出或落盘。
 
@@ -85,6 +85,8 @@ GitHub [上传接口会改写特殊文件名](https://docs.github.com/en/rest/re
 
 ## 工作空间域名
 
+公开注册由 `apps/web/wrangler.jsonc` 的 `REGISTRATION_OPEN` 控制，`"1"` 开放，`"0"` 关闭普通邮箱新注册；变更须走上述正式发布流程。关闭不会删除已有账号或撤销既有会话。发布后读取主域 `/api/auth/config` 核对 `registrationOpen`，保留 `TURNSTILE_SECRET`、`TURNSTILE_SITE_KEY`、`BREVO_API_KEY` 与 `MAIL_FROM` 的现有配置；注册仍须完成人机验证和邮箱验证。线上开放及验证证据见 ACCEPTANCE。
+
 主入口为 `https://tr.zhangheng.eu.org`，原 `https://taskrelay.zhangheng.workers.dev` 保留。自定义域名已在 `apps/web/wrangler.jsonc` 的 `routes` 中声明为 `custom_domain: true`，指向同一 `taskrelay` Worker；不创建另一套 D1/R2/模型配置。
 
 两个主机名均使用应用认证；历史 Access 切换证据见[验收补充](ACCEPTANCE.md#历史部署补充证据)，旧入口也没有保留 owner JWT 或设备管理权限。网站注册、发信及重置回调以新主域名为准，用户应使用主入口；原地址继续支持 v2 设备执行接口。HTTPS 验证使用正常证书校验。
@@ -93,7 +95,16 @@ GitHub [上传接口会改写特殊文件名](https://docs.github.com/en/rest/re
 
 ## 模型出站实现
 
-所有能力测试、任务解析、Stagehand 模型回调及人工协助解析统一经过 `MODEL_EGRESS`，由美国区域 Durable Object 的 alarm 发起上游请求。网页和设备请求只提交加密的推理作业，不转发原始 Request、IP 或地区头。API Key 仍由云端从 D1 解密，网站和客户端均拿不到明文。缺少出站绑定会明确失败，不回退到带访问者上下文的直接请求。
+1. 在已提供管理令牌的环境运行 `node scripts/prepare-model-gateway.mjs --create`，仅创建缺失网关；省略参数即可只读核验。也可在 wrangler.jsonc 指定的账号创建认证网关 `taskrelay`，开启 Require provider credentials（byok_only），使用 Workers AI Standard billing，保持 Free 计划。缓存 TTL 为 0，关闭自动重试、统一计费回退和正文存储。每个运行请求额外发送只保留元数据、跳过缓存、只尝试一次的请求头。
+2. 通过 Workers Secret 为部署服务设置 `AI_GATEWAY_TOKEN`（AI Gateway Run）及 `WORKERS_AI_TOKEN`（账户 Workers AI Read）。`AI_GATEWAY_ACCOUNT_ID` 与 `AI_GATEWAY_ID` 是公开的部署变量。管理网关和 Secrets Store 使用独立管理凭据。不要轮换 MASTER_KEY。网关账号、认证及路由核对完成后才进入数据切换。
+3. 先用同构的隔离部署验收三种区域、两种协议、流式与真实桌面 Stagehand 任务。单次切换的发布预检读取网关配置和 Worker Secret 名称，需赋予生产发布令牌相应的只读权限。先排空队列，再在公共池暂停领取并排空当前执行；确认排队任务已处置、旧调度无需延续。使用现有 Production Release，保留 D1 bookmark。迁移 0007 关闭旧模型和活动调度、移除旧密钥列；该迁移之后旧程序不可直接回滚。需恢复时使用同一恢复点和匹配的旧程序。
+4. 在管理员「设置 → 模型服务 → 管理服务 → 添加服务」登记连接。第三方在该网关 Provider Keys 按显示的供应商和密钥别名保存 API Key。自定义类型在 Cloudflare 创建 Custom Provider：slug 取界面显示的网关供应商标识去掉 `custom-`，base URL 只填上游 origin；已保存的路径前缀由 TaskRelay 追加。连接发布后不要在 Cloudflare 将该 slug 改指其他主机。变更目的地址或供应商账号须创建新连接。Workers AI 直接使用免费可用的 `@cf/作者/模型`，不需要供应商密钥。
+   第三方与自定义连接登记后，用配置服务凭据运行 `node scripts/prepare-model-gateway.mjs --verify-connection <连接ID>`，核对该网关真实密钥别名、供应商和自定义上游，再允许该连接出站。配置服务需要读取网关、Custom Provider、Provider Keys 并更新 D1 的权限。Workers AI 由账户令牌认证。自定义端点验收使用受控重定向和一次性测试密钥，确认目的域不会收到跨域凭据；Worker 的重定向设置只控制到 Cloudflare 的一跳。
+
+5. 添加模型时选择已配置服务并填写模型名。「保存并测试」核对该版本的问答、工具和结构化输出，通过后管理员手动启用。可在高级设置覆盖请求发起区域，或从测试详情单独测试图像。已有成功条件卡的任务可以重新选模；其他旧交办可使用新模型重新交办。历史聊天与用量仍绑定原版本。核对网关元数据、无正文、使用量和地区证据，首次切换由发布脚本保持领取暂停，记录中保留 oldClaims。先在隔离部署用同版执行器实测 Stagehand；生产模型探测和聊天通过后，恢复原领取开关并观察首个受控任务。若需先在生产运行唯一验收任务，应在无其他待领任务的受控窗口执行。管理员访问 `/api/admin/settings/check?egress=1&region=eu` 可读取后台对象的 jurisdiction 和到 OpenAI 的诊断结果，依次替换为 auto、us、eu。网关到供应商的实际出口需核对供应商侧记录。
+6. 普通用户只可使用启用的平台模型或本人的私有模型。个人密钥自助登记属于后续交付；先核对 Secrets Store 的账户容量。
+
+迁移 0009 清除旧协议和网关接入前的模型配置，移除旧路由、能力及区域。仅被用量引用的模型可以整行删除，历史任务和聊天的外键标识保留。迁移 0008 后仅登记支持 Responses 的服务。发布会排空在途调用，退休旧协议队列并暂停对应定时计划，领取保持关闭直到核验。对照发布记录中的 oldClaims 恢复原状态。Workers AI 使用账户级 `/ai/v1/responses` 和网关 ID；单独探测 `@cf/openai/gpt-oss-20b` 的结构化输出、工具及真实问答，通过后提供给用户。原生和自定义连接按各自的 Responses 路径验证。
 
 普通 Worker 即使指定美国 placement，实际测试仍可能向 OpenAI 保留访问者的地区上下文：2026-11-03 实测执行位置 `remote-IAD`，但 OpenAI trace 的 `loc=HK`，模型返回 `unsupported_country_region_territory`。改为独立 alarm 后，同次诊断分别显示普通请求 `HK/HKG`、后台请求 `US/IAD`（另一次为 `US/ATL`），现有 `gpt-6-luna / Responses` 的连接、工具和严格 Schema 测试全部通过。因此没有保留无效的全站 placement 提示，也没有伪造地区头。
 
@@ -266,3 +277,9 @@ README 负责使用入口与状态，CHANGELOG 记录客户端版本的变更，
 ## 2026-11-08 全量重置发布（已上线，领取已恢复）
 
 历史时点与验证限制见[对应验收记录](ACCEPTANCE.md#2026-11-08-存储-v2-生产全量重置与正式桌面发布)；当前操作统一按[发布流程](#发布)执行。
+
+### 定时任务扩展（0.24.0 源码候选）
+
+上线前按原发布流程应用 `0005_task_schedules.sql`，再更新云端与 Windows 0.24.0；本地实现不代表已迁移生产。基础执行协议仍为 19，新增定时能力单独登记，旧执行器可继续处理普通任务，新定时运行只分配给已声明能力的设备。迁移不更换 MASTER_KEY，旧计划的时间与状态保留。没有新执行器时定时运行排队至领取期限，不自动回退给旧版。
+
+验收需分别确认每分钟触发、Windows 在线领取、真实站点执行、后台总结及下一次经验使用；独立包内 smoke 不替代这些验收。

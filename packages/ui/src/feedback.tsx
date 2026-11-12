@@ -1,7 +1,7 @@
 import { Badge } from "./components/ui/badge";
 import { Alert, AlertDescription } from "./components/ui/alert";
 import { useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Spinner } from "./components/ui/spinner";
 import { Button } from "./components/ui/button";
 export function LoadingState({ label }: { label: string }) {
   const [slow, setSlow] = useState(false);
@@ -15,7 +15,7 @@ export function LoadingState({ label }: { label: string }) {
       aria-live="polite"
       className="flex items-start gap-2 text-sm text-muted-foreground"
     >
-      <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin" aria-hidden="true" />
+      <Spinner aria-hidden="true" className="mt-0.5 shrink-0" />
       <div>
         <p>{label}</p>
         {slow && <p className="mt-1">等待时间较长，连接可能较慢。请稍候，已有请求不会自动重发。</p>}
@@ -82,9 +82,11 @@ export function Status({ value, outcome }: { value: string; outcome?: string }) 
 export function ErrorText({ error }: { error: string }) {
   const friendly: Record<string, string> = {
     RESOURCE_VERSION_CONFLICT: "设置已被其他操作更新，请刷新列表后重新操作。",
+    MODEL_DISABLE_BEFORE_DELETE: "此模型已有使用记录。请先停用，再删除模型配置。",
     RESOURCE_IN_USE:
       "仍有任务、历史、登录状态或其他数据引用，不能删除。请先停用；登录状态可单独清除。",
     MEMORY_VERSION_CONFLICT: "这条记忆已被修改或删除，草稿已保留，请刷新后核对。",
+    MODEL_PROTOCOL_RETIRED: "此模型版本已停止提供服务，请选择可用模型重新交办。",
     MODEL_DISABLED: "模型已停用，相关任务已失败。请选择可用模型重新交办。",
     ACCOUNT_DISABLED: "站点账号已停用，相关任务已失败。恢复账号后可重新交办。",
     PREFERENCES_TOO_LARGE:
@@ -118,6 +120,11 @@ export function ErrorText({ error }: { error: string }) {
     EMAIL_NOT_VERIFIED: "请先点击验证邮件中的链接。",
     EMAIL_VERIFICATION_REQUIRED: "请先验证邮箱。",
     PASSWORD_TOO_SHORT: "密码至少需要 12 位。",
+    SCHEDULE_NOT_READY: "等待执行器理解当前需求后，再开启定时。",
+    SCHEDULE_VERSION_CONFLICT: "任务设置或需求已变化，请重新打开后确认。",
+    SCHEDULE_TIME_INVALID: "执行时间无效，请检查日期、时间及夏令时。",
+    SCHEDULE_TIMEZONE_INVALID: "时区无效，例如北京时间为 Asia/Shanghai。",
+    SCHEDULE_TIME_PAST: "请选择未来的执行时间。",
     INVALID_TOKEN: "链接无效或已过期，请重新申请。",
     USER_DISABLED: "账号已停用，请联系管理员。",
     ADMIN_REQUIRED: "此操作仅限管理员。",
@@ -149,6 +156,15 @@ export function ErrorText({ error }: { error: string }) {
     CANNOT_DISABLE_SELF: "不能停用当前管理员账号。",
     DEVICE_SCOPE_REJECTED: "执行器不能访问任务管理功能。",
 
+    WORKERS_AI_FREE_LIMIT: "Workers AI 当日免费额度已用尽，北京时间 08:00 重置。",
+    WORKERS_AI_PAID_MODEL: "此 Workers AI 模型需要付费计划，请选择免费计划可用的模型。",
+    MODEL_GATEWAY_BINDING_REQUIRED: "请管理员在 Cloudflare 登记该连接的密钥并核验绑定。",
+    MODEL_GATEWAY_NOT_CONFIGURED: "平台网关配置不完整，请管理员检查运行令牌、账户和网关 ID。",
+    MODEL_TEST_REQUIRED: "请先通过当前版本的问答、工具和结构化输出测试。",
+    MODEL_ANSWER_INCORRECT: "问答测试未通过，模型未返回预期答案。",
+    MODEL_CONNECTION_NOT_FOUND: "模型连接不可用，请重新选择供应商连接。",
+    MODEL_CONNECTION_IN_USE: "此服务仍被模型版本引用。请先删除关联模型配置，再重新检查。",
+    WORKERS_AI_MODEL_INVALID: "请填写完整的 @cf/作者/模型 标识。",
     MODEL_HTTP_403_UNSUPPORTED_REGION:
       "请求被模型服务判定来自不支持的地区。请使用支持当前使用地区的兼容服务，或联系服务商确认可用性。",
     MODEL_HTTP_403_PERMISSION: "模型服务拒绝访问。请检查 API Key 所属项目和模型权限。",

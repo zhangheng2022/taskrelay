@@ -81,7 +81,7 @@ export function AuthGate({ transport, children }: { transport: Transport; childr
   const resetToken = new URLSearchParams(location.search).get("token");
   const [ready, setReady] = useState(false),
     [loading, setLoading] = useState(true),
-    [mode, setMode] = useState<"login" | "register" | "forgot" | "reset" | "verify">(
+    [mode, setMode] = useState<"login" | "register" | "forgot" | "reset">(
       resetToken ? "reset" : "login",
     ),
     [config, setConfig] = useState({ registrationOpen: false, siteKey: "" }),
@@ -160,13 +160,12 @@ export function AuthGate({ transport, children }: { transport: Transport; childr
         {children}
       </QueryBoundary>
     );
-  const needsBot = ["register", "forgot", "verify"].includes(mode);
+  const needsBot = ["register", "forgot"].includes(mode);
   const title = {
     login: "登录 TaskRelay",
     register: "创建账号",
     forgot: "找回密码",
     reset: "设置新密码",
-    verify: "重新发送验证邮件",
   }[mode];
   function change(next: typeof mode) {
     setMode(next);
@@ -225,14 +224,6 @@ export function AuthGate({ transport, children }: { transport: Transport; childr
                       ),
                     );
                     setNote("如果邮箱已注册，将收到重置密码邮件。");
-                  } else if (mode === "verify") {
-                    await authResult(
-                      authClient.sendVerificationEmail(
-                        { email, callbackURL: location.origin + "/" },
-                        botHeaders(token),
-                      ),
-                    );
-                    setNote("请检查验证邮件。");
                   } else {
                     await authResult(
                       authClient.resetPassword({ newPassword: password, token: resetToken ?? "" }),
@@ -315,9 +306,6 @@ export function AuthGate({ transport, children }: { transport: Transport; childr
               </Button>
               <Button variant="ghost" onClick={() => change("forgot")}>
                 忘记密码
-              </Button>
-              <Button variant="ghost" onClick={() => change("verify")}>
-                验证邮箱
               </Button>
             </>
           )}

@@ -11,18 +11,16 @@ import { generateStructured } from "../apps/cloud/src/models";
 
 const profile = {
   baseUrl: "https://provider.example/v1",
-  protocol: "chat" as const,
+  protocol: "responses" as const,
   model: "test",
 };
 const enc = new TextEncoder();
 const event = (value: unknown) => enc.encode(`data: ${JSON.stringify(value)}\n\n`);
-function completion(content: string, finish: string | null = null) {
-  return {
-    id: "chat",
-    object: "chat.completion.chunk",
-    choices: [{ index: 0, delta: { content }, finish_reason: finish }],
-  };
-}
+const delta = (text: string) => ({ type: "response.output_text.delta", delta: text });
+const completedText = (text: string) => ({
+  type: "response.completed",
+  response: { output: [{ type: "message", content: [{ type: "output_text", text }] }] },
+});
 function sse(events: unknown[], done = true) {
   return new Response(
     new ReadableStream({
@@ -36,7 +34,7 @@ function sse(events: unknown[], done = true) {
   );
 }
 
-test("Chat 流在终态之前交付中文正文，工具分片完整汇总并保留真实用量", async () => {
+test("Responses 流在终态之前交付中文正文，工具分片完整汇总并保留真实用量", async () => {
   let controller!: ReadableStreamDefaultController<Uint8Array>;
   let first!: () => void;
   const seen = new Promise<void>((r) => {
@@ -71,39 +69,22 @@ test("Chat 流在终态之前交付中文正文，工具分片完整汇总并保
     return value;
   });
   await new Promise((r) => setTimeout(r, 0));
-  const chinese = event(completion("你好"));
+  const chinese = event(delta("你好"));
   for (const byte of chinese) controller.enqueue(new Uint8Array([byte]));
   await seen;
   assert.equal(completed, false);
   assert.deepEqual(texts, ["你好"]);
   controller.enqueue(
     event({
-      choices: [
-        {
-          index: 0,
-          delta: {
-            tool_calls: [
-              { index: 0, id: "call", function: { name: "check", arguments: '{"ok":' } },
-            ],
-          },
-          finish_reason: null,
-        },
-      ],
+      type: "response.completed",
+      response: {
+        output: [
+          { type: "function_call", call_id: "call", name: "check", arguments: '{"ok":true}' },
+        ],
+        usage: { input_tokens: 8, output_tokens: 6 },
+      },
     }),
   );
-  controller.enqueue(
-    event({
-      choices: [
-        {
-          index: 0,
-          delta: { tool_calls: [{ index: 0, function: { arguments: "true}" } }] },
-          finish_reason: "tool_calls",
-        },
-      ],
-    }),
-  );
-  controller.enqueue(event({ choices: [], usage: { prompt_tokens: 8, completion_tokens: 6 } }));
-  controller.enqueue(enc.encode("data: [DONE]\n\n"));
   controller.close();
   const full = await result;
   assert.deepEqual(full.calls, [{ id: "call", name: "check", arguments: '{"ok":true}' }]);
@@ -145,23 +126,17 @@ test("Responses 仅公开 output_text，完成事件汇总工具与用量", asyn
   assert.deepEqual(result.usage, { input: 10, output: 3 });
 });
 
-for (const protocol of ["chat", "responses"] as const)
-  test(`${protocol} 提前断流不能成功且不重发`, async () => {
-    let requests = 0;
-    await assert.rejects(
-      infer({ ...profile, protocol }, "key", { messages: [], stream: true }, async () => {
-        requests++;
-        return sse(
-          protocol === "chat"
-            ? [completion("半句")]
-            : [{ type: "response.output_text.delta", delta: "半句" }],
-          false,
-        );
-      }),
-      /MODEL_STREAM_INCOMPLETE/,
-    );
-    assert.equal(requests, 1);
-  });
+test(`Responses 提前断流不能成功且不重发`, async () => {
+  let requests = 0;
+  await assert.rejects(
+    infer(profile, "key", { messages: [], stream: true }, async () => {
+      requests++;
+      return sse([{ type: "response.output_text.delta", delta: "半句" }], false);
+    }),
+    /MODEL_STREAM_INCOMPLETE/,
+  );
+  assert.equal(requests, 1);
+});
 
 test("流式大小限制取消底层读取，HTTP 错误不泄露供应商正文", async () => {
   let cancelled = false;
@@ -229,7 +204,7 @@ test("生产入口使用固定配置流式并推送正文，重复请求不受�
       drafts: async () => [],
     }),
   } as unknown as AppEnv["NOTIFICATIONS"];
-  f.replies(sse([completion("正在查看"), completion("", "stop")]));
+  f.replies(sse([delta("正在查看"), completedText("正在查看")]));
   const body = {
     epoch: f.run.leaseEpoch,
     requestId: "stream_request",
@@ -267,7 +242,11 @@ test("未知流式能力先做独立探测，仅明确不支持且控制探测�
   assert.equal(response.status, 200);
   assert.equal(response.data.response.text, "业务回复");
   assert.deepEqual(
-    f.requests.map((r) => r.body.stream),
+    f.requests.map((r) => r.body.tool_choice),
+    ["auto", "auto", "auto"],
+  );
+  assert.deepEqual(
+    f.requests.map((r) => r.body.stream ?? false),
     [true, false, false],
   );
   assert.ok(!JSON.stringify(f.requests.slice(0, 2)).includes("用户业务只允许发送一次"));
@@ -277,6 +256,65 @@ test("未知流式能力先做独立探测，仅明确不支持且控制探测�
   assert.equal(JSON.parse(row!.capabilities).streaming.tools, "unsupported");
 });
 
+test("工具能力探测采用执行器的自动选择并验证真实函数及参数", async (t) => {
+  const f = await productionModelFixture(t);
+  f.replies(
+    "42",
+    JSON.stringify({
+      __model: { text: "", calls: [{ id: "call", name: "check", arguments: '{"value":7}' }] },
+    }),
+    '{"ok":true}',
+  );
+  const { status, data: capabilities } = await f.request("/api/admin/models/model_test/test", {});
+  assert.equal(status, 200);
+  assert.equal(f.requests[1].body.tool_choice, "auto");
+  assert.equal(capabilities.tools, true);
+  f.replies("42", "check with value 7", '{"ok":true}');
+  assert.equal((await f.request("/api/admin/models/model_test/test", {})).data.tools, false);
+});
+
+test("新模型先停用，管理员按固定版本试答，答错、旧版通过及并发编辑均不能开放新版本", async (t) => {
+  const f = await productionModelFixture(t);
+  const input = { name: "验收配置", connectionId: "conn_test", model: "test" };
+  const created = await f.request("/api/admin/models", input);
+  assert.equal(created.status, 201);
+  const id = created.data.id;
+  const path = "/api/admin/models/" + id;
+  const enable = (expectedVersion: number) =>
+    f.request(path + "/state", { expectedVersion, enabled: true }, "PUT");
+  assert.equal(
+    (await f.request("/api/user/threads", { modelId: id })).data.error,
+    "MODEL_DISABLED",
+  );
+  assert.equal((await enable(1)).data.error, "MODEL_TEST_REQUIRED");
+  f.replies("no answer");
+  const bad = await f.request(path + "/test?version=1", {});
+  assert.equal(bad.data.error, "MODEL_ANSWER_INCORRECT");
+  assert.equal((await enable(1)).data.error, "MODEL_TEST_REQUIRED");
+  assert.equal((await f.request(path, { ...input, expectedVersion: 1 }, "PUT")).data.version, 2);
+  const good = () =>
+    f.replies(
+      "42",
+      JSON.stringify({
+        __model: { text: "", calls: [{ id: "check", name: "check", arguments: '{"value":7}' }] },
+      }),
+      '{"ok":true}',
+    );
+  good();
+  assert.equal((await f.request(path + "/test?version=1", {})).data.questionAnswered, true);
+  assert.equal((await enable(1)).data.error, "RESOURCE_VERSION_CONFLICT");
+  assert.equal((await enable(2)).data.error, "MODEL_TEST_REQUIRED");
+  good();
+  assert.equal((await f.request(path + "/test?version=2", {})).data.tools, true);
+  assert.equal(
+    (await f.request("/api/user/threads", { modelId: id })).data.error,
+    "MODEL_DISABLED",
+  );
+  f.replies("red");
+  assert.equal((await f.request(path + "/vision?version=2", {})).data.vision, true);
+  assert.equal((await enable(2)).status, 200);
+  assert.ok((await f.request("/api/user/threads", { modelId: id })).data.id);
+});
 test("能力探测网络故障不降级、不提交用户业务、不标记不支持", async (t) => {
   const f = await productionModelFixture(t);
   await f.db.prepare("UPDATE settings SET value='1' WHERE key='modelStreamingEnabled'").run();
@@ -336,8 +374,14 @@ test("结构化修复生成新草稿版本，内部字段不会进入预览", as
     }),
   } as unknown as AppEnv["NOTIFICATIONS"];
   f.replies(
-    sse([completion('{"reply":"首稿","internal":"secret"}'), completion("", "stop")]),
-    sse([completion('{"reply":"修复正文","valid":true}'), completion("", "stop")]),
+    sse([
+      delta('{"reply":"首稿","internal":"secret"}'),
+      completedText('{"reply":"首稿","internal":"secret"}'),
+    ]),
+    sse([
+      delta('{"reply":"修复正文","valid":true}'),
+      completedText('{"reply":"修复正文","valid":true}'),
+    ]),
   );
   const result = await generateStructured(
     { ...f.env, requestUserId: "fixture_owner" },

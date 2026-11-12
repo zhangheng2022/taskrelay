@@ -6,6 +6,7 @@ import { beginCleanup, cleanupJobs, drainHistoryCleanups } from "../apps/cloud/s
 import { insertTask, task } from "./helpers";
 import { appendMessage } from "../apps/cloud/src/chat-messages";
 import { invoke } from "../apps/cloud/src/models";
+import { maintenance } from "../apps/cloud/src/index";
 
 async function setup(t: Parameters<typeof productionModelFixture>[0]) {
   const s = await productionModelFixture(t);
@@ -126,6 +127,66 @@ test("全部清理固定目标，重复请求不删除之后新建的聊天，�
       .get()!.definition,
     "{}",
   );
+});
+
+test("批写统计不能阻塞已清空的队首，也不能提前完成仍有下一批正文的目标", async (t) => {
+  const s = await setup(t);
+  for (let i = 0; i < 105; i++)
+    seedMessage(s.sql, {
+      id: "batch_" + i,
+      thread_id: s.thread,
+      seq: i + 10,
+      role: "user",
+      content: "待清理",
+      turn_id: "turn",
+      at: Date.now(),
+    });
+  const job = await beginCleanup(s.env, s.run.userId, "all", null, "cleanup_progress");
+  const batch = s.env.DB.batch.bind(s.env.DB);
+  t.mock.method(s.env.DB, "batch", async (statements: D1PreparedStatement[]) =>
+    (await batch(statements)).map((r) => ({ ...r, meta: { ...r.meta, changes: 1 } })),
+  );
+  await drain(s);
+  const [done] = await cleanupJobs(s.env, s.run.userId, job.id);
+  assert.equal(done.status, "done");
+  assert.equal(done.completed, done.total);
+  assert.equal(
+    s.sql.prepare("SELECT COUNT(*) n FROM ai_messages WHERE thread_id=?").get(s.thread)?.n,
+    0,
+  );
+});
+
+test("完整维护轮次不会用保留期标记覆盖聊天清理，仍回收其他过期调用", async (t) => {
+  const s = await setup(t);
+  const graph = s.sql.prepare(
+    "INSERT INTO ai_graph_inputs(owner,id,digest,parent_thread,run_id,created_at) VALUES(?,?,'digest',?,?,1)",
+  );
+  graph.run(s.run.userId, "thread_graph", s.thread, null);
+  graph.run(s.run.userId, "run_graph", null, s.run.id);
+  const call = s.sql.prepare(
+    "INSERT INTO ai_calls(id,user_id,graph_id,run_id,digest,status,created_at,updated_at) VALUES(?,?,?,?,'digest','done',1,1)",
+  );
+  call.run("direct", s.run.userId, null, s.run.id);
+  call.run("thread_only", s.run.userId, "thread_graph", null);
+  call.run("via_run_graph", s.run.userId, "run_graph", null);
+  call.run("expired", s.run.userId, null, null);
+  s.sql.exec("INSERT INTO call_results(id,result) SELECT id,'old' FROM ai_calls");
+  const job = await beginCleanup(s.env, s.run.userId, "all", null, "maintenance_cleanup");
+  await maintenance(s.env);
+  const deferred = s.sql.prepare("SELECT result FROM call_results WHERE id='thread_only'").get();
+  for (let i = 0; i < 12; i++) await maintenance(s.env);
+  const [done] = await cleanupJobs(s.env, s.run.userId, job.id);
+  assert.equal(done.status, "done");
+  assert.equal(done.completed, done.total);
+  assert.equal(deferred?.result, "old");
+  assert.deepEqual(
+    s.sql
+      .prepare("SELECT error FROM ai_calls ORDER BY id")
+      .all()
+      .map((row) => row.error),
+    ["THREAD_DELETED", "HISTORY_EXPIRED", "THREAD_DELETED", "THREAD_DELETED"],
+  );
+  assert.equal(s.sql.prepare("SELECT COUNT(*) n FROM call_results").get()?.n, 0);
 });
 
 test("清空保留暂停入口，后台只清旧运行和旧聊天，新消息不受影响", async (t) => {

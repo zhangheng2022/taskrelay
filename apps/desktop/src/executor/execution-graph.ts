@@ -47,7 +47,7 @@ export interface ExecutionGraphPort {
   ): Promise<{ request: ExecutionHelp; answer: HelpResponse }>;
   pollHelp(request: ExecutionHelp): Promise<HelpResponse>;
   consumeHelp(request: ExecutionHelp, answer: HelpResponse): Promise<unknown>;
-  record(call: ExecutorCall, result: unknown): void;
+  record(call: ExecutorCall, result: unknown): void | Promise<void>;
   error(call: ExecutorCall, error: Error): Promise<void>;
   say(text: string, eventId: string): Promise<unknown>;
   finish(text: string, userSeq: number): Promise<boolean>;
@@ -232,7 +232,7 @@ export async function runExecutionGraph(port: ExecutionGraphPort) {
         } finally {
           slot.done.resolve();
         }
-        port.record(
+        await port.record(
           slot.call,
           typeof result.content === "string" ? JSON.parse(result.content) : result.content,
         );
@@ -285,7 +285,7 @@ export async function runExecutionGraph(port: ExecutionGraphPort) {
       port.guard();
       if (!text.trim()) {
         if (++emptyReplies > 1) throw Error("MODEL_EMPTY_REPLY");
-        port.record(
+        await port.record(
           { id: "empty", name: "model", arguments: "{}" },
           { error: "MODEL_EMPTY_REPLY" },
         );

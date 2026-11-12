@@ -1,3 +1,4 @@
+import { Disclosure } from "./disclosure";
 import { useContext } from "react";
 import type { ChatPart } from "../../contracts/src/execution";
 import type { Transport } from "../../contracts/src/index";
@@ -50,10 +51,9 @@ function Attachments({
             onSaved={onAccountSaved}
           />
         ) : (
-          <details key={i} className="text-xs text-muted-foreground">
-            <summary>操作反馈</summary>
+          <Disclosure key={i} label="操作反馈" className="text-xs text-muted-foreground">
             <p className="whitespace-pre-wrap break-words">{p.result}</p>
-          </details>
+          </Disclosure>
         );
       })}
     </div>

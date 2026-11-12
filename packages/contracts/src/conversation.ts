@@ -1,6 +1,7 @@
 /** 聊天快照协议：两类历史各有游标，写入确认仍由 requestId 与会话版本负责。 */
 import type { TaskInput } from "./index";
 export type ThreadPage = {
+  scheduleCard?: import("./task-schedule").ScheduleCard | null;
   id: string;
   drafts?: import("./streaming").ChatDraft[];
   version: number;

@@ -15,7 +15,7 @@ import { DesktopUpdater } from "../apps/desktop/src/main/updater";
 import { createHash } from "node:crypto";
 import type { TaskRun } from "../packages/contracts/src/index";
 import { BrowserStateAdapter } from "../apps/desktop/src/main/browser-state";
-import type { ProtectedStateFiles } from "../apps/desktop/src/main/protected-state";
+import { ProtectedStateFiles } from "../apps/desktop/src/main/protected-state";
 import { browserStateSchema } from "../packages/contracts/src/accounts";
 
 const settle = () => new Promise<void>((r) => setImmediate(r));
@@ -711,4 +711,83 @@ test("正式 Host：旧指令完成请求被明确拒绝后不保留待上传成
   });
   await settle();
   assert.equal(s.journal.pending().length, 1);
+});
+
+test("操作记录断网后仅保存系统密文，可靠回传时解密且不重放浏览器", async (t) => {
+  const plaintext = new Map<string, string>();
+  const vault = new ProtectedStateFiles("unused-inline-records", {
+    isEncryptionAvailable: () => true,
+    encryptString(value) {
+      const key = crypto.randomUUID();
+      plaintext.set(key, value);
+      return Buffer.from(key);
+    },
+    decryptString(value) {
+      return plaintext.get(value.toString())!;
+    },
+  });
+  const s = fixture(t, undefined, vault),
+    run = s.run("record");
+  await s.host.start(run);
+  s.cloud.request = async () => {
+    throw Error("OFFLINE");
+  };
+  s.children[0].rpc("/api/runner/runs/record/execution-record", {
+    epoch: run.leaseEpoch,
+    callId: "read",
+    content: "private-operation-result",
+  });
+  await settle();
+  await settle();
+  const pending = s.journal.pending();
+  assert.equal(pending.length, 1);
+  assert.ok(!pending[0].body.includes("private-operation-result"));
+  let received: unknown;
+  s.cloud.request = async <T>(_method: string, _path: string, body?: unknown) => {
+    received = body;
+    return {} as T;
+  };
+  await s.host.flush();
+  assert.equal((received as { content: string }).content, "private-operation-result");
+  assert.equal(s.journal.pending().length, 0);
+  assert.equal(s.children.length, 1);
+});
+test("网络日志只接受同代白名单事件，限量持久化并随本机历史清除", async (t) => {
+  const s = fixture(t);
+  const run = s.run("network");
+  await s.host.start(run);
+  const child = s.children[0],
+    generation = child.messages[0].generation;
+  const sample = {
+    phase: "dns",
+    result: "error",
+    connection: 1,
+    at: new Date().toISOString(),
+    elapsedMs: 12,
+    query: "AAAA",
+    resolver: "alidns",
+    attempt: 2,
+    reason: "ECONNRESET",
+  };
+  const send = (gen: string, event: unknown) =>
+    child.emit("message", { generation: gen, type: "network", event });
+  send("old", sample);
+  send(generation, { ...sample, raw: "secret" });
+  assert.equal(s.journal.diagnostic().journal[0].network, undefined);
+  for (let connection = 1; connection <= 68; connection++)
+    send(generation, { ...sample, connection });
+  await s.host.stop(false);
+  await s.host.flush();
+  const reopened = new Journal(s.dir);
+  try {
+    const report = reopened.diagnostic().journal[0].network!;
+    assert.equal(report.host, new URL(run.task.entryUrl).hostname);
+    assert.equal(report.truncated, true);
+    assert.equal(report.events.length, 64);
+    assert.deepEqual(report.events[63], { ...sample, connection: 64 });
+    reopened.clearHistory();
+    assert.equal(reopened.cached("network:" + generation), null);
+  } finally {
+    reopened.close();
+  }
 });

@@ -4,7 +4,7 @@
 
 ## 工作流程
 
-TaskRelay 为用户提供隔离的浏览器任务空间：网站交办与聊天，Cloudflare 规划和调度，管理员授权的 Windows 设备池执行。桌面仅为执行器，不提供任务编辑、聊天或模型管理；公开注册默认关闭。RewardPilot 仅参考进程架构，不复用 UI、积分业务或本地调度。
+TaskRelay 为用户提供隔离的浏览器任务空间：网站交办与聊天，Cloudflare 规划和调度，管理员授权的 Windows 设备池执行。桌面仅为执行器，不提供任务编辑、聊天或模型管理；公开注册由部署配置控制，保留人机验证、邮箱验证和用户隔离。RewardPilot 仅参考进程架构，不复用 UI、积分业务或本地调度。
 
 1. 阅读请求和目录约定，查看 `git status --short`，保留已有改动；不顺手提交技能、截图、密钥、缓存或产物。
 2. 按任务查阅 [架构](docs/ARCHITECTURE.md)、[产品](PRODUCT.md)、[部署](docs/DEPLOYMENT.md)、[验收](docs/ACCEPTANCE.md)，由下方导航定位源码。
@@ -46,20 +46,20 @@ CLI 故障按技能处理并说明替代方式，未执行成功不称为 OCR �
 - **框架与恢复**：LangChain 统一模型、工具和原生消息，LangGraph 为唯一 AI 编排；鉴权、租约、加密、出站和防重 adapter 保留。工具串行，interrupt 等待节点无先行副作用；桌面协助仅在同一 generation 恢复，不跨进程恢复浏览器任务。
 - **未知结果不重放**：记录操作是否送出、是否收到后续观察，不用 DOM/URL 指纹阻拦不同操作；观察不等于业务成功。停止时结果未返回不自动重放，历史 unknown 和检查点保留，不自动恢复旧任务。
 - **进程与控制**：Main 管连接、SQLite、令牌和子进程；Preload 仅暴露校验后的命名入口；Renderer 不访问文件、明文令牌或执行进程。Stagehand 在 utilityProcess，Main 拒绝旧 generation。停止直接控制执行器；关窗口保留托盘，明确退出停止领取并关闭自有进程，自启动默认关闭。
-- **调度权威**：配置和设备分配归云端，不加桌面本地调度器。条件卡确认频率、模型和账号的方向保留，当前不扩展、不作为执行前提；个人次数限制保持关闭。
+- **调度权威**：配置和设备分配归云端，不加桌面本地调度器。云端发布任务拆解时提供定时卡片，用户确认频率并启用；卡片不作为首次执行前提，后台经验不能扩大授权；个人次数限制保持关闭。
 
 ### 模型与出站
 
-- 所有生产模型请求走 `models.invoke → egress → ModelEgress` 的美国 jurisdiction 与 alarm，再调用提供方；各进程和普通请求均不得直连。结构化输出走 `models.generateStructured → invoke`，Zod 只校验适配。
+- 所有生产模型请求走 `models.invoke → egress → ModelEgress` 按固定模型版本选择自动、美国或欧盟，由 alarm 通过平台 AI Gateway 调用提供方；各进程和普通请求均不得直连。结构化输出走 `models.generateStructured → invoke`，Zod 只校验适配。
 - `submitAndWait` 在同次 RPC 内提交并等待；alarm 执行中不再次 RPC 轮询同一对象，取得终态才 ack，避免新请求替换 I/O 上下文。
 - 不绕过 workerd 的 `MODEL_REGION_REQUIRES_DEPLOYMENT`，不改回访客请求链。测试可用隔离 adapter，真实模型及地区证据须来自部署环境。
-- 模型名自由输入，保留 Chat Completions 与 Responses；缺能力即阻止使用，不暗换模型/提供方。运行固定任务快照中的模型配置版本。
+- 模型名自由输入，仅使用 Responses API；缺能力即阻止使用，不暗换模型/提供方。运行固定任务快照中的模型配置版本。
 - 自定义地址仅接受校验后的公网 HTTPS，不携带凭据跨域重定向；错误仅返回固定公开分类，不透传上游正文。用量来自实际响应，缺 token 或单价显示“未知”。
 
 ### 身份、数据与费用
 
 - 网站用 Better Auth 会话和已验证邮箱，服务端检查用户归属与管理员角色；Cloudflare Access 仅可作外层限制。设备用可吊销 bearer token，不得访问用户/管理员接口。开发绕过仅限本机 `DEV_MODE=1`，生产关闭，开发服务不暴露公网。
-- Main 用系统 `safeStorage` 保存设备令牌；模型密钥、账号凭据及敏感回复按上下文加密。本人聊天可解密已授权回复，清空和保留期同步清理密文。日志/诊断包不含明文秘密、Profile、SQLite 或 API Key。
+- Main 用系统 `safeStorage` 保存设备令牌；模型密钥由 Cloudflare BYOK 托管，账号凭据及敏感回复按上下文加密。本人聊天可解密已授权回复，清空和保留期同步清理密文。日志/诊断包不含明文秘密、Profile、SQLite 或 API Key。
 - **不得重新生成或覆盖现有 `MASTER_KEY`**；密文依赖它，轮换须有迁移与恢复方案。
 - 截图先脱敏再保存，秘密及敏感匹配结果不得传入网页执行环境。聊天图片长期保存，随聊天删除/保留期清理；先关闭聊天、阻止新写入，再清图片。终态可独立收尾，不能把旧消息挂到新聊天。
 - 证据由私有 SQLite DO 分块加密保存，短期协助证据在完成/过期后清理；生产不绑定 R2。Cloudflare 保持 Free，普通 Worker 仅路由、业务进入 DO，长 AI 回合经持久化 outbox 与 alarm；不加项目每日预算或全站模型上限，不自动购买/切换付费服务。
@@ -108,6 +108,8 @@ CLI 故障按技能处理并说明替代方式，未执行成功不称为 OCR �
 
 改 UI 前读技能与对应 pattern，核对 `packages/ui/components.json` 和已安装组件，通过 CLI 查文档及更新差异，选择一致的原语库。按现有 `Transport` 适配示例，不因 AI SDK/Next.js/演示 transport 改宿主架构。
 
+- **优先使用 shadcn/ui 组件。** 网站、Windows Renderer 和共享 UI 新增或修改界面时，表单、按钮、导航、列表、弹层、反馈、折叠区和聊天交互均先复用 `packages/ui` 中已安装的 shadcn 组件或基于它们的业务组件。缺少合适组件时，先查官方组件及组合方式；只有现有方案无法满足具体交互或平台要求时，才使用原生或自定义控件。
+- 按交互选型。表单使用 Field 系列及 [FormSelect](packages/ui/src/form-select.tsx)，导航与操作使用 Sidebar、Button 和 DropdownMenu，弹窗与确认使用 Dialog、Sheet 和 AlertDialog，展开详情使用 Collapsible，反馈使用 Alert、Spinner 或 Skeleton。验收时实际触发改动的控件，检查深浅主题、窄屏、键盘焦点，以及适用的禁用、选中、展开和错误状态。
 - 聊天使用 `MessageScroller`、`Message`、`Bubble` 和稳定消息标识；跟随、上翻、回到最新由官方滚动组件负责。
 - 输入用 `InputGroup`：Enter 发送、Shift+Enter 换行、中文组合态不发送；只追问缺失信息，详细表单为次级入口。
 - Model Selector 展示真实配置/能力；Tool/Task/Plan 用 `Trace` 展示实际步骤、状态及可展开的脱敏输入输出/错误；确认在原聊天中提供具体操作与明确选择，并遵守后端绑定校验。

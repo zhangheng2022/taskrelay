@@ -1,3 +1,4 @@
+import { scheduleFence } from "./schedule-fence";
 import { dbTime } from "./database";
 /** 云端队列与租约：固化运行快照、按用户公平领取、维护账号锁，并清理过期运行及推进已确认调度。 */
 import { quotaDay } from "./tenancy";
@@ -52,6 +53,7 @@ export function taskFrom(row: Row): TaskDefinition {
     title: row.title,
     createdAt: row.created_at,
     confirmedCondition: row.confirmed_condition ?? null,
+    requirementRevision: row.requirement_revision ?? 0,
     status: row.status,
     nextRunAt: row.next_run_at,
   };
@@ -82,8 +84,8 @@ export async function queueReasons(db: D1Database, userId: string) {
     WHEN ((SELECT COUNT(*) FROM runs used WHERE used.user_id=r.user_id AND used.started_day=?) + COALESCE((SELECT runs FROM quota_carry WHERE user_id=r.user_id AND day=?),0))>=m.daily_runs AND NOT COALESCE(m.daily_quota_paused=1 OR m.daily_quota_paused_until>CAST(unixepoch('subsec')*1000 AS INTEGER),0) THEN '今日启动额度已用完，上海时间零点重置'
     WHEN EXISTS(SELECT 1 FROM runs active WHERE active.user_id=r.user_id AND (active.status IN ('running','waiting_user','verifying') OR active.cleanup_pending=1)) THEN '等待上一项运行、人工协助或浏览器清理结束'
     WHEN EXISTS(SELECT 1 FROM account_locks l WHERE l.account_key=r.account_key AND l.run_id<>COALESCE(r.reconciliation_of,'')) THEN '账号被占用或结果待核查'
-    WHEN NOT EXISTS(SELECT 1 FROM devices d WHERE d.revoked=0 AND d.claim_ready=1 AND d.protocol_version=${PROTOCOL_VERSION} AND d.last_seen>?) THEN '没有最近在线、未暂停且版本兼容的可用设备'
-    WHEN NOT EXISTS(SELECT 1 FROM devices d WHERE d.revoked=0 AND d.claim_ready=1 AND d.protocol_version=${PROTOCOL_VERSION} AND d.last_seen>? AND NOT EXISTS(SELECT 1 FROM runs busy WHERE busy.device_id=d.id AND (busy.status IN ('running','waiting_user','verifying') OR busy.cleanup_pending=1))) THEN '符合条件的设备正在执行其他任务或清理浏览器'
+    WHEN NOT EXISTS(SELECT 1 FROM devices d WHERE d.revoked=0 AND d.claim_ready=1 AND (r.requires_scheduling=0 OR d.schedule_capable=1) AND d.protocol_version=${PROTOCOL_VERSION} AND d.last_seen>?) THEN '没有最近在线、未暂停且版本兼容的可用设备'
+    WHEN NOT EXISTS(SELECT 1 FROM devices d WHERE d.revoked=0 AND d.claim_ready=1 AND (r.requires_scheduling=0 OR d.schedule_capable=1) AND d.protocol_version=${PROTOCOL_VERSION} AND d.last_seen>? AND NOT EXISTS(SELECT 1 FROM runs busy WHERE busy.device_id=d.id AND (busy.status IN ('running','waiting_user','verifying') OR busy.cleanup_pending=1))) THEN '符合条件的设备正在执行其他任务或清理浏览器'
     ELSE '等待设备领取；设备本地暂停或网络状态可能影响领取' END reason
     FROM runs r JOIN tasks t ON t.id=r.task_id JOIN members m ON m.id=r.user_id
     LEFT JOIN accounts a ON a.id=r.account_id AND a.user_id=r.user_id
@@ -124,14 +126,16 @@ export async function enqueue(
     if (card?.confirmed_content)
       task = { ...task, runConditions: JSON.parse(card.confirmed_content) };
   }
+  const fence = command?.groupId ? { sql: "1=1", values: [] } : scheduleFence(task);
   const at = now(),
     deadline = new Date(new Date(scheduled).getTime() + limits.lateMs).toISOString();
   await db.batch([
     db
       .prepare(
-        `INSERT OR IGNORE INTO runs(id,task_id,task_version,status,scheduled_for,deadline,account_key,idempotency_key,created_at,updated_at,user_id,profile_id,execution_protocol,thread_id,account_id,dispatch_group_id,dispatch_index)
-      SELECT ?,?,?,'queued',?,?,?,?,?,?,?,?,${PROTOCOL_VERSION},${command ? "?" : "(SELECT id FROM ai_threads WHERE task_id=? AND closed=0 LIMIT 1)"},?,?,?
-      WHERE EXISTS(SELECT 1 FROM tasks WHERE id=? AND version=? AND context_withdrawn=0 AND deleted=0)
+        `INSERT OR IGNORE INTO runs(id,task_id,task_version,status,scheduled_for,deadline,account_key,idempotency_key,created_at,updated_at,user_id,profile_id,execution_protocol,thread_id,account_id,dispatch_group_id,dispatch_index,requires_scheduling)
+      SELECT ?,?,?,'queued',?,?,?,?,?,?,?,?,${PROTOCOL_VERSION},${command ? "?" : task.scheduleTrigger ? "(SELECT thread_id FROM task_schedules WHERE task_id=?)" : "(SELECT id FROM ai_threads WHERE task_id=? AND closed=0 LIMIT 1)"},?,?,?,${Number(!!task.requiresScheduling)}
+      WHERE EXISTS(SELECT 1 FROM tasks WHERE id=? AND version=? AND context_withdrawn=0 AND deleted=0) AND ${fence.sql}
+       ${task.scheduleTrigger && !command?.groupId ? "AND NOT EXISTS(SELECT 1 FROM runs WHERE task_id=? AND (status IN ('queued','running','waiting_user','verifying','unknown') OR cleanup_pending=1)) AND NOT EXISTS(SELECT 1 FROM account_dispatch_groups WHERE task_id=? AND state IN ('active','paused'))" : ""}
       ${
         command
           ? `AND EXISTS(SELECT 1 FROM conversation_commands c JOIN ai_threads t ON t.id=c.thread_id
@@ -164,6 +168,8 @@ export async function enqueue(
         command?.position ?? null,
         task.id,
         task.version,
+        ...fence.values,
+        ...(task.scheduleTrigger && !command?.groupId ? [task.id, task.id] : []),
         ...(command ? [command.id, command.threadId, task.id, owner.user_id] : []),
         ...(command?.groupId ? [command.groupId, command.position] : []),
       ),
@@ -201,6 +207,14 @@ export async function claim(
     )
     .bind(deviceId, requestId)
     .first<Row>();
+  if (
+    prior?.requires_scheduling &&
+    !(await db
+      .prepare("SELECT id FROM devices WHERE id=? AND schedule_capable=1")
+      .bind(deviceId)
+      .first())
+  )
+    return null;
   if (prior)
     return ["running", "waiting_user", "verifying"].includes(prior.status) &&
       prior.lease_expires_at > now() &&
@@ -221,9 +235,9 @@ export async function claim(
        WHERE m.disabled=0 AND t.deleted=0 AND t.context_withdrawn=0
        AND NOT EXISTS(SELECT 1 FROM runs active WHERE active.user_id=r.user_id AND (active.status IN ('running','waiting_user','verifying') OR active.cleanup_pending=1))
        AND (m.daily_quota_paused=1 OR m.daily_quota_paused_until>CAST(unixepoch('subsec')*1000 AS INTEGER) OR ((SELECT COUNT(*) FROM runs used WHERE used.user_id=r.user_id AND used.started_day=?) + COALESCE((SELECT runs FROM quota_carry WHERE user_id=r.user_id AND day=?),0))<m.daily_runs)
-       AND EXISTS(SELECT 1 FROM devices WHERE id=? AND revoked=0 AND claim_ready=1)
+       AND EXISTS(SELECT 1 FROM devices WHERE id=? AND revoked=0 AND claim_ready=1 AND (r.requires_scheduling=0 OR schedule_capable=1))
        AND NOT EXISTS(SELECT 1 FROM devices preferred WHERE preferred.id=COALESCE(a.last_device_id,a.assigned_device_id) AND preferred.id<>?
-         AND preferred.revoked=0 AND preferred.claim_ready=1 AND preferred.protocol_version=${PROTOCOL_VERSION} AND preferred.last_seen>?
+         AND preferred.revoked=0 AND preferred.claim_ready=1 AND (r.requires_scheduling=0 OR preferred.schedule_capable=1) AND preferred.protocol_version=${PROTOCOL_VERSION} AND preferred.last_seen>?
          AND NOT EXISTS(SELECT 1 FROM runs busy WHERE busy.device_id=preferred.id AND (busy.status IN ('running','waiting_user','verifying') OR busy.cleanup_pending=1)))
        AND r.execution_protocol=${PROTOCOL_VERSION} AND r.status='queued' AND r.deadline>?
        AND (r.dispatch_group_id IS NULL OR EXISTS(SELECT 1 FROM account_dispatch_groups g WHERE g.id=r.dispatch_group_id AND g.state='active'))
@@ -369,7 +383,7 @@ export async function tick(db: D1Database) {
   ]);
   const due = await db
     .prepare(
-      "SELECT * FROM task_details WHERE status='active' AND next_run_at<=? ORDER BY next_run_at LIMIT 100",
+      "SELECT * FROM task_details WHERE status='active' AND next_run_at<=? AND id NOT IN(SELECT task_id FROM task_schedules) ORDER BY next_run_at LIMIT 100",
     )
     .bind(dbTime(at))
     .all<Row>();

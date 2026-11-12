@@ -1,3 +1,12 @@
+import { connectionInputSchema, egressRegionSchema } from "../../../packages/contracts/src/index";
+import {
+  connectionFrom,
+  createConnection,
+  connectionDeletionPreview,
+  validateEndpoint,
+} from "./model-gateway";
+import { scheduleRoutes } from "./task-schedules";
+import { learningSnapshot } from "./execution-learning";
 import { modelManagement, accountManagement } from "./resource-management";
 import { capturePreferences, checkPreferenceBudget } from "./ai/preferences";
 import { pageQuery, pageKey, pageCursor } from "./pagination";
@@ -22,7 +31,7 @@ import { hash } from "../../../packages/contracts/src/security";
 import { nextOccurrence } from "../../../packages/contracts/src/schedule";
 import type { AppEnv, Variables } from "./env";
 import { now, taskFrom, runFrom, getRun, tick, queueReasons, type Row } from "./store";
-import { modelFrom, getModel, storeModel, probe, probeVision, validateEndpoint } from "./models";
+import { modelFrom, getModelProfile, storeModel, probe, probeVision } from "./models";
 import { seal, unseal } from "./crypto";
 import { accountMatchesDomain, accountSummary, accountRoutes } from "./accounts";
 import { accountCardRoutes } from "./account-cards";
@@ -60,11 +69,15 @@ const taskConditionsInput = z
   .strict();
 const taskStateInput = z.object({ enabled: z.boolean() });
 const runRequestInput = z.object({ requestId: idSchema });
+const probeVersion = validator("query", (v: { version?: string }) =>
+  z.object({ version: z.coerce.number().int().positive().optional() }).parse(v),
+);
 const modelEditInput = modelInputSchema.extend({
   expectedVersion: z.number().int().positive().optional(),
 });
 const retentionInput = z.object({ retentionDays: z.number().int().min(1).max(365) });
 export const user = userBase
+  .route("/tasks", scheduleRoutes)
   .route("/accounts", accountManagement)
   .get("/me", async (c) =>
     c.json({
@@ -92,9 +105,11 @@ export const user = userBase
       WHERE r.user_id=? AND r.history_deleted=0 ORDER BY r.created_at DESC,r.id DESC LIMIT 51`,
         )
         .bind(c.get("userId")),
-      db.prepare(
-        "SELECT v.id,v.version,v.config,v.capabilities,m.enabled,m.management_version FROM models m JOIN model_profile_versions v ON v.id=m.id AND v.version=m.current_version ORDER BY m.created_at DESC",
-      ),
+      db
+        .prepare(
+          "SELECT v.id,v.version,v.config,v.capabilities,v.connection_id,v.effective_region,m.owner_user_id,m.enabled,m.management_version FROM models m JOIN model_profile_versions v ON v.id=m.id AND v.version=m.current_version JOIN model_connections c ON c.id=v.connection_id AND c.owner_user_id IS m.owner_user_id WHERE json_extract(v.config,'$.protocol')='responses' AND (m.owner_user_id IS NULL OR m.owner_user_id=?) AND (m.enabled=1 OR ?=1) ORDER BY m.created_at DESC",
+        )
+        .bind(c.get("userId"), Number(c.get("actor") === "owner")),
       db
         .prepare(
           `SELECT a.enabled,a.management_version,a.id,a.name,a.origin,a.username_hint,a.created_at,a.assigned_device_id,a.login_reset,a.business_domains,
@@ -116,9 +131,24 @@ export const user = userBase
       nextTasksCursor: r[0].length > 50 ? pageCursor(r[0][49].created_at, r[0][49].id) : null,
       nextRunsCursor: r[1].length > 50 ? pageCursor(r[1][49].created_at, r[1][49].id) : null,
       runs: r[1].slice(0, 50).map((row) => runFrom({ ...row, queue_reason: reasons.get(row.id) })),
+      ...(c.get("actor") === "owner"
+        ? {
+            modelConnections: (
+              await db
+                .prepare(
+                  "SELECT * FROM model_connections WHERE owner_user_id IS NULL ORDER BY name,id",
+                )
+                .all<Row>()
+            ).results.map(connectionFrom),
+          }
+        : {}),
       models: r[2]
         .map(modelFrom)
-        .map((m) => (c.get("actor") === "owner" ? m : { ...m, baseUrl: "", hasKey: false })),
+        .map((m) =>
+          c.get("actor") === "owner"
+            ? m
+            : { ...m, connectionId: undefined, region: undefined, effectiveRegion: undefined },
+        ),
       me: { id: c.get("userId"), role: c.get("member").role, email: c.get("member").email },
       quota: await quotaSummary(db, c.get("userId"), c.get("member")),
       accounts: r[3].map(accountSummary),
@@ -235,7 +265,7 @@ export const user = userBase
       )
         throw Error("CONVERSATION_BUSY");
       const base = taskFrom(row),
-        model = await getModel(c.env, b.modelId);
+        model = await getModelProfile(c.env, b.modelId);
       if (
         !model.profile.capabilities.connection ||
         !model.profile.capabilities.tools ||
@@ -317,6 +347,24 @@ export const user = userBase
         .first<Row>();
       if (!row) throw new Error("TASK_NOT_FOUND");
       const task = taskFrom(row);
+      const schedule = await c.env.DB.prepare("SELECT version FROM task_schedules WHERE task_id=?")
+        .bind(id)
+        .first<{ version: number }>();
+      if (schedule)
+        return scheduleRoutes.request(
+          `http://local/${id}/schedule`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              requestId: crypto.randomUUID(),
+              expectedVersion: schedule.version,
+              expectedTaskVersion: task.version,
+              enabled,
+            }),
+          },
+          c.env,
+        );
       if (enabled) {
         if (row.context_withdrawn) throw Error("TASK_CONTEXT_WITHDRAWN");
         if (!row.confirmed_condition) throw Error("CONDITIONS_CONFIRMATION_REQUIRED");
@@ -347,7 +395,7 @@ export const user = userBase
       if (!row) throw new Error("TASK_NOT_FOUND");
       if (row.context_withdrawn) throw Error("TASK_CONTEXT_WITHDRAWN");
       const task = taskFrom(row);
-      const model = await getModel(c.env, task.modelId, task.modelVersion);
+      const model = await getModelProfile(c.env, task.modelId, task.modelVersion);
       if (!model.profile.capabilities.tools || model.profile.capabilities.structured === "none")
         throw new Error("MODEL_CAPABILITIES_REQUIRED");
       // A manual invocation does not enable periodic scheduling. It is eligible even if paused.
@@ -373,7 +421,7 @@ export const user = userBase
       return c.json(
         await enqueueTaskDispatch(
           c.env.DB,
-          { ...task, preferenceSnapshotId },
+          { ...task, preferenceSnapshotId, learningIds: await learningSnapshot(c.env.DB, task) },
           `manual:${task.id}:${requestId}`,
         ),
       );
@@ -389,7 +437,7 @@ export const user = userBase
         run.queueReason = (await queueReasons(c.env.DB, c.get("userId"))).get(run.id);
       const [usage] = await c.env.DB.batch([
         c.env.DB.prepare(
-          `SELECT u.id,u.at,u.input_tokens,u.output_tokens,p.config FROM model_usage u JOIN model_profile_versions p ON p.id=u.model_id AND p.version=u.model_version WHERE run_id=? ${before ? "AND (u.at,u.id)<(?,?)" : ""} ORDER BY u.at DESC,u.id DESC LIMIT 51`,
+          `SELECT u.id,u.at,u.input_tokens,u.output_tokens,u.retired_cost,p.config FROM model_usage u LEFT JOIN model_profile_versions p ON p.id=u.model_id AND p.version=u.model_version WHERE run_id=? ${before ? "AND (u.at,u.id)<(?,?)" : ""} ORDER BY u.at DESC,u.id DESC LIMIT 51`,
         ).bind(run.id, ...(before ?? [])),
       ]);
       return c.json({
@@ -400,16 +448,16 @@ export const user = userBase
             ? pageCursor((usage.results[49] as Row).at, (usage.results[49] as Row).id)
             : null,
         usage: (usage.results.slice(0, 50) as Row[]).map((r: Row) => {
-          const p = JSON.parse(r.config);
+          const p = r.config ? JSON.parse(r.config) : {};
           return {
             input: r.input_tokens,
             output: r.output_tokens,
             cost:
               r.input_tokens === null ||
               r.output_tokens === null ||
-              p.inputPrice === null ||
-              p.outputPrice === null
-                ? null
+              p.inputPrice == null ||
+              p.outputPrice == null
+                ? (r.retired_cost ?? null)
                 : (r.input_tokens * p.inputPrice + r.output_tokens * p.outputPrice) / 1000000,
           };
         }),
@@ -465,6 +513,54 @@ export const user = userBase
     },
   );
 export const admin = adminBase
+  .get("/model-connections/:id/deletion", async (c) =>
+    c.json(await connectionDeletionPreview(c.env, idSchema.parse(c.req.param("id")))),
+  )
+  .delete("/model-connections/:id", async (c) => {
+    const id = idSchema.parse(c.req.param("id"));
+    // 预览不授予删除权；同一条写入重新检查所有历史版本，避免检查与删除间新增引用。
+    const result = await c.env.DB.prepare(
+      `DELETE FROM model_connections WHERE id=? AND owner_user_id IS NULL
+        AND NOT EXISTS(SELECT 1 FROM model_profile_versions WHERE connection_id=model_connections.id)`,
+    )
+      .bind(id)
+      .run();
+    if (!result.meta.changes) {
+      const exists = await c.env.DB.prepare(
+        "SELECT id FROM model_connections WHERE id=? AND owner_user_id IS NULL",
+      )
+        .bind(id)
+        .first();
+      if (!exists) return c.json({ error: "MODEL_CONNECTION_NOT_FOUND" }, 404);
+      return c.json({ error: "MODEL_CONNECTION_IN_USE" }, 409);
+    }
+    // 仅移除 TaskRelay 的连接登记，Cloudflare 中的网关、密钥及自定义提供方保持原样。
+    return c.json({ ok: true });
+  })
+  .post(
+    "/model-connections",
+    validator("json", (v: z.input<typeof connectionInputSchema>) => connectionInputSchema.parse(v)),
+    async (c) => c.json(await createConnection(c.env, c.req.valid("json")), 201),
+  )
+  .put(
+    "/model-connections/:id/region",
+    validator("json", (v: { defaultRegion: unknown; expectedRegion: unknown }) =>
+      z
+        .object({ defaultRegion: egressRegionSchema, expectedRegion: egressRegionSchema })
+        .strict()
+        .parse(v),
+    ),
+    async (c) => {
+      const { defaultRegion, expectedRegion } = c.req.valid("json");
+      const result = await c.env.DB.prepare(
+        "UPDATE model_connections SET default_region=? WHERE id=? AND owner_user_id IS NULL AND default_region=?",
+      )
+        .bind(defaultRegion, c.req.param("id"), expectedRegion)
+        .run();
+      if (!result.meta.changes) throw Error("RESOURCE_VERSION_CONFLICT");
+      return c.json({ ok: true });
+    },
+  )
   .route("/models", modelManagement)
   .post(
     "/models",
@@ -481,11 +577,18 @@ export const admin = adminBase
       );
     },
   )
-  .post("/models/:id/test", async (c) => {
-    const { profile } = await getModel(c.env, c.req.param("id"));
-    return c.json(await probe(c.env, profile.id, profile.version));
+  .post("/models/:id/test", probeVersion, async (c) => {
+    const id = c.req.param("id");
+    const env = { ...c.env, adminProbeModelId: id };
+    const { profile } = await getModelProfile(env, id, c.req.valid("query").version);
+    return c.json(await probe(env, id, profile.version));
   })
-  .post("/models/:id/vision", async (c) => c.json(await probeVision(c.env, c.req.param("id"))))
+  .post("/models/:id/vision", probeVersion, async (c) => {
+    const id = c.req.param("id");
+    return c.json(
+      await probeVision({ ...c.env, adminProbeModelId: id }, id, c.req.valid("query").version),
+    );
+  })
   .post("/devices/:id/revoke", async (c) => {
     await c.env.DB.prepare("UPDATE devices SET revoked=1 WHERE id=?").bind(c.req.param("id")).run();
     return c.json({ ok: true });
@@ -565,6 +668,7 @@ export const admin = adminBase
       try {
         const result = await egress<Record<string, string>>(c.env, {
           kind: "trace",
+          region: egressRegionSchema.parse(c.req.query("region") ?? "us"),
         });
         for (const [key, value] of Object.entries(result)) checks[`workerEgress_${key}`] = value;
       } catch (error) {

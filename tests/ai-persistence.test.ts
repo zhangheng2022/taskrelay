@@ -220,7 +220,7 @@ test("并发同一消息只执行一次，另一消息不能抢占 active turn",
   });
   const provider = globalThis.fetch;
   t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
-    if (requestUrl(input).startsWith("https://provider.example/")) {
+    if (requestUrl(input).startsWith("https://gateway.ai.cloudflare.com/")) {
       enter();
       await blocked;
     }

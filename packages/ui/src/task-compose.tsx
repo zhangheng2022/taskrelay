@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ChatMarkdown } from "./chat-markdown";
 import type { Snapshot, Transport } from "../../contracts/src/index";
 import { useThread } from "./use-thread";
 import { canUseModel, ModelSelector } from "./model-selector";
@@ -92,7 +93,7 @@ export function TaskCompose({
         {thread.page?.messages.map((m) => (
           <MessageScrollerItem key={m.id} messageId={m.id}>
             <ChatMessage speaker={m.role}>
-              {m.content}
+              {m.role === "assistant" ? <ChatMarkdown content={m.content} /> : m.content}
               <ChatAttachments
                 parts={m.parts ?? []}
                 transport={transport}

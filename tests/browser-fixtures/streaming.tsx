@@ -1,6 +1,7 @@
 /** 隔离流式布局夹具：真实 hook 与聊天滚动组件，合成事件不会连接业务服务。 */
 import { createRoot } from "react-dom/client";
 import { Thread, ChatMessage, DraftMessages } from "../../packages/ui/src/chat-parts";
+import { ChatMarkdown } from "../../packages/ui/src/chat-markdown";
 import { MessageScrollerItem } from "../../packages/ui/src/components/ui/message-scroller";
 import { useThread } from "../../packages/ui/src/use-thread";
 import type { ThreadPage } from "../../packages/contracts/src/conversation";
@@ -96,6 +97,11 @@ Object.assign(window, {
       page.drafts = [draft];
       changed?.();
     },
+    pending() {
+      draft = { ...draft, status: "pending", seq: draft.seq + 1 };
+      page.drafts = [draft];
+      changed?.();
+    },
   },
 });
 function Streaming() {
@@ -105,7 +111,9 @@ function Streaming() {
       <Thread>
         {current?.messages.map((message) => (
           <MessageScrollerItem key={message.id} messageId={message.id}>
-            <ChatMessage speaker={message.role}>{message.content}</ChatMessage>
+            <ChatMessage speaker={message.role}>
+              <ChatMarkdown content={message.content} />
+            </ChatMessage>
           </MessageScrollerItem>
         ))}
         <DraftMessages drafts={current?.drafts} />

@@ -86,9 +86,18 @@ function CodeBlockCopyButton({
   size = "icon-xs",
   className,
   onClick,
+  copyLabel = "Copy",
+  copiedLabel = "Copied",
+  errorLabel = "Copy failed",
   ...props
-}: React.ComponentProps<typeof Button> & { value: string }) {
+}: React.ComponentProps<typeof Button> & {
+  value: string;
+  copyLabel?: string;
+  copiedLabel?: string;
+  errorLabel?: string;
+}) {
   const [copied, setCopied] = React.useState(false);
+  const [failed, setFailed] = React.useState(false);
 
   React.useEffect(() => {
     if (!copied) {
@@ -106,21 +115,25 @@ function CodeBlockCopyButton({
         data-copied={copied || undefined}
         variant={variant}
         size={size}
-        aria-label={copied ? "Copied" : "Copy"}
+        aria-label={copied ? copiedLabel : copyLabel}
         className={cn(className)}
         onClick={(event) => {
           onClick?.(event);
-          navigator.clipboard
-            .writeText(value)
+          setFailed(false);
+          Promise.resolve()
+            .then(() => navigator.clipboard.writeText(value))
             .then(() => setCopied(true))
-            .catch(() => {});
+            .catch(() => {
+              setCopied(false);
+              setFailed(true);
+            });
         }}
         {...props}
       >
         {copied ? <CheckIcon /> : <CopyIcon />}
       </Button>
       <span aria-live="polite" className="sr-only">
-        {copied ? "Copied" : ""}
+        {failed ? errorLabel : copied ? copiedLabel : ""}
       </span>
     </>
   );

@@ -1,17 +1,20 @@
+import type { EgressRegion } from "../../../packages/contracts/src/index";
 import type { AppEnv } from "./env";
 import type { Inference } from "../../../packages/model/src/index";
 import { seal, unseal } from "./crypto";
 
 export type EgressJob =
-  | { kind: "trace" }
+  | { kind: "trace"; region?: EgressRegion }
   | {
       kind: "inference";
+      region: EgressRegion;
       modelId: string;
       version: number;
       request: Inference;
       runId: string | null;
       userId: string;
       reservationId: string;
+      adminProbe?: boolean;
       callId?: string;
       preview?: import("./chat-drafts").DraftTarget;
     };
@@ -25,7 +28,8 @@ export async function egress<T>(
   // This jurisdiction constrains the execution itself, unlike a placement hint.
   let region: AppEnv["MODEL_EGRESS"];
   try {
-    region = env.MODEL_EGRESS.jurisdiction("us");
+    const target = job.region ?? "us";
+    region = target === "auto" ? env.MODEL_EGRESS : env.MODEL_EGRESS.jurisdiction(target);
   } catch (error) {
     if ((error as Error).message === "Jurisdiction restrictions are not implemented in workerd.")
       throw new Error("MODEL_REGION_REQUIRES_DEPLOYMENT");

@@ -1,6 +1,7 @@
 import type { utilityProcess, UtilityProcess } from "electron";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { networkEventSchema, networkEventLimit, type NetworkEvent } from "../shared/network-log";
 import { limits, type TaskRun } from "../../../../packages/contracts/src/index";
 import type { Cloud } from "./cloud";
 import { Journal } from "./journal";
@@ -84,7 +85,12 @@ export class ExecutorHost {
   async flush() {
     for (const row of this.journal.pending()) {
       try {
-        const body = JSON.parse(row.body);
+        const queued = JSON.parse(row.body);
+        if (row.path.endsWith("/execution-record") && !this.protectedStates)
+          throw Error("OS_ENCRYPTION_UNAVAILABLE");
+        const body = row.path.endsWith("/execution-record")
+          ? (this.protectedStates!.decrypt(queued.encryptedRecord) as Record<string, unknown>)
+          : queued;
         const result = await this.cloud.request<{ synced?: boolean; revision?: number }>(
           "POST",
           row.path,
@@ -150,8 +156,27 @@ export class ExecutorHost {
         resolve();
       }),
     );
+    const events: NetworkEvent[] = [];
+    let truncated = false;
     child.on("message", (message) => {
       if (message?.generation !== gen || this.child !== child || this.stopping) return;
+      if (message.type === "network") {
+        const sample = networkEventSchema.safeParse(message.event);
+        if (truncated || !sample.success) return;
+        if (events.length === networkEventLimit) truncated = true;
+        else events.push(sample.data);
+        // 缓存随本机历史清理，独立于检查点，因此停止或崩溃不会覆盖已收到的记录。
+        try {
+          this.journal.cache("network:" + gen, {
+            host: new URL(run.task.entryUrl).hostname,
+            events,
+            truncated,
+          });
+        } catch {
+          /* 本机诊断写入失败不能中断运行或影响租约。 */
+        }
+        return;
+      }
       if (message.type === "alive") {
         this.alive = Date.now();
         return;
@@ -424,6 +449,14 @@ export class ExecutorHost {
       body?.epoch !== run.leaseEpoch
     )
       throw new Error("RUN_SCOPE_MISMATCH");
+    if (p.endsWith("/execution-record")) {
+      if (!this.protectedStates) throw Error("OS_ENCRYPTION_UNAVAILABLE");
+      const key = `record_${run.id}_${body.callId}`;
+      this.journal.queue(key, p, { encryptedRecord: this.protectedStates.encrypt(body) });
+      const result = await this.cloud.request("POST", p, body);
+      this.journal.remove(key);
+      return result;
+    }
     if (/\/(events|finish)$/.test(p)) {
       const key = p.endsWith("/finish") ? `finish_${run.id}` : `events_${body.events?.[0]?.id}`;
       this.journal.queue(key, p, body);

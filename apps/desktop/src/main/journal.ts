@@ -1,3 +1,4 @@
+import { networkLogSchema } from "../shared/network-log";
 import { journalSchema } from "./journal-schema";
 import { executionTimingSchema } from "../shared/execution-timing";
 import { DatabaseSync } from "node:sqlite";
@@ -100,22 +101,31 @@ export class Journal {
     this.db.exec("BEGIN IMMEDIATE;DELETE FROM cache;DELETE FROM journal;COMMIT;");
   }
   diagnostic() {
-    // 只取计时子对象；最新检查点可能只涵盖运行的一部分。
+    // 仅导出允许的计时与同一代运行的网络事件，最新记录可能不完整。
     const rows = this.db
       .prepare(
-        `SELECT run_id,state,updated_at,
+        `SELECT run_id,state,updated_at,cache.value AS network_log,
       CASE WHEN json_type(payload,'$.timing')='object'
            THEN json_extract(payload,'$.timing') END AS timing
-      FROM journal ORDER BY updated_at DESC,run_id DESC LIMIT 30`,
+      FROM journal LEFT JOIN cache ON cache.key=('network:' || journal.generation)
+      ORDER BY updated_at DESC,run_id DESC LIMIT 30`,
       )
-      .all() as { run_id: string; state: string; updated_at: number; timing: string | null }[];
+      .all() as {
+      run_id: string;
+      state: string;
+      updated_at: number;
+      network_log: string | null;
+      timing: string | null;
+    }[];
     return {
       schema: 4,
-      journal: rows.map(({ timing, ...row }) => {
+      journal: rows.map(({ timing, network_log, ...row }) => {
         const parsed =
           typeof timing === "string" && executionTimingSchema.safeParse(JSON.parse(timing));
+        const network = network_log && networkLogSchema.safeParse(JSON.parse(network_log));
         return {
           ...row,
+          ...(network && network.success ? { network: network.data } : {}),
           updated_at: new Date(row.updated_at).toISOString(),
           ...(parsed && parsed.success ? { timing: parsed.data } : {}),
         };

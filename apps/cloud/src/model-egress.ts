@@ -31,7 +31,7 @@ export class ModelEgress extends DurableObject<AppEnv> {
       }
       if (job.kind !== "inference") throw new Error("MODEL_EGRESS_INPUT_INVALID");
       return performInference(
-        this.env,
+        { ...this.env, adminProbeModelId: job.adminProbe ? job.modelId : undefined },
         job.modelId,
         job.version,
         job.request,

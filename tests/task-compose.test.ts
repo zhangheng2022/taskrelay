@@ -1,6 +1,7 @@
 import { dbTime } from "../apps/cloud/src/database";
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { productionModelFixture } from "./production-model-fixture";
 import { hash } from "../packages/contracts/src/security";
 const decision = (start = true) =>
@@ -13,33 +14,63 @@ const decision = (start = true) =>
     accountId: null,
     executionOutline: start ? ["打开目标网站", "读取页面内容并反馈"] : [],
   });
-for (const protocol of ["chat", "responses"] as const)
-  test(`新交办/${protocol}：意图检查后直接启动，同一会话且重复发送不重复启动`, async (t) => {
-    const s = await productionModelFixture(t, protocol),
-      th = (await s.request("/api/user/threads", { modelId: "model_test" })).data;
-    s.replies(decision());
-    const b = { requestId: "start_one", content: "查看 example.com" };
-    const r = await s.request(`/api/user/threads/${th.id}/messages`, b);
-    assert.equal(r.status, 202, JSON.stringify(r.data));
-    assert.ok(r.data.taskId, JSON.stringify(r.data));
-    const retry = await s.request(`/api/user/threads/${th.id}/messages`, b);
-    assert.equal(retry.data.id, th.id);
-    assert.equal(s.jobs(), 1);
-    assert.equal(
-      retry.data.messages.filter((m: { role: string }) => m.role === "user").length,
-      1,
-      "重试已启动交办不能再追加一条执行中补充",
-    );
-    assert.equal(
-      s.sql.prepare("SELECT COUNT(*) n FROM runs WHERE task_id=?").get(r.data.taskId)!.n,
-      1,
-    );
-    assert.equal(
-      s.sql.prepare("SELECT execution_protocol FROM runs WHERE task_id=?").get(r.data.taskId)!
-        .execution_protocol,
-      19,
-    );
-  });
+test("普通咨询的矛盾交办标记只修复一次，始终不提交缺少目标的任务", async (t) => {
+  const s = await productionModelFixture(t);
+  const thread = (await s.request("/api/user/threads", { modelId: "model_test" })).data;
+  const send = (requestId: string) =>
+    s.request(`/api/user/threads/${thread.id}/messages`, {
+      requestId,
+      content: "日本的首都是哪里？",
+    });
+  const reply = { ...JSON.parse(decision(false)), reply: "东京。" };
+  const invalid = JSON.stringify({ ...reply, start: true });
+  s.replies(invalid, JSON.stringify(reply));
+  const fixed = await send("repair_handoff");
+  assert.equal(fixed.data.messages.at(-1).content, "东京。");
+  assert.ok(!fixed.data.taskId);
+  assert.equal(s.requests.length, 2);
+  s.replies(invalid, invalid);
+  const failed = await send("invalid_again");
+  assert.equal(failed.data.status, "failed");
+  assert.equal(failed.data.error, "MODEL_INVALID_JSON");
+  assert.ok(!failed.data.taskId);
+  assert.equal(s.requests.length, 4);
+  assert.equal(s.sql.prepare("SELECT count(*) n FROM runs WHERE thread_id=?").get(thread.id)!.n, 0);
+});
+test(`新交办/Responses：意图检查后直接启动，同一会话且重复发送不重复启动`, async (t) => {
+  const s = await productionModelFixture(t, "responses"),
+    th = (await s.request("/api/user/threads", { modelId: "model_test" })).data;
+  s.replies(decision());
+  const b = { requestId: "start_one", content: "查看 example.com" };
+  const r = await s.request(`/api/user/threads/${th.id}/messages`, b);
+  assert.equal(r.status, 202, JSON.stringify(r.data));
+  assert.ok(r.data.taskId, JSON.stringify(r.data));
+  assert.match(r.data.messages.at(-1).content, /执行步骤/);
+  assert.equal(r.data.scheduleCard.state, "off");
+  assert.equal(r.data.scheduleCard.ready, true);
+  assert.equal(r.data.scheduleCard.nextRunAt, null);
+  assert.equal(r.data.scheduleCard.frequency, null);
+  const schedule = await s.request(`/api/user/tasks/${r.data.taskId}/schedule`, null, "GET");
+  assert.deepEqual(schedule.data.card, r.data.scheduleCard);
+  const retry = await s.request(`/api/user/threads/${th.id}/messages`, b);
+  assert.equal(retry.data.id, th.id);
+  assert.deepEqual(retry.data.scheduleCard, r.data.scheduleCard);
+  assert.equal(s.jobs(), 1);
+  assert.equal(
+    retry.data.messages.filter((m: { role: string }) => m.role === "user").length,
+    1,
+    "重试已启动交办不能再追加一条执行中补充",
+  );
+  assert.equal(
+    s.sql.prepare("SELECT COUNT(*) n FROM runs WHERE task_id=?").get(r.data.taskId)!.n,
+    1,
+  );
+  assert.equal(
+    s.sql.prepare("SELECT execution_protocol FROM runs WHERE task_id=?").get(r.data.taskId)!
+      .execution_protocol,
+    19,
+  );
+});
 test("意图不明只追问，不创建运行", async (t) => {
   const s = await productionModelFixture(t),
     th = (await s.request("/api/user/threads", { modelId: "model_test" })).data;
@@ -49,7 +80,64 @@ test("意图不明只追问，不创建运行", async (t) => {
     content: "帮我处理一下",
   });
   assert.equal(r.data.taskId, null);
+  assert.equal(r.data.scheduleCard, null);
   assert.match(r.data.messages.at(-1).content, /请说明/);
+});
+
+test("首次拆解即可保存频率，再次交办后保留频率并等待用户重新启用", async (t) => {
+  const s = await productionModelFixture(t);
+  const th = (await s.request("/api/user/threads", { modelId: "model_test" })).data;
+  const path = `/api/user/threads/${th.id}/messages`;
+  s.replies(decision());
+  const first = (await s.request(path, { requestId: "initial", content: "读取网站" })).data;
+  const frequency = { kind: "daily", time: "09:00", timezone: "Asia/Shanghai" };
+  const saved = await s.request(`/api/user/tasks/${first.taskId}/schedule`, {
+    requestId: "enable_plan",
+    expectedVersion: first.scheduleCard.version,
+    expectedTaskVersion: first.scheduleCard.taskVersion,
+    enabled: true,
+    frequency,
+  });
+  assert.equal(saved.data.card.state, "enabled");
+  s.sql
+    .prepare("UPDATE runs SET status='succeeded',cleanup_pending=0 WHERE task_id=?")
+    .run(first.taskId);
+  s.sql
+    .prepare("UPDATE account_dispatch_groups SET state='completed' WHERE task_id=?")
+    .run(first.taskId);
+  s.replies(decision());
+  const second = (await s.request(path, { requestId: "revise", content: "改为读取今日数据" })).data;
+  assert.equal(second.scheduleCard.taskVersion, first.scheduleCard.taskVersion + 1);
+  assert.equal(second.scheduleCard.state, "paused");
+  assert.equal(second.scheduleCard.ready, true);
+  assert.deepEqual(second.scheduleCard.frequency, frequency);
+  assert.equal(second.scheduleCard.nextRunAt, null);
+});
+
+test("历史拆解补建卡片，后到的用户消息不能借用旧拆解启用", async (t) => {
+  const s = await productionModelFixture(t);
+  // 还原到本次迁移前的数据库，在真实交办入口生成一份历史拆解。
+  s.sql.exec("DROP TRIGGER schedule_on_published_outline; DROP VIEW published_task_outlines;");
+  const th = (await s.request("/api/user/threads", { modelId: "model_test" })).data;
+  s.replies(decision());
+  const path = `/api/user/threads/${th.id}/messages`;
+  const plan = (await s.request(path, { requestId: "old_plan", content: "读取网站" })).data;
+  assert.equal(plan.scheduleCard, null);
+  await s.request(path, { requestId: "after_plan", content: "只读取今日的数据" });
+  const migration = new URL(
+    "../apps/cloud/migrations/0006_schedule_on_outline.sql",
+    import.meta.url,
+  );
+  s.sql.exec(readFileSync(migration, "utf8"));
+  const schedule = await s.request(`/api/user/tasks/${plan.taskId}/schedule`, null, "GET");
+  assert.equal(schedule.data.card.state, "off");
+  assert.equal(schedule.data.card.ready, false);
+  assert.equal(schedule.data.card.nextRunAt, null);
+  assert.equal(
+    s.sql.prepare("SELECT confirmed_seq FROM task_schedules WHERE task_id=?").get(plan.taskId)!
+      .confirmed_seq,
+    1,
+  );
 });
 
 test("交办已入队但尚未提升时，原请求重试继续处理且不重复入队", async (t) => {

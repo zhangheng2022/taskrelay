@@ -9,7 +9,6 @@ import { advanceDispatchGroups } from "../apps/cloud/src/account-dispatch";
 import { enqueue, claim, tick } from "../apps/cloud/src/store";
 import { PROTOCOL_VERSION, type TaskRun } from "../packages/contracts/src/index";
 import { hash } from "../packages/contracts/src/security";
-import { seal } from "../apps/cloud/src/crypto";
 import { testDb, insertTask, task } from "./helpers";
 
 async function fixture(t: TestContext) {
@@ -65,19 +64,18 @@ async function fixture(t: TestContext) {
   }
   sql
     .prepare(
-      "INSERT INTO model_profile_versions(id,version,config,secret,capabilities,created_at) VALUES(?,1,?,?,?,?)",
+      "INSERT INTO model_profile_versions(id,version,config,connection_id,effective_region,capabilities,created_at) VALUES(?,1,?,'conn_test','us',?,?)",
     )
     .run(
       "model_test",
       JSON.stringify({
         name: "test",
-        baseUrl: "https://provider.example/v1",
+        region: "inherit",
         model: "fixture",
-        protocol: "chat",
+        protocol: "responses",
         inputPrice: null,
         outputPrice: null,
       }),
-      await seal("fixture-key", env.MASTER_KEY, "model:model_test:1"),
       JSON.stringify({
         connection: true,
         tools: true,

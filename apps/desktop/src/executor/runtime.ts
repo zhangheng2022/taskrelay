@@ -19,7 +19,9 @@ import type { ContextBudget } from "../../../../packages/model/src/agent-context
 import { chatSnapshots } from "./chat-snapshots";
 import { compactPageUrls, pageContextGuide } from "./page-context";
 import type { BrowserStateAccess } from "../../../../packages/contracts/src/accounts";
+import type { NetworkEvent } from "../shared/network-log";
 export interface RuntimePort {
+  networkEvent?: (event: NetworkEvent) => void;
   rpc<T>(path: string, body?: unknown, binary?: Uint8Array): Promise<T>;
   checkpoint(state: string, payload: unknown): Promise<void>;
   cancelled(): boolean;
@@ -177,15 +179,19 @@ export async function execute(
       image = await shot(event);
     if (image.parts.length) await say(event, "协助所需的当前页面。", image.parts, false);
   };
+  let executionRecordCount = 0;
+  let executionExperience: string[] = [];
   const context = async () => {
     const result = await api<{
       messages: ChatContext[];
       modelContext?: ContextBudget;
       preferenceSnapshot?: TaskPreference[];
+      executionExperience?: string[];
       accountBinding?: { accountId: string | null; credentialVersion: number; stateEpoch: number };
-    }>("context", { after: cursor }, "context");
+    }>("context", { after: cursor, supportsScheduling: true }, "context");
     if (result.modelContext) modelContext = result.modelContext;
     if (result.preferenceSnapshot) taskPreferences = result.preferenceSnapshot;
+    if (result.executionExperience) executionExperience = result.executionExperience;
     if (result.accountBinding) {
       if (accountContext?.accountId && result.accountBinding.accountId !== accountContext.accountId)
         throw Error("ACCOUNT_CONTEXT_MISMATCH");
@@ -233,7 +239,12 @@ export async function execute(
     outcome: "reported" | "error" | "stopped" | "unconfirmed",
     expectedUserSeq?: number,
   ) => {
-    const result = { summary: redactSnapshot(summary, secrets), outcome, evidence: [] };
+    const result = {
+      summary: redactSnapshot(summary, secrets),
+      outcome,
+      evidence: [],
+      executionRecordCount,
+    };
     let stateCandidateKey: string | null = null;
     if (supportsState && !writePending && ["succeeded", "failed"].includes(status))
       try {
@@ -392,7 +403,11 @@ export async function execute(
   };
   try {
     const sdk = await adapters.loadSdk();
-    proxy = await adapters.startProxy();
+    proxy = await adapters.startProxy(
+      port.networkEvent
+        ? { entryHost: new URL(run.task.entryUrl).hostname, event: port.networkEvent }
+        : undefined,
+    );
     guard();
     await checkpoint("starting", { run });
     const launch = await port.rpc<{ cdpUrl: string; state?: BrowserStateAccess }>("local:browser", {
@@ -478,6 +493,7 @@ export async function execute(
               accountContext,
               accountName: run.accountName,
               taskPreferences,
+              executionExperience,
               initialNavigationError: entryError,
               untrustedPage: observation,
             }),
@@ -503,6 +519,7 @@ export async function execute(
             messages,
             purpose,
             supportsScreenshot: true,
+            supportsScheduling: true,
             supportsDrafts: true,
             expectedUserSeq: userSeq,
           },
@@ -524,7 +541,7 @@ export async function execute(
         return userSeq !== plannedUserSeq;
       },
       say: (text, event) => say(`thought:${event}`, text),
-      record: (call, result) => {
+      record: async (call, result) => {
         if (call.name === "model") return;
         history.push(
           {
@@ -540,6 +557,19 @@ export async function execute(
           },
           { role: "tool", tool_call_id: call.id, content: JSON.stringify(result) ?? "null" },
         );
+        executionRecordCount++;
+        const content = redactSnapshot(
+          JSON.stringify({
+            tool: call.name,
+            arguments: call.name === "offerAccountSave" ? "[凭据已省略]" : call.arguments,
+            result,
+          }),
+          secrets,
+        );
+        await api("execution-record", {
+          callId: call.id,
+          content: content.length > 32000 ? `${content.slice(0, 31980)}\n[记录截断]` : content,
+        }).catch(() => {});
       },
       error: async (call, error) => {
         if (call.name === "offerAccountSave") {
@@ -579,6 +609,12 @@ export async function execute(
         else await fresh();
         if (writePending && !["observe", "extract", "wait", "screenshot"].includes(call.name))
           throw Error("ACTION_RESULT_PENDING");
+        if (call.name === "confirmRequirements")
+          return api("requirements", {
+            summary: args.summary,
+            changed: args.changed,
+            userSeq: plannedUserSeq,
+          });
         if (call.name === "offerAccountSave") {
           for (const value of [args.username, args.password])
             if (typeof value === "string" && value) secrets.add(value);

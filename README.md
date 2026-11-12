@@ -2,7 +2,7 @@
 
 **交代任务，在同一聊天跟进结果。**
 
-云端 LangGraph 理解意图并生成可调整的大步骤，桌面官方 createAgent 负责具体执行；LangChain 统一模型与工具消息，用户原话和补充直接交给执行器 AI 与 Stagehand，同一聊天展示过程、截图、协助及最终回复。不要求输入字段分类、自定义动作计划或独立成功审核。新交办目前按手动任务执行，运行条件卡与定时暂不扩展。源码版本、部署、安装和真实验收范围见验收记录。
+云端 LangGraph 理解意图并生成可调整的大步骤，桌面官方 createAgent 负责具体执行；LangChain 统一模型与工具消息，用户原话和补充直接交给执行器 AI 与 Stagehand，同一聊天展示过程、截图、协助及最终回复。不要求输入字段分类、自定义动作计划或独立成功审核。首次交办立即执行；执行器理解需求后在会话右上角显示定时卡片，用户选择频率并启用后续运行。每次结束后后台总结操作经验，供后续执行参考。源码版本、部署、安装和真实验收范围见验收记录。
 
 [![CI](https://github.com/zhangheng2022/taskrelay/actions/workflows/ci.yml/badge.svg)](https://github.com/zhangheng2022/taskrelay/actions/workflows/ci.yml)
 [更新记录](CHANGELOG.md) · [验收范围](docs/ACCEPTANCE.md) · [部署说明](docs/DEPLOYMENT.md) · [问题反馈](https://github.com/zhangheng2022/taskrelay/issues)
@@ -12,22 +12,22 @@
 ## 当前状态
 
 - **开发预览阶段**：公开更新目录、源码版本与本机安装分别核验，当前版本与验证范围见部署和验收记录。Windows 自签名仅面向预置信任的受控设备，不保证消除 SmartScreen 提示，非稳定版。
-- 工作空间：[tr.zhangheng.eu.org](https://tr.zhangheng.eu.org)，公开注册当前关闭。原 `taskrelay.zhangheng.workers.dev` 地址继续兼容已配对客户端。
+- 工作空间：[tr.zhangheng.eu.org](https://tr.zhangheng.eu.org)，外部用户可注册并验证邮箱后使用。原 `taskrelay.zhangheng.workers.dev` 地址继续兼容已配对客户端。
 - Windows 是独立执行器；任务编辑、聊天、历史与模型设置在网站完成。当前源码支持发布通知触发检查、每 60 秒补查、自动下载与空闲安装重启；更新网络经过 Cloudflare，客户端不直连 GitHub。旧版首次升级仍需按原流程确认，发布通道状态见验收台账。
 - 已有源码测试、开发机打包，以及真实模型在虚构站上的协助、批准/拒绝、提交后进程中断与只读核查证据。干净 Windows、更多模型提供方、断网/休眠等其他故障和连续观察仍需补齐，以 [验收台账](docs/ACCEPTANCE.md) 为准。
 - Cloudflare 保持 Free，不设置项目级每日平台预算或个人次数门槛；**模型服务费用由提供方单独计算**。
 
 ## 可以做什么
 
-| 能力         | 行为与边界                                                                       |
-| ------------ | -------------------------------------------------------------------------------- |
-| 自然语言交办 | 明确交办直接执行；缺少必要信息才追问；当前按手动交办执行                         |
-| 执行与调度   | 云端管理版本、领取与租约；新条件卡/定时配置暂不开放，旧确认条件兼容保留          |
-| 浏览器操作   | AI 根据目标选择相关公开网站并读取、导航、填写和提交；保留公网访问与凭据保护      |
-| 人工协助     | 执行器先求助云端，必要时询问用户；协助加密保存，本人聊天可查看                   |
-| 结果与报告   | 过程、图片和最终回复进入同一聊天；“已回复”不等于全部完成，未知操作不自动重放     |
-| 模型兼容     | Chat Completions / Responses，自由填写模型名；必须通过所需能力测试，不静默换模型 |
-| 用户与设备   | 用户工作空间隔离，管理员维护共享模型与可信 Windows 设备池                        |
+| 能力         | 行为与边界                                                                   |
+| ------------ | ---------------------------------------------------------------------------- |
+| 自然语言交办 | 明确交办首次直接执行；缺少必要信息才追问；后续定时由用户启用                 |
+| 执行与调度   | 云端管理版本、领取与租约；支持单次、每天、每周和每月定时，兼容旧频率         |
+| 浏览器操作   | AI 根据目标选择相关公开网站并读取、导航、填写和提交；保留公网访问与凭据保护  |
+| 人工协助     | 执行器先求助云端，必要时询问用户；协助加密保存，本人聊天可查看               |
+| 结果与报告   | 过程、图片和最终回复进入同一聊天；“已回复”不等于全部完成，未知操作不自动重放 |
+| 模型兼容     | Responses，自由填写模型名；必须通过所需能力测试，不静默换模型                |
+| 用户与设备   | 用户工作空间隔离，管理员维护共享模型与可信 Windows 设备池                    |
 
 普通和批量任务使用同一 AI 工具循环，根据实际页面反馈报告结果，不提供文字或地址硬匹配条件。共享设备须由可信管理员维护，浏览器 Profile 隔离不对设备管理员隐藏数据。TaskRelay 不提供任意 JavaScript、Shell、主机文件操作或远程浏览器接管工具。
 
@@ -37,12 +37,12 @@ flowchart LR
   W <--> C[Cloudflare：身份、调度、租约与结果]
   C <--> E[Windows：独立执行器]
   E <--> S[公开网站：专用 Chromium]
-  C --> M[美国区域模型出站服务]
+  C --> M[按模型版本选区的 AI Gateway 出站服务]
 ```
 
 ## 使用
 
-1. 管理员在网站“设置 → 模型服务”配置公网 OpenAI 兼容服务和任意模型名称；普通用户使用管理员提供的模型。默认 Chat Completions，也支持 Responses。Base URL 示例 `https://api.openai.com/v1`；粘贴完整 `/responses` 或 `/chat/completions` 地址时自动规范，并检查协议是否一致。
+1. 管理员在网站“设置 → 模型服务”登记供应商连接并配置模型名。平台网关支持第三方供应商、带路径前缀的自定义公网 HTTPS 服务和 Workers AI。每个模型版本使用 Responses，用户可选择已启用的可用模型。
 2. 保存后执行“测试能力”。连接、工具调用、结构化输出都通过后才能创建 AI 任务。图像能力可以单独测试。未返回用量或未设置单价时显示未知。
 3. 管理员安装 Windows x64 的 `TaskRelay Setup.exe`，在执行器配对入口通过系统浏览器授权，核对网站和客户端的校验码。
 4. 点击“新建任务”，选择模型并描述目标；明确交办后排队执行，咨询只回答。运行中在原对话补充要求，或回复协助。
@@ -50,9 +50,9 @@ flowchart LR
 
 客户端关闭窗口后保留托盘；从托盘选择退出会停止本机进程。自启动默认关闭。离线时可读缓存、停止本机执行，不能创建或调度新任务。
 
-网站采用 shadcn/ui 默认中性色主题，支持浅色、深色和跟随系统。左侧选择任务，中间查看同一对话、步骤与结果，底部继续沟通；停止当前运行与暂停后续调度分别处理。当前没有新条件卡生成入口。Windows 使用独立执行器界面，仅提供连接、状态、暂停、停止、自启动和诊断。
+网站采用 shadcn/ui 默认中性色主题，支持浅色、深色和跟随系统。左侧选择任务，中间查看同一对话、步骤与结果，底部继续沟通；停止当前运行与暂停后续调度分别处理。定时卡片支持预览、启停和查看执行总结；修改需求后暂停并重新确认。Windows 使用独立执行器界面，仅提供连接、状态、暂停、停止、自启动和诊断。
 
-所有模型请求统一由美国区域的 Cloudflare Durable Object 后台发出，覆盖能力测试、任务解析、执行规划和人工协助解析。网站及桌面均不直连模型服务，也不向模型服务传递访问者的地区/IP 请求上下文。现有 `gpt-6-luna / Responses` 已通过真实连接、工具及严格结构化输出测试；这不等同于真实网站任务闭环验收。
+模型请求由 Cloudflare Durable Object 的后台 alarm 发往平台 AI Gateway。管理员先登记供应商连接及托管密钥，再创建模型并测试能力。连接默认区域可选自动、美国和欧盟，模型可以覆盖并在版本中固定。配置步骤见[部署说明](docs/DEPLOYMENT.md#模型出站实现)。
 
 ## 开发
 
@@ -77,7 +77,7 @@ npm run prepare:browser
 npm run desktop
 ```
 
-本地 workerd 不实现地区约束，真实模型调用会明确返回 `MODEL_REGION_REQUIRES_DEPLOYMENT`。真实模型联调请使用已部署的 Cloudflare 环境；本地协议/状态测试使用隔离模拟，不静默回退到本地网络发送密钥。
+本地 workerd 不实现地区约束，指定美国或欧盟时会明确返回 `MODEL_REGION_REQUIRES_DEPLOYMENT`。真实模型联调请使用已部署的 Cloudflare 环境；本地协议/状态测试使用隔离模拟，不静默回退到本地网络发送密钥。
 
 ```powershell
 npm run typecheck
@@ -141,14 +141,14 @@ node scripts/smoke.mjs "$env:LOCALAPPDATA\TaskRelay\app-<实际版本>\TaskRelay
 
 ## 工程结构
 
-| 路径               | 职责                                                                |
-| ------------------ | ------------------------------------------------------------------- |
-| apps/web           | Vite 网站和 Cloudflare 部署配置                                     |
-| apps/cloud         | DO 内的 Hono API、D1 调度/租约/幂等、加密短期证据、美国区域模型网关 |
-| apps/desktop       | Electron Main、受限 Preload、独立 utilityProcess 执行器、Forge      |
-| packages/contracts | Zod 协议、授权策略、时区调度                                        |
-| packages/model     | Chat Completions / Responses 适配                                   |
-| packages/ui        | 自行设计的 React + shadcn/ui 共享界面                               |
+| 路径               | 职责                                                            |
+| ------------------ | --------------------------------------------------------------- |
+| apps/web           | Vite 网站和 Cloudflare 部署配置                                 |
+| apps/cloud         | DO 内的 Hono API、D1 调度/租约/幂等、加密短期证据、分区模型网关 |
+| apps/desktop       | Electron Main、受限 Preload、独立 utilityProcess 执行器、Forge  |
+| packages/contracts | Zod 协议、授权策略、时区调度                                    |
+| packages/model     | Responses 适配                                                  |
+| packages/ui        | 自行设计的 React + shadcn/ui 共享界面                           |
 
 架构现状与改进候选见 [ARCHITECTURE.md](docs/ARCHITECTURE.md)，开发及技能指引见 [AGENTS.md](AGENTS.md)。部署说明见 [DEPLOYMENT.md](docs/DEPLOYMENT.md)，实际验证范围见 [ACCEPTANCE.md](docs/ACCEPTANCE.md)。
 
@@ -156,13 +156,13 @@ node scripts/smoke.mjs "$env:LOCALAPPDATA\TaskRelay\app-<实际版本>\TaskRelay
 
 ### LangChain 与 Cloudflare 免费运行架构
 
-普通 Worker 只处理静态资源和轻量路由，Hono 业务进入 SQLite Durable Objects；对话通过 D1 outbox 异步执行，网站与客户端使用休眠 WebSocket 通知和低频兜底。短期图片在 DO 加密保存，生产已移除 R2 绑定。模型 API 保持现有配置与美国 alarm 出站链路，模型提供方费用不属于 Cloudflare 免费承诺。免费预算耗尽时停止接收新工作，不自动开通付费服务；详见 [免费部署](docs/DEPLOYMENT.md#资源配置与已记录部署)。
+普通 Worker 只处理静态资源和轻量路由，Hono 业务进入 SQLite Durable Objects；对话通过 D1 outbox 异步执行，网站与客户端使用休眠 WebSocket 通知和低频兜底。短期图片在 DO 加密保存，生产已移除 R2 绑定。模型 API 使用按固定版本选区的 alarm 网关出站链路，模型提供方费用不属于 Cloudflare 免费承诺。免费预算耗尽时停止接收新工作，不自动开通付费服务；详见 [免费部署](docs/DEPLOYMENT.md#资源配置与已记录部署)。
 
 `node scripts/test-free-runtime.mjs` 验证隔离 workerd 的真实 DO 路由、异步 alarm、加密分块证据及 WebSocket 撤销；不调用真实模型。
 
 本机 CPU 对照采样：`node scripts/profile-worker.mjs .cache/ai-profile/current`。脚本在本机 workerd 使用隔离 D1、合成账号和模型响应，输出 CPU profile 与统计；不读取生产密钥，不验证真实模型地区。统计含本地 D1 绑定开销，不能等同 Cloudflare 计费 CPU 或免费套餐达标证明。保留某次构建后可加 `--reuse-bundle` 重跑同一版本。
 
-云端以 LangGraph 管理交办、阶段计划和协助，D1 加密保存图检查点；桌面以 LangGraph 管理现场工具循环，协助暂停只在同一执行进程内恢复。LangChain 统一模型和工具消息，平台 adapter 保持设备租约、动作防重和美国模型出站约束。设置中本人启用的记忆会在交办时固定为加密偏好快照，供规划、执行和协助共同使用；旧记忆默认停用，不自动从聊天提取。
+云端以 LangGraph 管理交办、阶段计划和协助，D1 加密保存图检查点；桌面以 LangGraph 管理现场工具循环，协助暂停只在同一执行进程内恢复。LangChain 统一模型和工具消息，平台 adapter 保持设备租约、动作防重和版本化模型出站约束。设置中本人启用的记忆会在交办时固定为加密偏好快照，供规划、执行和协助共同使用；旧记忆默认停用，不自动从聊天提取。
 
 本地新库使用 `npm run db:migrate` 初始化独立 v2 基线。当前协议、桌面版本和本地结构版本以[合同源码](packages/contracts/src/index.ts)、[桌面清单](apps/desktop/package.json)及[本地存储结构](apps/desktop/src/main/journal-schema.ts)为准。正常运行不兼容旧库、旧字段或旧聊天游标；旧库不能直接应用新基线。原 0001–0030 SQL 仅保留在 `scripts/db/legacy-schema` 供一次性离线转换使用。`npm run db:convert -- --source <路径> --inspect` 只读预检，`npm run db:benchmark` 在忽略目录生成合成容量对照；转换、导入和回退要求见 [部署与恢复](docs/DEPLOYMENT.md#存储-v2-离线切换保留数据参考流程)。生产和本机安装状态分别记录在 [验收](docs/ACCEPTANCE.md)，不能从源码版本推断已上线。
 

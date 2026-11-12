@@ -11,7 +11,6 @@ import { testDb, task, insertTask } from "./helpers";
 import { claim, enqueue, queueReasons } from "../apps/cloud/src/store";
 import { quotaDay, quotaReset, reserve, quotaSummary } from "../apps/cloud/src/tenancy";
 import { hash } from "../packages/contracts/src/security";
-import { seal } from "../apps/cloud/src/crypto";
 
 async function fixture() {
   const { db, sql } = testDb();
@@ -86,6 +85,31 @@ async function fixture() {
   }
   return { db, sql, env, request, cookies, ownedTask };
 }
+
+test("服务删除与引用预览只允许管理员会话，拒绝普通用户、匿名和设备令牌", async (t) => {
+  const s = await fixture();
+  t.after(() => s.sql.close());
+  for (const [method, suffix] of [
+    ["GET", "/deletion"],
+    ["DELETE", ""],
+  ]) {
+    const path = "/api/admin/model-connections/conn_test" + suffix;
+    assert.equal((await s.request(path, s.cookies.alice, undefined, method)).status, 403);
+    assert.equal((await s.request(path, "", undefined, method)).status, 401);
+    assert.equal(
+      (
+        await app.request(
+          "http://localhost" + path,
+          { method, headers: { Authorization: "Bearer " + "a".repeat(64) } },
+          s.env,
+        )
+      ).status,
+      403,
+    );
+    assert.ok(s.sql.prepare("SELECT id FROM model_connections WHERE id='conn_test'").get());
+    assert.equal((await s.request(path, s.cookies.owner, undefined, method)).status, 200);
+  }
+});
 
 test("发布恢复记录拥有领取开关，管理员不能覆盖进行中的暂停", async (context) => {
   const s = await fixture();
@@ -309,26 +333,29 @@ test("两用户使用同一幂等编号仍各自创建任务；账号、协助�
   s.env.EVIDENCE_STORE = {
     getByName: () => ({ get: async () => new Uint8Array([1, 2, 3]).buffer }),
   } as any;
-  s.sql.prepare("INSERT INTO model_profile_versions VALUES(?,1,?,?,?,?)").run(
-    "model_test",
-    JSON.stringify({
-      name: "shared",
-      baseUrl: "https://provider.example/v1",
-      model: "test",
-      protocol: "chat",
-      inputPrice: 1,
-      outputPrice: 1,
-    }),
-    await seal("key", s.env.MASTER_KEY, "model:model_test:1"),
-    JSON.stringify({
-      connection: true,
-      tools: true,
-      structured: "schema",
-      vision: false,
-      testedAt: null,
-    }),
-    dbTime(new Date().toISOString()),
-  );
+  s.sql
+    .prepare(
+      "INSERT INTO model_profile_versions(id,version,config,connection_id,effective_region,capabilities,created_at) VALUES(?,1,?,'conn_test','us',?,?)",
+    )
+    .run(
+      "model_test",
+      JSON.stringify({
+        name: "shared",
+        region: "inherit",
+        model: "test",
+        protocol: "responses",
+        inputPrice: 1,
+        outputPrice: 1,
+      }),
+      JSON.stringify({
+        connection: true,
+        tools: true,
+        structured: "schema",
+        vision: false,
+        testedAt: null,
+      }),
+      dbTime(new Date().toISOString()),
+    );
   async function create(who: string, input: any, requestId: string) {
     const thread = (await (
       await s.request("/api/user/threads", s.cookies[who], { modelId: "model_test" })

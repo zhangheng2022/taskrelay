@@ -1,3 +1,4 @@
+import { resolveScheduleIntent } from "../task-schedules";
 /**
  * 交办图按“理解意图 → 可选任务交接 → 回复”推进；明确交办时产出可调整的大步骤。
  * 检查点保存图状态，命令模块承担任务交接的幂等性，不在此规划页面控件操作。
@@ -10,16 +11,25 @@ import { commitDecision } from "./commands";
 import { GRAPH_VERSION, openGraph, type GraphScope } from "./graph";
 import { RelayChatModel } from "./model";
 
-const decisionSchema = z.object({
-  reply: z.string(),
-  start: z.boolean(),
-  title: z.string().nullable(),
-  goal: z.string().nullable(),
-  entryUrl: z.string().nullable(),
-  accountId: z.string().nullable(),
-  accountIds: z.array(z.string()).default([]),
-  executionOutline: z.array(z.string().min(1)),
-});
+const decisionSchema = z
+  .object({
+    reply: z.string(),
+    changesRequirements: z.boolean().default(false),
+    start: z
+      .boolean()
+      .describe("仅在本轮明确交办并具备目标、网址和执行步骤时为 true；咨询和追问为 false。"),
+    title: z.string().nullable(),
+    goal: z.string().nullable(),
+    entryUrl: z.string().nullable(),
+    accountId: z.string().nullable(),
+    accountIds: z.array(z.string()).default([]),
+    executionOutline: z.array(z.string().min(1)),
+  })
+  .refine(
+    // 在提交交办前校验，允许已收到但互相矛盾的字段使用现有的一次结构化修复。
+    (d) => !d.start || Boolean(d.goal?.trim() && d.entryUrl?.trim() && d.executionOutline.length),
+    "启动交办需要 goal、entryUrl 和 executionOutline",
+  );
 type Decision = z.infer<typeof decisionSchema>;
 const State = Annotation.Root({
   messages: Annotation<Message[]>(),
@@ -70,11 +80,13 @@ export async function planConversation(
         },
       );
       await runtime.guard();
-      if (
-        decision.start &&
-        (!decision.goal || !decision.entryUrl || !decision.executionOutline.length)
-      )
-        throw Error("HANDOFF_INCOMPLETE");
+      if (thread.task_id)
+        await resolveScheduleIntent(
+          env,
+          thread.task_id,
+          thread.id,
+          decision.start || decision.changesRequirements,
+        );
       return { decision };
     })
     .addNode("handoff", async (state) => {

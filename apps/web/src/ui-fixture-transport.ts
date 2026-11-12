@@ -1,3 +1,4 @@
+import type { ScheduleCard } from "../../../packages/contracts/src/task-schedule";
 import type { MemoryPreference } from "../../../packages/contracts/src/preferences";
 import {
   PROTOCOL_VERSION,
@@ -11,6 +12,16 @@ import type { ThreadPage } from "../../../packages/ui/src/use-thread";
 // 开发预览的隔离 Transport：按当前网站请求合同维护演示任务、聊天和执行器状态。
 // 每次创建独立状态；只返回内存演示数据，不访问网络、模型或安装程序。
 export function createFixtureTransport(options: URLSearchParams): Transport {
+  let scheduleCard: ScheduleCard = {
+    version: 1,
+    taskVersion: 1,
+    summary: "每天读取订单并汇总待处理事项",
+    ready: true,
+    state: "off",
+    frequency: null,
+    legacy: null,
+    nextRunAt: null,
+  };
   const state = options.get("state") ?? "new";
   const assistance = [
     "challenge",
@@ -44,15 +55,29 @@ export function createFixtureTransport(options: URLSearchParams): Transport {
     devices: [],
     challenges: [],
     serverTime: new Date().toISOString(),
+    modelConnections: options.has("admin")
+      ? [
+          {
+            id: "conn_test",
+            name: "演示连接",
+            kind: "provider",
+            provider: "openai",
+            bindingVerified: true,
+            gatewayProvider: "openai",
+            defaultRegion: "us",
+            keyAlias: "preview",
+          },
+        ]
+      : undefined,
     models: [
       {
         id: "fixture_model",
         version: 1,
         name: "演示模型",
-        baseUrl: "https://example.com/v1",
+        connectionId: "conn_test",
         model: "fixture",
-        protocol: "chat",
-        hasKey: true,
+        protocol: "responses",
+        region: "inherit",
         inputPrice: null,
         outputPrice: null,
         capabilities: {
@@ -65,6 +90,17 @@ export function createFixtureTransport(options: URLSearchParams): Transport {
       },
     ],
   };
+  if (options.has("connection-delete") && snapshot.modelConnections) {
+    snapshot.modelConnections.push({
+      id: "conn_unused",
+      name: "待删除的演示服务",
+      kind: "workers-ai",
+      gatewayProvider: "workers-ai",
+      keyAlias: null,
+      bindingVerified: true,
+      defaultRegion: "auto",
+    });
+  }
   if (options.has("batch"))
     definition.verification = {
       kind: "batch",
@@ -244,7 +280,60 @@ export function createFixtureTransport(options: URLSearchParams): Transport {
       )
         throw new Error("OFFLINE");
       let result: unknown;
-      if (path === "/api/user/snapshot") result = structuredClone(snapshot);
+      if (path.startsWith("/api/admin/model-connections/")) {
+        const id = path.split("/")[4];
+        const connection = snapshot.modelConnections?.find((value) => value.id === id);
+        if (!connection) throw Error("MODEL_CONNECTION_NOT_FOUND");
+        const references = snapshot.models
+          .filter((model) => model.connectionId === id)
+          .map((model) => ({
+            modelId: model.id,
+            name: model.name,
+            version: model.version,
+          }));
+        if (method === "GET" && path.endsWith("/deletion")) {
+          result = { name: connection.name, referenceCount: references.length, references };
+        } else if (method === "DELETE") {
+          if (references.length || options.has("delete-conflict"))
+            throw Error("MODEL_CONNECTION_IN_USE");
+          snapshot.modelConnections = snapshot.modelConnections!.filter((value) => value.id !== id);
+          result = { ok: true };
+        } else throw Error("FIXTURE_ROUTE_UNSUPPORTED");
+      } else if (path.includes("/schedule")) {
+        if (path.endsWith("/preview"))
+          result = {
+            times: [1, 2, 3].map((days) => new Date(Date.now() + days * 86400000).toISOString()),
+          };
+        else {
+          if (method !== "GET") {
+            const input = body as { enabled: boolean; frequency?: ScheduleCard["frequency"] };
+            scheduleCard = {
+              ...scheduleCard,
+              version: scheduleCard.version + 1,
+              state: input.enabled ? "enabled" : "paused",
+              frequency: input.frequency ?? scheduleCard.frequency,
+              nextRunAt: input.enabled ? new Date(Date.now() + 86400000).toISOString() : null,
+            };
+          }
+          result = {
+            card: options.has("schedule") ? scheduleCard : null,
+            learning: [
+              {
+                runId: "demo_run",
+                createdAt: new Date().toISOString(),
+                accountId: null,
+                accountName: null,
+                state: "done",
+                summary: "已读取当天订单；页面没有额外结果。",
+                improvements: "先核对日期范围，再读取列表，避免重复进入详情。",
+                applied: true,
+                incomplete: false,
+                error: null,
+              },
+            ],
+          };
+        }
+      } else if (path === "/api/user/snapshot") result = structuredClone(snapshot);
       else if (path.startsWith("/api/user/history-cleanups-preview"))
         result = {
           chats: snapshot.tasks.length,

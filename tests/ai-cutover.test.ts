@@ -264,7 +264,7 @@ test("历史保持完整，云端意图检查收到当前纠正", async (t) => {
   assert.equal(result.data.messages.length, 12);
   assert.ok(s.jobs() > 1);
   assert.match(JSON.stringify(s.requests.at(-1)!.body), /以后只读/);
-  const payload = JSON.parse(s.requests.at(-1)!.body.messages.at(-1).content);
+  const payload = JSON.parse(s.requests.at(-1)!.body.input.at(-1).content);
   assert.equal(payload.userMessages.length, 6);
   assert.ok(
     payload.userMessages

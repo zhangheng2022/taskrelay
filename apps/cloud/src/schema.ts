@@ -4,6 +4,7 @@ import {
   sqliteTable,
   text,
   integer,
+  real,
   primaryKey,
   index,
   uniqueIndex,
@@ -1160,6 +1161,8 @@ export const conversationInbox = sqliteTable(
 export const devices = sqliteTable(
   "devices",
   {
+    /** 是否支持定时任务与执行总结扩展 */
+    scheduleCapable: integer("schedule_capable").notNull().default(0),
     /** 稳定标识；保留存量身份 */
     id: text("id").primaryKey(),
     /** 界面显示名称 */
@@ -1398,7 +1401,7 @@ export const messageBodies = sqliteTable(
   ],
 );
 
-/** 不可变模型配置版本；密钥按模型 ID/版本加密，运行固定版本。能力探测可更新同版本的实际能力记录。 任务/聊天/运行仍引用时保留版本身份，不随当前头切换删除。 */
+/** 不可变模型配置版本；连接和区域固定，运行固定版本。能力探测可更新同版本的实际能力记录。 任务/聊天/运行仍引用时保留版本身份，不随当前头切换删除。 */
 export const modelProfileVersions = sqliteTable(
   "model_profile_versions",
   {
@@ -1408,8 +1411,8 @@ export const modelProfileVersions = sqliteTable(
     version: integer("version").notNull(),
     /** 模型配置 JSON，格式 1；modelInputSchema 校验，版本配置权威，不含明文 API Key */
     config: text("config").notNull(),
-    /** 模型 API Key 密文；AAD 为 model:<id>:<version>，仅可信服务端配置/出站适配器读取，不向网页或设备返回密钥 */
-    secret: text("secret").notNull(),
+    connectionId: text("connection_id").references(() => modelConnections.id),
+    effectiveRegion: text("effective_region"),
     /** 模型能力 JSON，格式 1；models 的能力探测/读取入口维护，实际探测结果权威，不暗换模型 */
     capabilities: text("capabilities").notNull(),
     /** 记录创建时点；UTC Unix 毫秒 */
@@ -1422,6 +1425,7 @@ export const modelProfileVersions = sqliteTable(
       sql.raw("created_at IS NULL OR typeof(created_at)='integer'"),
     ),
 
+    check("model_region", sql.raw("effective_region IN ('auto','us','eu')")),
     primaryKey({ columns: [t.id, t.version] }),
     foreignKey({ columns: [t.id], foreignColumns: [models.id] }),
   ],
@@ -1443,6 +1447,8 @@ export const modelUsage = sqliteTable(
     inputTokens: integer("input_tokens"),
     /** 提供方实际输出 token 数，NULL 表示未知 */
     outputTokens: integer("output_tokens"),
+    /** 旧模型配置删除前固化的实际费用；单价或 token 未知时为空。 */
+    retiredCost: real("retired_cost"),
     /** 事实记录时点；UTC Unix 毫秒 */
     at: integer("at").notNull(),
     /** 所属业务成员 ID；由服务端授权，不接受网页扩权 */
@@ -1478,10 +1484,13 @@ export const modelUsage = sqliteTable(
   ],
 );
 
-/** 模型配置主表；保存当前版本指针，版本正文和密钥只在 model_profile_versions。 版本仍被任务/聊天引用时拒绝物理删除，当前版本头与正文在同一事务写入。 */
+/** 模型配置主表；保存当前版本指针，版本正文只在 model_profile_versions。 版本仍被任务/聊天引用时拒绝物理删除，当前版本头与正文在同一事务写入。 */
 export const models = sqliteTable(
   "models",
   {
+    /** 模型配置删除时点；被历史引用的身份继续保留。 */
+    deletedAt: integer("deleted_at"),
+    ownerUserId: text("owner_user_id"),
     /** 是否启用；停用会失败关联排队与执行任务 */
     enabled: integer("enabled").notNull().default(1),
     /** 管理操作代次 */
@@ -1496,6 +1505,8 @@ export const models = sqliteTable(
     createdAt: integer("created_at").notNull(),
   },
   (t): SQLiteTableExtraConfigValue[] => [
+    foreignKey({ columns: [t.ownerUserId], foreignColumns: [members.id] }),
+    index("models_owner").on(t.ownerUserId),
     check("models_enabled_check", sql.raw("enabled IN (0,1)")),
 
     /** 与 SQL 基线同源的校验约束；不得在 ORM 迁移中放宽。 */
@@ -1682,6 +1693,10 @@ export const runSnapshots = sqliteTable(
 export const runs = sqliteTable(
   "runs",
   {
+    /** 是否由新执行器登记执行总结 */
+    learningEnabled: integer("learning_enabled").notNull().default(0),
+    /** 是否要求定时任务扩展能力 */
+    requiresScheduling: integer("requires_scheduling").notNull().default(0),
     /** 稳定标识；保留存量身份 */
     id: text("id").primaryKey(),
     /** 所属任务 ID */
@@ -1918,6 +1933,8 @@ export const taskVersions = sqliteTable(
 export const tasks = sqliteTable(
   "tasks",
   {
+    /** 需求变化代次，隔离旧执行经验 */
+    requirementRevision: integer("requirement_revision").notNull().default(0),
     /** 稳定标识；保留存量身份 */
     id: text("id").primaryKey(),
     /** 本实体内的递增版本 */
@@ -1993,5 +2010,107 @@ export const preferenceSnapshots = sqliteTable(
     foreignKey({ columns: [table.threadId], foreignColumns: [aiThreads.id] }),
     // 按原聊天清理快照。
     index("preference_snapshots_thread").on(table.threadId),
+  ],
+);
+
+/** 每个任务的独立调度与执行器确认。 */
+export const taskSchedules = sqliteTable(
+  "task_schedules",
+  {
+    taskId: text("task_id")
+      .primaryKey()
+      .references(() => tasks.id),
+    threadId: text("thread_id").references(() => aiThreads.id),
+    version: integer("version").notNull().default(1),
+    taskVersion: integer("task_version").notNull(),
+    requirementRevision: integer("requirement_revision").notNull().default(0),
+    confirmedSeq: integer("confirmed_seq").notNull().default(0),
+    summary: text("summary"),
+    ready: integer("ready").notNull().default(0),
+    state: text("state").notNull().default("off"),
+    frequency: text("frequency"),
+    schedule: text("schedule"),
+    nextRunAt: integer("next_run_at"),
+    legacy: integer("legacy").notNull().default(0),
+  },
+  (t) => [
+    index("task_schedules_due").on(t.state, t.nextRunAt),
+    check("task_schedules_state", sql`${t.state} IN ('off','enabled','paused')`),
+  ],
+);
+/** 调度配置写入的幂等身份与摘要。 */
+export const scheduleRequests = sqliteTable(
+  "schedule_requests",
+  {
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id),
+    requestId: text("request_id").notNull(),
+    digest: text("digest").notNull(),
+    version: integer("version").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.taskId, t.requestId] })],
+);
+/** 每次执行的加密总结与经验，不改变用户任务记忆。 */
+export const executionLearning = sqliteTable(
+  "execution_learning",
+  {
+    runId: text("run_id")
+      .primaryKey()
+      .references(() => runs.id),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id),
+    taskVersion: integer("task_version").notNull(),
+    accountId: text("account_id"),
+    requirementRevision: integer("requirement_revision").notNull().default(0),
+    state: text("state").notNull().default("pending"),
+    summary: text("summary"),
+    improvements: text("improvements"),
+    incomplete: integer("incomplete").notNull().default(1),
+    error: text("error"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("execution_learning_task").on(t.taskId, t.taskVersion, t.createdAt)],
+);
+/** 原执行器逐次上报的加密操作记录。 */
+export const executionRecords = sqliteTable(
+  "execution_records",
+  {
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id),
+    callId: text("call_id").notNull(),
+    content: text("content").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.runId, t.callId] })],
+);
+
+/** 供应商连接仅保存网关路由和密钥别名。 */
+export const modelConnections = sqliteTable(
+  "model_connections",
+  {
+    id: text("id").primaryKey(),
+    ownerUserId: text("owner_user_id").references(() => members.id),
+    name: text("name").notNull(),
+    kind: text("kind").notNull(),
+    provider: text("provider").notNull(),
+    upstream: text("upstream"),
+    keyAlias: text("key_alias"),
+    bindingVerified: integer("binding_verified").notNull().default(0),
+    defaultRegion: text("default_region").notNull(),
+  },
+  (t) => [
+    index("model_connections_owner").on(t.ownerUserId),
+    uniqueIndex("model_connections_alias")
+      .on(t.provider, t.keyAlias)
+      .where(sql.raw("key_alias IS NOT NULL")),
+    uniqueIndex("model_custom_routes").on(t.provider).where(sql.raw("kind='custom'")),
+    check("connection_verified", sql.raw("binding_verified IN (0,1)")),
+    check("connection_kind", sql.raw("kind IN ('provider','custom','workers-ai')")),
+    check("connection_region", sql.raw("default_region IN ('auto','us','eu')")),
+    check("connection_alias", sql.raw("(kind='workers-ai')=(key_alias IS NULL)")),
+    check("connection_upstream", sql.raw("(kind='custom')=(upstream IS NOT NULL)")),
   ],
 );

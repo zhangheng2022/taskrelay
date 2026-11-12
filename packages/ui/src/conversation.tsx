@@ -1,5 +1,6 @@
 import { createApi, rpcData } from "./api";
 import { DraftMessages } from "./chat-parts";
+import { ChatMarkdown } from "./chat-markdown";
 import { useState, useRef } from "react";
 import type { TaskDefinition, TaskRun, Transport } from "../../contracts/src/index";
 import { useThread } from "./use-thread";
@@ -123,7 +124,7 @@ export function Conversation({
                       : ""}
                   </div>
                 )}
-                {m.content}
+                {m.role === "assistant" ? <ChatMarkdown content={m.content} /> : m.content}
                 {"parts" in m && (
                   <ChatAttachments
                     transport={transport}

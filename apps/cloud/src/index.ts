@@ -1,3 +1,4 @@
+import { tickSchedules } from "./task-schedules";
 import { dbTime } from "./database";
 /** 应用路由与维护入口：统一请求大小、来源、身份和错误响应；定时清理委托给队列与聊天生命周期模块。 */
 import { drainHistoryCleanups } from "./history-cleanup";
@@ -201,7 +202,7 @@ app.onError((error, c) => {
       ? "INVALID_INPUT"
       : /^[A-Z][A-Z0-9_]+$/.test(error.message)
         ? error.message
-        : (/(?:MODEL_DISABLED|ACCOUNT_DISABLED|MEMORY_LIMIT|QUEUE_LIMIT|CLAIM_BUSY|RUN_QUOTA_EXCEEDED|SCHEDULE_QUOTA_EXCEEDED|USER_DISABLED|ACCOUNT_DEVICE_MISMATCH)/.exec(
+        : (/(?:MODEL_PROTOCOL_RETIRED|MODEL_DISABLED|ACCOUNT_DISABLED|MEMORY_LIMIT|QUEUE_LIMIT|CLAIM_BUSY|RUN_QUOTA_EXCEEDED|SCHEDULE_QUOTA_EXCEEDED|USER_DISABLED|ACCOUNT_DEVICE_MISMATCH)/.exec(
             error.message,
           )?.[0] ?? "INTERNAL_ERROR");
   return c.json(
@@ -245,6 +246,7 @@ export async function maintenance(env: AppEnv) {
     return;
   await drainHistoryCleanups(env);
   await tick(env.DB);
+  await tickSchedules(env);
   await cleanupAccountCards(env);
   await advanceDispatchGroups(env.DB);
   const expired = await env.DB.prepare(

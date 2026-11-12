@@ -22,12 +22,9 @@ test("正式 execute 等待流式工具参数完整再执行，并关联最终�
   const result = await scenario([], {
     firstModel: async (clicks) => {
       let controller!: ReadableStreamDefaultController<Uint8Array>;
-      const frame = (delta: unknown, finish: string | null = null) =>
-        enc.encode(
-          `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`,
-        );
+      const frame = (event: unknown) => enc.encode(`data: ${JSON.stringify(event)}\n\n`);
       return infer(
-        { baseUrl: "https://provider.example/v1", protocol: "chat", model: "fixture" },
+        { baseUrl: "https://provider.example/v1", protocol: "responses", model: "fixture" },
         "key",
         { messages: [], stream: true },
         async () =>
@@ -37,16 +34,11 @@ test("正式 execute 等待流式工具参数完整再执行，并关联最终�
                 controller = c;
                 c.enqueue(
                   frame({
-                    tool_calls: [
-                      {
-                        index: 0,
-                        id: "partial",
-                        function: { name: "act", arguments: '{"instruction":"' },
-                      },
-                    ],
+                    type: "response.function_call_arguments.delta",
+                    delta: '{"instruction":"',
                   }),
                 );
-                c.enqueue(frame({ content: "正在处理" }));
+                c.enqueue(frame({ type: "response.output_text.delta", delta: "正在处理" }));
               },
             }),
             { headers: { "content-type": "text/event-stream" } },
@@ -55,12 +47,20 @@ test("正式 execute 等待流式工具参数完整再执行，并关联最终�
           assert.equal(clicks(), 0);
           observedPartial = true;
           controller.enqueue(
-            frame(
-              { tool_calls: [{ index: 0, function: { arguments: '点击按钮"}' } }] },
-              "tool_calls",
-            ),
+            frame({
+              type: "response.completed",
+              response: {
+                output: [
+                  {
+                    type: "function_call",
+                    call_id: "partial",
+                    name: "act",
+                    arguments: '{"instruction":"点击按钮"}',
+                  },
+                ],
+              },
+            }),
           );
-          controller.enqueue(enc.encode("data: [DONE]\n\n"));
           controller.close();
         },
       );
@@ -130,6 +130,7 @@ for (const changingNetworkFacts of [false, true])
     assert.equal(result.finish.status, "succeeded");
     assert.equal(result.clicks, 2);
     assert.equal(result.navigations, 1);
+    assert.equal(result.networkSamples, 1);
     assert.ok(result.browserUrls.includes(longUrl));
     const decisions = result.calls.filter(
       (c) => c.path.endsWith("/model") && c.body.purpose === "decision",
@@ -623,7 +624,15 @@ async function scenario(
       throw Error("RAW_SELECTOR_PATH_MUST_NOT_BE_USED");
     },
   };
+  let networkSamples = 0;
   const port: RuntimePort = {
+    ...(options.networkFacts
+      ? {
+          networkEvent: () => {
+            networkSamples++;
+          },
+        }
+      : {}),
     cancelled: () => cancelled,
     checkpoint: async (state, payload) => {
       checkpoints.push({ state, payload });
@@ -816,32 +825,46 @@ async function scenario(
             }),
           },
         }) as any,
-      startProxy: async () => ({
-        port: 1,
-        ...(options.networkFacts
-          ? {
-              diagnostics: () => {
-                const facts = Array.from({ length: 8 }, () => ({
-                  host: "example.com",
-                  code: "ERR_CONNECTION_RESET",
-                  at: new Date(
-                    Date.UTC(2026, 10, 8) +
-                      (options.changingNetworkFacts ? networkSnapshots.length * 1000 : 0),
-                  ).toISOString(),
-                }));
-                networkSnapshots.push(facts);
-                return facts;
-              },
-            }
-          : {}),
-        close: async () => {
-          closed = true;
-        },
-      }),
+      startProxy: async (logging) => {
+        if (logging) {
+          assert.equal(logging.entryHost, "example.com");
+          logging.event({
+            at: new Date().toISOString(),
+            phase: "dns",
+            query: "A",
+            connection: 1,
+            result: "ok",
+            elapsedMs: 1,
+          });
+        }
+        return {
+          port: 1,
+          ...(options.networkFacts
+            ? {
+                diagnostics: () => {
+                  const facts = Array.from({ length: 8 }, () => ({
+                    host: "example.com",
+                    code: "ERR_CONNECTION_RESET",
+                    at: new Date(
+                      Date.UTC(2026, 10, 8) +
+                        (options.changingNetworkFacts ? networkSnapshots.length * 1000 : 0),
+                    ).toISOString(),
+                  }));
+                  networkSnapshots.push(facts);
+                  return facts;
+                },
+              }
+            : {}),
+          close: async () => {
+            closed = true;
+          },
+        };
+      },
       delay: async () => {},
     },
   );
   return {
+    networkSamples,
     networkSnapshots,
     calls,
     checkpoints,
@@ -1272,4 +1295,18 @@ test("正式 execute 单独传递固定偏好，保留用户纠正且不把偏�
   assert.ok(
     !JSON.stringify(result.calls.filter((c) => c.path.endsWith("/stagehand"))).includes(preference),
   );
+});
+
+test("正式 execute 明确需求后发布卡片，继续首次执行并回传操作记录", async () => {
+  const result = await scenario([
+    tool("confirmRequirements", { summary: "读取当前订单", changed: false }),
+    tool("act", { instruction: "点击查询" }),
+    answer("已读取"),
+  ]);
+  const confirmation = result.calls.find((c) => c.path.endsWith("/requirements"));
+  assert.equal(confirmation?.body.summary, "读取当前订单");
+  assert.equal(typeof confirmation?.body.userSeq, "number");
+  assert.equal(result.clicks, 1);
+  assert.equal(result.finish.result.executionRecordCount, 2);
+  assert.equal(result.calls.filter((c) => c.path.endsWith("/execution-record")).length, 2);
 });

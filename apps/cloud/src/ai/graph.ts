@@ -22,7 +22,7 @@ export interface GraphScope {
   owner: string;
   id: string;
   threadId: string;
-  kind: "chat" | "help";
+  kind: "chat" | "help" | "learning";
   turnId?: string;
   runId?: string;
   epoch?: number;

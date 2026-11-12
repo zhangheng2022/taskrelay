@@ -212,6 +212,7 @@ async function onMessage({ data }: { data: any }) {
     try {
       await execute(data.run as TaskRun, {
         rpc,
+        networkEvent: (event) => parent.postMessage({ generation, type: "network", event }),
         checkpoint: (state, payload) => rpc("local:checkpoint", { state, payload }),
         cancelled: () => cancelled,
       });

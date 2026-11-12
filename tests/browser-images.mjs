@@ -351,7 +351,12 @@ try {
   report.metrics.bytes = requests.reduce((sum, r) => sum + r.bytes, 0);
   report.requests = requests;
   if (!baseline) {
-    for (const width of [1280, 390]) {
+    for (const { width, dark } of [
+      { width: 1280, dark: false },
+      { width: 1280, dark: true },
+      { width: 390, dark: false },
+      { width: 390, dark: true },
+    ]) {
       await client.Emulation.setDeviceMetricsOverride({
         width,
         height: 844,
@@ -360,15 +365,67 @@ try {
       });
       await client.Page.navigate({ url: `${origin}tests/browser-fixtures/streaming.html` });
       await wait('document.querySelectorAll("[data-slot=message-scroller-item]").length === 40');
-      await evaluate('window.streamFixture.update("首段正文已经到达")');
+      await evaluate(`document.documentElement.classList.toggle("dark", ${dark})`);
+      await evaluate('window.streamFixture.update("**首段正文已经到达")');
       await wait(
         'document.body.textContent.includes("首段正文已经到达") && document.body.textContent.includes("生成中")',
       );
-      await screenshot(`streaming-first-${width}`);
-      assert.ok(
-        await evaluate("document.documentElement.scrollWidth <= innerWidth"),
-        "流式正文无横向溢出",
+      await wait(
+        'document.querySelector(".chat-markdown strong")?.textContent === "首段正文已经到达"',
       );
+      const atBottom =
+        '(() => { const v = document.querySelector("[data-slot=message-scroller-viewport]"); return v.scrollHeight - v.clientHeight - v.scrollTop < 3; })()';
+      await wait(atBottom);
+      await screenshot(`streaming-first-${width}-${dark ? "dark" : "light"}`);
+      const markdown =
+        "# 执行结果\n\n中文 **重点**、*说明*、~~旧状态~~ 与 `状态字段`。\n\n> 任务反馈仅供本次查看。\n\n- [x] 完成观察\n- [ ] 后续核对\n\n[查看网页](https://example.com)\n\n![图片替代文本](https://tracker.invalid/pixel)\n\n| 记录 | 长内容 | 状态 |\n| --- | --- | --- |\n| 示例 | " +
+        "column_".repeat(70) +
+        ' | 已回复 |\n\n```ts\nconst value = "' +
+        "long_code_".repeat(55) +
+        '";\n\nconsole.log(value);';
+      await evaluate(`window.streamFixture.update(${JSON.stringify(markdown)})`);
+      await wait(
+        'document.querySelector(".chat-markdown table") && document.querySelector(".chat-markdown [data-slot=code-block]")',
+      );
+      await wait(atBottom);
+      assert.ok(
+        await evaluate(
+          'document.documentElement.scrollWidth <= innerWidth && (() => { const v = document.querySelector("[data-slot=message-scroller-viewport]"); return v.scrollWidth <= v.clientWidth; })()',
+        ),
+        "Markdown 表格与代码不会撑宽页面或聊天视口",
+      );
+      assert.ok(
+        await evaluate(
+          '(() => { const c = document.querySelector(".chat-markdown pre"); return c.scrollWidth > c.clientWidth; })()',
+        ),
+        "长代码只在块内横向滚动",
+      );
+      assert.ok(
+        await evaluate(
+          '(() => { const t = document.querySelector(".chat-markdown table").parentElement; return t.scrollWidth > t.clientWidth; })()',
+        ),
+        "长表格局部横向滚动，不将内容挤成窄列",
+      );
+      assert.equal(
+        await evaluate('document.querySelectorAll(".chat-markdown img").length'),
+        0,
+        "Markdown 图片不请求外网",
+      );
+      await evaluate('document.querySelector(".chat-markdown pre").focus()');
+      await client.Input.dispatchKeyEvent({
+        type: "keyDown",
+        key: "ArrowRight",
+        code: "ArrowRight",
+        windowsVirtualKeyCode: 39,
+      });
+      await client.Input.dispatchKeyEvent({
+        type: "keyUp",
+        key: "ArrowRight",
+        code: "ArrowRight",
+        windowsVirtualKeyCode: 39,
+      });
+      await wait('document.querySelector(".chat-markdown pre").scrollLeft > 0');
+      await screenshot(`markdown-code-${width}-${dark ? "dark" : "light"}`);
       await evaluate(
         'document.querySelector("[data-slot=message-scroller-viewport]").scrollTop = 0',
       );
@@ -377,15 +434,19 @@ try {
         'document.querySelector("[data-slot=message-scroller-viewport]").scrollTop',
       );
       await evaluate(
-        'window.streamFixture.update("首段正文已经到达\\n" + "后续生成内容。\\n".repeat(40))',
+        `window.streamFixture.update(${JSON.stringify(markdown + "\n```\n\n" + "后续生成内容。\n\n".repeat(40))})`,
       );
       await delay(300);
       const after = await evaluate(
         'document.querySelector("[data-slot=message-scroller-viewport]").scrollTop',
       );
       assert.ok(Math.abs(before - after) < 2, "上翻历史时流式追加保持位置");
+      await evaluate("window.streamFixture.pending()");
+      await wait('document.body.textContent.includes("正在确认回复")');
       await evaluate("window.streamFixture.interrupt()");
       await wait('document.body.textContent.includes("生成中断，内容未完成")');
+      await evaluate('document.querySelector("[aria-label=回到最新消息]").click()');
+      await wait(atBottom);
       await evaluate("window.streamFixture.finish()");
       await wait(
         '!document.body.textContent.includes("生成中断") && !document.body.textContent.includes("正在确认回复")',
@@ -395,10 +456,12 @@ try {
         41,
         "正式回复接替草稿不重复",
       );
-      await screenshot(`streaming-final-${width}`);
+      assert.equal(await evaluate('document.querySelectorAll(".chat-markdown table").length'), 1);
+      await evaluate('document.querySelector(".chat-markdown h1").scrollIntoView({block:"start"})');
+      await screenshot(`streaming-final-${width}-${dark ? "dark" : "light"}`);
     }
     report.cases.push(
-      "streaming first draft, interrupted snapshot, final merge, desktop/mobile width and history scroll retention",
+      "Markdown streaming, pending, interruption, final merge, safe images, keyboard code scroll, desktop/mobile light/dark, bottom follow and history scroll retention",
     );
     for (const width of [1280, 390]) {
       await client.Emulation.setDeviceMetricsOverride({

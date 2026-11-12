@@ -171,16 +171,17 @@ export async function drainHistoryCleanups(env: AppEnv) {
         if (kind === "thread" && env.NOTIFICATIONS)
           await env.NOTIFICATIONS.getByName("user:" + job.user_id).closeDrafts(resource);
         if (kind === "task") {
+          // 依据本批语句实际返回的行确认空轮次，避免写入统计让已清空的目标一直排在队首。
           const result = await env.DB.batch([
             env.DB.prepare(
-              "DELETE FROM task_versions WHERE rowid IN(SELECT rowid FROM task_versions WHERE task_id=? AND version<=? AND version<>(SELECT version FROM tasks WHERE id=task_versions.task_id) AND NOT EXISTS(SELECT 1 FROM runs WHERE runs.task_id=task_versions.task_id AND runs.task_version=task_versions.version) AND NOT EXISTS(SELECT 1 FROM account_dispatch_groups g WHERE g.task_id=task_versions.task_id AND g.task_version=task_versions.version) LIMIT 100)",
+              "DELETE FROM task_versions WHERE rowid IN(SELECT rowid FROM task_versions WHERE task_id=? AND version<=? AND version<>(SELECT version FROM tasks WHERE id=task_versions.task_id) AND NOT EXISTS(SELECT 1 FROM runs WHERE runs.task_id=task_versions.task_id AND runs.task_version=task_versions.version) AND NOT EXISTS(SELECT 1 FROM account_dispatch_groups g WHERE g.task_id=task_versions.task_id AND g.task_version=task_versions.version) LIMIT 100) RETURNING 1 AS touched",
             ).bind(resource, target.cutoff_version),
             // 运行安全身份仍引用历史版本；保留最小版本身份并回收正文，不能破坏 FK 或释放 unknown。
             env.DB.prepare(
-              "UPDATE task_versions SET definition='{}' WHERE rowid IN(SELECT rowid FROM task_versions WHERE task_id=? AND version<=? AND definition<>'{}' AND version<>(SELECT version FROM tasks WHERE id=task_versions.task_id) LIMIT 100)",
+              "UPDATE task_versions SET definition='{}' WHERE rowid IN(SELECT rowid FROM task_versions WHERE task_id=? AND version<=? AND definition<>'{}' AND version<>(SELECT version FROM tasks WHERE id=task_versions.task_id) LIMIT 100) RETURNING 1 AS touched",
             ).bind(resource, target.cutoff_version),
           ]);
-          if (result.every((r) => !r.meta.changes))
+          if (result.every((r) => r.results.length === 0))
             await env.DB.prepare(
               "UPDATE history_cleanup_targets SET done=1 WHERE job_id=? AND kind='task' AND resource_id=?",
             )
@@ -202,20 +203,20 @@ export async function drainHistoryCleanups(env: AppEnv) {
               : ["run_conditions", "execution_help"];
           const statements = tables.map((table) =>
             env.DB.prepare(
-              `DELETE FROM ${table} WHERE rowid IN(SELECT rowid FROM ${table} WHERE ${field}=? LIMIT 100)`,
+              `DELETE FROM ${table} WHERE rowid IN(SELECT rowid FROM ${table} WHERE ${field}=? LIMIT 100) RETURNING 1 AS touched`,
             ).bind(resource),
           );
           if (kind === "thread")
             statements.push(
               env.DB.prepare(
-                "UPDATE conversation_inbox SET content='',status='failed' WHERE rowid IN(SELECT rowid FROM conversation_inbox WHERE thread_id=? AND (content<>'' OR status<>'failed') LIMIT 100)",
+                "UPDATE conversation_inbox SET content='',status='failed' WHERE rowid IN(SELECT rowid FROM conversation_inbox WHERE thread_id=? AND (content<>'' OR status<>'failed') LIMIT 100) RETURNING 1 AS touched",
               ).bind(resource),
             );
           const graphWhere = kind === "thread" ? "parent_thread=?" : "run_id=?";
           for (const table of ["ai_checkpoints", "ai_writes"])
             statements.push(
               env.DB.prepare(
-                `DELETE FROM ${table} WHERE rowid IN(SELECT p.rowid FROM ${table} p JOIN ai_graph_inputs g ON g.id=p.thread AND g.owner=p.owner WHERE g.${graphWhere} LIMIT 100)`,
+                `DELETE FROM ${table} WHERE rowid IN(SELECT p.rowid FROM ${table} p JOIN ai_graph_inputs g ON g.id=p.thread AND g.owner=p.owner WHERE g.${graphWhere} LIMIT 100) RETURNING 1 AS touched`,
               ).bind(resource),
             );
           const calls = await env.DB.prepare(
@@ -229,17 +230,19 @@ export async function drainHistoryCleanups(env: AppEnv) {
             const ids = calls.results.map((r) => r.id),
               placeholders = ids.map(() => "?").join(",");
             statements.push(
-              env.DB.prepare(`DELETE FROM call_results WHERE id IN(${placeholders})`).bind(...ids),
+              env.DB.prepare(
+                `DELETE FROM call_results WHERE id IN(${placeholders}) RETURNING 1 AS touched`,
+              ).bind(...ids),
             );
             statements.push(
               env.DB.prepare(
-                `UPDATE ai_calls SET status='unknown',error='THREAD_DELETED' WHERE id IN(${placeholders}) AND (status<>'unknown' OR error IS NULL OR error<>'THREAD_DELETED')`,
+                `UPDATE ai_calls SET status='unknown',error='THREAD_DELETED' WHERE id IN(${placeholders}) AND (status<>'unknown' OR error IS NULL OR error<>'THREAD_DELETED') RETURNING 1 AS touched`,
               ).bind(...ids),
             );
           }
           const results = await env.DB.batch(statements);
           // 再经过一个无删除轮次才完成，避免刚好满批时漏掉余下内容。
-          if (!images.results.length && results.every((r) => !r.meta.changes))
+          if (!images.results.length && results.every((r) => r.results.length === 0))
             await env.DB.prepare(
               "UPDATE history_cleanup_targets SET done=1 WHERE job_id=? AND kind=? AND resource_id=?",
             )
