@@ -1,5 +1,13 @@
 # TaskRelay 验收记录
 
+## 2026-11-12 聊天清理停滞恢复
+
+生产原有 5 个已提交的单任务清理作业，各含一个任务、一个聊天和一次运行。发布前固定目标完成数为 0/15，范围内有 40 条聊天消息、6 条图片记录，侧栏有 3 个可见任务。原作业的更新时间均停在提交时刻，采样日志能确认定时唤醒到达，未能确定旧 alarm 停滞的具体原因。
+
+生产部署 `a57d4cabc5999cfe3df331f3211701938cdcbc0d` 后，按原作业 ID 只读核对。设置页自动从 0/15 更新到 10/15，随后显示“聊天记录已清理完成”。最终 5 个作业全部完成，15/15 个目标完成，范围内的聊天消息与图片索引均为 0，侧栏仍有 3 个可见任务。验收复用了用户先前确认的作业。[修复](https://github.com/zhangheng2022/taskrelay/pull/70) · [主分支 CI](https://github.com/zhangheng2022/taskrelay/actions/runs/43155498078) · [生产发布](https://github.com/zhangheng2022/taskrelay/actions/runs/43156042309)
+
+577 项测试通过。真实 workerd 与 D1 回归覆盖存储冻结、已有 alarm 时的定时恢复和剩余目标自动收尾，另有并发触发与失败重试回归。生产抽查核对了图片索引，未逐个读取图片存储对象。
+
 ## 2026-11-12 停用模型删除修复
 
 生产健康检查确认提交 `f6f6f6531fb0179d901b7c4e6a7958f5a9776031`，公开发布 0.26.1。刷新模型管理页后，GPT-OSS 20B v1 显示已停用。实际打开删除确认框，核对历史聊天、运行和用量保留的说明，点击取消后模型仍在列表中。本次未对生产模型提交删除。[修复](https://github.com/zhangheng2022/taskrelay/pull/68) · [主分支 CI](https://github.com/zhangheng2022/taskrelay/actions/runs/43150116353) · [生产发布](https://github.com/zhangheng2022/taskrelay/actions/runs/43150711993)
