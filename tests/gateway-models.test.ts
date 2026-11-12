@@ -73,6 +73,49 @@ test("移除 Chat 协议只退休固定到旧版本的运行，保留历史和�
   await assert.rejects(enqueue(db, retired, "again"), /MODEL_PROTOCOL_RETIRED/);
   await assert.rejects(invoke(env, mixed.id, 1, { messages: [] }), /MODEL_PROTOCOL_RETIRED/);
   assert.equal(sql.prepare("SELECT count(*) n FROM ai_calls").get()!.n, 0);
+  const runId = String(sql.prepare("SELECT id FROM runs WHERE task_id=?").get(retired.id)!.id);
+  sql
+    .prepare(
+      "UPDATE model_profile_versions SET config=json_set(config,'$.inputPrice',2,'$.outputPrice',3) WHERE version=1 AND id IN (?,?)",
+    )
+    .run(old.id, mixed.id);
+  const usage = sql.prepare(
+    "INSERT INTO model_usage(id,run_id,model_id,model_version,user_id,input_tokens,output_tokens,at) VALUES(?,?,?,1,'fixture_owner',10,5,1)",
+  );
+  usage.run("usage_only", null, old.id);
+  usage.run("historical_charge", runId, mixed.id);
+  sql.exec("BEGIN");
+  sql.exec(
+    readFileSync(
+      new URL("../apps/cloud/migrations/0009_remove_retired_models.sql", import.meta.url),
+      "utf8",
+    ),
+  );
+  sql.exec("COMMIT");
+  assert.equal(sql.prepare("SELECT id FROM models WHERE id=?").get(old.id), undefined);
+  assert.equal(
+    sql.prepare("SELECT * FROM model_profile_versions WHERE id=?").get(old.id),
+    undefined,
+  );
+  const reference = sql
+    .prepare(
+      "SELECT config,capabilities,connection_id,effective_region FROM model_profile_versions WHERE id=? AND version=1",
+    )
+    .get(mixed.id)!;
+  assert.deepEqual(
+    { ...reference },
+    { config: "{}", capabilities: "{}", connection_id: null, effective_region: null },
+  );
+  assert.equal(
+    sql.prepare("SELECT retired_cost FROM model_usage WHERE id='usage_only'").get()!.retired_cost,
+    0.000035,
+  );
+  assert.deepEqual(sql.prepare("PRAGMA foreign_key_check").all(), []);
+  await assert.rejects(invoke(env, mixed.id, 1, { messages: [] }), /MODEL_PROTOCOL_RETIRED/);
+  assert.equal((await storeModel(env, input, mixed.id, 2)).version, 3);
+  const runPage = await app.request("http://localhost/api/user/runs/" + runId, {}, env);
+  assert.equal(runPage.status, 200);
+  assert.equal(((await runPage.json()) as { usage: { cost: number }[] }).usage[0]?.cost, 0.000035);
   const page = await app.request("http://localhost/api/user/threads/historic", {}, env);
   assert.equal(page.status, 200);
   assert.equal(((await page.json()) as { id: string }).id, "historic");

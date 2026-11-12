@@ -429,7 +429,7 @@ export const user = userBase
         run.queueReason = (await queueReasons(c.env.DB, c.get("userId"))).get(run.id);
       const [usage] = await c.env.DB.batch([
         c.env.DB.prepare(
-          `SELECT u.id,u.at,u.input_tokens,u.output_tokens,p.config FROM model_usage u JOIN model_profile_versions p ON p.id=u.model_id AND p.version=u.model_version WHERE run_id=? ${before ? "AND (u.at,u.id)<(?,?)" : ""} ORDER BY u.at DESC,u.id DESC LIMIT 51`,
+          `SELECT u.id,u.at,u.input_tokens,u.output_tokens,u.retired_cost,p.config FROM model_usage u LEFT JOIN model_profile_versions p ON p.id=u.model_id AND p.version=u.model_version WHERE run_id=? ${before ? "AND (u.at,u.id)<(?,?)" : ""} ORDER BY u.at DESC,u.id DESC LIMIT 51`,
         ).bind(run.id, ...(before ?? [])),
       ]);
       return c.json({
@@ -440,16 +440,16 @@ export const user = userBase
             ? pageCursor((usage.results[49] as Row).at, (usage.results[49] as Row).id)
             : null,
         usage: (usage.results.slice(0, 50) as Row[]).map((r: Row) => {
-          const p = JSON.parse(r.config);
+          const p = r.config ? JSON.parse(r.config) : {};
           return {
             input: r.input_tokens,
             output: r.output_tokens,
             cost:
               r.input_tokens === null ||
               r.output_tokens === null ||
-              p.inputPrice === null ||
-              p.outputPrice === null
-                ? null
+              p.inputPrice == null ||
+              p.outputPrice == null
+                ? (r.retired_cost ?? null)
                 : (r.input_tokens * p.inputPrice + r.output_tokens * p.outputPrice) / 1000000,
           };
         }),

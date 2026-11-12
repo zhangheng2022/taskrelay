@@ -49,9 +49,9 @@ export async function getModelProfile(
 ) {
   const row = await env.DB.prepare(
     `SELECT v.id,v.version,v.config,v.connection_id,v.effective_region,v.capabilities,m.owner_user_id,m.enabled,m.management_version
-     FROM model_profile_versions v JOIN models m ON m.id=v.id JOIN model_connections c
+     FROM model_profile_versions v JOIN models m ON m.id=v.id LEFT JOIN model_connections c
      ON c.id=v.connection_id AND c.owner_user_id IS m.owner_user_id WHERE v.id=? AND (m.owner_user_id IS NULL OR m.owner_user_id=?)
-     AND v.version=COALESCE(?,m.current_version)`,
+     AND (c.id IS NOT NULL OR (v.connection_id IS NULL AND v.config='{}')) AND v.version=COALESCE(?,m.current_version)`,
   )
     .bind(id, userId ?? null, version ?? null)
     .first<Row>();

@@ -4,6 +4,7 @@ import {
   sqliteTable,
   text,
   integer,
+  real,
   primaryKey,
   index,
   uniqueIndex,
@@ -1446,6 +1447,8 @@ export const modelUsage = sqliteTable(
     inputTokens: integer("input_tokens"),
     /** 提供方实际输出 token 数，NULL 表示未知 */
     outputTokens: integer("output_tokens"),
+    /** 旧模型配置删除前固化的实际费用；单价或 token 未知时为空。 */
+    retiredCost: real("retired_cost"),
     /** 事实记录时点；UTC Unix 毫秒 */
     at: integer("at").notNull(),
     /** 所属业务成员 ID；由服务端授权，不接受网页扩权 */
