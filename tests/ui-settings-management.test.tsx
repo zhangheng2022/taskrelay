@@ -40,14 +40,15 @@ test("模型管理区分连接与任务能力，确认停用和恢复，删除�
         enabled: body.enabled,
         managementVersion: body.expectedVersion + 1,
       };
-    } else if (path.endsWith("/test")) {
+    } else if (path.includes("/test?version=")) {
       state.models[0].capabilities = {
         ...state.models[0].capabilities,
+        questionAnswered: true,
         tools: true,
         structured: "schema",
         testedAt: new Date().toISOString(),
       };
-    } else if (path.endsWith("/vision")) {
+    } else if (path.includes("/vision?version=")) {
       state.models[0].capabilities = {
         ...state.models[0].capabilities,
         vision: false,
@@ -61,59 +62,144 @@ test("模型管理区分连接与任务能力，确认停用和恢复，删除�
       <SettingsModels snapshot={{ ...state }} transport={transport} refresh={refresh} />,
     );
   const view = render(<SettingsModels snapshot={state} transport={transport} refresh={refresh} />);
-  assert.ok(view.getByText("连接 通过"));
-  assert.ok(view.getByText("工具调用 未通过"));
-  fireEvent.click(view.getByRole("button", { name: "停用" }));
+  const menu = async (label: string) => {
+    fireEvent.keyDown(view.getByRole("button", { name: /更多：/ }), { key: "ArrowDown" });
+    fireEvent.click(await view.findByRole("menuitem", { name: label }));
+  };
+  assert.equal(view.queryByText("工具调用 未通过"), null);
+  await menu("停用");
   let dialog = await view.findByRole("alertdialog");
   assert.match(dialog.textContent!, /任务标记为失败/);
   fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
   assert.equal(writes.length, 0);
-  fireEvent.click(view.getByRole("button", { name: "停用" }));
-  dialog = await view.findByRole("alertdialog");
-  fireEvent.click(within(dialog).getByRole("button", { name: "停用模型" }));
-  await view.findByRole("button", { name: "启用" });
-  fireEvent.click(view.getByRole("button", { name: "启用" }));
+  await menu("停用");
+  fireEvent.click(
+    within(await view.findByRole("alertdialog")).getByRole("button", { name: "停用模型" }),
+  );
+  await view.findByText("已停用");
+  await waitFor(() =>
+    assert.equal(
+      (view.getByRole("button", { name: "测试模型" }) as HTMLButtonElement).disabled,
+      false,
+    ),
+  );
+  fireEvent.click(view.getByRole("button", { name: "测试模型" }));
+  fireEvent.click(await view.findByRole("button", { name: "启用" }));
   dialog = await view.findByRole("alertdialog");
   assert.match(dialog.textContent!, /旧任务不会自动重试/);
   fireEvent.click(within(dialog).getByRole("button", { name: "启用模型" }));
-  await view.findByRole("button", { name: "停用" });
+  await view.findByText("已启用");
   assert.deepEqual(
-    writes.map((w) => w.body),
+    writes.filter((w) => w.path.endsWith("/state")).map((w) => w.body),
     [
       { expectedVersion: 7, enabled: false },
       { expectedVersion: 8, enabled: true },
     ],
   );
-  fireEvent.click(view.getByRole("button", { name: "测试能力" }));
+  await menu("测试详情");
   await view.findByText("工具调用 通过");
-  fireEvent.click(view.getByRole("button", { name: "测试图像（可选）" }));
+  fireEvent.click(view.getByRole("button", { name: "测试图像" }));
   await view.findByText("图像输入 未通过");
-  assert.ok(view.getByText("工具调用 通过"));
-  fireEvent.click(view.getByRole("button", { name: "删除" }));
-  dialog = await view.findByRole("alertdialog");
-  fireEvent.click(within(dialog).getByRole("button", { name: "永久删除模型" }));
+  fireEvent.keyDown(view.getByRole("dialog"), { key: "Escape" });
+  await menu("删除");
+  fireEvent.click(
+    within(await view.findByRole("alertdialog")).getByRole("button", { name: "永久删除模型" }),
+  );
   await view.findByText(/请先停用，再删除模型配置/);
   assert.equal(writes.filter((w) => w.method === "DELETE").length, 1);
-  assert.ok(view.getByRole("button", { name: "编辑" }));
+  fireEvent.click(view.getByRole("button", { name: "筛选" }));
   fireEvent.change(view.getByLabelText("搜索名称或模型"), { target: { value: "不存在" } });
   await view.findByText("没有匹配的模型");
   fireEvent.change(view.getByLabelText("搜索名称或模型"), { target: { value: "" } });
   fireEvent.change(view.getByLabelText("筛选状态"), { target: { value: "disabled" } });
   await view.findByText("没有匹配的模型");
   fireEvent.change(view.getByLabelText("筛选状态"), { target: { value: "all" } });
-  fireEvent.click(view.getByRole("button", { name: "停用" }));
+  await menu("停用");
   fireEvent.click(
     within(await view.findByRole("alertdialog")).getByRole("button", { name: "停用模型" }),
   );
   await view.findByRole("button", { name: "启用" });
-  fireEvent.click(view.getByRole("button", { name: "删除" }));
+  await menu("删除");
   dialog = await view.findByRole("alertdialog");
   assert.match(dialog.textContent!, /历史聊天、运行和用量记录会保留/);
   fireEvent.click(within(dialog).getByRole("button", { name: "永久删除模型" }));
-  await view.findByText("先连接一个模型服务");
+  await view.findByText("还没有平台模型");
   assert.equal(view.queryByRole("button", { name: "编辑" }), null);
 });
 
+test("未配置服务时引导接入，添加模型只填模型名，问答失败后重试已保存版本", async () => {
+  const data = structuredClone(snapshot);
+  data.models = [];
+  data.modelConnections = [];
+  let submitted = 0,
+    probes = 0;
+  const transport = transportWith(async (method, path, body) => {
+    if (path === "/api/admin/model-connections") {
+      const connection = {
+        ...body,
+        id: "conn_fixture",
+        gatewayProvider: "workers-ai",
+        keyAlias: null,
+        bindingVerified: true,
+      };
+      data.modelConnections!.push(connection);
+      return connection;
+    }
+    if (path === "/api/admin/models") {
+      submitted++;
+      assert.equal(body.name, body.model);
+      assert.equal(body.region, "inherit");
+      data.models.push({
+        ...body,
+        id: "model_saved",
+        version: 3,
+        enabled: false,
+        managementVersion: 1,
+        capabilities: {
+          tools: false,
+          connection: false,
+          structured: "none",
+          vision: false,
+          testedAt: null,
+        },
+      });
+      return { id: "model_saved", version: 3 };
+    }
+    assert.equal(path, "/api/admin/models/model_saved/test?version=3");
+    probes++;
+    data.models[0].capabilities = {
+      ...data.models[0].capabilities,
+      connection: probes > 1,
+      questionAnswered: probes > 1,
+      tools: probes > 1,
+      structured: probes > 1 ? "schema" : "none",
+      testedAt: "2026-11-12",
+    };
+    return data.models[0].capabilities;
+  });
+  const refresh = async () =>
+    view.rerender(
+      <SettingsModels snapshot={{ ...data }} transport={transport} refresh={refresh} />,
+    );
+  const view = render(<SettingsModels snapshot={data} transport={transport} refresh={refresh} />);
+  fireEvent.click(view.getByRole("button", { name: "添加模型" }));
+  await view.findByText(/先添加一个服务/);
+  fireEvent.click(view.getByRole("button", { name: "添加服务" }));
+  fireEvent.change(view.getByLabelText("服务提供方"), { target: { value: "workers-ai" } });
+  fireEvent.click(view.getByRole("button", { name: "保存服务" }));
+  fireEvent.click(await view.findByRole("button", { name: "继续添加模型" }));
+  assert.equal(
+    (view.getByLabelText("选择服务") as unknown as HTMLSelectElement).value,
+    "conn_fixture",
+  );
+  fireEvent.change(view.getByLabelText("模型名"), { target: { value: "@cf/openai/example" } });
+  fireEvent.click(view.getByRole("button", { name: "保存并测试" }));
+  await view.findByText("测试失败");
+  fireEvent.click(view.getByRole("button", { name: "重新测试" }));
+  await view.findByText("测试通过，待启用");
+  assert.equal(submitted, 1);
+  assert.equal(probes, 2);
+});
 test("成员管理禁止停用自己，筛选后独立提交状态并按需读取使用量", async () => {
   const data = {
     users: [

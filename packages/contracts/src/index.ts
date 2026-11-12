@@ -220,6 +220,7 @@ export const modelInputSchema = z
   });
 export type ModelInput = z.infer<typeof modelInputSchema>;
 export interface ModelCapabilities {
+  questionAnswered?: boolean;
   streaming?: Partial<Record<"text" | "tools" | "structured", "supported" | "unsupported">>;
   connection: boolean;
   tools: boolean;

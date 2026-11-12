@@ -42,6 +42,8 @@ export type AppEnv = Omit<
   TURNSTILE_SITE_KEY: string;
   REGISTRATION_OPEN: string;
   requestUserId?: string;
+  /** 仅管理员固定探测路由设置；出站时再次检查成员角色与平台模型归属。 */
+  adminProbeModelId?: string;
 };
 export type Variables = {
   deviceId: string;

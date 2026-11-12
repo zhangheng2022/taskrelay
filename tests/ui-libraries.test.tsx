@@ -145,17 +145,17 @@ test("模型表单保留编辑草稿、Zod 阻止无效预算、使用网关连�
     onSaved: async () => {},
   };
   const view = render(<ModelDialog {...props} value={original} />);
-  fireEvent.change(view.getByLabelText("配置名称"), { target: { value: "我的编辑" } });
+  fireEvent.change(view.getByLabelText("显示名称"), { target: { value: "我的编辑" } });
   view.rerender(<ModelDialog {...props} value={{ ...original, name: "后台版本", version: 2 }} />);
-  assert.equal((view.getByLabelText("配置名称") as HTMLInputElement).value, "我的编辑");
-  const url = view.getByLabelText("供应商连接") as HTMLInputElement;
+  assert.equal((view.getByLabelText("显示名称") as HTMLInputElement).value, "我的编辑");
+  const url = view.getByLabelText("选择服务") as HTMLInputElement;
   const originalUrl = url.value;
   fireEvent.change(url, { target: { value: "" } });
   fireEvent.change(view.getByLabelText("输出预留（token）"), { target: { value: "8192" } });
   fireEvent.change(view.getByLabelText("上下文预算（token，保守估计）"), {
     target: { value: "8192" },
   });
-  fireEvent.submit(view.getByRole("button", { name: "保存配置" }).closest("form")!);
+  fireEvent.submit(view.getByRole("button", { name: "保存并测试" }).closest("form")!);
   await waitFor(() =>
     assert.equal(
       view.getByLabelText("上下文预算（token，保守估计）").getAttribute("aria-invalid"),
@@ -167,15 +167,15 @@ test("模型表单保留编辑草稿、Zod 阻止无效预算、使用网关连�
     .getAttribute("aria-describedby")!
     .split(" ")
     .map((id) => document.getElementById(id)?.dataset.slot);
-  assert.deepEqual(description, ["field-description", "field-error"]);
+  assert.deepEqual(description, ["field-error"]);
   fireEvent.change(url, { target: { value: originalUrl } });
   fireEvent.change(view.getByLabelText("上下文预算（token，保守估计）"), {
     target: { value: "32000" },
   });
-  fireEvent.submit(view.getByRole("button", { name: "保存配置" }).closest("form")!);
+  fireEvent.submit(view.getByRole("button", { name: "保存并测试" }).closest("form")!);
   await waitFor(() => assert.equal(calls, 1));
   assert.equal(view.queryByLabelText("API Key"), null);
-  assert.equal((view.getByLabelText("配置名称") as HTMLInputElement).value, "我的编辑");
+  assert.equal((view.getByLabelText("显示名称") as HTMLInputElement).value, "我的编辑");
   assert.equal(calls, 1);
 });
 
@@ -302,7 +302,7 @@ test("供应商连接表单登记自定义前缀、修改默认区域并保留�
       ]}
     />,
   );
-  fireEvent.click(view.getByText("供应商连接"));
+  fireEvent.click(view.getByText("查看配置步骤"));
   fireEvent.change(view.getByLabelText("测试 · 请求发起区域"), { target: { value: "eu" } });
   await waitFor(() => assert.equal(refreshed, 1));
   assert.deepEqual(calls[0], {
@@ -310,12 +310,13 @@ test("供应商连接表单登记自定义前缀、修改默认区域并保留�
     path: "/api/admin/model-connections/conn_test/region",
     body: { expectedRegion: "us", defaultRegion: "eu" },
   });
-  fireEvent.change(view.getByLabelText("连接名称"), { target: { value: "接入" } });
-  fireEvent.change(view.getByLabelText("连接类型"), { target: { value: "custom" } });
+  fireEvent.click(view.getByText("添加服务"));
+  fireEvent.change(view.getByLabelText("服务名称"), { target: { value: "接入" } });
+  fireEvent.change(view.getByLabelText("服务提供方"), { target: { value: "custom" } });
   fireEvent.change(view.getByLabelText("公网 HTTPS 服务地址"), {
     target: { value: "https://new.example/v2" },
   });
-  fireEvent.submit(view.getByText("创建连接").closest("form")!);
+  fireEvent.submit(view.getByText("保存服务").closest("form")!);
   await waitFor(() => assert.equal(refreshed, 2));
   assert.deepEqual(calls[1], {
     method: "POST",

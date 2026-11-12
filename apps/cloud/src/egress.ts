@@ -14,6 +14,7 @@ export type EgressJob =
       runId: string | null;
       userId: string;
       reservationId: string;
+      adminProbe?: boolean;
       callId?: string;
       preview?: import("./chat-drafts").DraftTarget;
     };

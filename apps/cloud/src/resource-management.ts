@@ -19,8 +19,12 @@ function routes(kind: "accounts" | "models") {
         const { enabled, expectedVersion } = c.req.valid("json");
         const id = c.req.param("id");
         const token = crypto.randomUUID();
+        const ready =
+          kind === "models" && enabled
+            ? " AND json_extract(v.capabilities,'$.questionAnswered')=1 AND json_extract(v.capabilities,'$.connection')=1 AND json_extract(v.capabilities,'$.tools')=1 AND json_extract(v.capabilities,'$.structured') IN ('schema','json')"
+            : "";
         const update = c.env.DB.prepare(
-          `UPDATE ${kind} SET enabled=?,management_token=?,management_version=management_version+1 WHERE id=? AND management_version=? ${kind === "accounts" ? "AND user_id=?" : "AND owner_user_id IS NULL AND EXISTS(SELECT 1 FROM model_profile_versions v WHERE v.id=models.id AND v.version=models.current_version AND v.connection_id IS NOT NULL AND json_extract(v.config,'$.protocol')='responses')"}`,
+          `UPDATE ${kind} SET enabled=?,management_token=?,management_version=management_version+1 WHERE id=? AND management_version=? ${kind === "accounts" ? "AND user_id=?" : `AND owner_user_id IS NULL AND EXISTS(SELECT 1 FROM model_profile_versions v WHERE v.id=models.id AND v.version=models.current_version AND v.connection_id IS NOT NULL AND json_extract(v.config,'$.protocol')='responses'${ready})`}`,
         ).bind(
           Number(enabled),
           token,
@@ -86,7 +90,18 @@ function routes(kind: "accounts" | "models") {
           }
         }
         const results = await c.env.DB.batch(statements);
-        if (!results[0].meta.changes) return c.json({ error: "RESOURCE_VERSION_CONFLICT" }, 409);
+        if (!results[0].meta.changes) {
+          if (
+            ready &&
+            (await c.env.DB.prepare(
+              "SELECT 1 FROM models WHERE id=? AND management_version=? AND deleted_at IS NULL AND owner_user_id IS NULL",
+            )
+              .bind(id, expectedVersion)
+              .first())
+          )
+            return c.json({ error: "MODEL_TEST_REQUIRED" }, 409);
+          return c.json({ error: "RESOURCE_VERSION_CONFLICT" }, 409);
+        }
         if (!enabled) {
           const stopped = results[2].results as {
             id: string;

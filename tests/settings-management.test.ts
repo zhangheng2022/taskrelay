@@ -19,6 +19,12 @@ import { createAccount } from "../apps/cloud/src/accounts";
 for (const kind of ["accounts", "models"] as const) {
   test(`${kind} 停用原子失败排队与执行，保留未知操作锁；恢复不重试且冲突不再停止`, async (t) => {
     const s = await productionModelFixture(t);
+    if (kind === "models")
+      s.sql
+        .prepare(
+          "UPDATE model_profile_versions SET capabilities=json_set(capabilities,'$.questionAnswered',json('true')) WHERE id='model_test'",
+        )
+        .run();
     await enqueue(s.db, task(), "queued_before_disable");
     s.sql.prepare("UPDATE runs SET write_pending=1,may_have_written=1 WHERE id=?").run(s.run.id);
     const id = kind === "accounts" ? "account_test" : "model_test";

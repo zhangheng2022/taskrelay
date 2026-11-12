@@ -26,6 +26,7 @@ test("移除 Chat 协议只退休固定到旧版本的运行，保留历史和�
   const mixed = await storeModel(env, input);
   const current = await storeModel(env, input, mixed.id, 1);
   assert.equal(current.protocol, "responses");
+  sql.prepare("UPDATE models SET enabled=1 WHERE id IN (?,?)").run(old.id, mixed.id);
   const retired = task({ id: "old_task", modelId: mixed.id, accountId: null });
   const kept = task({ id: "new_task", modelId: mixed.id, modelVersion: 2, accountId: null });
   for (const snapshot of [retired, kept]) {
@@ -164,6 +165,7 @@ test("发布模型固定连接和有效区域，原生网关、托管密钥、Wo
     [v1.effectiveRegion, v2.effectiveRegion, v3.effectiveRegion],
     ["us", "eu", "auto"],
   );
+  sql.prepare("UPDATE models SET enabled=1 WHERE id=?").run(v1.id);
   for (const v of [v1, v2, v3]) await invoke(env, v.id, v.version, messages);
   assert.deepEqual(regions, ["us", "eu"]);
   assert.equal(sent.length, 3);
@@ -186,6 +188,7 @@ test("发布模型固定连接和有效区域，原生网关、托管密钥、Wo
     upstream: "https://public.example/api/v3/",
   });
   const cv = await storeModel(env, { ...config, connectionId: custom.id, protocol: "responses" });
+  sql.prepare("UPDATE models SET enabled=1 WHERE id=?").run(cv.id);
   await assert.rejects(invoke(env, cv.id, 1, messages), /MODEL_GATEWAY_BINDING_REQUIRED/);
   assert.equal(sent.length, 3);
   sql.prepare("UPDATE model_connections SET binding_verified=1 WHERE id=?").run(custom.id);
@@ -212,6 +215,7 @@ test("发布模型固定连接和有效区域，原生网关、托管密钥、Wo
     model: "@cf/vendor/example",
     protocol: "responses",
   });
+  sql.prepare("UPDATE models SET enabled=1 WHERE id=?").run(model.id);
   await invoke(env, model.id, 1, messages);
   assert.equal(
     sent.at(-1)!.url,
