@@ -560,7 +560,7 @@ export const conversations = conversationsBase
           t.user_id,
         )
         .run();
-      if (!changed.meta.changes) return c.json({ error: "THREAD_MODEL_CONFLICT" }, 409);
+      if (!changed.meta.changes) throw Error("THREAD_MODEL_CONFLICT");
       await notifyUser(c.env, t.user_id);
       return c.json(await threadPage(c.env, t.id));
     },
