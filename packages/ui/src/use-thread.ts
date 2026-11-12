@@ -110,9 +110,10 @@ export function useThread(
         }),
       );
       if (generation.current !== g) return;
-      const found = list.items.find(
-        (t) => (taskId ? t.task_id === taskId : t.model_id === modelId && !t.task_id),
-      );
+      const found = list.items.find((t) => {
+        if (taskId) return t.task_id === taskId;
+        return t.model_id === modelId && !t.task_id;
+      });
       const p = found
         ? await rpcData(
             createApi(transport).api.user.threads[":id"].$get({

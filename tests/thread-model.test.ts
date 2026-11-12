@@ -19,12 +19,14 @@ test("停用模型的旧会话可切换，保留消息、任务和运行快照",
     content: "保留旧会话内容",
   });
   s.sql.exec("UPDATE runs SET status='succeeded',cleanup_pending=0");
+  s.sql.exec("BEGIN");
   s.sql.exec(
     "INSERT INTO models(id,current_version,created_at,enabled) VALUES('model_next',2,1,1)",
   );
   s.sql.exec(
     "INSERT INTO model_profile_versions(id,version,config,connection_id,effective_region,capabilities,created_at) SELECT 'model_next',2,json_set(config,'$.model','next-model'),connection_id,effective_region,capabilities,created_at FROM model_profile_versions WHERE id='model_test' AND version=2",
   );
+  s.sql.exec("COMMIT");
   s.sql.exec("UPDATE models SET enabled=0 WHERE id='model_test'");
   const snapshots = s.sql.prepare("SELECT * FROM run_snapshots").all();
   const versions = s.sql.prepare("SELECT * FROM task_versions").all();
