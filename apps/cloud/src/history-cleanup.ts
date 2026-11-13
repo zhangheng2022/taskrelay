@@ -104,7 +104,8 @@ export async function beginCleanup(
     env.DB.prepare(`DELETE FROM preference_snapshots WHERE thread_id IN(${threads})`).bind(id),
     env.DB.prepare(`DELETE FROM run_results WHERE run_id IN(${runs})`).bind(id),
     env.DB.prepare(`DELETE FROM run_snapshots WHERE run_id IN(${runs})`).bind(id),
-    // 新版本是清空后的空入口；旧版本正文由固定目标分批回收，安全身份继续保留。
+    // 占位版本沿用原模型身份；触发器仅在本次作业捕获目标时允许沿用停用模型。
+    // 旧版本正文由固定目标分批回收，安全身份继续保留。
     env.DB.prepare(
       `INSERT INTO task_versions(task_id,version,definition,user_id,model_id,model_version)
       SELECT t.id,t.version+1,json_object('id',t.id,'version',t.version+1,'title',CASE WHEN ?=1 THEN '已删除任务' ELSE t.title END,
