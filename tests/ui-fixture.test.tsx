@@ -1,7 +1,7 @@
 import "./ui-dom";
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { App } from "../packages/ui/src/app";
 import { createFixtureTransport } from "../apps/web/src/ui-fixture-transport";
 import type { Transport } from "../packages/contracts/src/index";
@@ -46,15 +46,30 @@ for (const state of ["challenge", "failed"]) {
   });
 }
 
-test("新任务夹具仍为空白对话，不混入其他任务的演示历史", async () => {
+test("新建任务从空白开始，刷新明确的会话地址可恢复问答", async () => {
   const { transport, creates } = fixture("state=new&history");
-  const view = render(<App transport={transport} />);
-  await waitFor(
-    () =>
-      assert.equal(view.getByRole("textbox", { name: "任务需求" }).hasAttribute("disabled"), false),
-    { timeout: 2500 },
-  );
+  let view = render(<App transport={transport} />);
+  const input = await view.findByRole("textbox", { name: "任务需求" });
+  assert.deepEqual(creates, []);
+  fireEvent.change(input, { target: { value: "之前的普通问答" } });
+  fireEvent.click(view.getByRole("button", { name: "发送消息" }));
+  await view.findByText(/这是界面演示回复/);
   assert.deepEqual(creates, [{ modelId: "fixture_model" }]);
+  const previous = location.hash;
+  assert.match(previous, /^#chat\//);
+  view.unmount();
+  view = render(<App transport={transport} />);
+  await view.findByText("之前的普通问答");
+  fireEvent.click(view.getByRole("button", { name: "新建任务" }));
+  await waitFor(() => assert.equal(location.hash, ""));
+  assert.equal(view.queryByText("之前的普通问答"), null);
   assert.equal(view.queryByText("第 1 条任务询问"), null);
-  assert.equal(view.queryByText(/请在同一聊天提供登录所需信息/), null);
+  fireEvent.change(view.getByRole("textbox", { name: "任务需求" }), {
+    target: { value: "这次的新问题" },
+  });
+  fireEvent.click(view.getByRole("button", { name: "发送消息" }));
+  await view.findByText(/这是界面演示回复/);
+  assert.equal(creates.length, 2);
+  assert.notEqual(location.hash, previous);
+  assert.equal(view.queryByText("之前的普通问答"), null);
 });

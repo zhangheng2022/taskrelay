@@ -19,8 +19,7 @@ test("新交办慢请求立即显示原文和发送状态，失败恢复输入�
   const ids: string[] = [];
   let page: ThreadPage = { ...threadPage };
   const transport = transportWith(async (method, path, body) => {
-    if (path.split("?")[0] === "/api/user/threads")
-      return { items: [{ id: page.id, model_id: "model-ui", task_id: null }], nextCursor: null };
+    if (path.split("?")[0] === "/api/user/threads") return page;
     if (method === "GET") return page;
     ids.push(body.requestId);
     return new Promise((resolve, reject) => {
@@ -43,7 +42,7 @@ test("新交办慢请求立即显示原文和发送状态，失败恢复输入�
   fireEvent.click(v.getByRole("button", { name: "发送消息" }));
   assert.ok(v.getByText(content));
   assert.ok(v.getByText("正在发送…"));
-  assert.equal(ids.length, 1);
+  await waitFor(() => assert.equal(ids.length, 1));
   await act(async () => rejectPost(Error("REQUEST_UNCONFIRMED")));
   assert.equal(v.queryByText("正在发送…"), null);
   assert.equal((v.getByRole("textbox") as HTMLTextAreaElement).value, content);
@@ -68,11 +67,7 @@ test("交办通过消息启动，异步完成保留会话并允许继续补充",
     opened: string[] = [];
   const transport = {
     ...transportWith(async (method, path, body) => {
-      if (path.split("?")[0] === "/api/user/threads")
-        return {
-          items: [{ id: threadPage.id, model_id: "model-ui", task_id: null }],
-          nextCursor: null,
-        };
+      if (path.split("?")[0] === "/api/user/threads") return page;
       if (method === "GET") return page;
       assert.ok(path.endsWith("/messages"));
       sent.push(body);
@@ -100,7 +95,6 @@ test("交办通过消息启动，异步完成保留会话并允许继续补充",
   await waitFor(() =>
     assert.equal(view.getByRole("button", { name: "发送消息" }).hasAttribute("disabled"), true),
   );
-  await waitFor(() => assert.ok(listener));
   fireEvent.change(view.getByRole("textbox"), { target: { value: "查看 https://example.com/" } });
   fireEvent.click(view.getByRole("button", { name: "发送消息" }));
   await waitFor(() => assert.equal(sent.length, 1));
@@ -110,6 +104,7 @@ test("交办通过消息启动，异步完成保留会话并允许继续补充",
   assert.notEqual(sent[0].requestId, sent[1].requestId);
   assert.equal(view.queryByRole("button", { name: "创建并试运行" }), null);
   page = { ...page, taskId: "created-task", activeTurn: null, status: "done" };
+  await waitFor(() => assert.ok(listener));
   await act(async () => listener!());
   await waitFor(() => assert.deepEqual(opened, ["created-task"]));
 });
