@@ -220,6 +220,52 @@ test("清空保留暂停入口，后台只清旧运行和旧聊天，新消息�
   );
 });
 
+test("任务模型停用后仍可删除、清空和批量清理，普通任务版本仍要求启用模型", async (t) => {
+  for (const scope of ["task", "clear", "all"] as const) {
+    await t.test(scope, async (t) => {
+      const s = await setup(t);
+      s.sql.exec("UPDATE models SET enabled=0 WHERE id='model_test'");
+      const targetId = scope === "all" ? null : s.run.taskId;
+      const input = { scope, targetId, requestId: "cleanup_disabled_model" };
+      const response = await s.request("/api/user/history-cleanups", input);
+      assert.equal(response.status, 202, JSON.stringify(response.data));
+      const jobId = response.data.id;
+      const retry = await s.request("/api/user/history-cleanups", input);
+      assert.equal(retry.status, 202);
+      assert.equal(retry.data.id, jobId);
+      const current = s.sql
+        .prepare(
+          `SELECT t.deleted,t.status,t.context_withdrawn,v.version,v.model_id,v.model_version
+           FROM tasks t JOIN task_versions v ON v.task_id=t.id AND v.version=t.version WHERE t.id=?`,
+        )
+        .get(s.run.taskId)!;
+      assert.equal(current.deleted, Number(scope !== "clear"));
+      assert.equal(current.status, "paused");
+      assert.equal(current.context_withdrawn, 1);
+      assert.equal(current.model_id, "model_test");
+      assert.equal(current.model_version, s.run.task.modelVersion);
+      assert.throws(
+        () =>
+          s.sql
+            .prepare(
+              `INSERT INTO task_versions(task_id,version,definition,user_id,model_id,model_version)
+               SELECT task_id,version+1,definition,user_id,model_id,model_version
+               FROM task_versions WHERE task_id=? AND version=?`,
+            )
+            .run(s.run.taskId, current.version),
+        /MODEL_DISABLED/,
+      );
+      await drain(s);
+      assert.equal((await cleanupJobs(s.env, s.run.userId, jobId))[0].status, "done");
+      assert.equal(
+        s.sql.prepare("SELECT id FROM ai_messages WHERE id='msg_secret'").get(),
+        undefined,
+      );
+      assert.equal(s.requests.length, 0);
+    });
+  }
+});
+
 test("图片删除失败可恢复，正文分批清理且密文/图副本回收，保留幂等摘要", async (t) => {
   const s = await setup(t);
   let fail = true,
