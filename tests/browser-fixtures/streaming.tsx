@@ -105,7 +105,7 @@ Object.assign(window, {
   },
 });
 function Streaming() {
-  const { page: current } = useThread(transport, "compose", "model");
+  const { page: current } = useThread(transport, "compose", "model", undefined, page.id);
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
       <Thread>

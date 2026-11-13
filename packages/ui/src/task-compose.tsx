@@ -12,21 +12,28 @@ import { DraftMessages } from "./chat-parts";
 
 // 新任务以普通聊天交办；云端返回 taskId 后沿用原会话进入任务页，不在本地创建执行计划。
 export function TaskCompose({
+  threadId,
   transport,
   snapshot,
   offline,
   onSaved,
   onSettings,
+  onThreadCreated,
 }: {
+  threadId?: string;
   transport: Transport;
   snapshot: Snapshot;
   offline: boolean;
   onSaved: (id: string) => Promise<void>;
   onSettings: () => void;
+  onThreadCreated?: (id: string) => void;
 }) {
   const available = snapshot.models.filter(canUseModel);
   const [modelId, setModelId] = useState(available.length === 1 ? available[0].id : "");
-  const thread = useThread(transport, "compose", modelId);
+  // 初次发送后地址栏记录会话，但仍由当前组件接收这次发送的结果。
+  const [resumeThreadId] = useState(threadId);
+  const thread = useThread(transport, "compose", modelId, undefined, resumeThreadId);
+  const canSend = !!thread.page || (!resumeThreadId && !!modelId);
   const [text, setText] = useState(""),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
@@ -46,14 +53,14 @@ export function TaskCompose({
     }
   }, [thread.page?.taskId, onSaved]);
   async function send() {
-    if (flight.current || offline || !text.trim() || !thread.page) return;
+    if (flight.current || offline || !text.trim() || !canSend) return;
     flight.current = true;
     setBusy(true);
     setError("");
     const content = text;
     setText("");
     try {
-      await thread.send(content);
+      await thread.send(content, onThreadCreated);
     } catch (e) {
       setText(content);
       setError((e as Error).message);
@@ -124,14 +131,14 @@ export function TaskCompose({
         setText={setText}
         onSend={() => void send()}
         busy={busy}
-        disabled={offline || !thread.page}
+        disabled={offline || !canSend}
         label="任务需求"
         placeholder="交代任务，或继续补充要求…"
       >
         <ModelSelector
           models={snapshot.models}
-          value={modelId}
-          disabled={busy || !!thread.page?.activeTurn || !!thread.page?.messages.length}
+          value={thread.page?.modelId ?? modelId}
+          disabled={busy || !!resumeThreadId || !!thread.page}
           onChange={setModelId}
         />
       </Composer>

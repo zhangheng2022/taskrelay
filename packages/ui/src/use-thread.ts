@@ -48,14 +48,14 @@ export function useThread(
   kind: "compose" | "chat",
   modelId: string,
   taskId?: string,
+  resumeThreadId?: string,
 ) {
   const [page, setPage] = useState<ThreadPage | null>(null),
     [sending, setSending] = useState<{ id: string; content: string } | null>(null),
     [error, setError] = useState(""),
-    [loading, setLoading] = useState(!!modelId),
+    [loading, setLoading] = useState(!!(taskId || resumeThreadId)),
     [retryIndex, setRetryIndex] = useState(0);
-  const scope = `${kind}:${modelId}:${taskId ?? ""}`,
-    generation = useRef(0),
+  const generation = useRef(0),
     current = useRef<ThreadPage | null>(null),
     attempt = useRef<{
       content: string;
@@ -101,31 +101,21 @@ export function useThread(
     setPage(null);
     attempt.current = null;
     setError("");
-    setLoading(!!modelId);
-    if (!modelId) return;
+    setLoading(!!(taskId || resumeThreadId));
     (async () => {
-      const list = await rpcData(
-        createApi(transport).api.user.threads.$get({
-          query: taskId ? { taskId } : { modelId, unattached: "true" as const },
-        }),
-      );
+      const api = createApi(transport).api.user.threads;
+      if (resumeThreadId) {
+        const p = await rpcData(api[":id"].$get({ param: { id: resumeThreadId }, query: {} }));
+        if (generation.current === g) accept(p);
+        return;
+      }
+      if (!taskId || !modelId) return;
+      const list = await rpcData(api.$get({ query: { taskId } }));
       if (generation.current !== g) return;
-      const found = list.items.find((t) => {
-        if (taskId) return t.task_id === taskId;
-        return t.model_id === modelId && !t.task_id;
-      });
+      const found = list.items.find((t) => t.task_id === taskId);
       const p = found
-        ? await rpcData(
-            createApi(transport).api.user.threads[":id"].$get({
-              param: { id: found.id },
-              query: {},
-            }),
-          )
-        : await rpcData(
-            createApi(transport).api.user.threads.$post({
-              json: { modelId, ...(taskId ? { taskId } : {}) },
-            }),
-          );
+        ? await rpcData(api[":id"].$get({ param: { id: found.id }, query: {} }))
+        : await rpcData(api.$post({ json: { modelId, taskId } }));
       if (generation.current === g) {
         accept(p);
         setError("");
@@ -140,7 +130,7 @@ export function useThread(
     return () => {
       generation.current = g + 1;
     };
-  }, [transport, scope, modelId, taskId, accept, retryIndex]);
+  }, [transport, modelId, taskId, resumeThreadId, accept, retryIndex]);
   const refresh = useCallback(async (): Promise<void> => {
     const p = current.current;
     if (!p) return;
@@ -247,9 +237,9 @@ export function useThread(
       unsubscribe?.();
     };
   }, [page?.id, refresh, transport]);
-  async function send(content: string) {
-    const p = current.current;
-    if (!p) throw new Error("会话尚未加载");
+  async function send(content: string, onThreadCreated?: (id: string) => void) {
+    let p = current.current;
+    if (!p && (kind !== "compose" || resumeThreadId || !modelId)) throw new Error("会话尚未加载");
     if (writing.current) throw new Error("消息正在发送");
     if (attempt.current && attempt.current.content !== content)
       throw new Error("请先重试上一条消息以确认结果");
@@ -263,8 +253,15 @@ export function useThread(
     writing.current = true;
     setSending({ id: `pending_${attempt.current.requestId}`, content });
     try {
+      const api = createApi(transport).api.user.threads;
+      if (!p) {
+        p = await rpcData(api.$post({ json: { modelId } }));
+        if (g !== generation.current) return;
+        accept(p);
+        onThreadCreated?.(p.id);
+      }
       const result = await rpcData(
-        createApi(transport).api.user.threads[":id"].messages.$post({
+        api[":id"].messages.$post({
           param: { id: p.id },
           json: attempt.current,
         }),
@@ -287,6 +284,10 @@ export function useThread(
             "本轮未完成",
         );
       return result;
+    } catch (error) {
+      // 会话尚未创建成功时，消息请求还没有发出，允许直接修改原文重试。
+      if (!p && g === generation.current) attempt.current = null;
+      throw error;
     } finally {
       if (g === generation.current) {
         writing.current = false;

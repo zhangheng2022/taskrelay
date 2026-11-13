@@ -78,6 +78,17 @@ export function App({ transport }: { transport: Transport }) {
     </QueryBoundary>
   );
 }
+const composePath = "#chat/";
+
+function threadFromHash(hash: string) {
+  return hash.startsWith(composePath) ? hash.slice(composePath.length) || undefined : undefined;
+}
+
+function taskFromHash(hash: string) {
+  if (hash.startsWith("#settings") || hash.startsWith(composePath) || hash === "#runs") return null;
+  return hash.slice(1) || null;
+}
+
 // 工作空间只编排导航、云端快照和当前运行选择；会话读写交给共享聊天组件。
 // 通知与轮询共用加载入口，写操作完成后额外刷新，避免旧快照覆盖操作结果。
 function Workspace({ transport }: { transport: Transport }) {
@@ -99,11 +110,7 @@ function Workspace({ transport }: { transport: Transport }) {
           ? "runs"
           : "tasks",
     ),
-    [selected, setSelected] = useState<string | null>(() =>
-      location.hash.startsWith("#settings") || location.hash === "#runs"
-        ? null
-        : location.hash.slice(1) || null,
-    ),
+    [selected, setSelected] = useState(() => taskFromHash(location.hash)),
     [runId, setRunId] = useState<string | null>(null);
   const [settingsSection, setSettingsSection] = useState(
     () => location.hash.split("/")[1] || "general",
@@ -113,6 +120,8 @@ function Workspace({ transport }: { transport: Transport }) {
     if (settingsScroll.current) settingsScroll.current.scrollTop = 0;
   }, [page, settingsSection]);
   const settingsLeave = useRef<(() => Promise<boolean>) | null>(null);
+  const [draftKey, setDraftKey] = useState(0);
+  const [composeThreadId, setComposeThreadId] = useState(() => threadFromHash(location.hash));
   const lastHash = useRef(location.hash);
   const historyIndex = useRef(Number(history.state?.settingsIndex ?? 0));
   const routing = useRef(false);
@@ -124,7 +133,9 @@ function Workspace({ transport }: { transport: Transport }) {
     } else if (hash === "#runs") setPageState("runs");
     else {
       setPageState("tasks");
-      setSelected(hash.slice(1) || null);
+      setSelected(taskFromHash(hash));
+      setComposeThreadId(threadFromHash(hash));
+      if (!hash || hash.startsWith(composePath)) setDraftKey((key) => key + 1);
     }
   }, []);
   const navigate = useCallback(
@@ -261,8 +272,7 @@ function Workspace({ transport }: { transport: Transport }) {
     }
   }
   const [detail, setDetail] = useState(false),
-    [search, setSearch] = useState(""),
-    [draftKey, setDraftKey] = useState(0);
+    [search, setSearch] = useState("");
   const [cleanupSelection, setCleanupSelection] = useState<CleanupSelection | null>(null);
   const [chatEpoch, setChatEpoch] = useState(0);
   const [theme, setTheme] = useTheme();
@@ -327,9 +337,10 @@ function Workspace({ transport }: { transport: Transport }) {
   const pending = data.waitingHelp ?? [];
   function choose(id: string | null, rid: string | null = null, fresh = false) {
     void (async () => {
-      if (lastHash.current !== (id ? "#" + id : "") && !(await navigate(id ? "#" + id : "")))
-        return;
-      if (fresh) setDraftKey((k) => k + 1);
+      const hash = id ? "#" + id : "";
+      if (lastHash.current !== hash) {
+        if (!(await navigate(hash))) return;
+      } else if (fresh) setDraftKey((key) => key + 1);
       setSelected(id);
       setRunId(rid);
       setPageState("tasks");
@@ -549,7 +560,7 @@ function Workspace({ transport }: { transport: Transport }) {
                 ? "设置"
                 : page === "runs"
                   ? "运行记录"
-                  : (task?.title ?? "新任务")}
+                  : (task?.title ?? (composeThreadId ? "聊天" : "新任务"))}
             </h1>
             {task && page === "tasks" && (
               <p className="truncate text-xs text-muted-foreground">
@@ -764,13 +775,28 @@ function Workspace({ transport }: { transport: Transport }) {
         ) : !task ? (
           <TaskCompose
             key={draftKey}
+            threadId={composeThreadId}
             transport={transport}
             snapshot={data}
             offline={offline}
             onSettings={() => setPage("settings")}
+            onThreadCreated={(id) => {
+              const hash = composePath + id;
+              history.replaceState(history.state, "", location.pathname + location.search + hash);
+              lastHash.current = hash;
+              setComposeThreadId(id);
+            }}
             onSaved={async (id) => {
+              const hash = lastHash.current;
               await refresh();
-              choose(id);
+              if (lastHash.current !== hash) return;
+              const taskHash = "#" + id;
+              history.replaceState(
+                history.state,
+                "",
+                location.pathname + location.search + taskHash,
+              );
+              applyHash(taskHash);
             }}
           />
         ) : (

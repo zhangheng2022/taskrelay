@@ -140,6 +140,7 @@ for (const host of ["compose", "conversation"] as const) {
     const view = render(
       host === "compose" ? (
         <TaskCompose
+          threadId={page.id}
           transport={transport}
           snapshot={snapshot}
           offline={false}
