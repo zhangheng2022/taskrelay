@@ -20,8 +20,17 @@ test("聊天只接受原模型版本已验证的档位，重绑模型时恢复�
   const first = await create("low");
   assert.equal(first.status, 200, JSON.stringify(first.data));
   assert.equal(first.data.reasoningEffort, "low");
+  assert.equal(first.data.modelAvailable, true);
 
   s.sql.exec("UPDATE models SET current_version=2 WHERE id='model_test'");
+  s.sql.exec(
+    "UPDATE model_profile_versions SET capabilities=json_set(capabilities,'$.connection',0) WHERE id='model_test' AND version=2",
+  );
+  const reopened = await s.request(`/api/user/threads/${first.data.id}`, undefined, "GET");
+  assert.equal(reopened.data.modelAvailable, true, "新版本未验证不影响已绑定的旧版本");
+  s.sql.exec(
+    "UPDATE model_profile_versions SET capabilities=json_set(capabilities,'$.connection',1) WHERE id='model_test' AND version=2",
+  );
   const path = `/api/user/threads/${first.data.id}/model`;
   const high = await s.request(
     path,
@@ -144,6 +153,7 @@ test("停用模型的旧会话可切换，保留消息、任务和运行快照",
   const snapshots = s.sql.prepare("SELECT * FROM run_snapshots").all();
   const versions = s.sql.prepare("SELECT * FROM task_versions").all();
   const current = (await s.request(`/api/user/threads/${page.id}`, undefined, "GET")).data;
+  assert.equal(current.modelAvailable, false);
   const path = `/api/user/threads/${page.id}/model`;
   const switched = await s.request(
     path,
@@ -153,6 +163,7 @@ test("停用模型的旧会话可切换，保留消息、任务和运行快照",
   assert.equal(switched.status, 200, JSON.stringify(switched.data));
   assert.equal(switched.data.id, page.id);
   assert.equal(switched.data.modelId, "model_next");
+  assert.equal(switched.data.modelAvailable, true);
   assert.ok(
     switched.data.messages.some((m: { content: string }) => m.content === "保留旧会话内容"),
   );

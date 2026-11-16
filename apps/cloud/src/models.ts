@@ -188,8 +188,13 @@ export async function invoke(
       const verified = pinned.capabilities.reasoningEfforts?.[request.reasoningEffort];
       if (!verified || (request.schema && verified.structured !== "schema"))
         throw Error("MODEL_REASONING_EFFORT_UNSUPPORTED");
-      if ((request.image || request.imageRef) && !verified.vision)
-        throw Error("MODEL_REASONING_VISION_UNSUPPORTED");
+      const hasImage =
+        request.image ||
+        request.imageRef ||
+        request.messages.some((message) =>
+          message.content_blocks?.some((part) => part.type === "image_url"),
+        );
+      if (hasImage && !verified.vision) throw Error("MODEL_REASONING_VISION_UNSUPPORTED");
     }
     let streamMode = request.stream ? "stream" : "buffered";
     // 去重先于能力选择：回退开关或能力更新不能改变已发出调用的身份，也不能触发重探测。

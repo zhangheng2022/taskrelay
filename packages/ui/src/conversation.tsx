@@ -46,7 +46,10 @@ export function Conversation({
   const runLabels = new Map(runs.map((item) => [item.id, item.accountName]));
   if (run?.accountName) runLabels.set(run.id, run.accountName);
   const modelId = thread.page?.modelId ?? task.modelId;
-  const modelUnavailable = !!models && !models.some((m) => m.id === modelId && canUseModel(m));
+  const modelUnavailable =
+    thread.page?.modelAvailable === undefined
+      ? !!models && !models.some((m) => m.id === modelId && canUseModel(m))
+      : !thread.page.modelAvailable;
   const modelLocked =
     !!active ||
     run?.status === "unknown" ||

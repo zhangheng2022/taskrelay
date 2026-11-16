@@ -33,8 +33,10 @@ export function TaskCompose({
   // 初次发送后地址栏记录会话，但仍由当前组件接收这次发送的结果。
   const [resumeThreadId] = useState(threadId);
   const thread = useThread(transport, "compose", modelId, undefined, resumeThreadId);
-  const selectedModel = available.find((model) => model.id === (thread.page?.modelId ?? modelId));
-  const canSend = !!selectedModel && (!!thread.page || !resumeThreadId);
+  const selectedModel = available.find((model) => model.id === modelId);
+  const canSend = thread.page
+    ? thread.page.modelAvailable !== false
+    : !resumeThreadId && !!selectedModel;
   const [effort, setEffort] = useState<ReasoningEffort | null>(null);
   const optionsLocked = offline || !!thread.page?.activeTurn || !!thread.page?.queued?.length;
   const [text, setText] = useState(""),
@@ -173,7 +175,7 @@ export function TaskCompose({
                   : selectedModel?.capabilities.reasoningEfforts
               }
               value={thread.page ? (thread.page.reasoningEffort ?? null) : effort}
-              disabled={busy || optionsLocked || !selectedModel}
+              disabled={busy || optionsLocked || !canSend}
               onChange={(reasoningEffort) => void changeModel({ reasoningEffort })}
             />
           </>

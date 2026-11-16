@@ -22,7 +22,6 @@ import {
   taskInputSchema,
   idSchema,
   reasoningEffortSchema,
-  type ModelCapabilities,
   type TaskInput,
 } from "../../../../packages/contracts/src/index";
 import type { Message } from "../../../../packages/model/src/index";
@@ -104,11 +103,16 @@ export async function threadPage(
   )
     .bind(id)
     .first<NonNullable<ThreadPage["latestTurn"]>>();
-  const efforts = await env.DB.prepare(
-    "SELECT json_extract(capabilities,'$.reasoningEfforts') AS efforts FROM model_profile_versions WHERE id=? AND version=?",
-  )
-    .bind(t.model_id, t.model_version)
-    .first<string>("efforts");
+  // 旧会话可以继续使用已验证的固定版本，当前版本的能力由切换入口单独校验。
+  const pinned = await getModelProfile(env, t.model_id, t.model_version).catch((error: unknown) => {
+    if (
+      error instanceof Error &&
+      ["MODEL_DISABLED", "MODEL_NOT_FOUND", "MODEL_PROTOCOL_RETIRED"].includes(error.message)
+    )
+      return null;
+    throw error;
+  });
+  const caps = pinned?.profile.capabilities;
   return {
     id,
     drafts: env.NOTIFICATIONS
@@ -119,10 +123,9 @@ export async function threadPage(
     taskId: t.task_id,
     scheduleCard: t.task_id ? await scheduleCard(env, t.task_id) : null,
     modelId: t.model_id,
+    modelAvailable: !!caps?.connection && caps.tools && caps.structured !== "none",
     reasoningEffort: t.reasoning_effort ?? null,
-    ...(efforts
-      ? { reasoningEfforts: JSON.parse(efforts) as ModelCapabilities["reasoningEfforts"] }
-      : {}),
+    ...(caps?.reasoningEfforts ? { reasoningEfforts: caps.reasoningEfforts } : {}),
     version: t.version,
     draft: t.draft ? JSON.parse(t.draft) : null,
     partial: JSON.parse(t.partial),

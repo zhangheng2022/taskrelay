@@ -14,6 +14,38 @@ afterEach(() => {
   localStorage.clear();
 });
 
+test("已有聊天依据固定版本而非未验证的当前版本继续发送", async () => {
+  const page = { ...threadPage, modelAvailable: true };
+  const current = snapshot.models[0];
+  const newer = {
+    ...current,
+    version: current.version + 1,
+    capabilities: { ...current.capabilities, connection: false },
+  };
+  const messages: string[] = [];
+  const v = render(
+    <TaskCompose
+      threadId={page.id}
+      transport={transportWith(async (method, path, body) => {
+        if (method === "POST") {
+          assert.equal(path, `/api/user/threads/${page.id}/messages`);
+          messages.push(body.content);
+        }
+        return page;
+      })}
+      snapshot={{ ...snapshot, models: [newer] }}
+      offline={false}
+      onSaved={async () => {}}
+      onSettings={() => {}}
+    />,
+  );
+  const textbox = v.getByRole("textbox") as HTMLTextAreaElement;
+  await waitFor(() => assert.equal(textbox.disabled, false));
+  fireEvent.change(textbox, { target: { value: "继续原聊天" } });
+  fireEvent.click(v.getByRole("button", { name: "发送消息" }));
+  await waitFor(() => assert.deepEqual(messages, ["继续原聊天"]));
+});
+
 test("新聊天仅显示已验证推理强度，并在首条消息发出前持久化", async () => {
   const model = snapshot.models[0];
   const reasoningEfforts = {

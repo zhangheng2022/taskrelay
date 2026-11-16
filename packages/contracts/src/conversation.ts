@@ -6,6 +6,7 @@ export type ThreadPage = {
   drafts?: import("./streaming").ChatDraft[];
   version: number;
   modelId: string;
+  modelAvailable?: boolean;
   reasoningEffort?: ReasoningEffort | null;
   reasoningEfforts?: ModelCapabilities["reasoningEfforts"];
   taskId?: string | null;
