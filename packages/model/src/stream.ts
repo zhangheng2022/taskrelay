@@ -65,6 +65,7 @@ export async function readModelStream(
   client: OpenAI,
   body: Record<string, unknown>,
   onText?: (text: string) => Promise<void>,
+  verifyEffort?: (actual?: import("../../contracts/src/index").ReasoningEffort | null) => void,
 ): Promise<ModelResponse> {
   let text = "";
   const stream = await client.responses.create(body as unknown as ResponseCreateParamsStreaming);
@@ -76,6 +77,7 @@ export async function readModelStream(
       await onText?.(text);
     } else if (event.type === "response.completed") {
       const r = event.response;
+      verifyEffort?.(r.reasoning?.effort);
       result = {
         text: r.output
           .filter((item) => item.type === "message")

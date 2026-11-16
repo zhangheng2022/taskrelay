@@ -23,7 +23,7 @@ import { z } from "zod";
 import { zodResponseFormat } from "openai/helpers/zod";
 import type { AppEnv } from "../env";
 import { generateStructured, getModelProfile, invoke } from "../models";
-import type { Message, Tool } from "../../../../packages/model/src/index";
+import type { Inference, Message, Tool } from "../../../../packages/model/src/index";
 import {
   aiMessageToModelResponse,
   fromLangChainMessages,
@@ -58,6 +58,7 @@ export class RelayChatModel extends BaseChatModel<RelayModelOptions> {
     private runId: string | null = null,
     private graphId?: string,
     private graphGeneration?: number,
+    private reasoningEffort?: Inference["reasoningEffort"],
   ) {
     super({ maxRetries: 0, disableStreaming: true });
     assertPrivateAI();
@@ -200,6 +201,7 @@ export class RelayChatModel extends BaseChatModel<RelayModelOptions> {
       this.version,
       {
         messages: wireMessages,
+        ...(this.reasoningEffort ? { reasoningEffort: this.reasoningEffort } : {}),
         ...(choice !== "none" && options.tools?.length
           ? {
               tools: options.tools,
@@ -297,6 +299,7 @@ export class RelayChatModel extends BaseChatModel<RelayModelOptions> {
         options?.operationId ?? this.operationId,
         this.graphId,
         {
+          reasoningEffort: this.reasoningEffort,
           ...(options?.image ? { image: options.image } : {}),
           ...(options?.imageRef ? { imageRef: options.imageRef } : {}),
           ...(wireSchema ? { wireSchema } : {}),

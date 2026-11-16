@@ -55,6 +55,16 @@ test("模型管理区分连接与任务能力，确认停用和恢复，删除�
         vision: false,
         visionTestedAt: new Date().toISOString(),
       };
+    } else if (path.includes("/reasoning-effort?version=")) {
+      assert.equal(
+        new URL(path, "https://fixture.invalid").searchParams.get("version"),
+        String(state.models[0].version),
+      );
+      assert.deepEqual(body, { effort: "high" });
+      state.models[0].capabilities = {
+        ...state.models[0].capabilities,
+        reasoningEfforts: { high: { structured: "schema", vision: false, streaming: [] } },
+      };
     }
     return { ok: true };
   });
@@ -101,6 +111,10 @@ test("模型管理区分连接与任务能力，确认停用和恢复，删除�
   await view.findByText("工具调用 通过");
   fireEvent.click(view.getByRole("button", { name: "测试图像" }));
   await view.findByText("图像输入 未通过");
+  await chooseOption(view.getByLabelText("测试推理强度"), "高 · 未验证");
+  fireEvent.click(view.getByRole("button", { name: "测试所选档位" }));
+  await view.findByText("推理强度测试通过");
+  await view.findByText("高 · 已验证");
   fireEvent.keyDown(view.getByRole("dialog"), { key: "Escape" });
   await menu("删除");
   fireEvent.click(

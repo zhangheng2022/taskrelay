@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Transport } from "../../contracts/src/index";
+import type { ReasoningEffort, Transport } from "../../contracts/src/index";
 // 管理新任务和既有任务共用的聊天生命周期：查找/创建、通知刷新、发送、历史分页与清空。
 // generation 隔离会话切换，revision 隔离读写交错；attempt 保存待确认发送的原文和幂等标识。
 // sending 仅作内存中的即时回显，不冒充服务端记录；被读写占用期间的通知合并后补读。
@@ -237,7 +237,11 @@ export function useThread(
       unsubscribe?.();
     };
   }, [page?.id, refresh, transport]);
-  async function send(content: string, onThreadCreated?: (id: string) => void) {
+  async function send(
+    content: string,
+    onThreadCreated?: (id: string) => void,
+    effort?: ReasoningEffort | null,
+  ) {
     let p = current.current;
     if (!p && (kind !== "compose" || resumeThreadId || !modelId)) throw new Error("会话尚未加载");
     if (writing.current) throw new Error("消息正在发送");
@@ -255,7 +259,9 @@ export function useThread(
     try {
       const api = createApi(transport).api.user.threads;
       if (!p) {
-        p = await rpcData(api.$post({ json: { modelId } }));
+        p = await rpcData(
+          api.$post({ json: { modelId, ...(effort ? { reasoningEffort: effort } : {}) } }),
+        );
         if (g !== generation.current) return;
         accept(p);
         onThreadCreated?.(p.id);
@@ -300,7 +306,9 @@ export function useThread(
       }
     }
   }
-  async function changeModel(modelId: string) {
+  async function changeModel(
+    selection: { modelId: string } | { reasoningEffort: ReasoningEffort | null },
+  ) {
     const p = current.current;
     if (!p || writing.current) throw Error("THREAD_MODEL_CONFLICT");
     if (attempt.current) throw Error("请先重试上一条消息以确认结果，再切换模型");
@@ -311,7 +319,7 @@ export function useThread(
       const next = await rpcData(
         createApi(transport).api.user.threads[":id"].model.$put({
           param: { id: p.id },
-          json: { modelId, expectedVersion: p.version },
+          json: { ...selection, expectedVersion: p.version },
         }),
       );
       if (g === generation.current) {

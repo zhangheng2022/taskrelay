@@ -631,6 +631,8 @@ export const aiThreads = sqliteTable(
     modelId: text("model_id").notNull(),
     /** 固定模型配置版本 */
     modelVersion: integer("model_version").notNull(),
+    /** 后续聊天的推理强度；空值沿用提供方默认。 */
+    reasoningEffort: text("reasoning_effort"),
     /** 本实体内的递增版本 */
     version: integer("version").notNull().default(0),
     /** 当前运行中的云端回合 ID；NULL 表示可推进 inbox */
@@ -659,6 +661,11 @@ export const aiThreads = sqliteTable(
     check("ai_threads_check_1", sql.raw("created_at IS NULL OR typeof(created_at)='integer'")),
     /** 与 SQL 基线同源的校验约束；不得在 ORM 迁移中放宽。 */
     check("ai_threads_check_2", sql.raw("updated_at IS NULL OR typeof(updated_at)='integer'")),
+    /** 允许模型默认值和 Responses API 的合法显式档位。 */
+    check(
+      "ai_threads_reasoning_effort",
+      sql.raw("reasoning_effort IN ('none','minimal','low','medium','high','xhigh','max')"),
+    ),
 
     /** 用户未关闭聊天的 updated_at、ID 倒序键集分页；条件 closed=0。 */
     index("threads_visible").on(t.userId, desc(t.updatedAt), desc(t.id)).where(sql.raw("closed=0")),

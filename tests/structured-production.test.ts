@@ -44,6 +44,7 @@ test(`执行器原生工具调用/Responses 使用运行快照模型与美国出
   );
   const body = s.requests[0].body;
   assert.equal(body.model, "vendor/non-gpt");
+  assert.equal(body.reasoning, undefined, "旧快照使用供应商默认值");
   assert.equal(body.tool_choice, "auto");
   assert.equal(body.response_format, undefined);
   assert.equal(body.text, undefined);
@@ -61,6 +62,38 @@ test(`执行器原生工具调用/Responses 使用运行快照模型与美国出
   assert.equal(final.status, 200);
   assert.match(final.data.response.text, /暂不可用/);
   assert.deepEqual(final.data.response.calls, []);
+});
+
+test("执行器工具决策和 Stagehand 使用固定快照的推理强度", async (t) => {
+  const s = await productionModelFixture(t);
+  s.sql
+    .exec(`UPDATE run_snapshots SET task_snapshot=json_set(task_snapshot,'$.reasoningEffort','low');
+    UPDATE model_profile_versions SET capabilities=json_set(capabilities,'$.reasoningEfforts.low',json('{"structured":"schema","vision":false,"streaming":[]}')) WHERE id='model_test' AND version=1`);
+  const message = [{ role: "user", content: "读取网页信息" }];
+  s.replies("页面可用", '{"ok":true}');
+  const model = await s.request(`/api/runner/runs/${s.run.id}/model`, {
+    epoch: s.run.leaseEpoch,
+    requestId: "fixed_effort",
+    messages: message,
+  });
+  assert.equal(model.status, 200, JSON.stringify(model.data));
+  const stagehand = await s.request(`/api/runner/runs/${s.run.id}/stagehand`, {
+    epoch: s.run.leaseEpoch,
+    messages: message,
+    schema: {
+      type: "object",
+      properties: { ok: { type: "boolean" } },
+      required: ["ok"],
+      additionalProperties: false,
+    },
+  });
+  assert.equal(stagehand.status, 200, JSON.stringify(stagehand.data));
+  assert.equal(s.requests.length, 2);
+  for (const { body } of s.requests) {
+    assert.equal(body.model, "vendor/non-gpt");
+    assert.deepEqual(body.reasoning, { effort: "low" });
+  }
+  assert.equal(s.requests[1].body.text.format.type, "json_schema");
 });
 
 test("只有声明支持截图工具的执行器收到截图能力，旧安装版本保持兼容", async (t) => {

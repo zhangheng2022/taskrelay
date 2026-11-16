@@ -14,13 +14,15 @@ import { beginCleanup, cleanupJobs, drainHistoryCleanups } from "../history-clea
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv, Variables } from "../env";
-import { getModelProfile } from "../models";
+import { checkReasoningEffort, getModelProfile } from "../models";
 import { now, uid, taskFrom, type Row } from "../store";
 import { reserve } from "../tenancy";
 import { hash } from "../../../../packages/contracts/src/security";
 import {
   taskInputSchema,
   idSchema,
+  reasoningEffortSchema,
+  type ModelCapabilities,
   type TaskInput,
 } from "../../../../packages/contracts/src/index";
 import type { Message } from "../../../../packages/model/src/index";
@@ -102,6 +104,11 @@ export async function threadPage(
   )
     .bind(id)
     .first<NonNullable<ThreadPage["latestTurn"]>>();
+  const efforts = await env.DB.prepare(
+    "SELECT json_extract(capabilities,'$.reasoningEfforts') AS efforts FROM model_profile_versions WHERE id=? AND version=?",
+  )
+    .bind(t.model_id, t.model_version)
+    .first<string>("efforts");
   return {
     id,
     drafts: env.NOTIFICATIONS
@@ -112,6 +119,10 @@ export async function threadPage(
     taskId: t.task_id,
     scheduleCard: t.task_id ? await scheduleCard(env, t.task_id) : null,
     modelId: t.model_id,
+    reasoningEffort: t.reasoning_effort ?? null,
+    ...(efforts
+      ? { reasoningEfforts: JSON.parse(efforts) as ModelCapabilities["reasoningEfforts"] }
+      : {}),
     version: t.version,
     draft: t.draft ? JSON.parse(t.draft) : null,
     partial: JSON.parse(t.partial),
@@ -387,6 +398,7 @@ const threadInput = z
   .object({
     modelId: idSchema,
     taskId: idSchema.optional(),
+    reasoningEffort: reasoningEffortSchema.nullable().optional(),
   })
   .strict();
 const messageInput = z
@@ -448,6 +460,7 @@ export const conversations = conversationsBase
       const b = c.req.valid("json");
       let task: TaskInput | null = null;
       let taskVersion: number | null = null;
+      let definition: ReturnType<typeof taskFrom> | null = null;
       if (b.taskId) {
         const r = await c.env.DB.prepare(
           "SELECT * FROM task_details WHERE id=? AND user_id=? AND deleted=0",
@@ -456,16 +469,10 @@ export const conversations = conversationsBase
           .first<Row>();
         if (!r) throw new Error("TASK_NOT_FOUND");
         taskVersion = r.version;
-        task = taskInputSchema.strip().parse(taskFrom(r));
+        definition = taskFrom(r);
+        task = taskInputSchema.strip().parse(definition);
       }
-      const bound = b.taskId
-        ? await c.env.DB.prepare(
-            "SELECT definition FROM task_details WHERE id=? AND user_id=? AND deleted=0",
-          )
-            .bind(b.taskId, c.get("userId"))
-            .first<{ definition: string }>()
-        : null;
-      const definition = bound ? JSON.parse(bound.definition) : null;
+      const effort = b.taskId ? (definition?.reasoningEffort ?? null) : (b.reasoningEffort ?? null);
       const { profile } = await getModelProfile(
         c.env,
         definition?.modelId ?? b.modelId,
@@ -477,9 +484,15 @@ export const conversations = conversationsBase
         profile.capabilities.structured === "none"
       )
         throw new Error("MODEL_CAPABILITIES_REQUIRED");
+      if (!b.taskId) checkReasoningEffort(profile, effort);
       const id = uid("thread");
-      await c.env.DB.prepare(
-        "INSERT OR IGNORE INTO ai_threads(id,user_id,task_id,kind,model_id,model_version,draft,created_at,updated_at) SELECT ?,?,?,?,?,?,?,?,? WHERE ? IS NULL OR EXISTS(SELECT 1 FROM tasks WHERE id=? AND user_id=? AND deleted=0 AND version=?)",
+      const inserted = await c.env.DB.prepare(
+        `INSERT OR IGNORE INTO ai_threads(id,user_id,task_id,kind,model_id,model_version,reasoning_effort,draft,created_at,updated_at)
+         SELECT ?,?,?,?,?,?,?,?,?,? WHERE (? IS NULL OR EXISTS(SELECT 1 FROM tasks WHERE id=? AND user_id=? AND deleted=0 AND version=?))
+         AND (? IS NULL OR EXISTS(SELECT 1 FROM models m JOIN model_profile_versions v
+           ON v.id=m.id AND v.version=m.current_version WHERE m.id=? AND m.current_version=?
+           AND m.management_version=? AND m.enabled=1 AND m.deleted_at IS NULL
+           AND (m.owner_user_id IS NULL OR m.owner_user_id=?) AND json_type(v.capabilities,?)='object'))`,
       )
         .bind(
           id,
@@ -488,6 +501,7 @@ export const conversations = conversationsBase
           "chat",
           profile.id,
           profile.version,
+          effort,
           task ? JSON.stringify(task) : null,
           dbTime(now()),
           dbTime(now()),
@@ -495,8 +509,15 @@ export const conversations = conversationsBase
           b.taskId ?? null,
           c.get("userId"),
           taskVersion,
+          b.taskId ? null : effort,
+          profile.id,
+          profile.version,
+          profile.managementVersion,
+          c.get("userId"),
+          `$.reasoningEfforts.${effort}`,
         )
         .run();
+      if (!b.taskId && !inserted.meta.changes) throw Error("THREAD_MODEL_CONFLICT");
       const existing = await c.env.DB.prepare(
         "SELECT id FROM ai_threads WHERE user_id=? AND task_id=? AND kind='chat' AND closed=0",
       )
@@ -522,14 +543,25 @@ export const conversations = conversationsBase
     "/threads/:id/model",
     validator("json", (value) =>
       z
-        .object({ modelId: idSchema, expectedVersion: z.number().int().nonnegative() })
+        .object({
+          modelId: idSchema.optional(),
+          reasoningEffort: reasoningEffortSchema.nullable().optional(),
+          expectedVersion: z.number().int().nonnegative(),
+        })
         .strict()
+        .refine((input) => (input.modelId !== undefined) !== (input.reasoningEffort !== undefined))
         .parse(value),
     ),
     async (c) => {
       const t = await ownedThread(c.env, c.req.param("id"));
       const b = c.req.valid("json");
-      const { profile } = await getModelProfile(c.env, b.modelId);
+      const effort = b.reasoningEffort ?? null;
+      const { profile } = await getModelProfile(
+        c.env,
+        b.modelId ?? t.model_id,
+        b.modelId ? undefined : t.model_version,
+      );
+      checkReasoningEffort(profile, effort);
       if (
         !profile.capabilities.connection ||
         !profile.capabilities.tools ||
@@ -539,25 +571,31 @@ export const conversations = conversationsBase
       // 仅切换空闲会话的后续模型；任务、运行和定时快照保持原样，不重放旧消息。
       // 同一条件写复查队列、批次及模型状态，防止读取之后出现交办或停用。
       const changed = await c.env.DB.prepare(
-        `UPDATE ai_threads SET model_id=?,model_version=?,version=version+1,updated_at=?
+        `UPDATE ai_threads SET model_id=?,model_version=?,reasoning_effort=?,version=version+1,updated_at=?
          WHERE id=? AND user_id=? AND version=? AND closed=0 AND active_turn IS NULL
          AND NOT EXISTS(SELECT 1 FROM conversation_inbox WHERE thread_id=ai_threads.id AND status IN ('pending','queued','processing'))
          AND NOT EXISTS(SELECT 1 FROM conversation_commands WHERE thread_id=ai_threads.id AND state IN ('pending','committed'))
          AND NOT EXISTS(SELECT 1 FROM runs WHERE task_id=ai_threads.task_id AND (status IN ('queued','running','waiting_user','verifying','unknown') OR cleanup_pending=1))
          AND NOT EXISTS(SELECT 1 FROM account_dispatch_groups WHERE task_id=ai_threads.task_id AND state IN ('active','paused'))
-         AND EXISTS(SELECT 1 FROM models WHERE id=? AND enabled=1 AND deleted_at IS NULL AND current_version=? AND management_version=? AND (owner_user_id IS NULL OR owner_user_id=?))`,
+         AND EXISTS(SELECT 1 FROM models WHERE id=? AND enabled=1 AND deleted_at IS NULL ${b.modelId ? "AND current_version=?" : ""} AND management_version=? AND (owner_user_id IS NULL OR owner_user_id=?))
+         AND (? IS NULL OR EXISTS(SELECT 1 FROM model_profile_versions WHERE id=? AND version=? AND json_type(capabilities,?)='object'))`,
       )
         .bind(
           profile.id,
           profile.version,
+          effort,
           dbTime(now()),
           t.id,
           t.user_id,
           b.expectedVersion,
           profile.id,
-          profile.version,
+          ...(b.modelId ? [profile.version] : []),
           profile.managementVersion,
           t.user_id,
+          effort,
+          profile.id,
+          profile.version,
+          `$.reasoningEfforts.${effort}`,
         )
         .run();
       if (!changed.meta.changes) throw Error("THREAD_MODEL_CONFLICT");

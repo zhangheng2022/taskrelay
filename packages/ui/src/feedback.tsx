@@ -186,6 +186,13 @@ export function ErrorText({ error }: { error: string }) {
     PAIRING_EXPIRED:
       "设备配对链接已过期。如仍需连接，请在执行器中重新发起配对；已授权设备和任务结果不受影响。",
     MODEL_CAPABILITIES_REQUIRED: "模型尚未通过能力测试，请到设置中测试。",
+    MODEL_REASONING_EFFORT_UNSUPPORTED:
+      "这个模型版本尚未验证此推理强度。请选择模型默认或已验证的档位。",
+    MODEL_REASONING_EFFORT_MISMATCH: "服务未确认所选推理强度。请改用模型默认或联系管理员。",
+    MODEL_REASONING_VISION_UNSUPPORTED:
+      "所选推理强度尚未通过图像测试。请改用模型默认或联系管理员。",
+    MODEL_REASONING_TEST_FAILED: "所选强度未通过测试，请核对模型支持的档位。",
+    MODEL_REASONING_TEST_CONFLICT: "测试期间模型能力已更新，请刷新后重试。",
     TRIAL_REQUIRED: "请先完成一次成功的试运行，再启用调度。",
     CHALLENGE_STALE: "这条协助请求已过期或已回复，请刷新当前任务。",
     CHALLENGE_ALREADY_REPLIED: "此步骤已经收到另一条回复，请等待执行器处理，不会重复提交。",

@@ -84,6 +84,7 @@ export async function executeHelpGraph(env: AppEnv, event: GraphEvent) {
       help,
       modelId: run.task.modelId,
       version: run.task.modelVersion,
+      ...(run.task.reasoningEffort ? { reasoningEffort: run.task.reasoningEffort } : {}),
       epoch: run.leaseEpoch,
     },
   );
@@ -151,6 +152,7 @@ export async function executeHelpGraph(env: AppEnv, event: GraphEvent) {
         run.id,
         event.graph_id,
         runtime.generation,
+        run.task.reasoningEffort,
       );
       return {
         answer: await model.runAgent(answerSchema, state.messages, state.history, runtime.guard, {

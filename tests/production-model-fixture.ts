@@ -136,6 +136,7 @@ export async function productionModelFixture(
       native = JSON.parse(reply as string).__model;
     } catch {}
     return Response.json({
+      reasoning: requests.at(-1)?.body.reasoning,
       output: native
         ? [
             ...(native.text

@@ -49,6 +49,7 @@ export async function planConversation(
   const runtime = await openGraph(scope, {
     modelId: thread.model_id,
     version: thread.model_version,
+    ...(thread.reasoning_effort ? { reasoningEffort: thread.reasoning_effort } : {}),
     messages,
     history,
   });
@@ -63,6 +64,7 @@ export async function planConversation(
         null,
         id,
         runtime.generation,
+        thread.reasoning_effort ?? undefined,
       );
       const decision = await model.runAgent(
         decisionSchema,
