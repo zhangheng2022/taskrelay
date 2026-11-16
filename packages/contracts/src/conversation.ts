@@ -1,11 +1,14 @@
 /** 聊天快照协议：两类历史各有游标，写入确认仍由 requestId 与会话版本负责。 */
-import type { TaskInput } from "./index";
+import type { ModelCapabilities, ReasoningEffort, TaskInput } from "./index";
 export type ThreadPage = {
   scheduleCard?: import("./task-schedule").ScheduleCard | null;
   id: string;
   drafts?: import("./streaming").ChatDraft[];
   version: number;
   modelId: string;
+  modelAvailable?: boolean;
+  reasoningEffort?: ReasoningEffort | null;
+  reasoningEfforts?: ModelCapabilities["reasoningEfforts"];
   taskId?: string | null;
   queued?: { id: string; content: string; at: string }[];
   conditions?: {

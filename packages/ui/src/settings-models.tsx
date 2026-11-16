@@ -24,6 +24,12 @@ import { Button } from "./components/ui/button";
 import { Badge } from "./components/ui/badge";
 import { ErrorText, formatDate } from "./feedback";
 import { SettingsSearch, useConfirmation, useSettingsAction } from "./settings-support";
+import { reasoningEffortSchema, type ReasoningEffort } from "../../contracts/src/index";
+import { reasoningEffortLabels } from "./model-selector";
+import { FormSelect } from "./form-select";
+import { Field, FieldDescription, FieldLabel } from "./components/ui/field";
+import { SelectItem } from "./components/ui/select";
+import { Spinner } from "./components/ui/spinner";
 export function SettingsModels({
   snapshot,
   transport,
@@ -36,6 +42,7 @@ export function SettingsModels({
   const [services, setServices] = useState<"manage" | "add" | null>(null);
   const [filtering, setFiltering] = useState(false);
   const [detail, setDetail] = useState<string | null>(null);
+  const [effort, setEffort] = useState<ReasoningEffort>("medium");
   const [savedNotice, setSavedNotice] = useState("");
   const [model, setModel] = useState<ModelProfile | true | null>(null);
   const [search, setSearch] = useState(""),
@@ -153,7 +160,7 @@ export function SettingsModels({
           label="搜索名称或模型"
         />
       )}
-      {action.feedback}
+      {!selected && action.feedback}
       {savedNotice && <p role="status">{savedNotice}</p>}
       {confirmation}
       {!models.length && (
@@ -244,7 +251,7 @@ export function SettingsModels({
         <Dialog
           open
           onOpenChange={(open) => {
-            if (!open) setDetail(null);
+            if (!open && !busy) setDetail(null);
           }}
         >
           <DialogContent className="max-h-[90dvh] overflow-y-auto">
@@ -278,6 +285,54 @@ export function SettingsModels({
             {selected.capabilities.error?.split(",").map((code) => (
               <ErrorText key={code} error={code} />
             ))}
+            <Field>
+              <FieldLabel htmlFor="reasoning-effort-probe">测试推理强度</FieldLabel>
+              <FieldDescription>
+                只有通过此版本能力测试的档位才会出现在聊天输入区。
+              </FieldDescription>
+              <FormSelect
+                id="reasoning-effort-probe"
+                value={effort}
+                disabled={!!busy}
+                onValueChange={(value) => setEffort(reasoningEffortSchema.parse(value))}
+              >
+                {reasoningEffortSchema.options.map((level) => (
+                  <SelectItem key={level} value={level}>
+                    {reasoningEffortLabels[level]} ·{" "}
+                    {selected.capabilities.reasoningEfforts?.[level] ? "已验证" : "未验证"}
+                  </SelectItem>
+                ))}
+              </FormSelect>
+              <Button
+                className="self-start"
+                variant="outline"
+                disabled={
+                  !!busy ||
+                  !selected.capabilities.connection ||
+                  !selected.capabilities.tools ||
+                  selected.capabilities.structured === "none"
+                }
+                onClick={() =>
+                  void action.act(
+                    "reasoning:" + selected.id,
+                    () =>
+                      rpcData(
+                        api[":id"]["reasoning-effort"].$post({
+                          param: { id: selected.id },
+                          query: { version: selected.version },
+                          json: { effort },
+                        }),
+                      ),
+                    refresh,
+                    "推理强度测试通过",
+                  )
+                }
+              >
+                {busy === "reasoning:" + selected.id && <Spinner data-icon="inline-start" />}
+                {busy === "reasoning:" + selected.id ? "正在测试档位…" : "测试所选档位"}
+              </Button>
+            </Field>
+            {action.feedback}
             <div className="flex flex-wrap gap-2">
               <Button disabled={!!busy} onClick={() => void testVersion(selected)}>
                 重新测试

@@ -2,6 +2,16 @@ import { z } from "zod";
 import { batchVerificationSchema, batchReportSchema } from "./batch";
 
 export const PROTOCOL_VERSION = 19;
+export const reasoningEffortSchema = z.enum([
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]);
+export type ReasoningEffort = z.infer<typeof reasoningEffortSchema>;
 export const EXECUTION_GRAPH_VERSION = "relay-graph-4";
 export const limits = {
   leaseMs: 90_000,
@@ -43,6 +53,7 @@ export const taskInputSchema = z
   .strict();
 export type TaskInput = z.infer<typeof taskInputSchema>;
 export interface TaskDefinition extends TaskInput {
+  reasoningEffort?: ReasoningEffort;
   learningIds?: string[];
   requiresScheduling?: boolean;
   requirementRevision?: number;
@@ -220,6 +231,16 @@ export const modelInputSchema = z
   });
 export type ModelInput = z.infer<typeof modelInputSchema>;
 export interface ModelCapabilities {
+  reasoningEfforts?: Partial<
+    Record<
+      ReasoningEffort,
+      {
+        structured: "schema" | "json";
+        vision: boolean;
+        streaming: Array<"text" | "tools" | "structured">;
+      }
+    >
+  >;
   questionAnswered?: boolean;
   streaming?: Partial<Record<"text" | "tools" | "structured", "supported" | "unsupported">>;
   connection: boolean;

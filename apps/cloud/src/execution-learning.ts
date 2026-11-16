@@ -169,6 +169,7 @@ export async function executeLearning(env: AppEnv, runId: string) {
           runId,
           `learning_${runId}`,
           runtime.generation,
+          run.task.reasoningEffort,
         );
         return {
           result: await model.runAgent(

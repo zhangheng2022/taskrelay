@@ -2,7 +2,7 @@
  * 模型协议适配：官方 OpenAI SDK 承接 Responses，集中处理兼容服务差异。
  * 仅由区域出站入口调用，SDK 不重试、不记录正文；边界负责禁止重定向、超时、大小限制与固定错误。
  */
-import type { ModelProfile } from "../../contracts/src/index";
+import type { ModelProfile, ReasoningEffort } from "../../contracts/src/index";
 import { outputSchema } from "./schema";
 import OpenAI from "openai";
 import type { ResponseCreateParamsNonStreaming } from "openai/resources/responses/responses";
@@ -28,6 +28,7 @@ export interface Tool {
 }
 export interface Inference {
   messages: Message[];
+  reasoningEffort?: ReasoningEffort;
   image?: string;
   imageRef?: { artifactId: string; epoch: number };
   tools?: Tool[];
@@ -99,6 +100,7 @@ export async function infer(
     store: false,
     max_output_tokens: request.maxTokens ?? 4096,
   };
+  if (request.reasoningEffort) body.reasoning = { effort: request.reasoningEffort };
   if (request.image)
     input.push({
       role: "user",
@@ -173,9 +175,15 @@ export async function infer(
     },
   });
   try {
-    if (streaming) return await readModelStream(client, body, onText);
+    const verifyEffort = (actual?: ReasoningEffort | null) => {
+      // 部分兼容服务忽略此字段。明确选档时要求响应确认，以免聊天下发了不同档位。
+      if (request.reasoningEffort && request.reasoningEffort !== actual)
+        throw new ModelBoundaryError("MODEL_REASONING_EFFORT_MISMATCH");
+    };
+    if (streaming) return await readModelStream(client, body, onText, verifyEffort);
     const data = await client.responses.create(body as unknown as ResponseCreateParamsNonStreaming);
     if (!data || !Array.isArray(data.output)) throw new ModelBoundaryError("MODEL_EMPTY_RESPONSE");
+    verifyEffort(data.reasoning?.effort);
     // 部分兼容服务省略 object:'response'，SDK 不生成 output_text；集中保留这一个兼容分支。
     const text =
       data.output_text ??

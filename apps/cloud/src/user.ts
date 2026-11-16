@@ -24,6 +24,7 @@ import {
   PROTOCOL_VERSION,
   scheduleSchema,
   modelInputSchema,
+  reasoningEffortSchema,
   idSchema,
   type TaskDefinition,
 } from "../../../packages/contracts/src/index";
@@ -31,7 +32,14 @@ import { hash } from "../../../packages/contracts/src/security";
 import { nextOccurrence } from "../../../packages/contracts/src/schedule";
 import type { AppEnv, Variables } from "./env";
 import { now, taskFrom, runFrom, getRun, tick, queueReasons, type Row } from "./store";
-import { modelFrom, getModelProfile, storeModel, probe, probeVision } from "./models";
+import {
+  modelFrom,
+  getModelProfile,
+  storeModel,
+  probe,
+  probeVision,
+  probeReasoningEffort,
+} from "./models";
 import { seal, unseal } from "./crypto";
 import { accountMatchesDomain, accountSummary, accountRoutes } from "./accounts";
 import { accountCardRoutes } from "./account-cards";
@@ -288,6 +296,10 @@ export const user = userBase
         schedule: b.schedule,
         modelId: b.modelId,
         modelVersion: model.profile.version,
+        reasoningEffort:
+          base.modelId === model.profile.id && base.modelVersion === model.profile.version
+            ? base.reasoningEffort
+            : undefined,
         accountId: b.accountId,
         accountIds: b.accountId ? [b.accountId] : [],
         version: base.version + 1,
@@ -589,6 +601,22 @@ export const admin = adminBase
       await probeVision({ ...c.env, adminProbeModelId: id }, id, c.req.valid("query").version),
     );
   })
+  .post(
+    "/models/:id/reasoning-effort",
+    probeVersion,
+    validator("json", (value) => z.object({ effort: reasoningEffortSchema }).strict().parse(value)),
+    async (c) => {
+      const id = c.req.param("id");
+      return c.json(
+        await probeReasoningEffort(
+          { ...c.env, adminProbeModelId: id },
+          id,
+          c.req.valid("query").version,
+          c.req.valid("json").effort,
+        ),
+      );
+    },
+  )
   .post("/devices/:id/revoke", async (c) => {
     await c.env.DB.prepare("UPDATE devices SET revoked=1 WHERE id=?").bind(c.req.param("id")).run();
     return c.json({ ok: true });

@@ -154,6 +154,7 @@ export function Composer({
   placeholder,
   label = "消息",
   maxLength = 6000,
+  modelControls,
   children,
 }: {
   text: string;
@@ -164,6 +165,7 @@ export function Composer({
   placeholder: string;
   label?: string;
   maxLength?: number;
+  modelControls?: ReactNode;
   children?: ReactNode;
 }) {
   return (
@@ -175,7 +177,7 @@ export function Composer({
         if (text.trim() && !busy && !disabled) onSend();
       }}
     >
-      <InputGroup>
+      <InputGroup className="rounded-2xl bg-muted">
         <InputGroupTextarea
           aria-label={label}
           value={text}
@@ -201,20 +203,23 @@ export function Composer({
         />
         <InputGroupAddon align="block-end" className="flex-wrap">
           {children}
-          <span className="ml-auto" />
-          <InputGroupButton
-            type="submit"
-            size="icon-sm"
-            variant="default"
-            aria-label="发送消息"
-            disabled={busy || disabled || !text.trim()}
-          >
-            {busy ? (
-              <Spinner aria-hidden="true" data-icon="inline-start" />
-            ) : (
-              <ArrowUp data-icon="inline-start" />
-            )}
-          </InputGroupButton>
+          <div className="ml-auto flex min-w-0 max-w-full items-center justify-end gap-2">
+            {modelControls}
+            <InputGroupButton
+              type="submit"
+              size="icon-sm"
+              variant="default"
+              className="shrink-0 rounded-full"
+              aria-label="发送消息"
+              disabled={busy || disabled || !text.trim()}
+            >
+              {busy ? (
+                <Spinner aria-hidden="true" data-icon="inline-start" />
+              ) : (
+                <ArrowUp data-icon="inline-start" />
+              )}
+            </InputGroupButton>
+          </div>
         </InputGroupAddon>
       </InputGroup>
       <p className="mt-2 text-center text-xs text-muted-foreground">

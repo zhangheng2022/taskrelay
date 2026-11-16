@@ -2,7 +2,7 @@ import "./ui-dom";
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { useState } from "react";
-import { render, fireEvent, cleanup, waitFor, act } from "@testing-library/react";
+import { render, fireEvent, cleanup, waitFor, act, within } from "@testing-library/react";
 import { Composer } from "../packages/ui/src/chat-parts";
 import { TaskCompose } from "../packages/ui/src/task-compose";
 import { ModelSelector } from "../packages/ui/src/model-selector";
@@ -12,6 +12,91 @@ import type { ThreadPage } from "../packages/ui/src/use-thread";
 afterEach(() => {
   cleanup();
   localStorage.clear();
+});
+
+test("已有聊天依据固定版本而非未验证的当前版本继续发送", async () => {
+  const page = { ...threadPage, modelAvailable: true };
+  const current = snapshot.models[0];
+  const newer = {
+    ...current,
+    version: current.version + 1,
+    capabilities: { ...current.capabilities, connection: false },
+  };
+  const messages: string[] = [];
+  const v = render(
+    <TaskCompose
+      threadId={page.id}
+      transport={transportWith(async (method, path, body) => {
+        if (method === "POST") {
+          assert.equal(path, `/api/user/threads/${page.id}/messages`);
+          messages.push(body.content);
+        }
+        return page;
+      })}
+      snapshot={{ ...snapshot, models: [newer] }}
+      offline={false}
+      onSaved={async () => {}}
+      onSettings={() => {}}
+    />,
+  );
+  const textbox = v.getByRole("textbox") as HTMLTextAreaElement;
+  await waitFor(() => assert.equal(textbox.disabled, false));
+  fireEvent.change(textbox, { target: { value: "继续原聊天" } });
+  fireEvent.click(v.getByRole("button", { name: "发送消息" }));
+  await waitFor(() => assert.deepEqual(messages, ["继续原聊天"]));
+});
+
+test("新聊天仅显示已验证推理强度，并在首条消息发出前持久化", async () => {
+  const model = snapshot.models[0];
+  const reasoningEfforts = {
+    high: { structured: "schema", vision: false, streaming: [] },
+  } as const;
+  // 只声明一个档位，确保未验证的选项没有混入菜单。
+  const proof = { high: { ...reasoningEfforts.high, streaming: [] } };
+  let page: ThreadPage = { ...threadPage, reasoningEffort: "high", reasoningEfforts: proof };
+  const calls: string[] = [];
+  const v = render(
+    <TaskCompose
+      transport={transportWith(async (method, path, body) => {
+        if (method === "POST" && path === "/api/user/threads") {
+          calls.push(path);
+          assert.deepEqual(body, { modelId: model.id, reasoningEffort: "high" });
+        } else if (method === "POST" && path.endsWith("/messages")) {
+          calls.push(path);
+          page = {
+            ...page,
+            messages: [
+              { id: "ack", seq: 1, role: "user", content: body.content, at: "2026-11-16" },
+            ],
+          };
+        }
+        return page;
+      })}
+      snapshot={{
+        ...snapshot,
+        models: [{ ...model, capabilities: { ...model.capabilities, reasoningEfforts: proof } }],
+      }}
+      offline={false}
+      onSaved={async () => {}}
+      onSettings={() => {}}
+    />,
+  );
+  const select = v.getByRole("button", { name: "推理强度" });
+  fireEvent.keyDown(select, { key: "ArrowDown" });
+  const menu = await within(document.body).findByRole("menu");
+  assert.deepEqual(
+    within(menu)
+      .getAllByRole("menuitemradio")
+      .map((el) => el.textContent),
+    ["模型默认", "高"],
+  );
+  fireEvent.click(within(menu).getByRole("menuitemradio", { name: "高" }));
+  fireEvent.change(v.getByRole("textbox"), { target: { value: "二十三减去六" } });
+  fireEvent.click(v.getByRole("button", { name: "发送消息" }));
+  await waitFor(() =>
+    assert.deepEqual(calls, ["/api/user/threads", `/api/user/threads/${page.id}/messages`]),
+  );
+  assert.match(select.textContent!, /推理 高/);
 });
 
 test("新交办慢请求立即显示原文和发送状态，失败恢复输入，重试沿用请求且确认后只留一条", async () => {

@@ -88,6 +88,7 @@ export async function commitDecision(
     id: base?.id ?? `task_${(await hash(turnId)).slice(0, 40)}`,
     version: (base?.version ?? 0) + 1,
     modelVersion: t.model_version,
+    ...(t.reasoning_effort ? { reasoningEffort: t.reasoning_effort } : {}),
     status: "pending_validation",
     createdAt: base?.createdAt ?? now(),
     nextRunAt: null,

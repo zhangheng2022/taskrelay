@@ -14,7 +14,11 @@ import {
   type ModelResponse,
 } from "../../../packages/model/src/index";
 import { draftPublisher, type DraftTarget } from "./chat-drafts";
-import type { ModelCapabilities, ModelProfile } from "../../../packages/contracts/src/index";
+import type {
+  ModelCapabilities,
+  ModelProfile,
+  ReasoningEffort,
+} from "../../../packages/contracts/src/index";
 import type { AppEnv } from "./env";
 import { seal, unseal } from "./crypto";
 import { now, uid, type Row } from "./store";
@@ -40,6 +44,14 @@ export function modelFrom(row: Row): ModelProfile {
     capabilities,
   };
 }
+export function checkReasoningEffort(
+  profile: ModelProfile,
+  effort: ReasoningEffort | null | undefined,
+) {
+  if (effort && !profile.capabilities.reasoningEfforts?.[effort])
+    throw Error("MODEL_REASONING_EFFORT_UNSUPPORTED");
+}
+
 // 读能力与真正出站使用同一归属约束。未迁移的历史版本缺少连接，只可查询历史用量。
 export async function getModelProfile(
   env: AppEnv,
@@ -172,6 +184,18 @@ export async function invoke(
     throw new Error(prior.status === "failed" ? prior.error : "MODEL_CALL_OUTCOME_UNKNOWN");
   }
   try {
+    if (request.reasoningEffort && env.adminProbeModelId !== id) {
+      const verified = pinned.capabilities.reasoningEfforts?.[request.reasoningEffort];
+      if (!verified || (request.schema && verified.structured !== "schema"))
+        throw Error("MODEL_REASONING_EFFORT_UNSUPPORTED");
+      const hasImage =
+        request.image ||
+        request.imageRef ||
+        request.messages.some((message) =>
+          message.content_blocks?.some((part) => part.type === "image_url"),
+        );
+      if (hasImage && !verified.vision) throw Error("MODEL_REASONING_VISION_UNSUPPORTED");
+    }
     let streamMode = request.stream ? "stream" : "buffered";
     // 去重先于能力选择：回退开关或能力更新不能改变已发出调用的身份，也不能触发重探测。
     if (request.stream === undefined) {
@@ -181,11 +205,19 @@ export async function invoke(
             "SELECT value FROM settings WHERE key='modelStreamingEnabled'",
           ).first<{ value: string }>()
         )?.value === "0";
-      if (!disabled) await ensureStreaming(env, id, version, request, userId);
+      if (!disabled && !request.reasoningEffort)
+        await ensureStreaming(env, id, version, request, userId);
       const { profile } = await getModelProfile(env, id, version);
+      const kind = streamKind(request);
       request = {
         ...request,
-        stream: !disabled && profile.capabilities.streaming?.[streamKind(request)] === "supported",
+        stream:
+          !disabled &&
+          (request.reasoningEffort
+            ? profile.capabilities.reasoningEfforts?.[request.reasoningEffort]?.streaming.includes(
+                kind,
+              ) === true
+            : profile.capabilities.streaming?.[kind] === "supported"),
       };
       streamMode = request.stream ? "stream" : disabled ? "buffered" : "fallback";
     }
@@ -350,6 +382,7 @@ export async function generateStructured<T>(
     imageRef?: Inference["imageRef"];
     format?: "schema" | "json";
     wireSchema?: Record<string, unknown>;
+    reasoningEffort?: ReasoningEffort;
   },
   graphGeneration?: number,
   preview?: DraftTarget,
@@ -389,6 +422,7 @@ export async function generateStructured<T>(
             ]
           : instructions,
         ...format,
+        ...(media?.reasoningEffort ? { reasoningEffort: media.reasoningEffort } : {}),
         ...(media?.image ? { image: media.image } : {}),
         ...(media?.imageRef ? { imageRef: media.imageRef } : {}),
         maxTokens: profile.outputTokens ?? 4096,
@@ -726,4 +760,112 @@ export async function probeVision(env: AppEnv, id: string, version?: number) {
     /* Independent optional capability; text capabilities remain unchanged. */
   }
   return saveProbeResult(env, id, profile.version, { vision, visionTestedAt: now() });
+}
+
+/** 管理员逐档验证固定模型版本。普通请求只使用该档已验证的传输方式。 */
+export async function probeReasoningEffort(
+  env: AppEnv,
+  id: string,
+  version: number | undefined,
+  effort: ReasoningEffort,
+) {
+  const { profile } = await getModelProfile(env, id, version);
+  const caps = profile.capabilities;
+  if (!caps.connection || !caps.tools || caps.structured === "none")
+    throw Error("MODEL_CAPABILITIES_REQUIRED");
+  const shape = {
+    type: "object",
+    properties: { ok: { type: "boolean" } },
+    required: ["ok"],
+    additionalProperties: false,
+  };
+  const textProbe: Inference = {
+    messages: [{ role: "user", content: "What is 17 + 25? Reply with just the number." }],
+  };
+  const probes = [
+    { kind: "text", request: textProbe, validate: (r: ModelResponse) => r.text.trim() === "42" },
+    {
+      kind: "tools",
+      request: {
+        messages: [{ role: "user", content: "Call check with ok true." }],
+        tools: [{ name: "check", description: "Capability test", parameters: shape }],
+        toolChoice: "auto",
+      },
+      validate: (r: ModelResponse) =>
+        r.calls.length === 1 &&
+        r.calls[0].name === "check" &&
+        JSON.parse(r.calls[0].arguments).ok === true,
+    },
+    {
+      kind: "structured",
+      request: {
+        messages: [{ role: "user", content: 'Return JSON {"ok":true}.' }],
+        ...(caps.structured === "schema" ? { schema: shape } : { jsonMode: true }),
+      },
+      validate: (r: ModelResponse) => JSON.parse(r.text).ok === true,
+    },
+  ] as const satisfies ReadonlyArray<{
+    kind: ReturnType<typeof streamKind>;
+    request: Inference;
+    validate: (response: ModelResponse) => boolean;
+  }>;
+  const verify = async (
+    request: Inference,
+    validate: (result: ModelResponse) => boolean,
+    stream: boolean,
+  ) => {
+    const result = await invoke(env, id, profile.version, {
+      ...request,
+      reasoningEffort: effort,
+      maxTokens: profile.outputTokens ?? 4096,
+      stream,
+    });
+    try {
+      if (validate(result)) return;
+    } catch {
+      // JSON 样例未正确返回时按档位测试失败处理。
+    }
+    throw Error("MODEL_REASONING_TEST_FAILED");
+  };
+  const streaming: Array<ReturnType<typeof streamKind>> = [];
+  for (const { kind, request, validate } of probes) {
+    await verify(request, validate, false);
+    if (caps.streaming?.[kind] === "supported") {
+      await verify(request, validate, true);
+      streaming.push(kind);
+    }
+  }
+  if (caps.vision) {
+    const visionProbe: Inference = {
+      messages: [
+        {
+          role: "user",
+          content: "What solid color is this image? Reply with only the English color name.",
+        },
+      ],
+      image: visionFixture,
+    };
+    const red = (r: ModelResponse) => /^\s*red[.!。]?\s*$/i.test(r.text);
+    await verify(visionProbe, red, false);
+    if (streaming.includes("text")) await verify(visionProbe, red, true);
+  }
+  const stored = await env.DB.prepare(
+    `UPDATE model_profile_versions
+     SET capabilities=json_set(json_insert(capabilities,'$.reasoningEfforts',json('{}')),?,json(?))
+     WHERE id=? AND version=? AND connection_id IS NOT NULL
+       AND json_extract(capabilities,'$.connection')=1 AND json_extract(capabilities,'$.tools')=1
+       AND json_extract(capabilities,'$.structured')=? AND json_extract(capabilities,'$.vision')=?
+     RETURNING capabilities`,
+  )
+    .bind(
+      `$.reasoningEfforts.${effort}`,
+      JSON.stringify({ streaming, structured: caps.structured, vision: caps.vision }),
+      id,
+      profile.version,
+      caps.structured,
+      Number(caps.vision),
+    )
+    .first<string>("capabilities");
+  if (!stored) throw Error("MODEL_REASONING_TEST_CONFLICT");
+  return JSON.parse(stored) as ModelCapabilities;
 }

@@ -243,6 +243,9 @@ runner.post("/runs/:id/model", async (c) => {
     run.task.modelVersion,
     `execute_${run.id}_${b.requestId}`,
     run.id,
+    undefined,
+    undefined,
+    run.task.reasoningEffort,
   );
   const bound = tools.length
     ? model.bindTools(
@@ -318,6 +321,9 @@ runner.post("/runs/:id/stagehand", async (c) => {
     run.task.modelVersion,
     operation,
     run.id,
+    undefined,
+    undefined,
+    run.task.reasoningEffort,
   );
   const options = {
     image: b.image,

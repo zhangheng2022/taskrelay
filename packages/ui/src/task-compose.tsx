@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { ChatMarkdown } from "./chat-markdown";
-import type { Snapshot, Transport } from "../../contracts/src/index";
+import type { ReasoningEffort, Snapshot, Transport } from "../../contracts/src/index";
 import { useThread } from "./use-thread";
-import { canUseModel, ModelSelector } from "./model-selector";
+import { canUseModel, ModelSelector, ReasoningEffortSelector } from "./model-selector";
 import { Thread, ChatMessage, Composer, ThreadActivity, SendingMessage } from "./chat-parts";
 import { MessageScrollerItem } from "./components/ui/message-scroller";
 import { Button } from "./components/ui/button";
@@ -33,7 +33,12 @@ export function TaskCompose({
   // 初次发送后地址栏记录会话，但仍由当前组件接收这次发送的结果。
   const [resumeThreadId] = useState(threadId);
   const thread = useThread(transport, "compose", modelId, undefined, resumeThreadId);
-  const canSend = !!thread.page || (!resumeThreadId && !!modelId);
+  const selectedModel = available.find((model) => model.id === modelId);
+  const canSend = thread.page
+    ? thread.page.modelAvailable !== false
+    : !resumeThreadId && !!selectedModel;
+  const [effort, setEffort] = useState<ReasoningEffort | null>(null);
+  const optionsLocked = offline || !!thread.page?.activeTurn || !!thread.page?.queued?.length;
   const [text, setText] = useState(""),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
@@ -60,9 +65,30 @@ export function TaskCompose({
     const content = text;
     setText("");
     try {
-      await thread.send(content, onThreadCreated);
+      await thread.send(content, onThreadCreated, effort);
     } catch (e) {
       setText(content);
+      setError((e as Error).message);
+    } finally {
+      flight.current = false;
+      setBusy(false);
+    }
+  }
+  async function changeModel(selection: Parameters<typeof thread.changeModel>[0]) {
+    if (flight.current || optionsLocked) return;
+    if (!thread.page) {
+      if ("modelId" in selection) {
+        setModelId(selection.modelId);
+        setEffort(null);
+      } else setEffort(selection.reasoningEffort);
+      return;
+    }
+    flight.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      await thread.changeModel(selection);
+    } catch (e) {
       setError((e as Error).message);
     } finally {
       flight.current = false;
@@ -134,14 +160,27 @@ export function TaskCompose({
         disabled={offline || !canSend}
         label="任务需求"
         placeholder="交代任务，或继续补充要求…"
-      >
-        <ModelSelector
-          models={snapshot.models}
-          value={thread.page?.modelId ?? modelId}
-          disabled={busy || !!resumeThreadId || !!thread.page}
-          onChange={setModelId}
-        />
-      </Composer>
+        modelControls={
+          <>
+            <ModelSelector
+              models={snapshot.models}
+              value={thread.page?.modelId ?? modelId}
+              disabled={busy || optionsLocked || (!!resumeThreadId && !thread.page)}
+              onChange={(id) => void changeModel({ modelId: id })}
+            />
+            <ReasoningEffortSelector
+              efforts={
+                thread.page
+                  ? thread.page.reasoningEfforts
+                  : selectedModel?.capabilities.reasoningEfforts
+              }
+              value={thread.page ? (thread.page.reasoningEffort ?? null) : effort}
+              disabled={busy || optionsLocked || !canSend}
+              onChange={(reasoningEffort) => void changeModel({ reasoningEffort })}
+            />
+          </>
+        }
+      />
     </div>
   );
 }
