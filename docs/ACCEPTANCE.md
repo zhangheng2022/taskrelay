@@ -1,5 +1,11 @@
 # TaskRelay 验收记录
 
+## 2026-11-17 近期工具结果超限修复（0.27.3 生产验收）
+
+- [修复 PR #98](https://github.com/zhangheng2022/taskrelay/pull/98) 已合入。提交 `41512de7b12f0a37a0c27dce6f4862bef2e2c242` 的[主分支 CI](https://github.com/zhangheng2022/taskrelay/actions/runs/44078770068)和[生产发布](https://github.com/zhangheng2022/taskrelay/actions/runs/44079934104)均通过。Worker 版本为 `86de201e-f409-4f2e-b87e-68c4be4897e5`，D1 无新增迁移。
+- 主域和备用域均返回该提交、协议 19 以及 [Windows 0.27.3](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.27.3) 更新。两个下载端点 HEAD 返回 200，清单、下载响应与发布资产一致，大小 387899187 字节，SHA-256 为 `5543caa5b116c04e44949fd7163b8aaac5a0ac3a27926e5678a9ccfb8efc8dcb`。发布作业校验了完整下载和哈希。两域匿名请求及 Bearer 权限边界检查通过。
+- 托管 Windows 验证了签名、包内 smoke、实际安装、快捷方式启动及安装 ASAR。隔离对照将同一 `execute()` 夹具的摘要模块替换为修复前版本，确认报 `CONTEXT_SUMMARY_NOT_REDUCED`。未重跑截图中的 Microsoft Rewards 任务，未验收用户设备升级或该任务的真实模型表现。
+
 ## 2026-11-17 近期工具结果超限修复（0.27.3 源码验收）
 
 - `execute()` 回归使用合成网页和确定性模型响应。旧切分下，近期提取结果超过决策的历史额度，即使旧历史摘要很短也会中断。改后单次摘要接收完整提取结果，下一决策使用摘要继续并正常收尾，页面操作和提取各执行一次。另验证部分返回的工具批次保持配对、长网址引用可解析、云端协助的独立摘要窗口兼容，以及摘要仍超限时拒绝替换历史。
