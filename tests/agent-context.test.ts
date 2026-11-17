@@ -218,9 +218,13 @@ test("超过摘要输入窗口时不裁剪为最后若干消息或分块重试",
   assert.equal(calls, 0);
 });
 
-test("官方摘要保留尚未返回的调用且不产生孤立工具结果", async () => {
+test("官方摘要保留部分返回的调用批次和已有结果", async () => {
   const sent: Message[][] = [];
-  const summary = new CallbackChatModel(async () => reply("旧读取已完成"));
+  const summarized: Message[][] = [];
+  const summary = new CallbackChatModel(async (messages) => {
+    summarized.push(messages);
+    return reply("旧读取已完成");
+  });
   const model = new CallbackChatModel(async (messages) => {
     sent.push(messages);
     return reply("完成");
@@ -241,15 +245,28 @@ test("官方摘要保留尚未返回的调用且不产生孤立工具结果", as
     {
       messages: [
         ...history(),
-        new AIMessage({ content: "", tool_calls: [{ id: "pending", name: "observe", args: {} }] }),
+        new AIMessage({
+          content: "",
+          tool_calls: [
+            { id: "returned", name: "extract", args: {} },
+            { id: "pending", name: "observe", args: {} },
+          ],
+        }),
+        new ToolMessage({ tool_call_id: "returned", content: "保留的已返回结果".repeat(170) }),
       ],
     },
     { callbacks: [] },
   );
+  assert.equal(summarized.length, 1);
+  assert.ok(summarized[0].some((m) => m.content.includes("x".repeat(11000))));
+  assert.ok(summarized[0].every((m) => !m.content.includes("保留的已返回结果")));
   assert.equal(sent.length, 1);
-  assert.equal(sent[0].at(-1)?.tool_calls?.[0].id, "pending");
-  assert.equal(
-    sent[0].some((m) => m.role === "tool"),
-    false,
+  assert.deepEqual(
+    sent[0].at(-2)?.tool_calls?.map((call) => call.id),
+    ["returned", "pending"],
+  );
+  assert.deepEqual(
+    sent[0].filter((m) => m.role === "tool").map((m) => m.tool_call_id),
+    ["returned"],
   );
 });
