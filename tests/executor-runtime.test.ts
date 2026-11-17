@@ -76,32 +76,40 @@ test("正式 execute 等待流式工具参数完整再执行，并关联最终�
   assert.equal(result.finish.sourceCallId, `execute_${run.id}_${last.body.requestId}`);
 });
 
-test("正式 execute 在短摘要仍无法容纳近期工具结果时保留大小诊断，不额外决策或重试", async () => {
-  const result = await scenario([tool("extract", { instruction: "读取当前页面" })], {
-    extraction: "private-diagnostic-content".repeat(1200),
-  });
-  assert.equal(result.finish.status, "failed");
-  assert.match(result.finish.result.summary, /CONTEXT_SUMMARY_NOT_REDUCED/);
+test("正式 execute 将近期超大工具结果纳入同次摘要后继续决策，不重放操作", async () => {
+  const extraction = "private-diagnostic-content".repeat(750);
+  const summaryText = "已操作页面并读取到关键事实。";
+  const result = await scenario(
+    [tool("act", { instruction: "点击按钮" }), tool("extract", { instruction: "读取当前页面" })],
+    { extraction, summaryText },
+  );
+  assert.equal(result.finish.status, "succeeded", result.finish.result.summary);
+  assert.equal(result.clicks, 1);
   const checkpoint = result.checkpoints.at(-1);
   assert.equal(checkpoint.state, "finished");
   const timing = executionTimingSchema.parse(checkpoint.payload.timing);
+  const before = timing.contextSizes!.at(-2)!.report;
   const report = timing.contextSizes!.at(-1)!.report;
-  assert.equal(report.failure, "CONTEXT_SUMMARY_NOT_REDUCED");
-  assert.ok(report.summaryMessage!.estimatedTokens < report.budget.historyAllowanceTokens);
-  assert.ok(report.preserved!.estimatedTokens > report.budget.historyAllowanceTokens);
-  const largest = report.preserved!.largest[0];
+  assert.equal(report.phase, "after-summary");
+  assert.ok(report.replacement!.estimatedTokens <= report.budget.historyAllowanceTokens);
+  const largest = before.history.largest[0];
   assert.equal(largest.tool, "extract");
-  assert.ok(largest.sections.find((s) => s.section === "data")!.bytes > 20000);
+  assert.ok(largest.estimatedTokens > before.budget.historyAllowanceTokens);
   assert.doesNotMatch(JSON.stringify(timing), /private-diagnostic-content/);
   assert.equal(timing.phases.extract?.calls, 1);
-  assert.equal(
-    result.calls.filter((c) => c.path.endsWith("/model") && c.body.purpose === "summary").length,
-    1,
+  const models = result.calls.filter((c) => c.path.endsWith("/model"));
+  assert.deepEqual(
+    models.map((c) => c.body.purpose),
+    ["decision", "decision", "summary", "decision"],
   );
-  assert.equal(
-    result.calls.filter((c) => c.path.endsWith("/model") && c.body.purpose === "decision").length,
-    1,
+  assert.ok(
+    models[2].body.messages.some((message: { content: string }) =>
+      message.content.includes(extraction),
+    ),
   );
+  const decision = models[3].body.messages;
+  assert.ok(decision.some((message: { content: string }) => message.content.includes(summaryText)));
+  assert.ok(decision.every((message: { role: string }) => message.role !== "tool"));
   assert.equal(result.sessionCloses, 1);
   assert.equal(result.closed, true);
 });

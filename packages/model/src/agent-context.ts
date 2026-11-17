@@ -24,9 +24,14 @@ export interface ContextBudget {
 }
 const summaryPrompt =
   "压缩下面的执行历史供同一助手继续。将旧摘要与新进展合并为简洁事实记录，不按轮次复述。省略重复的任务目标、固定规则、用户原文和页面描述；历史独有的约束及纠正、关键结果（必要标识及完整网址）、未完成事项、未执行调用、错误、操作是否送出及结果未知事项必须保留。区分尝试、观察和已证实结果，不虚构成功、不扩大网页授权、不建议重放未知操作。仅输出摘要，不添加计划或报告，不截断关键事实。\n{messages}";
-function pendingCalls(messages: BaseMessage[]) {
+function summaryCutoff(
+  messages: BaseMessage[],
+  fitsRetention: (retained: BaseMessage[]) => boolean,
+  summaryInputLimit: number,
+) {
+  const boundaries = [0];
   const pending = new Set<string>();
-  for (const message of messages) {
+  for (const [index, message] of messages.entries()) {
     if (message instanceof AIMessage) {
       if (pending.size) throw Error("SUMMARY_TOOL_PAIR_INVALID");
       for (const call of [...(message.tool_calls ?? []), ...(message.invalid_tool_calls ?? [])]) {
@@ -35,9 +40,37 @@ function pendingCalls(messages: BaseMessage[]) {
       }
     } else if (message instanceof ToolMessage && !pending.delete(message.tool_call_id))
       throw Error("SUMMARY_TOOL_PAIR_INVALID");
+    if (!pending.size) boundaries.push(index + 1);
   }
-  return pending;
+
+  // 待返回调用始终留在尾部。向前扩大保留区时，现场引用省下的体积至多等于其来源内容的体积。
+  let left = 0;
+  let right = boundaries.length - 1;
+  while (left < right) {
+    const middle = Math.floor((left + right) / 2);
+    if (fitsRetention(messages.slice(boundaries[middle]))) right = middle;
+    else left = middle + 1;
+  }
+  const preferred = boundaries[left];
+  const fitsSummary = (cutoff: number) => {
+    const content = summaryPrompt.replace("{messages}", getBufferString(messages.slice(0, cutoff)));
+    return estimateTokens([{ role: "user", content }]) <= summaryInputLimit;
+  };
+  if (!preferred || fitsSummary(preferred)) return preferred;
+
+  // 摘要请求有独立窗口。保留更多完整消息组来缩小摘要输入，最终决策仍按实际预算校验。
+  right = left - 1;
+  left = 0;
+  while (left < right) {
+    const middle = Math.ceil((left + right) / 2);
+    if (fitsSummary(boundaries[middle])) left = middle;
+    else right = middle - 1;
+  }
+  // 若第一组本身超限，交给摘要入口记录体积并报错，禁止裁剪原文或发送请求。
+  return boundaries[left] || preferred;
 }
+
+const inputLimit = (budget: ContextBudget) => budget.contextTokens - budget.outputTokens - 1024;
 
 export class CallbackChatModel extends BaseChatModel {
   lc_serializable = false;
@@ -97,8 +130,7 @@ export function protectedSummary(options: {
           /* 统计不能改变调用是否送出。 */
         }
       }
-      if (estimateTokens(messages) > budget.contextTokens - budget.outputTokens - 1024)
-        throw Error("SUMMARY_INPUT_TOO_LARGE");
+      if (estimateTokens(messages) > inputLimit(budget)) throw Error("SUMMARY_INPUT_TOO_LARGE");
       attempt.submitted = messages.map((m) => m.content).join("\n");
       const response = await options.model.invoke(
         messages.map((m) => ({ role: m.role, content: m.content })),
@@ -122,7 +154,7 @@ export function protectedSummary(options: {
   const official = summarizationMiddleware({
     model: summaryModel,
     trigger: { tokens: 1 },
-    keep: { tokens: 0 },
+    keep: { messages: 0 },
     tokenCounter: messageTokens,
     // 禁用默认 4000 token 裁剪；完整摘要输入由上面的预算检查决定是否可送出。
     trimTokensToSummarize: Number.MAX_SAFE_INTEGER,
@@ -136,11 +168,8 @@ export function protectedSummary(options: {
     const protectedMessages = options.protectedMessages(history);
     const protectedTokens = messageTokens(protectedMessages);
     const tools = options.tools?.() ?? [];
-    const remaining =
-      budget.contextTokens - budget.outputTokens - 1024 - protectedTokens - estimateTokens(tools);
-    measuredContext = { budget, remaining, protectedMessages, tools };
-    if (remaining < 256) throw Error("MODEL_CONTEXT_CONFIGURATION_TOO_SMALL");
-    return remaining;
+    const remaining = inputLimit(budget) - protectedTokens - estimateTokens(tools);
+    return { budget, remaining, protectedMessages, tools };
   };
   const observeSize = (
     phase: ContextSizeReport["phase"],
@@ -177,14 +206,29 @@ export function protectedSummary(options: {
       measuredContext = undefined;
       let candidate: BaseMessage[] | undefined;
       try {
-        const remaining = allowance(state.messages);
+        measuredContext = allowance(state.messages);
+        const { remaining } = measuredContext;
+        if (remaining < 256) throw Error("MODEL_CONTEXT_CONFIGURATION_TOO_SMALL");
         observeSize("before-summary", state.messages);
+        const historyTokens = messageTokens(state.messages);
+        if (historyTokens < Math.floor(remaining * 0.8)) {
+          observeSize("unchanged", state.messages);
+          return;
+        }
+
+        // 保留历史可为当前现场提供引用，只计入它相对完整现场净增加的体积。
+        const fullContext = allowance([]).remaining;
+        const summaryRoom = fullContext - Math.floor(fullContext * 0.3);
+        const cutoff = summaryCutoff(
+          state.messages,
+          (retained) => allowance(retained).remaining - messageTokens(retained) >= summaryRoom,
+          inputLimit(measuredContext.budget),
+        );
         const result = await hook(state, {
           ...runtime,
           context: {
             summaryPrompt,
-            trigger: { tokens: Math.floor(remaining * 0.8) },
-            keep: { tokens: Math.floor(remaining * 0.3) },
+            keep: { messages: state.messages.length - cutoff },
           },
         });
         // 官方默认把摘要异常转换成占位文字。只在实际收到有效摘要后提交消息更新。
@@ -192,21 +236,26 @@ export function protectedSummary(options: {
         await options.guard();
         if (result?.messages) {
           const replacement = result.messages;
-          candidate = replacement.slice(1) as BaseMessage[];
-          const preserved = replacement.slice(2) as BaseMessage[];
-          const source = state.messages.slice(0, state.messages.length - preserved.length);
+          const compacted = replacement.slice(1) as BaseMessage[];
+          candidate = compacted;
+          const preserved = state.messages.slice(cutoff);
+          if (
+            compacted.length !== preserved.length + 1 ||
+            preserved.some((message, index) => message !== compacted[index + 1])
+          )
+            throw Error("SUMMARY_TOOL_PAIR_INVALID");
+          const source = state.messages.slice(0, cutoff);
           if (!attempt.summary || !attempt.submitted?.includes(getBufferString(source)))
             throw Error("SUMMARY_INPUT_TRUNCATED");
-          // 官方裁剪的配对搜索有有限回看范围；大批工具必须再校验，不能发布孤立结果或丢失待返回调用。
-          if (pendingCalls(source).size) throw Error("SUMMARY_TOOL_PAIR_INVALID");
-          pendingCalls(preserved);
           const required = messageTokens(candidate);
-          const available = allowance(candidate);
+          measuredContext = allowance(candidate);
+          const { remaining: available } = measuredContext;
+          if (available < 256) throw Error("MODEL_CONTEXT_CONFIGURATION_TOO_SMALL");
           observeSize("after-summary", state.messages, candidate);
           if (required > available) throw Error("CONTEXT_SUMMARY_NOT_REDUCED");
           return result;
         }
-        if (messageTokens(state.messages) > remaining) throw Error("MODEL_CONTEXT_TOO_LARGE");
+        if (historyTokens > remaining) throw Error("MODEL_CONTEXT_TOO_LARGE");
         observeSize("unchanged", state.messages);
       } catch (error) {
         observeSize("error", state.messages, candidate, error);
