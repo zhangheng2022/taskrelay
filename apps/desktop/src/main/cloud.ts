@@ -28,6 +28,14 @@ export class Cloud {
     if (!encrypted) throw new Error("DEVICE_UNAUTHORIZED");
     return safeStorage.decryptString(Buffer.from(encrypted, "base64"));
   }
+  verifyBackgroundPairing() {
+    if (!this.paired) throw Error("BACKGROUND_PAIRING_REQUIRED");
+    try {
+      if (!this.token()) throw Error();
+    } catch {
+      throw Error("BACKGROUND_DEVICE_TOKEN_UNAVAILABLE");
+    }
+  }
   async connect(executorIdle: boolean) {
     // 离线转换保留的终态/关闭回执不执行浏览器副作用，可在协议升级后以原身份确认。
     // 其他旧请求及未收尾检查点仍阻止升级，不能用格式切换重放未知操作。

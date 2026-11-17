@@ -253,6 +253,13 @@ export class ExecutorHost {
       });
     this.notify();
   }
+  // 退出期间才收到租约：持久化取消与关闭事实，无需创建子进程或浏览器。
+  abandonClaim(run: TaskRun) {
+    const generation = randomUUID();
+    this.journal.checkpoint(run.id, generation, run.leaseEpoch, "claimed", { run });
+    this.retire(run, generation, true);
+    this.closed(run);
+  }
   async refreshControl() {
     const child = this.child,
       run = this.current,
@@ -483,7 +490,9 @@ export class ExecutorHost {
         row.state === "intent" ||
         row.state === "human-delivery" ||
         payload.status === "unknown";
-    const stoppedSummary = this.child ? "执行进程已停止。" : "执行进程未能启动。";
+    let stoppedSummary = "执行进程未能启动。";
+    if (this.child) stoppedSummary = "执行进程已停止。";
+    else if (cancelled) stoppedSummary = "执行器已退出，任务未启动。";
     const stoppedCode = this.child ? "EXECUTOR_EXITED" : "EXECUTOR_START_FAILED";
     // Preserve a previously queued terminal fact. Never replace it with a fabricated success.
     this.journal.queue(`finish_${run.id}`, `/api/runner/runs/${run.id}/finish`, {
