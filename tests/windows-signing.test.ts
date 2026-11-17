@@ -190,6 +190,81 @@ test("旧未签名发布仅可持原固定清单恢复，新版本不得使用�
   }
 });
 
+test("固定清单可恢复 0.27.0 的历史服务签名，新发布拒绝服务包", async (t) => {
+  const root = await workspaceFixture(t, "scope");
+  const windows = path.join(root, "windows");
+  await mkdir(path.join(windows, "out"), { recursive: true });
+  const source = "a".repeat(40);
+  const version = "0.27.0";
+  const payload = "signed archive fixture";
+  const digest = sha256(payload);
+  const signed = signedFixture(version, digest);
+  const servicePath = "apps/desktop/out/make/squirrel.windows/x64/TaskRelay.Service.Setup.exe";
+  signed.artifacts.push({ file: servicePath, sha256: digest, bytes: Buffer.byteLength(payload) });
+  signed.signing.files.push(
+    { ...signed.signing.files[0], role: "service-setup" },
+    { ...signed.signing.files[0], role: "service-host" },
+  );
+  for (const artifact of signed.artifacts) {
+    const file = path.join(windows, artifact.file);
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, payload);
+    artifact.bytes = Buffer.byteLength(payload);
+  }
+  const smoke = { passed: true, version };
+  for (const name of ["packaged-smoke", "installed-smoke"])
+    await writeFile(path.join(windows, "out", name + ".json"), JSON.stringify(smoke));
+  const service = {
+    ...smoke,
+    session: 0,
+    account: "NT SERVICE\\TaskRelayExecutor",
+    setupSha256: digest,
+    hostSha256: digest,
+  };
+  for (const hostSha256 of [digest, "c".repeat(64)]) {
+    const acceptance = {
+      ...signed,
+      version,
+      sourceCommit: source,
+      actionsRunId: "1",
+      actionsRunAttempt: "1",
+      sourceDirty: false,
+      installedAsarMatches: true,
+      systemEntry: { runner: "github-hosted" },
+      reports: {
+        "packaged-smoke": smoke,
+        "installed-smoke": smoke,
+        service: { ...service, hostSha256 },
+      },
+    };
+    await writeFile(path.join(windows, "out/release-manifest.json"), JSON.stringify(acceptance));
+    const manifest = {
+      schema: 1,
+      kind: "windows",
+      version,
+      sourceCommit: source,
+      repository: "zhangheng2022/taskrelay",
+      runId: "1",
+      runAttempt: "1",
+      files: await fileTree(windows),
+    };
+    await writeFile(path.join(windows, "artifact-manifest.json"), JSON.stringify(manifest));
+    const plan = JSON.stringify({
+      schema: 1,
+      sha: source,
+      sources: { windows: { manifestHash: sha256(JSON.stringify(manifest)) } },
+    });
+    await writeFile(path.join(root, "release-plan.json"), plan);
+    await assert.rejects(verifyBundle(root, source, undefined, ["windows"]), /SIGNATURE_INVALID/);
+    if (hostSha256 === digest) await verifyBundle(root, source, sha256(plan), ["windows"]);
+    else
+      await assert.rejects(
+        verifyBundle(root, source, sha256(plan), ["windows"]),
+        /SIGNATURE_INVALID/,
+      );
+  }
+});
+
 test("Forge 签名制作使用同一真实缓存目录，正式构建缺证书时拒绝启动", () => {
   const source =
     'import config from "./apps/desktop/forge.config.mts"; import fs from "node:fs"; import assert from "node:assert/strict"; await config.hooks.preMake(); const temp=process.env.SQUIRREL_TEMP; assert.match(temp.replaceAll("\\\\","/"),/\\/.cache\\/squirrel-signing-/); assert.ok(fs.existsSync(temp)); const result=[]; assert.equal(await config.hooks.postMake({},result),result); assert.equal(fs.existsSync(temp),false);';

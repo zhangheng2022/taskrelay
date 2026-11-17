@@ -67,7 +67,7 @@ export async function verifyFiles(kind, root, sha, { legacyResume = false } = {}
       acceptance.signed === false &&
       version &&
       (Number(version[1]) < 19 || (Number(version[1]) === 19 && Number(version[2]) < 6));
-    if (!oldUnsigned) validateSigning(acceptance);
+    if (!oldUnsigned) validateSigning(acceptance, { legacyResume });
     for (const artifact of acceptance.artifacts ?? []) {
       if (!artifact.file.startsWith("apps/desktop/out/make/")) continue;
       const file = actual[artifact.file];
