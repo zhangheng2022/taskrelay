@@ -92,6 +92,7 @@ let serviceController = false;
 let serviceAccessError = "";
 let serviceRelease: ServiceRelease | null = null;
 let serviceCheckedAt: string | null = null;
+let serviceStatus: DesktopStatus | null = null;
 let switching = false;
 let retired = false;
 let drainForService = false;
@@ -274,6 +275,7 @@ async function desktopStatus(): Promise<DesktopStatus> {
       boot: windowsService.supported ? "not-installed" : "unavailable",
     };
   }
+  if (switching && serviceStatus) return serviceStatus;
   const info = await windowsService.info().catch(() => null);
   const current = info?.running
     ? ((await invoke("status").catch(() => null)) as ReturnType<typeof status> | null)
@@ -293,7 +295,7 @@ async function desktopStatus(): Promise<DesktopStatus> {
     };
   const autoStart = info?.mode === "auto";
   const boot = !current.paired ? "pairing" : autoStart ? "enabled" : "disabled";
-  return {
+  return (serviceStatus = {
     ...current,
     autoStart,
     boot,
@@ -305,9 +307,10 @@ async function desktopStatus(): Promise<DesktopStatus> {
       error: null,
       checkedAt: serviceCheckedAt,
     },
-  };
+  });
 }
 async function checkServiceUpdate() {
+  if (switching) return;
   if (!serviceController) return invoke("checkUpdate");
   const current = (await invoke("status")) as ReturnType<typeof status>;
   const release = await fetchServiceRelease();
@@ -348,6 +351,7 @@ async function configureStartup(enabled: boolean, upgrade = false) {
   }
   switching = true;
   const wasService = serviceController;
+  let previousPause = true;
   try {
     await transitionService({
       enabled,
@@ -372,6 +376,8 @@ async function configureStartup(enabled: boolean, upgrade = false) {
         }
       },
       stopPrevious: async () => {
+        if (!wasService)
+          previousPause = ((await invoke("status")) as ReturnType<typeof status>).paused;
         if (!wasService && ownership) return false;
         await invoke("quit");
         // 旧开机计划任务先等子进程退出，才可由管理员停用。
@@ -384,6 +390,7 @@ async function configureStartup(enabled: boolean, upgrade = false) {
         if (!wasService) login.setEnabled(false);
         serviceRelease = null;
         await waitForService();
+        if (!wasService) await invoke("pause", previousPause);
       },
       restore: async (stopped) => {
         if (!stopped) await invoke("drainForService", false).catch(() => {});
@@ -607,6 +614,8 @@ if (squirrelStartup || (!background && !app.requestSingleInstanceLock())) {
         path.join(userData, "runtime-extensions"),
       );
       journal = new Journal(userData);
+      // 首次安装若中断交接，完成授权也要等用户主动继续领取。
+      if (serviceMode && journal.get<boolean>("paused") === null) journal.set("paused", true);
       cloud = new Cloud(journal);
       if (
         serviceMode &&

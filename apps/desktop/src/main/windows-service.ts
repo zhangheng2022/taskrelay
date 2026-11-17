@@ -261,7 +261,14 @@ try {
   if ($fingerprint -ne ${quote(certificate.sha256)}) { exit 11 }
   ${sha256 ? `if ((Get-FileHash -InputStream $locked -Algorithm SHA256).Hash -ne ${quote(sha256)}) { exit 11 }` : ""}
   try { $child=Start-Process -FilePath $path -ArgumentList ${quote(argument)} -Verb RunAs -PassThru -Wait }
-  catch { if ($_.Exception.NativeErrorCode -eq 1223) { exit 12 }; throw }
+  catch {
+    $problem=$_.Exception
+    while ($problem) {
+      if ($problem -is [ComponentModel.Win32Exception] -and $problem.NativeErrorCode -eq 1223) { exit 12 }
+      $problem=$problem.InnerException
+    }
+    throw
+  }
   if ($child.ExitCode -ne 0) { exit 13 }
 } finally { $locked.Dispose() }
 `;

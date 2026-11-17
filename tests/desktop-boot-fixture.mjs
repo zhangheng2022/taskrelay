@@ -100,6 +100,7 @@ let service, serviceMock;
 if (mode === "service-ui") {
   let cancelled = true;
   let paired = false;
+  let paused = false;
   let version = "0.27.0";
   let release = "0.27.0";
   const adapter = new (class {
@@ -137,7 +138,7 @@ if (mode === "service-ui") {
           paired,
           version,
           cloudUrl: "https://127.0.0.1:1",
-          paused: true,
+          paused,
           online: paired,
           activeRunId: null,
           error: null,
@@ -147,6 +148,7 @@ if (mode === "service-ui") {
         paired = true;
         return true;
       }
+      if (method === "pause") paused = input;
       if (method === "idleForService") return true;
     }
   })();
