@@ -202,6 +202,9 @@ const commands = {
     journal.set("paused", z.boolean().parse(v));
     notify();
   },
+  togglePause() {
+    commands.pause(!journal.get<boolean>("paused"));
+  },
   stop: () => host.stop(true),
   checkUpdate: () => updater.check(true),
   async downloadUpdate(input: unknown) {
@@ -294,7 +297,14 @@ function finishQuit() {
 }
 async function quit() {
   if (quitting) return;
-  if (control) await invoke("quit");
+  if (control) {
+    if (ownership) await invoke("quit");
+    else {
+      // 后台进程可能已经退出。没有持锁者时，桌面控制窗口可以直接退出。
+      ownership = tryAcquireExecutor(app.getPath("userData"));
+      if (!ownership) await invoke("quit");
+    }
+  }
   quitting = true;
   finishQuit();
 }
@@ -316,10 +326,7 @@ function attachDesktop(root: string) {
       { label: "打开 TaskRelay", click: show },
       {
         label: "暂停 / 继续领取",
-        click: () =>
-          void desktopStatus()
-            .then(({ paused }) => invoke("pause", !paused))
-            .catch(desktopCommandFailed),
+        click: () => void invoke("togglePause").catch(desktopCommandFailed),
       },
       { type: "separator" },
       {

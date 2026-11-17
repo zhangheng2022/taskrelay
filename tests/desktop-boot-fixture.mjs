@@ -17,7 +17,7 @@ const app = Object.assign(events(), {
   getPath: (name) => (name === "exe" ? process.execPath : profile),
   whenReady: async () => {},
   requestSingleInstanceLock: () => true,
-  setAppUserModelId: () => {},
+  setAppUserModelId: () => send("appId"),
   getLoginItemSettings: () => ({ launchItems: [] }),
   setLoginItemSettings: (settings) => send("login", settings),
   exit: (code) => process.exit(code),

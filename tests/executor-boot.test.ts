@@ -17,7 +17,7 @@ async function profile(t: TestContext) {
   return dir;
 }
 
-test("后台 Main 领取并启动运行，独立桌面进程控制同一执行器", async (t) => {
+test("后台 Main 领取并启动运行，独立桌面进程控制同一执行器", { timeout: 30_000 }, async (t) => {
   const dir = await profile(t);
   const extension = path.join(dir, "resources", "stagehand-extension");
   await mkdir(extension, { recursive: true });
@@ -122,6 +122,17 @@ test("后台 Main 领取并启动运行，独立桌面进程控制同一执行�
     const exited = once(foreground.child, "exit");
     foreground.send("quit");
     assert.deepEqual(await exited, [0, null]);
+
+    const reboot = launch("background");
+    await reboot.wait("appId");
+    const viewer = launch("desktop");
+    assert.match(String(await viewer.wait("window")), /后台控制/);
+    const crashed = once(reboot.child, "exit");
+    reboot.child.kill();
+    await crashed;
+    const closed = once(viewer.child, "exit");
+    viewer.send("quit");
+    assert.deepEqual(await closed, [0, null]);
   } finally {
     await cleanup();
   }
