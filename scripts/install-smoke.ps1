@@ -63,47 +63,12 @@ Stop-InstalledTaskRelay
 & node scripts/smoke.mjs $installedExe 'out/installed-smoke.json'
 if ($LASTEXITCODE -ne 0) { throw 'INSTALLED_SMOKE_FAILED' }
 
-# 在托管机的非交互会话验证实际安装包能启动 Chromium 和 utilityProcess。
-# 使用 S4U 与本地合成站点；生产开机任务使用 Password 登录，访问已配对账户的 DPAPI。
-function Invoke-BootSessionSmoke {
-    [CmdletBinding(SupportsShouldProcess = $true)]
-    param()
-    $taskName = "TaskRelay-BootSmoke-$PID"
-    if (-not $PSCmdlet.ShouldProcess($taskName, '验收非交互会话中的安装包')) { return }
-    $report = Join-Path $workspacePath 'out/boot-session-smoke.json'
-    $profile = Join-Path $workspacePath 'out/boot-session-electron'
-    $arguments = '--taskrelay-background --taskrelay-smoke "{0}" "--user-data-dir={1}"' -f $report, $profile
-    $action = New-ScheduledTaskAction -Execute $installedExe -Argument $arguments
-    $account = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-    $principal = New-ScheduledTaskPrincipal -UserId $account -LogonType S4U -RunLevel Limited
-    $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::FromMinutes(3))
-    Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings | Out-Null
-    try {
-        $started = [DateTime]::UtcNow
-        Start-ScheduledTask -TaskName $taskName
-        $seenInSessionZero = $false
-        $deadline = $started.AddMinutes(3)
-        while ([DateTime]::UtcNow -lt $deadline) {
-            $seenInSessionZero = $seenInSessionZero -or [bool](Get-CimInstance Win32_Process -Filter "Name='TaskRelay.exe' AND SessionId=0" | Where-Object {
-                $_.ExecutablePath -eq $installedExe -and $_.CommandLine.Contains($report)
-            })
-            $finished = (Get-ScheduledTask -TaskName $taskName).State -eq 'Ready' -and
-                (Test-Path -LiteralPath $report) -and (Get-Item -LiteralPath $report).LastWriteTimeUtc -ge $started
-            if ($finished) { break }
-            Start-Sleep -Milliseconds 300
-        }
-        if (-not $finished -or -not $seenInSessionZero -or
-            (Get-ScheduledTaskInfo -TaskName $taskName).LastTaskResult -ne 0 -or
-            (Get-Content -LiteralPath $report -Raw | ConvertFrom-Json).passed -ne $true) {
-            throw 'BOOT_SESSION_SMOKE_FAILED'
-        }
-    } finally {
-        if ((Get-ScheduledTask -TaskName $taskName).State -eq 'Running') {
-            Stop-ScheduledTask -TaskName $taskName
-        }
-        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
-    }
+# 遗留计划任务调用安装后的新版本时应直接退出，不开启新窗口或开始领取。
+$legacyLaunch = Start-Process -FilePath $installedExe -ArgumentList '--taskrelay-background' -PassThru -WindowStyle Hidden
+if (-not $legacyLaunch.WaitForExit(10000)) {
+    Stop-InstalledTaskRelay
+    throw 'LEGACY_BOOT_DID_NOT_EXIT'
 }
-Invoke-BootSessionSmoke
+if ($legacyLaunch.ExitCode -ne 0) { throw 'LEGACY_BOOT_EXIT_FAILED' }
 $entryEvidence | ConvertTo-Json | Set-Content -LiteralPath 'out/system-entry.json' -Encoding utf8
 Write-Output "已验证 Windows 系统入口及安装版本 $version"

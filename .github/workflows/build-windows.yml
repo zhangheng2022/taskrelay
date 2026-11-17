@@ -68,9 +68,6 @@ jobs:
       - run: npm run make
         env:
           GH_TOKEN: ${{ github.token }}
-      - name: Build · 签名开机服务
-        shell: pwsh
-        run: ./scripts/build-service.ps1
       - if: always()
         name: Signing · 结束私钥使用
         shell: pwsh
@@ -81,9 +78,6 @@ jobs:
       - run: npm run test:smoke
       - run: ./scripts/install-smoke.ps1
         shell: pwsh
-      - name: Test · 开机服务与桌面控制
-        shell: pwsh
-        run: ./scripts/service-smoke.ps1
       - name: Signing · 核验实际安装
         shell: pwsh
         run: ./scripts/windows-signature.ps1 -Action Report -Installed

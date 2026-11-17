@@ -8,7 +8,6 @@ const transport: NonNullable<Transport["desktop"]> = {
   pairPoll: () => invoke("pairPoll"),
   pause: (value) => invoke("pause", value),
   autoStart: (value) => invoke("autoStart", value),
-  updateService: () => invoke("updateService"),
   stop: () => invoke("stop"),
   diagnostics: () => invoke("diagnostics"),
   checkUpdate: () => invoke("checkUpdate"),

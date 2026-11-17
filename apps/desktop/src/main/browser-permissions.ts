@@ -5,10 +5,7 @@ import path from "node:path";
 /** 为 Chromium 的 LPAC 子进程补齐公开程序资源的读取/执行权限。
  * 仅接受自有 browser/chrome-win64，拒绝重解析路径；不触碰 Profile、父目录或用户数据。
  * 安装与 ZIP 解压不保证保留 ACL，Main 在首次启动前调用，失败时不启动浏览器。 */
-export async function grantBrowserReadAccess(
-  directory: string,
-  installedByService = false,
-): Promise<void> {
+export async function grantBrowserReadAccess(directory: string): Promise<void> {
   const root = path.resolve(directory);
   if (
     path.basename(root) !== "chrome-win64" ||
@@ -26,8 +23,6 @@ export async function grantBrowserReadAccess(
   await validate(root);
   if (!(await lstat(path.join(root, "chrome.exe"))).isFile())
     throw Error("BROWSER_EXECUTABLE_MISSING");
-  // 服务安装器已为受保护的资源写入同一 ACE，服务账户只读程序目录。
-  if (installedByService) return;
   await new Promise<void>((resolve, reject) => {
     childProcess.execFile(
       "icacls.exe",

@@ -42,10 +42,6 @@ export function validateSigning(manifest, { allowTest = false } = {}) {
     "installed-stub",
     "installed-updater",
   ];
-  const serviceArtifact = manifest.artifacts?.find((entry) =>
-    entry.file.endsWith("/TaskRelay.Service.Setup.exe"),
-  );
-  if (serviceArtifact) roles.push("service-setup", "service-host");
   if (!Array.isArray(report.files) || report.files.length !== roles.length) fail();
   const files = new Map(report.files.map((file) => [file.role, file]));
   for (const role of roles) {
@@ -62,19 +58,6 @@ export function validateSigning(manifest, { allowTest = false } = {}) {
       fail();
   }
   const artifacts = manifest.artifacts ?? [];
-  if (serviceArtifact) {
-    const service = manifest.reports?.service;
-    if (
-      service?.passed !== true ||
-      service.version !== manifest.version ||
-      service.session !== 0 ||
-      service.account !== "NT SERVICE\\TaskRelayExecutor" ||
-      service.setupSha256 !== serviceArtifact.sha256 ||
-      files.get("service-setup").sha256 !== serviceArtifact.sha256 ||
-      files.get("service-host").sha256 !== service.hostSha256
-    )
-      fail();
-  }
   for (const [suffix, digest] of [
     ["/TaskRelay Setup.exe", files.get("setup").sha256],
     ["/TaskRelay-win32-x64/TaskRelay.exe", files.get("packaged-app").sha256],

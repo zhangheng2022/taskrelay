@@ -17,7 +17,7 @@ async function profile(t: TestContext) {
   return dir;
 }
 
-test("后台 Main 领取并启动运行，独立桌面进程控制同一执行器", { timeout: 30_000 }, async (t) => {
+test("登录后控制同一执行器，旧开机入口退出", { timeout: 30_000 }, async (t) => {
   const dir = await profile(t);
   const extension = path.join(dir, "resources", "stagehand-extension");
   await mkdir(extension, { recursive: true });
@@ -72,8 +72,15 @@ test("后台 Main 领取并启动运行，独立桌面进程控制同一执行�
     };
   }
   try {
-    const boot = launch("background");
-    await boot.wait("utility", (value) => value === "start");
+    const legacy = launch("legacy-boot");
+    assert.deepEqual(await once(legacy.child, "exit"), [0, null]);
+    assert.deepEqual(
+      legacy.messages.map((m) => m.type),
+      ["exit"],
+    );
+
+    const owner = launch("desktop");
+    await owner.wait("utility", (value) => value === "start");
     assert.equal(tryAcquireExecutor(dir), null);
     const desktop = launch("desktop");
     assert.match(String(await desktop.wait("window")), /后台控制/);
@@ -83,7 +90,17 @@ test("后台 Main 领取并启动运行，独立桌面进程控制同一执行�
       /STOP_RUN_BEFORE_PAIRING/,
     );
     await desktop.call("pause", true);
+    await desktop.call("autoStart", true);
+    assert.equal((await desktop.call<DesktopStatus>("status")).autoStart, true);
+    assert.deepEqual(await desktop.wait("login"), {
+      path: process.execPath,
+      args: [],
+      name: "com.squirrel.TaskRelay.TaskRelay",
+      openAtLogin: true,
+      enabled: true,
+    });
     await desktop.call("autoStart", false);
+    assert.equal((await desktop.call<DesktopStatus>("status")).autoStart, false);
     await desktop.call("checkUpdate");
     await desktop.call("downloadUpdate", "0.26.9");
     await desktop.call("stop");
@@ -101,14 +118,10 @@ test("后台 Main 领取并启动运行，独立桌面进程控制同一执行�
     assert.equal(diagnostics.outboxCount.count, 1);
     assert.equal(diagnostics.journal[0].run_id, run.id);
     assert.equal(
-      boot.messages.some((m) => m.type === "window"),
-      false,
-    );
-    assert.equal(
       desktop.messages.some((m) => m.type === "claim" || m.type === "utility"),
       false,
     );
-    const exits = [once(boot.child, "exit"), once(desktop.child, "exit")];
+    const exits = [once(owner.child, "exit"), once(desktop.child, "exit")];
     desktop.send("quit");
     assert.deepEqual(await Promise.all(exits), [
       [0, null],
@@ -128,8 +141,8 @@ test("后台 Main 领取并启动运行，独立桌面进程控制同一执行�
     await foreground.wait("utility", (value) => value === "cancel");
     assert.deepEqual(await exited, [0, null]);
 
-    const reboot = launch("background");
-    await reboot.wait("appId");
+    const reboot = launch("desktop");
+    await reboot.wait("window");
     const viewer = launch("desktop");
     assert.match(String(await viewer.wait("window")), /后台控制/);
     const crashed = once(reboot.child, "exit");
@@ -138,30 +151,6 @@ test("后台 Main 领取并启动运行，独立桌面进程控制同一执行�
     const closed = once(viewer.child, "exit");
     viewer.send("quit");
     assert.deepEqual(await closed, [0, null]);
-
-    const settings = new Journal(dir);
-    settings.set("paused", true);
-    settings.close();
-    const installer = launch("service-ui");
-    await installer.wait("window");
-    assert.equal((await installer.call<DesktopStatus>("status")).boot, "not-installed");
-    await assert.rejects(installer.call("autoStart", true), /SERVICE_UAC_CANCELLED/);
-    assert.equal((await installer.call<DesktopStatus>("status")).boot, "not-installed");
-    await installer.call("autoStart", true);
-    assert.equal((await installer.call<DesktopStatus>("status")).boot, "pairing");
-    await installer.call("configure", "https://127.0.0.1:1");
-    await installer.call("pairPoll");
-    assert.equal((await installer.call<DesktopStatus>("status")).boot, "enabled");
-    assert.equal((await installer.call<DesktopStatus>("status")).paused, true);
-    await installer.call("autoStart", false);
-    assert.equal((await installer.call<DesktopStatus>("status")).boot, "disabled");
-    await installer.call("checkUpdate");
-    assert.equal((await installer.call<DesktopStatus>("status")).serviceRelease?.version, "0.27.1");
-    await installer.call("updateService");
-    assert.equal((await installer.call<DesktopStatus>("status")).version, "0.27.1");
-    const serviceClosed = once(installer.child, "exit");
-    installer.send("quit");
-    assert.deepEqual(await serviceClosed, [0, null]);
   } finally {
     await cleanup();
   }

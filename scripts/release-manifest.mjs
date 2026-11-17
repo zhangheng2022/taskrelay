@@ -8,7 +8,6 @@ const root = path.resolve(import.meta.dirname, "..");
 const desktop = JSON.parse(await readFile(path.join(root, "apps/desktop/package.json"), "utf8"));
 const files = [
   "apps/desktop/out/make/squirrel.windows/x64/TaskRelay Setup.exe",
-  "apps/desktop/out/make/squirrel.windows/x64/TaskRelay.Service.Setup.exe",
   `apps/desktop/out/make/squirrel.windows/x64/TaskRelay-${desktop.version}-full.nupkg`,
   "apps/desktop/out/make/squirrel.windows/x64/RELEASES",
   "apps/desktop/out/TaskRelay-win32-x64/TaskRelay.exe",
@@ -45,7 +44,6 @@ for (const name of ["packaged-smoke", "installed-smoke"]) {
     throw new Error(`${name} does not identify this version and ASAR`);
 }
 const installedReport = reports["installed-smoke"];
-reports.service = JSON.parse(await readFile(path.join(root, "out/service-smoke.json"), "utf8"));
 const systemEntry = JSON.parse(await readFile(path.join(root, "out/system-entry.json"), "utf8"));
 if (
   systemEntry.runner !== "github-hosted" ||

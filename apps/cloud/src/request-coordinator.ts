@@ -4,7 +4,7 @@ import { app, maintenance } from "./index";
 import type { AppEnv } from "./env";
 import { wakeTurns } from "./ai/turn";
 import { notifyDevices } from "./notifications";
-import { loadReleaseCatalog, loadServiceCatalog } from "./updates";
+import { loadReleaseCatalog } from "./updates";
 import { UpdateBroadcast } from "./update-broadcast";
 
 /** Bounded session shards route application work. A routing hash is NEVER identity;
@@ -25,9 +25,6 @@ export class RequestCoordinator extends DurableObject<AppEnv> {
       );
       return catalog;
     });
-  }
-  serviceReleaseCatalog() {
-    return loadServiceCatalog(this.env.DB);
   }
   async alarm() {
     await new UpdateBroadcast(this.ctx.storage, this.env).alarm();
