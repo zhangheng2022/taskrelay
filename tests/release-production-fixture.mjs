@@ -107,7 +107,7 @@ const state = () =>
   Object.fromEntries(
     sql
       .prepare(
-        "SELECT key,value FROM settings WHERE key IN ('claimsEnabled','maintenance','productionRelease','desktopReleaseCatalog')",
+        "SELECT key,value FROM settings WHERE key IN ('claimsEnabled','maintenance','productionRelease','desktopReleaseCatalog','windowsServiceReleaseCatalog')",
       )
       .all()
       .map((row) => [row.key, row.value]),
@@ -126,7 +126,9 @@ const candidate = {
 const packageName = "TaskRelay-0.17.1-full.nupkg";
 const installerName = "TaskRelay Setup.exe";
 const publishedInstallerName = "TaskRelay.Setup.exe";
+const serviceInstallerName = "TaskRelay.Service.Setup.exe";
 const artifactNames = [packageName, installerName];
+if (mode === "desktop") artifactNames.push(serviceInstallerName);
 const packageRoot = "artifacts/windows/apps/desktop/out/make/squirrel.windows/x64";
 const manifest = {
   ...signedFixture(candidate.version, candidate.sha256),
@@ -154,6 +156,21 @@ manifest.artifacts.push({
   bytes: bytes.length,
   sha256: candidate.sha256,
 });
+if (mode === "desktop") {
+  const setup = manifest.signing.files.find((file) => file.role === "setup");
+  manifest.signing.files.push(
+    { ...setup, role: "service-setup" },
+    { ...setup, role: "service-host" },
+  );
+  manifest.reports.service = {
+    passed: true,
+    version: candidate.version,
+    session: 0,
+    account: "NT SERVICE\\TaskRelayExecutor",
+    setupSha256: candidate.sha256,
+    hostSha256: candidate.sha256,
+  };
+}
 if (mode === "wrong-manifest") manifest.sourceCommit = "b".repeat(40);
 if (mode === "bad-artifact") manifest.artifacts[0].sha256 = "b".repeat(64);
 if (mode === "bad-smoke") manifest.reports["installed-smoke"].passed = false;
@@ -199,7 +216,7 @@ if (desktop) {
   add("artifacts/windows/out/release-manifest.json", manifest);
   add("artifacts/windows/out/desktop-release.json", candidate);
   for (const [name, report] of Object.entries(manifest.reports))
-    add(`artifacts/windows/out/${name}.json`, report);
+    add(`artifacts/windows/out/${name === "service" ? "service-smoke" : name}.json`, report);
   for (const name of artifactNames) add(`${packageRoot}/${name}`, bytes);
 }
 const hash = (value) => createHash("sha256").update(value).digest("hex");
@@ -461,6 +478,17 @@ globalThis.fetch = async (input, options) => {
     assert.equal(catalog.latest, candidate.version);
     assert.equal(options.redirect, "error");
     return Response.json({ release: catalog.releases.find((r) => r.version === catalog.latest) });
+  }
+  if (url.startsWith("https://taskrelay.zhangheng.workers.dev/api/updates/windows-service-x64/")) {
+    assert.equal(mode, "desktop");
+    const catalog = JSON.parse(state().windowsServiceReleaseCatalog);
+    if (url.endsWith("/latest.json")) {
+      assert.equal(catalog.latest, candidate.version);
+      return Response.json({ release: catalog.releases[0] });
+    }
+    assert.ok(url.endsWith(`/${candidate.version}/${candidate.sha256}/${serviceInstallerName}`));
+    assert.equal(catalog.latest, null);
+    return new Response(bytes);
   }
   // 与生产入口读取同一绑定身份；网络仍全部截获到隔离 SQLite，不访问实际 D1。
   const db = `https://api.cloudflare.com/client/v4${dbPath}`;

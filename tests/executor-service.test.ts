@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -12,6 +13,7 @@ import {
   fetchServiceRelease,
   readServiceEnvironment,
   serveServiceCommands,
+  WindowsService,
 } from "../apps/desktop/src/main/windows-service";
 import { transitionService } from "../apps/desktop/src/main/service-transition";
 import { serveServiceUpdate } from "../apps/cloud/src/updates";
@@ -197,4 +199,76 @@ test("服务内层端口拒绝未授权命令，并在回执写好后才完成�
   } finally {
     server.close();
   }
+});
+
+test("Windows 适配器读取实际 SCM 状态，并只对校验过的服务入口发起提升", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "relay-windows-adapter-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let present = false;
+  let reply = "absent";
+  let registry = false;
+  let sid = '"host\\fixture","S-1-5-21-1-2-3-1001"';
+  let exit = 0;
+  let script = "";
+  const calls: string[] = [];
+  const fixture = {
+    exists: () => present,
+    execute: async (file: string, args: string[]) => {
+      calls.push(args[0]);
+      if (file.endsWith("reg.exe") && !registry) throw Error("NOT_FOUND");
+      if (file.endsWith("powershell.exe")) {
+        script = Buffer.from(args.at(-1)!, "base64").toString("utf16le");
+        if (exit) throw Object.assign(Error("WINDOWS_STATUS"), { code: exit });
+      }
+      return { stdout: file.endsWith("whoami.exe") ? sid : reply, stderr: "" };
+    },
+    spawn: () =>
+      spawn(
+        process.execPath,
+        [
+          "-e",
+          "process.stdin.once('data',b=>{const m=JSON.parse(b);if(m.method==='stop')process.exit(5);process.stdout.write(JSON.stringify(m.method==='unknown'?{ok:false,error:'REJECTED'}:{ok:true,value:m.input}));});",
+        ],
+        { stdio: ["pipe", "pipe", "ignore"], windowsHide: true },
+      ),
+    download: async (_release: typeof artifact, destination: string) =>
+      writeFile(destination, bytes),
+  };
+  const client = new WindowsService(true, fixture);
+  assert.equal(await new WindowsService(false, fixture).info(), null);
+  assert.equal(await client.info(), null);
+  registry = true;
+  await assert.rejects(client.info(), /安装不完整/);
+  present = true;
+  for (const mode of ["auto", "manual"] as const)
+    for (const running of [true, false]) {
+      reply = mode + (running ? " online" : " offline");
+      assert.deepEqual(await client.info(), { mode, running });
+    }
+  reply = "denied";
+  await assert.rejects(client.info(), /只有配置/);
+  reply = "invalid";
+  await assert.rejects(client.info(), /SERVICE_STATUS_INVALID/);
+  await client.start();
+  assert.equal(calls.at(-1), "start");
+  assert.equal(await client.call("pause", true), true);
+  await assert.rejects(client.call("unknown"), /REJECTED/);
+  await assert.rejects(client.call("stop"), /未响应/);
+  await client.setStartup(false);
+  assert.match(script, /-ArgumentList 'disable' -Verb RunAs/);
+  const prepared = await client.prepareInstall(artifact, root);
+  for (const [code, message] of [
+    [11, /签名或文件不匹配/],
+    [12, /SERVICE_UAC_CANCELLED/],
+    [13, /服务配置失败/],
+  ] as const) {
+    exit = code;
+    await assert.rejects(prepared.run(), message);
+  }
+  assert.ok(script.includes(artifact.sha256));
+  assert.match(script, /'S-1-5-21-1-2-3-1001'/);
+  await prepared.cleanup();
+  sid = "bad SID";
+  await assert.rejects(client.prepareInstall(artifact, root), /无法识别/);
+  assert.deepEqual(await readdir(root), []);
 });

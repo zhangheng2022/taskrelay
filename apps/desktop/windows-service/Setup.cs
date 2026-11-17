@@ -11,7 +11,9 @@ using Microsoft.Win32;
 internal static class Setup
 {
     private const string Payload = "TaskRelay.Payload";
+    private static string phase = "validate";
 
+    [STAThread]
     public static int Main(string[] args)
     {
         try
@@ -31,8 +33,11 @@ internal static class Setup
             }
             return 0;
         }
-        catch (InvalidOperationException) { return 4; }
-        catch { return 5; }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine("TaskRelay service setup: {0} {1} 0x{2:X8}", phase, error.GetType().Name, error.HResult);
+            return 5;
+        }
     }
 
     private static void Install(SecurityIdentifier owner)
@@ -43,29 +48,35 @@ internal static class Setup
             if (!Host.Owner().Equals(owner)) throw new InvalidOperationException("SERVICE_OWNER_MISMATCH");
             InstallOperations.WaitStopped();
         }
+        phase = "prepare-program-files";
         Directory.CreateDirectory(Host.Root);
         if ((File.GetAttributes(Host.Root) & FileAttributes.ReparsePoint) != 0)
             throw new IOException("SERVICE_PATH_REPARSE_POINT");
         var stage = Path.Combine(Host.Root, "stage-" + Guid.NewGuid().ToString("N"));
         var backup = Path.Combine(Host.Root, "previous-" + Guid.NewGuid().ToString("N"));
+        phase = "read-legacy-task";
         dynamic oldTask = FindLegacyTask(owner);
         bool disabledLegacy = false, createdService = false, movedOld = false, movedNew = false;
         try
         {
+            phase = "extract";
             Extract(stage);
             var browser = Path.Combine(stage, "resources", "browser", "chrome-win64");
             InstallOperations.Win("icacls.exe", InstallOperations.Quote(browser) + " /grant *S-1-15-2-2:(OI)(CI)(RX) /T /Q");
+            phase = "disable-legacy-task";
             if (oldTask != null && (bool)oldTask.Enabled)
             {
                 oldTask.Enabled = false;
                 disabledLegacy = true;
             }
             if (oldTask != null && (int)oldTask.State == 4) throw new InvalidOperationException("LEGACY_TASK_IS_RUNNING");
+            phase = "install-files";
             if (Directory.Exists(Host.Bin)) { Directory.Move(Host.Bin, backup); movedOld = true; }
             Directory.Move(stage, Host.Bin);
             movedNew = true;
             if (oldMode < 0)
             {
+                phase = "register-service";
                 var exe = InstallOperations.Quote(Path.Combine(Host.Bin, "TaskRelay.Service.exe")) + " service";
                 InstallOperations.Win("sc.exe", "create " + Host.Name + " binPath= " + InstallOperations.Quote(exe) +
                     " obj= \"NT SERVICE\\" + Host.Name + "\" start= demand DisplayName= \"TaskRelay Executor\"");
@@ -77,17 +88,20 @@ internal static class Setup
                     settings.SetValue("Owner", owner.Value, RegistryValueKind.String);
                 InstallOperations.SetStartup(true);
             }
+            phase = "prepare-service-data";
             var serviceSid = (SecurityIdentifier)new NTAccount(@"NT SERVICE\" + Host.Name).Translate(typeof(SecurityIdentifier));
             var dataParent = Path.GetDirectoryName(Host.Data);
             if (!Directory.Exists(dataParent)) Directory.CreateDirectory(dataParent, InstallOperations.PrivateAcl(serviceSid));
             InstallOperations.CheckPrivateDirectory(dataParent, serviceSid);
             if (!Directory.Exists(Host.Data)) Directory.CreateDirectory(Host.Data, InstallOperations.PrivateAcl(serviceSid));
             InstallOperations.CheckPrivateDirectory(Host.Data, serviceSid);
+            phase = "start-service";
             using (var service = new ServiceController(Host.Name))
             {
                 service.Start();
                 service.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(35));
             }
+            phase = "check-control";
             var ready = false;
             var deadline = DateTime.UtcNow.AddSeconds(45);
             while (!ready && DateTime.UtcNow < deadline)
@@ -134,12 +148,10 @@ internal static class Setup
         dynamic service = Activator.CreateInstance(type);
         service.Connect();
         dynamic root = service.GetFolder(@"\");
-        try { return root.GetTask("TaskRelay Executor Boot (" + owner.Value + ")"); }
-        catch (System.Runtime.InteropServices.COMException error)
-        {
-            if ((uint)error.ErrorCode != 0x80070002) throw;
-            return null;
-        }
+        var name = "TaskRelay Executor Boot (" + owner.Value + ")";
+        foreach (dynamic task in root.GetTasks(1))
+            if (String.Equals((string)task.Name, name, StringComparison.OrdinalIgnoreCase)) return task;
+        return null;
     }
 
     private static void Extract(string stage)

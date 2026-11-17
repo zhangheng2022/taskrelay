@@ -143,6 +143,14 @@ export async function downloadServiceRelease(
 type ServiceInfo = { mode: "auto" | "manual"; running: boolean };
 const commandTimeout = 55_000;
 const quote = (value: string) => "'" + value.replaceAll("'", "''") + "'";
+const windowsOperations = {
+  exists: existsSync,
+  execute: async (file: string, args: string[], timeout: number) =>
+    exec(file, args, { windowsHide: true, timeout }),
+  spawn: (file: string) =>
+    spawn(file, ["call"], { windowsHide: true, stdio: ["pipe", "pipe", "ignore"] }),
+  download: downloadServiceRelease,
+};
 export class WindowsService {
   private readonly system = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32");
   private readonly helper = path.join(
@@ -151,23 +159,28 @@ export class WindowsService {
     "bin",
     "TaskRelay.Service.exe",
   );
-  constructor(readonly supported: boolean) {}
+  constructor(
+    readonly supported: boolean,
+    private readonly native = windowsOperations,
+  ) {}
 
   async info(): Promise<ServiceInfo | null> {
     if (!this.supported) return null;
-    if (!existsSync(this.helper)) {
-      const registered = await exec(
-        path.join(this.system, "reg.exe"),
-        ["query", "HKLM\\SYSTEM\\CurrentControlSet\\Services\\TaskRelayExecutor", "/v", "Start"],
-        { windowsHide: true, timeout: 4000 },
-      ).then(
-        () => true,
-        () => false,
-      );
+    if (!this.native.exists(this.helper)) {
+      const registered = await this.native
+        .execute(
+          path.join(this.system, "reg.exe"),
+          ["query", "HKLM\\SYSTEM\\CurrentControlSet\\Services\\TaskRelayExecutor", "/v", "Start"],
+          4000,
+        )
+        .then(
+          () => true,
+          () => false,
+        );
       if (registered) throw Error("开机服务正在更新或安装不完整，请稍后重试。");
       return null;
     }
-    const { stdout } = await exec(this.helper, ["info"], { windowsHide: true, timeout: 6000 });
+    const { stdout } = await this.native.execute(this.helper, ["info"], 6000);
     const result = stdout.trim();
     if (result === "absent") return null;
     if (result === "denied") throw Error("只有配置此服务的 Windows 账户可以管理执行器。");
@@ -179,16 +192,13 @@ export class WindowsService {
   }
 
   async start() {
-    await exec(this.helper, ["start"], { windowsHide: true, timeout: 15000 });
+    await this.native.execute(this.helper, ["start"], 15000);
   }
 
   async call(method: string, input?: unknown): Promise<unknown> {
     const message = JSON.stringify({ method, input });
     const value = await new Promise<string>((resolve, reject) => {
-      const child = spawn(this.helper, ["call"], {
-        windowsHide: true,
-        stdio: ["pipe", "pipe", "ignore"],
-      });
+      const child = this.native.spawn(this.helper);
       let bytes = 0;
       const chunks: Buffer[] = [];
       const timer = setTimeout(() => child.kill(), commandTimeout);
@@ -217,14 +227,11 @@ export class WindowsService {
     const file = path.join(stage, serviceSetupName);
     const cleanup = () => rm(stage, { recursive: true, force: true });
     try {
-      await downloadServiceRelease(release, file);
-      const { stdout } = await exec(
+      await this.native.download(release, file);
+      const { stdout } = await this.native.execute(
         path.join(this.system, "whoami.exe"),
         ["/user", "/fo", "csv", "/nh"],
-        {
-          windowsHide: true,
-          timeout: 6000,
-        },
+        6000,
       );
       const sid = /,"(S-1-5-21-\d+-\d+-\d+-\d+)"\s*$/i.exec(stdout.trim())?.[1];
       if (!sid) throw Error("无法识别当前 Windows 账户。");
@@ -259,7 +266,7 @@ try {
 } finally { $locked.Dispose() }
 `;
     try {
-      await exec(
+      await this.native.execute(
         path.join(this.system, "WindowsPowerShell", "v1.0", "powershell.exe"),
         [
           "-NoProfile",
@@ -267,7 +274,7 @@ try {
           "-EncodedCommand",
           Buffer.from(code, "utf16le").toString("base64"),
         ],
-        { windowsHide: true, timeout: 10 * 60_000 },
+        10 * 60_000,
       );
     } catch (error) {
       const status = (error as { code?: number }).code;

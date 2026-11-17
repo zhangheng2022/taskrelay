@@ -17,8 +17,12 @@ function Invoke-RelayCall([string]$Method, $InputValue) {
     return $reply.value
 }
 function Install-RelayCandidate {
-    $process = Start-Process -FilePath $setup -ArgumentList $sid -WindowStyle Hidden -PassThru -Wait
-    if ($process.ExitCode -ne 0) { throw "SERVICE_INSTALLER_FAILED:$($process.ExitCode)" }
+    $log = Join-Path (Resolve-Path 'out') 'service-setup-error.log'
+    $process = Start-Process -FilePath $setup -ArgumentList $sid -WindowStyle Hidden -RedirectStandardError $log -PassThru -Wait
+    if ($process.ExitCode -ne 0) {
+        Get-Content -LiteralPath $log
+        throw "SERVICE_INSTALLER_FAILED:$($process.ExitCode)"
+    }
 }
 try {
     Install-RelayCandidate
