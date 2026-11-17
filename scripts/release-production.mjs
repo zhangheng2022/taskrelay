@@ -284,6 +284,22 @@ const updateCatalog = async (activate) => {
     ]);
   if ((await catalogValue()) !== next) throw Error("CATALOG_CONFLICT");
 };
+async function verifyPackage(assetPath, asset) {
+  const response = await fetch(productionOrigin + assetPath, {
+    redirect: "error",
+    signal: AbortSignal.timeout(600_000),
+  });
+  if (!response.ok || !response.body) throw Error(`CLOUDFLARE_DOWNLOAD_FAILED:${response.status}`);
+  const hash = createHash("sha256");
+  let size = 0;
+  for await (const chunk of response.body) {
+    size += chunk.length;
+    if (size > asset.bytes) throw Error("DOWNLOAD_SIZE_MISMATCH");
+    hash.update(chunk);
+  }
+  if (size !== asset.bytes || hash.digest("hex") !== asset.sha256)
+    throw Error("CLOUDFLARE_DOWNLOAD_HASH_MISMATCH");
+}
 const io = {
   assertOwnership,
   save: async (_before, next) => {
@@ -389,26 +405,14 @@ const io = {
     }
     if (release.draft) await github(`/releases/${release.id}`, "PATCH", { draft: false });
   },
-  register: async () => updateCatalog(false),
+  register: async () => {
+    await updateCatalog(false);
+  },
   verifyDownload: async () => {
     const { packagePath } = await import(
       pathToFileURL(path.resolve("packages/contracts/src/updates.ts")).href
     );
-    const response = await fetch(productionOrigin + packagePath(candidate), {
-      redirect: "error",
-      signal: AbortSignal.timeout(600_000),
-    });
-    if (!response.ok || !response.body)
-      throw Error(`CLOUDFLARE_DOWNLOAD_FAILED:${response.status}`);
-    const hash = createHash("sha256");
-    let size = 0;
-    for await (const chunk of response.body) {
-      size += chunk.length;
-      if (size > candidate.bytes) throw Error("DOWNLOAD_SIZE_MISMATCH");
-      hash.update(chunk);
-    }
-    if (size !== candidate.bytes || hash.digest("hex") !== candidate.sha256)
-      throw Error("CLOUDFLARE_DOWNLOAD_HASH_MISMATCH");
+    await verifyPackage(packagePath(candidate), candidate);
   },
   activate: async () => {
     await updateCatalog(true);
