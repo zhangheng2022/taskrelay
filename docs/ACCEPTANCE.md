@@ -1,5 +1,12 @@
 # TaskRelay 验收记录
 
+## 2026-11-17 聊天附件与发送／停止（0.27.2 生产验收）
+
+- [功能 PR #96](https://github.com/zhangheng2022/taskrelay/pull/96) 已合入。提交 `d772e1f9c2bcbbb2687971399a9953f0432ef81d` 的[主分支 CI](https://github.com/zhangheng2022/taskrelay/actions/runs/44071513363)及[生产发布](https://github.com/zhangheng2022/taskrelay/actions/runs/44072700970)通过。主域与备用域健康均返回该提交及协议 19，Windows 更新目录为 [0.27.2](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.27.2)。托管 Windows 核验了安装包签名、包内 smoke、实际安装和快捷方式启动。
+- 真实 Edge 测试使用合成文件。OpenAI · 美国的 `gpt-6.1-sol` v1 默认和高档均通过扫描 PDF 的结构化、工具调用测试。未验证 PDF 的模型保留待发附件并禁用提交，切换到支持的模型后可继续发送。云端回复读出红色、427、29，刷新后正文与三个下载入口仍存在。
+- 只读执行任务完成交接后，通过同一个输入框补充一批不同的文件。执行器最终回复页面标题 Example Domain，以及新附件的蓝色、724、73。运行收尾后停止方块恢复为发送箭头。生产图片实际解码，浏览器自动化未确认 CSV 下载保存在本地。隔离 workerd 已核对下载原件字节。
+- 功能变更的 OCR 委托审查覆盖 43 个文件（43 reviewed、0 skipped、100%），包括筛选默认排除的测试、锁文件和文档。实际安装证据来自托管 Runner，本轮未验收用户本机自动升级。
+
 ## 2026-11-17 聊天附件与发送／停止（0.27.2 源码验收）
 
 - `npm run quality` 通过，覆盖 613 项测试、类型、静态与仓库检查及 Web 构建。生产路由回归覆盖附件防重、伪造格式、模型能力、跨用户、消息撤回、保留期以及执行器按用户序号读取最近附件。Hono CLI 路由检查通过。
