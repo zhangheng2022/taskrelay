@@ -21,6 +21,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { writeFile } from "node:fs/promises";
 import { existsSync, realpathSync } from "node:fs";
+import { setTimeout as delay } from "node:timers/promises";
+import { hostname } from "node:os";
 import { z } from "zod";
 import { Journal } from "./journal";
 import { convertJournal } from "./convert-journal";
@@ -31,13 +33,16 @@ import { prepareExtension } from "./extension";
 import { ExecutorHost } from "./executor-host";
 import { DesktopUpdater } from "./updater";
 import { RunnerPoller } from "./runner-poller";
-import { loginSettings } from "./login";
+import { appUserModelId, loginSettings } from "./login";
 import { releaseSchema } from "../../../../packages/contracts/src/updates";
 import { cloudUrlSchema } from "../shared/ipc";
 import type { DesktopStatus } from "../../../../packages/contracts/src/index";
 import { packagedSmoke } from "./smoke";
+import { DesktopControl, tryAcquireExecutor } from "./desktop-control";
+// Main 运行现有执行链路，后台模式不创建窗口或托盘；同用户的桌面进程可转发命名控制。
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
+const background = process.argv.includes("--taskrelay-background");
 protocol.registerSchemesAsPrivileged([
   {
     scheme: "taskrelay",
@@ -61,6 +66,8 @@ let journal: Journal,
 let poller: RunnerPoller;
 let updater: DesktopUpdater;
 let login: ReturnType<typeof loginSettings>;
+let control: DesktopControl | undefined;
+let ownership: ReturnType<typeof tryAcquireExecutor>;
 function loginLaunchPath() {
   const stub = path.resolve(process.execPath, "../../TaskRelay.exe");
   return app.isPackaged &&
@@ -78,7 +85,7 @@ function updateBusy() {
     journal.incomplete().length > 0
   );
 }
-function status(): DesktopStatus {
+function status(): Omit<DesktopStatus, "autoStart"> {
   return {
     update: updater.status,
     paired: cloud.paired,
@@ -87,7 +94,6 @@ function status(): DesktopStatus {
     online: cloud.online,
     activeRunId: host.active,
     version: app.getVersion(),
-    autoStart: login.enabled(),
     error: lastError,
   };
 }
@@ -95,6 +101,7 @@ function notify() {
   window?.webContents.send("taskrelay:changed");
 }
 function show() {
+  if (background) return;
   if (window) {
     window.show();
     window.focus();
@@ -106,7 +113,7 @@ function createWindow() {
     height: 680,
     minWidth: 420,
     minHeight: 600,
-    title: "TaskRelay 执行器",
+    title: ownership ? "TaskRelay 执行器" : "TaskRelay 执行器 · 后台控制",
     backgroundColor: "#f7f8f6",
     show: false,
     autoHideMenuBar: true,
@@ -122,6 +129,7 @@ function createWindow() {
       webSecurity: true,
     },
   });
+  if (!ownership) window.on("page-title-updated", (event) => event.preventDefault());
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", (event, url) => {
     const origin = MAIN_WINDOW_VITE_DEV_SERVER_URL
@@ -154,18 +162,9 @@ function backgroundFailed() {
   lastError = "EXECUTOR_BACKGROUND_FAILED";
   notify();
 }
-function registerIpc() {
-  const handle = (name: string, fn: (...args: any[]) => unknown) =>
-    ipcMain.handle(`taskrelay:${name}`, async (event, ...args) => {
-      if (
-        event.sender !== window?.webContents ||
-        event.senderFrame !== window.webContents.mainFrame
-      )
-        throw new Error("IPC_SENDER_REJECTED");
-      return fn(...args);
-    });
-  handle("status", () => status());
-  handle("configure", async (input: unknown) => {
+const commands = {
+  status,
+  async configure(input: unknown) {
     if (host.active || poller.unsettled || updater.blocksClaims)
       throw new Error("STOP_RUN_BEFORE_PAIRING");
     const url = cloudUrlSchema.parse(input);
@@ -176,19 +175,13 @@ function registerIpc() {
       pollToken: string;
       url: string;
       code: string;
-    }>(
-      "POST",
-      "/api/pair/start",
-      { name: require("node:os").hostname(), protocolVersion: PROTOCOL_VERSION },
-      true,
-    );
+    }>("POST", "/api/pair/start", { name: hostname(), protocolVersion: PROTOCOL_VERSION }, true);
     if (new URL(result.url).origin !== url) throw new Error("PAIRING_URL_MISMATCH");
     pairing = { id: result.id, pollToken: result.pollToken };
-    await shell.openExternal(result.url);
     notify();
     return { url: result.url, code: result.code };
-  });
-  handle("pairPoll", async () => {
+  },
+  async pairPoll() {
     if (!pairing) return cloud.paired;
     const result = await cloud.request<{ approved: boolean; token?: string }>(
       "POST",
@@ -204,20 +197,63 @@ function registerIpc() {
       return true;
     }
     return false;
-  });
-  handle("pause", (v: unknown) => {
+  },
+  pause(v: unknown) {
     journal.set("paused", z.boolean().parse(v));
     notify();
-  });
-  handle("autoStart", (v: unknown) => {
-    login.setEnabled(z.boolean().parse(v));
-    notify();
-  });
-  handle("stop", () => host.stop(true));
-  handle("checkUpdate", () => updater.check(true));
-  handle("downloadUpdate", async (input: unknown) => {
+  },
+  stop: () => host.stop(true),
+  checkUpdate: () => updater.check(true),
+  async downloadUpdate(input: unknown) {
     const version = releaseSchema.shape.version.parse(input);
     if (updater.status.release?.version === version) await updater.check(true);
+  },
+  diagnostics: () => ({
+    version: app.getVersion(),
+    platform: process.platform,
+    arch: process.arch,
+    state: { online, active: host.active, paused: status().paused },
+    ...journal.diagnostic(),
+  }),
+  quit: prepareQuit,
+};
+function runCommand(method: string, input: unknown) {
+  if (!Object.hasOwn(commands, method)) throw Error("EXECUTOR_COMMAND_REJECTED");
+  if (quitting) throw Error("执行器正在退出。");
+  return commands[method as keyof typeof commands](input);
+}
+async function invoke(method: string, input?: unknown) {
+  return ownership ? runCommand(method, input) : control!.call(method, input);
+}
+async function desktopStatus(): Promise<DesktopStatus> {
+  const current = (await invoke("status")) as ReturnType<typeof status>;
+  return { ...current, autoStart: login.enabled() };
+}
+function registerIpc() {
+  const handle = (name: string, fn: (input: unknown) => unknown) =>
+    ipcMain.handle(`taskrelay:${name}`, (event, input) => {
+      if (
+        event.sender !== window?.webContents ||
+        event.senderFrame !== window.webContents.mainFrame
+      )
+        throw new Error("IPC_SENDER_REJECTED");
+      return fn(input);
+    });
+  handle("status", desktopStatus);
+  handle("configure", async (input) => {
+    const url = cloudUrlSchema.parse(input);
+    const result = (await invoke("configure", url)) as Awaited<
+      ReturnType<typeof commands.configure>
+    >;
+    if (new URL(result.url).origin !== url) throw Error("PAIRING_URL_MISMATCH");
+    await shell.openExternal(result.url);
+    return result;
+  });
+  for (const method of ["pairPoll", "pause", "stop", "checkUpdate", "downloadUpdate"] as const)
+    handle(method, (input) => invoke(method, input));
+  handle("autoStart", (input) => {
+    login.setEnabled(z.boolean().parse(input));
+    notify();
   });
   handle("diagnostics", async () => {
     const result = await dialog.showSaveDialog(window!, {
@@ -225,55 +261,97 @@ function registerIpc() {
       filters: [{ name: "JSON", extensions: ["json"] }],
     });
     if (result.canceled || !result.filePath) return "已取消导出";
-    await writeFile(
-      result.filePath,
-      JSON.stringify(
-        {
-          version: app.getVersion(),
-          platform: process.platform,
-          arch: process.arch,
-          state: { online, active: host.active, paused: status().paused },
-          ...journal.diagnostic(),
-        },
-        null,
-        2,
-      ),
-    );
+    await writeFile(result.filePath, JSON.stringify(await invoke("diagnostics"), null, 2));
     return `诊断已保存：${result.filePath}`;
   });
 }
 async function poll() {
   await poller.poll();
 }
-async function quit() {
-  if (quitting) return;
-  if (updater?.status.phase === "installing") {
-    show();
-    return;
-  }
+async function prepareQuit() {
+  if (updater?.status.phase === "installing") throw Error("执行器正在安装更新。");
   quitting = true;
-  cloud?.close();
   try {
+    // 领取可能已送达云端。先等本次领取返回，再停止它实际启动的运行。
+    await poller?.waitForPoll();
     await host?.stop(true);
   } catch {
     quitting = false;
     lastError = "PROCESS_CLEANUP_FAILED";
-    show();
-    return;
+    throw Error(lastError);
   }
+  cloud?.close();
   journal?.close();
   updater?.stop();
-  tray?.destroy();
-  app.exit(0);
 }
-if (squirrelStartup || !app.requestSingleInstanceLock()) {
+function finishQuit() {
+  try {
+    control?.close();
+    tray?.destroy();
+  } finally {
+    app.exit(0);
+  }
+}
+async function quit() {
+  if (quitting) return;
+  if (control) await invoke("quit");
+  quitting = true;
+  finishQuit();
+}
+function attachDesktop(root: string) {
+  login = loginSettings(app, loginLaunchPath());
+  const rendererRoot = path.resolve(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}`);
+  protocol.handle("taskrelay", (request) => {
+    const u = new URL(request.url);
+    if (u.host !== "app") return new Response(null, { status: 403 });
+    const target = path.resolve(rendererRoot, "." + decodeURIComponent(u.pathname));
+    if (!target.startsWith(rendererRoot + path.sep)) return new Response(null, { status: 403 });
+    return electronNet.fetch(pathToFileURL(target).toString());
+  });
+  registerIpc();
+  tray = new Tray(nativeImage.createFromPath(path.join(root, "icon.png")));
+  tray.setToolTip("TaskRelay");
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: "打开 TaskRelay", click: show },
+      {
+        label: "暂停 / 继续领取",
+        click: () =>
+          void desktopStatus()
+            .then(({ paused }) => invoke("pause", !paused))
+            .catch(desktopCommandFailed),
+      },
+      { type: "separator" },
+      {
+        label: "检查版本更新",
+        click: () => {
+          show();
+          void invoke("checkUpdate").catch(desktopCommandFailed);
+        },
+      },
+      { label: "退出 TaskRelay", click: () => void quit().catch(desktopCommandFailed) },
+    ]),
+  );
+  tray.on("double-click", show);
+  show();
+}
+function desktopCommandFailed(error: unknown) {
+  if (!background)
+    dialog.showErrorBox(
+      "TaskRelay",
+      error instanceof Error ? error.message : "执行器操作失败，请重试。",
+    );
+}
+if (squirrelStartup || (!background && !app.requestSingleInstanceLock())) {
   app.quit();
 } else {
-  app.on("second-instance", show);
+  app.on("second-instance", () => {
+    if (tray) show();
+  });
   app.on("before-quit", (event) => {
     if (!quitting) {
       event.preventDefault();
-      void quit().catch(backgroundFailed);
+      void quit().catch(desktopCommandFailed);
     }
   });
   app.on("window-all-closed", () => {});
@@ -282,7 +360,10 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
     .then(async () => {
       if (process.argv.includes("--taskrelay-convert-storage")) {
         try {
-          convertJournal(app.getPath("userData"));
+          const directory = app.getPath("userData");
+          ownership = tryAcquireExecutor(directory);
+          if (!ownership || background) throw Error("EXECUTOR_ALREADY_RUNNING");
+          convertJournal(directory);
           app.exit(0);
         } catch {
           app.exit(1);
@@ -315,12 +396,28 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
         return;
       }
       const userData = app.getPath("userData");
+      ownership = tryAcquireExecutor(userData);
+      if (background) {
+        // 用户恰好在开机任务前进入桌面时，等待前台退出再接管。
+        while (!ownership) {
+          await delay(3000);
+          if (quitting) return;
+          ownership = tryAcquireExecutor(userData);
+        }
+        app.setAppUserModelId(appUserModelId);
+      }
+      control = new DesktopControl(userData);
+      if (!ownership) {
+        attachDesktop(root);
+        return;
+      }
       const extensionPath = await prepareExtension(
         path.join(root, "stagehand-extension"),
         path.join(userData, "runtime-extensions"),
       );
       journal = new Journal(userData);
       cloud = new Cloud(journal);
+      if (background) cloud.verifyBackgroundPairing();
       const browser = new OwnedBrowser(
         path.join(root, "browser"),
         path.join(userData, "profiles"),
@@ -351,7 +448,6 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
           updater.tryInstall();
         },
       });
-      login = loginSettings(app, loginLaunchPath());
       updater = new DesktopUpdater({
         version: app.getVersion(),
         supported:
@@ -365,6 +461,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
         busy: updateBusy,
         changed: notify,
         available: (release) => {
+          if (background) return;
           tray?.setToolTip(`TaskRelay · 发现新版本 ${release.version}`);
           if (Notification.isSupported()) {
             const notification = new Notification({
@@ -382,43 +479,14 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
           cloud.close();
           journal.close();
           tray?.destroy();
-          autoUpdater.quitAndInstall();
+          if (background)
+            app.exit(75); // 计划任务启动器重新选择已安装的新版本。
+          else autoUpdater.quitAndInstall();
         },
       });
-      const rendererRoot = path.resolve(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}`);
-      protocol.handle("taskrelay", (request) => {
-        const u = new URL(request.url);
-        if (u.host !== "app") return new Response(null, { status: 403 });
-        const target = path.resolve(rendererRoot, "." + decodeURIComponent(u.pathname));
-        if (!target.startsWith(rendererRoot + path.sep)) return new Response(null, { status: 403 });
-        return electronNet.fetch(pathToFileURL(target).toString());
+      control.serve(runCommand, backgroundFailed, (method) => {
+        if (method === "quit") finishQuit();
       });
-      registerIpc();
-      const icon = nativeImage.createFromPath(path.join(root, "icon.png"));
-      tray = new Tray(icon);
-      tray.setToolTip("TaskRelay");
-      tray.setContextMenu(
-        Menu.buildFromTemplate([
-          { label: "打开 TaskRelay", click: show },
-          {
-            label: "暂停 / 继续领取",
-            click: () => {
-              journal.set("paused", !status().paused);
-              notify();
-            },
-          },
-          { type: "separator" },
-          {
-            label: "检查版本更新",
-            click: () => {
-              show();
-              void updater.check(true).catch(backgroundFailed);
-            },
-          },
-          { label: "退出 TaskRelay", click: () => void quit().catch(backgroundFailed) },
-        ]),
-      );
-      tray.on("double-click", show);
       powerMonitor.on("suspend", () => {
         void host.stop(true).catch(() => {});
       });
@@ -426,7 +494,7 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
         void updater.check().catch(backgroundFailed);
         void poll().catch(backgroundFailed);
       });
-      createWindow();
+      if (!background) attachDesktop(root);
       cloud.watch((event) => {
         if (event === "open" || event === "update") void updater.check().catch(backgroundFailed);
         if (event === "update") return;
@@ -444,12 +512,11 @@ if (squirrelStartup || !app.requestSingleInstanceLock()) {
       void poll().catch(backgroundFailed);
     })
     .catch((error) => {
-      dialog.showErrorBox(
-        "TaskRelay 启动失败",
-        /^[A-Z_]+$/.test(error.message)
-          ? error.message
-          : "请检查安装完整性，并重新安装 TaskRelay。",
-      );
+      const reason = /^[A-Z_]+$/.test(error.message)
+        ? error.message
+        : "请检查安装完整性，并重新安装 TaskRelay。";
+      if (background) process.stderr.write(`TaskRelay: ${reason}\n`);
+      else dialog.showErrorBox("TaskRelay 启动失败", reason);
       app.exit(1);
     });
 }

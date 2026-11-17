@@ -6,7 +6,7 @@ import type { TaskRun } from "../../../../packages/contracts/src/index";
 
 // Owns in-flight claims, including a response lost after the cloud granted a lease.
 export class RunnerPoller {
-  private polling = false;
+  private polling: Promise<void> | null = null;
   private claimRequest: string | null;
   constructor(
     private cloud: Pick<Cloud, "paired" | "connect" | "request">,
@@ -24,17 +24,26 @@ export class RunnerPoller {
     this.claimRequest = journal.get<string>("claimRequest");
   }
   get unsettled() {
-    return this.polling || !!this.claimRequest;
+    return !!this.polling || !!this.claimRequest;
   }
-  async poll() {
+  waitForPoll() {
+    return this.polling;
+  }
+  poll() {
     if (
       this.polling ||
       this.controls.quitting() ||
       !this.cloud.paired ||
       this.controls.installing()
     )
-      return;
-    this.polling = true;
+      return Promise.resolve();
+    this.polling = this.pollOnce().finally(() => {
+      this.polling = null;
+      this.controls.settled();
+    });
+    return this.polling;
+  }
+  private async pollOnce() {
     try {
       const connection = await this.cloud.connect(!this.host.active);
       if (connection.maintenance) {
@@ -77,9 +86,6 @@ export class RunnerPoller {
       this.controls.result(true, null);
     } catch (e) {
       this.controls.result(false, (e as Error).message);
-    } finally {
-      this.polling = false;
-      this.controls.settled();
     }
   }
 }
