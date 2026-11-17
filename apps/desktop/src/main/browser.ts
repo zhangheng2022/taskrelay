@@ -23,6 +23,7 @@ export class OwnedBrowser {
     private profiles: string,
     private journal: Journal,
     private extensionPath?: string,
+    private installedByService = false,
   ) {}
   async recover() {
     const record = this.journal.get<{
@@ -79,7 +80,10 @@ export class OwnedBrowser {
     guard();
     if (actual !== manifest.executableSha256) throw new Error("BROWSER_INTEGRITY_FAILED");
     if (process.platform === "win32" && !this.permissionsReady) {
-      await grantBrowserReadAccess(path.join(this.directory, "chrome-win64"));
+      await grantBrowserReadAccess(
+        path.join(this.directory, "chrome-win64"),
+        this.installedByService,
+      );
       guard();
       this.permissionsReady = true;
     }

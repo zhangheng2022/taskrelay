@@ -3,6 +3,10 @@ import {
   packageName,
   packagePath,
   releaseCatalogSchema,
+  serviceCatalogSchema,
+  serviceSetupName,
+  servicePackagePath,
+  SERVICE_UPDATE_PATH,
   UPDATE_PATH,
 } from "../../../packages/contracts/src/updates";
 
@@ -13,6 +17,12 @@ export async function loadReleaseCatalog(db: D1Database) {
     .prepare("SELECT value FROM settings WHERE key='desktopReleaseCatalog'")
     .first<{ value: string }>();
   return row ? releaseCatalogSchema.parse(JSON.parse(row.value)) : catalog;
+}
+export async function loadServiceCatalog(db: D1Database) {
+  const row = await db
+    .prepare("SELECT value FROM settings WHERE key='windowsServiceReleaseCatalog'")
+    .first<{ value: string }>();
+  return serviceCatalogSchema.parse(row ? JSON.parse(row.value) : { latest: null, releases: [] });
 }
 // Only reviewed, pinned releases from this repository. Never an arbitrary URL proxy.
 const repository = "zhangheng2022/taskrelay";
@@ -30,10 +40,36 @@ export async function serveUpdate(
   releases = catalog,
   fetcher: typeof fetch = fetch,
 ): Promise<Response> {
+  return serveCatalog(request, UPDATE_PATH, releases, packagePath, packageName, fetcher);
+}
+
+export function serveServiceUpdate(
+  request: Request,
+  releases: Awaited<ReturnType<typeof loadServiceCatalog>>,
+  fetcher: typeof fetch = fetch,
+) {
+  return serveCatalog(
+    request,
+    SERVICE_UPDATE_PATH,
+    releases,
+    servicePackagePath,
+    () => serviceSetupName,
+    fetcher,
+  );
+}
+
+async function serveCatalog<T extends { version: string; bytes: number; sha256: string }>(
+  request: Request,
+  prefix: string,
+  releases: { latest: string | null; releases: T[] },
+  assetPath: (release: T) => string,
+  assetName: (release: T) => string,
+  fetcher: typeof fetch,
+) {
   const url = new URL(request.url);
   if (!["GET", "HEAD"].includes(request.method)) return fail(405);
   if (url.search) return fail(400);
-  if (url.pathname === `${UPDATE_PATH}/latest.json`) {
+  if (url.pathname === `${prefix}/latest.json`) {
     const release = releases.releases.find((r) => r.version === releases.latest) ?? null;
     return new Response(request.method === "HEAD" ? null : JSON.stringify({ release }), {
       headers: {
@@ -43,9 +79,9 @@ export async function serveUpdate(
       },
     });
   }
-  const release = releases.releases.find((r) => packagePath(r) === url.pathname);
+  const release = releases.releases.find((r) => assetPath(r) === url.pathname);
   if (!release) return fail(404);
-  let upstream = `https://github.com/${repository}/releases/download/v${release.version}/${packageName(release)}`;
+  let upstream = `https://github.com/${repository}/releases/download/v${release.version}/${assetName(release)}`;
   try {
     for (let hop = 0; hop < 4; hop++) {
       // Do not forward caller cookies, credentials, headers or query parameters.
@@ -87,7 +123,7 @@ export async function serveUpdate(
         headers: {
           "Content-Type": "application/octet-stream",
           "Content-Length": String(release.bytes),
-          "Content-Disposition": `attachment; filename="${packageName(release)}"`,
+          "Content-Disposition": `attachment; filename="${assetName(release)}"`,
           "Cache-Control": "public, max-age=31536000, immutable",
           ETag: `"${release.sha256}"`,
           "X-Content-Type-Options": "nosniff",

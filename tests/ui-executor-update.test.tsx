@@ -78,3 +78,50 @@ test("执行器展示新版本，自动下载无需确认，失败支持重试�
     true,
   );
 });
+
+test("开机自启动从执行器直接启用，授权取消不报成已启用", async () => {
+  const status: DesktopStatus = {
+    paired: true,
+    cloudUrl: "https://example.com",
+    paused: false,
+    online: true,
+    activeRunId: null,
+    version: "0.27.0",
+    boot: "not-installed",
+    autoStart: false,
+    error: null,
+    update: { phase: "current", release: null, checkedAt: null, progress: null, error: null },
+  };
+  let cancelled = true;
+  const changes: boolean[] = [];
+  const executor: NonNullable<Transport["desktop"]> = {
+    status: async () => structuredClone(status),
+    configure: async () => ({ url: "", code: "" }),
+    pairPoll: async () => false,
+    pause: async () => {},
+    autoStart: async (value) => {
+      changes.push(value);
+      if (cancelled) throw Error("SERVICE_UAC_CANCELLED");
+      status.autoStart = value;
+      status.boot = value ? "pairing" : "disabled";
+    },
+    stop: async () => {},
+    diagnostics: async () => "",
+    subscribe: () => () => {},
+    checkUpdate: async () => {},
+    downloadUpdate: async () => {},
+  };
+  const view = render(<ExecutorApp executor={executor} />);
+  await view.findByText("首次开启会安装 Windows 服务，并引导你重新配对。");
+  const toggle = view.getByRole("switch", { name: "开机自启动" });
+  fireEvent.click(toggle);
+  await view.findByText("已取消 Windows 管理员授权。");
+  assert.equal(toggle.getAttribute("aria-checked"), "false");
+  cancelled = false;
+  fireEvent.click(toggle);
+  await view.findByText("请在上方授权新的执行设备，完成后可在无人登录时接单。");
+  assert.equal(toggle.getAttribute("aria-checked"), "true");
+  fireEvent.click(toggle);
+  await waitFor(() => assert.equal(toggle.getAttribute("aria-checked"), "false"));
+  assert.deepEqual(changes, [true, true, false]);
+});

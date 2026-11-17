@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Transport } from "../../contracts/src/index";
+import type { DesktopStatus, Transport } from "../../contracts/src/index";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Switch } from "./components/ui/switch";
@@ -22,6 +22,14 @@ import { ErrorText, LoadingState } from "./feedback";
 import { BrandMark } from "./brand-mark";
 import { ExecutorUpdate } from "./executor-update";
 import { QueryBoundary, useTransportQuery } from "./queries";
+const startupHelp: Record<NonNullable<DesktopStatus["boot"]>, string> = {
+  pairing: "请在上方授权新的执行设备，完成后可在无人登录时接单。",
+  offline: "开机服务未连接。重新打开执行器后可重试。",
+  "not-installed": "首次开启会安装 Windows 服务，并引导你重新配对。",
+  unavailable: "开机自启动需要 Windows x64 安装版。",
+  enabled: "开启后，无需登录 Windows 即可接单。",
+  disabled: "设为开启后，无需登录 Windows 即可接单。",
+};
 // Windows 状态窗口仅通过命名接口管理连接、领取开关、停止与更新；任务和聊天留在网站。
 // 本机状态与云端在线状态分别展示，因此断网时仍可停止正在执行的任务。
 export function ExecutorApp({ executor }: { executor: NonNullable<Transport["desktop"]> }) {
@@ -39,6 +47,7 @@ function ExecutorStatus({ executor }: { executor: NonNullable<Transport["desktop
   const [url, setUrl] = useState(""),
     [pair, setPair] = useState<{ code: string } | null>(null),
     [busy, setBusy] = useState(false),
+    [startupBusy, setStartupBusy] = useState(false),
     [error, setError] = useState(""),
     [note, setNote] = useState("");
   const cloudUrl = status?.cloudUrl;
@@ -85,11 +94,21 @@ function ExecutorStatus({ executor }: { executor: NonNullable<Transport["desktop
       await fn();
       await refresh();
     } catch (e) {
-      setError((e as Error).message);
+      const message = (e as Error).message;
+      setError(message.endsWith("SERVICE_UAC_CANCELLED") ? "SERVICE_UAC_CANCELLED" : message);
     } finally {
       setBusy(false);
     }
   }
+  async function changeStartup(value: boolean) {
+    setStartupBusy(true);
+    try {
+      await act(() => executor.autoStart(value));
+    } finally {
+      setStartupBusy(false);
+    }
+  }
+  const updateService = executor.updateService?.bind(executor);
   const showUpdateFirst =
     !!status &&
     ["available", "downloading", "waiting", "installing", "error"].includes(status.update.phase);
@@ -171,14 +190,27 @@ function ExecutorStatus({ executor }: { executor: NonNullable<Transport["desktop
               />
             </Field>
             <Field orientation="horizontal">
-              <FieldLabel htmlFor="executor-startup">登录 Windows 时启动</FieldLabel>
+              <FieldContent>
+                <FieldLabel htmlFor="executor-startup">开机自启动</FieldLabel>
+                <FieldDescription id="executor-startup-description">
+                  {startupBusy
+                    ? "正在配置开机服务，请等待下载、任务收尾和 Windows 授权。"
+                    : startupHelp[status?.boot ?? "unavailable"]}
+                </FieldDescription>
+              </FieldContent>
               <Switch
                 id="executor-startup"
+                aria-describedby="executor-startup-description"
                 checked={status?.autoStart ?? false}
-                disabled={busy || !status}
-                onCheckedChange={(v) => void act(() => executor.autoStart(v))}
+                disabled={busy || !status || status.boot === "unavailable"}
+                onCheckedChange={(v) => void changeStartup(v)}
               />
             </Field>
+            {status?.serviceRelease && updateService && (
+              <Button variant="outline" disabled={busy} onClick={() => void act(updateService)}>
+                更新开机服务至 {status.serviceRelease.version}
+              </Button>
+            )}
           </FieldGroup>
         </CardContent>
         <CardFooter className="flex flex-wrap gap-2">

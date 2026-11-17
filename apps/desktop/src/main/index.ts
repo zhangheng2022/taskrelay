@@ -34,15 +34,35 @@ import { ExecutorHost } from "./executor-host";
 import { DesktopUpdater } from "./updater";
 import { RunnerPoller } from "./runner-poller";
 import { appUserModelId, loginSettings } from "./login";
-import { releaseSchema } from "../../../../packages/contracts/src/updates";
+import {
+  newerVersion,
+  releaseSchema,
+  type ServiceRelease,
+} from "../../../../packages/contracts/src/updates";
 import { cloudUrlSchema } from "../shared/ipc";
 import type { DesktopStatus } from "../../../../packages/contracts/src/index";
 import { packagedSmoke } from "./smoke";
 import { DesktopControl, tryAcquireExecutor } from "./desktop-control";
+import {
+  fetchServiceRelease,
+  readServiceEnvironment,
+  serveServiceCommands,
+  WindowsService,
+} from "./windows-service";
+import { transitionService } from "./service-transition";
 // Main 运行现有执行链路，后台模式不创建窗口或托盘；同用户的桌面进程可转发命名控制。
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
-const background = process.argv.includes("--taskrelay-background");
+const serviceMode = process.argv.includes("--taskrelay-service");
+const background = serviceMode || process.argv.includes("--taskrelay-background");
+const serviceEnvironment = serviceMode ? readServiceEnvironment(process.env) : null;
+if (serviceEnvironment) app.setPath("userData", serviceEnvironment.directory);
+const windowsService = new WindowsService(
+  process.platform === "win32" &&
+    process.arch === "x64" &&
+    app.isPackaged &&
+    existsSync(path.resolve(process.execPath, "../../Update.exe")),
+);
 protocol.registerSchemesAsPrivileged([
   {
     scheme: "taskrelay",
@@ -68,6 +88,13 @@ let updater: DesktopUpdater;
 let login: ReturnType<typeof loginSettings>;
 let control: DesktopControl | undefined;
 let ownership: ReturnType<typeof tryAcquireExecutor>;
+let serviceController = false;
+let serviceAccessError = "";
+let serviceRelease: ServiceRelease | null = null;
+let serviceCheckedAt: string | null = null;
+let switching = false;
+let retired = false;
+let drainForService = false;
 function loginLaunchPath() {
   const stub = path.resolve(process.execPath, "../../TaskRelay.exe");
   return app.isPackaged &&
@@ -164,6 +191,11 @@ function backgroundFailed() {
 }
 const commands = {
   status,
+  drainForService(input: unknown) {
+    drainForService = z.boolean().parse(input);
+    notify();
+  },
+  idleForService: () => !updateBusy() && !updater.blocksClaims,
   async configure(input: unknown) {
     if (host.active || poller.unsettled || updater.blocksClaims)
       throw new Error("STOP_RUN_BEFORE_PAIRING");
@@ -194,6 +226,7 @@ const commands = {
       pairing = null;
       online = true;
       notify();
+      if (serviceMode) void poll().catch(backgroundFailed);
       return true;
     }
     return false;
@@ -226,11 +259,145 @@ function runCommand(method: string, input: unknown) {
   return commands[method as keyof typeof commands](input);
 }
 async function invoke(method: string, input?: unknown) {
+  if (serviceController) {
+    if (serviceAccessError) throw Error(serviceAccessError);
+    return windowsService.call(method, input);
+  }
   return ownership ? runCommand(method, input) : control!.call(method, input);
 }
 async function desktopStatus(): Promise<DesktopStatus> {
+  if (!serviceController) {
+    const current = (await invoke("status")) as ReturnType<typeof status>;
+    return {
+      ...current,
+      autoStart: false,
+      boot: windowsService.supported ? "not-installed" : "unavailable",
+    };
+  }
+  const info = await windowsService.info().catch(() => null);
+  const current = info?.running
+    ? ((await invoke("status").catch(() => null)) as ReturnType<typeof status> | null)
+    : null;
+  if (!current)
+    return {
+      update: { phase: "unsupported", release: null, progress: null, error: null, checkedAt: null },
+      paired: false,
+      cloudUrl: "",
+      paused: false,
+      online: false,
+      activeRunId: null,
+      version: app.getVersion(),
+      autoStart: info?.mode === "auto",
+      boot: "offline",
+      error: serviceAccessError || "无法连接开机服务，可以重试。",
+    };
+  const autoStart = info?.mode === "auto";
+  const boot = !current.paired ? "pairing" : autoStart ? "enabled" : "disabled";
+  return {
+    ...current,
+    autoStart,
+    boot,
+    serviceRelease,
+    update: {
+      phase: serviceCheckedAt && !serviceRelease ? "current" : "idle",
+      release: null,
+      progress: null,
+      error: null,
+      checkedAt: serviceCheckedAt,
+    },
+  };
+}
+async function checkServiceUpdate() {
+  if (!serviceController) return invoke("checkUpdate");
   const current = (await invoke("status")) as ReturnType<typeof status>;
-  return { ...current, autoStart: login.enabled() };
+  const release = await fetchServiceRelease();
+  serviceRelease = release && newerVersion(release.version, current.version) ? release : null;
+  serviceCheckedAt = new Date().toISOString();
+  notify();
+}
+async function waitForService() {
+  for (let i = 0; i < 40; i++) {
+    const info = await windowsService.info();
+    if (info?.running && (await windowsService.call("status").catch(() => null))) return;
+    await delay(500);
+  }
+  throw Error("开机服务还没有就绪，请等待后重试。");
+}
+function retireLocal() {
+  if (!ownership) return;
+  retired = true;
+  cloud.close();
+  updater.stop();
+  journal.close();
+  control?.close();
+  control = undefined;
+  ownership.close();
+  ownership = null;
+}
+async function openPairing(input: unknown) {
+  const url = cloudUrlSchema.parse(input);
+  const result = (await invoke("configure", url)) as Awaited<ReturnType<typeof commands.configure>>;
+  if (new URL(result.url).origin !== url) throw Error("PAIRING_URL_MISMATCH");
+  await shell.openExternal(result.url);
+  return result;
+}
+async function configureStartup(enabled: boolean, upgrade = false) {
+  if (!windowsService.supported || switching) {
+    if (!enabled && !upgrade) return;
+    throw Error("这台设备无法配置开机服务。");
+  }
+  switching = true;
+  const wasService = serviceController;
+  try {
+    await transitionService({
+      enabled,
+      upgrade,
+      info: () => windowsService.info(),
+      startup: (value) => windowsService.setStartup(value),
+      start: () => windowsService.start(),
+      currentVersion: async () => ((await invoke("status")) as ReturnType<typeof status>).version,
+      release: async () => (upgrade ? serviceRelease : fetchServiceRelease()),
+      prepare: (release) =>
+        windowsService.prepareInstall(
+          release,
+          path.join(app.getPath("userData"), "service-updates"),
+        ),
+      drain: async () => {
+        await invoke("drainForService", true);
+      },
+      waitUntilIdle: async () => {
+        while (!(await invoke("idleForService"))) {
+          if (quitting) throw Error("已取消开机服务配置。");
+          await delay(1500);
+        }
+      },
+      stopPrevious: async () => {
+        if (!wasService && ownership) return false;
+        await invoke("quit");
+        // 旧开机计划任务先等子进程退出，才可由管理员停用。
+        await delay(1400);
+        return true;
+      },
+      adopt: async () => {
+        retireLocal();
+        serviceController = true;
+        if (!wasService) login.setEnabled(false);
+        serviceRelease = null;
+        await waitForService();
+      },
+      restore: async (stopped) => {
+        if (!stopped) await invoke("drainForService", false).catch(() => {});
+        else if (wasService) await windowsService.start().catch(() => {});
+        else {
+          app.relaunch();
+          finishQuit();
+        }
+      },
+    });
+  } finally {
+    switching = false;
+    notify();
+  }
 }
 function registerIpc() {
   const handle = (name: string, fn: (input: unknown) => unknown) =>
@@ -243,21 +410,12 @@ function registerIpc() {
       return fn(input);
     });
   handle("status", desktopStatus);
-  handle("configure", async (input) => {
-    const url = cloudUrlSchema.parse(input);
-    const result = (await invoke("configure", url)) as Awaited<
-      ReturnType<typeof commands.configure>
-    >;
-    if (new URL(result.url).origin !== url) throw Error("PAIRING_URL_MISMATCH");
-    await shell.openExternal(result.url);
-    return result;
-  });
-  for (const method of ["pairPoll", "pause", "stop", "checkUpdate", "downloadUpdate"] as const)
+  handle("configure", openPairing);
+  for (const method of ["pairPoll", "pause", "stop", "downloadUpdate"] as const)
     handle(method, (input) => invoke(method, input));
-  handle("autoStart", (input) => {
-    login.setEnabled(z.boolean().parse(input));
-    notify();
-  });
+  handle("checkUpdate", checkServiceUpdate);
+  handle("autoStart", (input) => configureStartup(z.boolean().parse(input)));
+  handle("updateService", () => configureStartup(true, true));
   handle("diagnostics", async () => {
     const result = await dialog.showSaveDialog(window!, {
       defaultPath: `TaskRelay-diagnostics-${new Date().toISOString().slice(0, 10)}.json`,
@@ -269,7 +427,7 @@ function registerIpc() {
   });
 }
 async function poll() {
-  await poller.poll();
+  if (!retired) await poller.poll();
 }
 async function prepareQuit() {
   if (updater?.status.phase === "installing") throw Error("执行器正在安装更新。");
@@ -288,7 +446,7 @@ async function prepareQuit() {
 }
 function finishQuit() {
   try {
-    journal?.close();
+    if (!retired) journal?.close();
     control?.close();
     tray?.destroy();
   } finally {
@@ -297,7 +455,11 @@ function finishQuit() {
 }
 async function quit() {
   if (quitting) return;
-  if (control) {
+  if (switching) throw Error("正在配置开机服务，请等待配置完成。");
+  if (serviceController) {
+    const info = await windowsService.info().catch(() => null);
+    if (info?.running) await invoke("quit");
+  } else if (control) {
     if (ownership) await invoke("quit");
     else {
       // 后台进程可能已经退出。没有持锁者时，桌面控制窗口可以直接退出。
@@ -333,7 +495,7 @@ function attachDesktop(root: string) {
         label: "检查版本更新",
         click: () => {
           show();
-          void invoke("checkUpdate").catch(desktopCommandFailed);
+          void checkServiceUpdate().catch(desktopCommandFailed);
         },
       },
       { label: "退出 TaskRelay", click: () => void quit().catch(desktopCommandFailed) },
@@ -403,6 +565,28 @@ if (squirrelStartup || (!background && !app.requestSingleInstanceLock())) {
         return;
       }
       const userData = app.getPath("userData");
+      if (
+        background &&
+        !serviceMode &&
+        windowsService.supported &&
+        (await windowsService.info().catch(() => true))
+      ) {
+        app.exit(0);
+        return;
+      }
+      if (!background && windowsService.supported) {
+        const service = await windowsService.info().catch((error: Error) => {
+          serviceAccessError = error.message;
+          return null;
+        });
+        if (service || serviceAccessError) {
+          serviceController = true;
+          if (service && !service.running) await windowsService.start().catch(() => {});
+          attachDesktop(root);
+          void checkServiceUpdate().catch(() => {});
+          return;
+        }
+      }
       ownership = tryAcquireExecutor(userData);
       if (background) {
         // 用户恰好在开机任务前进入桌面时，等待前台退出再接管。
@@ -424,12 +608,20 @@ if (squirrelStartup || (!background && !app.requestSingleInstanceLock())) {
       );
       journal = new Journal(userData);
       cloud = new Cloud(journal);
-      if (background) cloud.verifyBackgroundPairing();
+      if (
+        serviceMode &&
+        (!safeStorage.isEncryptionAvailable() ||
+          safeStorage.decryptString(safeStorage.encryptString("taskrelay-service")) !==
+            "taskrelay-service")
+      )
+        throw Error("SERVICE_OS_ENCRYPTION_UNAVAILABLE");
+      if (background && !serviceMode) cloud.verifyBackgroundPairing();
       const browser = new OwnedBrowser(
         path.join(root, "browser"),
         path.join(userData, "profiles"),
         journal,
         extensionPath,
+        serviceMode,
       );
       host = new ExecutorHost(
         cloud,
@@ -444,7 +636,7 @@ if (squirrelStartup || (!background && !app.requestSingleInstanceLock())) {
       await host.recover();
       poller = new RunnerPoller(cloud, host, journal, {
         quitting: () => quitting,
-        blocksClaims: () => updater.blocksClaims,
+        blocksClaims: () => updater.blocksClaims || drainForService,
         installing: () => updater.status.phase === "installing",
         result: (connected, error) => {
           online = connected;
@@ -494,6 +686,12 @@ if (squirrelStartup || (!background && !app.requestSingleInstanceLock())) {
       control.serve(runCommand, backgroundFailed, (method) => {
         if (method === "quit") finishQuit();
       });
+      if (serviceEnvironment) {
+        const server = serveServiceCommands(serviceEnvironment, runCommand, (method) => {
+          if (method === "quit") finishQuit();
+        });
+        server.on("error", () => app.exit(1));
+      }
       powerMonitor.on("suspend", () => {
         void host.stop(true).catch(() => {});
       });
