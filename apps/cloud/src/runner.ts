@@ -25,6 +25,7 @@ import {
   toLangChainMessages,
 } from "../../../packages/model/src/langchain";
 import { saveSnapshot, imageReference } from "./images";
+import { recentAttachmentRefs } from "./chat-attachments";
 import { appendMessage, conversationContext, runThread } from "./chat-messages";
 import { resolveHelp } from "./execution-help";
 import { estimateTokens } from "../../../packages/model/src/agent-context";
@@ -255,6 +256,16 @@ runner.post("/runs/:id/model", async (c) => {
     : model.withConfig({ maxTokens: profile.outputTokens ?? 4096 });
   const thread =
     b.supportsDrafts && b.purpose === "decision" ? await runThread(c.env, run.id) : null;
+  const attachmentThread =
+    b.purpose === "decision" && b.expectedUserSeq !== undefined
+      ? (thread?.id ??
+        (await c.env.DB.prepare("SELECT thread_id FROM runs WHERE id=?")
+          .bind(run.id)
+          .first<string>("thread_id")))
+      : null;
+  const chatAttachments = attachmentThread
+    ? await recentAttachmentRefs(c.env, attachmentThread, b.expectedUserSeq!, b.epoch)
+    : undefined;
   const latestUser = thread
     ? await c.env.DB.prepare(
         "SELECT COALESCE(MAX(seq),0) seq FROM ai_messages WHERE thread_id=? AND role='user'",
@@ -265,6 +276,7 @@ runner.post("/runs/:id/model", async (c) => {
   const operation = `execute_${run.id}_${b.requestId}`;
   const response = aiMessageToModelResponse(
     await bound.invoke(toLangChainMessages(messages), {
+      chatAttachments,
       preview: thread
         ? {
             threadId: thread.id,

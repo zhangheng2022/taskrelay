@@ -125,9 +125,26 @@ try {
     (await db.prepare("SELECT interrupt_id FROM execution_help WHERE id='workerd_help'").first())
       .interrupt_id,
   );
-  await request(`/api/user/threads/${thread.id}/messages`, {
-    requestId: "resume-fixture",
-    content: "workerd-resume-code-0012，继续读取，不执行提交。",
+  const form = new FormData();
+  form.set("requestId", "resume-fixture");
+  form.set("content", "验证码在附件中。");
+  const resumeCode = "workerd-resume-code-0012";
+  form.set("files", new Blob([resumeCode]), "验证.txt");
+  const attachmentPath = `/api/user/threads/${thread.id}/attachment-messages`;
+  const sentAttachments = await Promise.all(
+    [1, 2].map(() => fetch(origin + attachmentPath, { method: "POST", body: form })),
+  );
+  for (const sent of sentAttachments) assert.equal(sent.status, 202, await sent.text());
+  const attached = (await request(`/api/user/threads/${thread.id}`)).messages.find(
+    (m) => m.attachments?.length,
+  );
+  assert.equal(attached.attachments.length, 1);
+  const file = attached.attachments[0];
+  const original = await fetch(origin + `/api/user/threads/${thread.id}/attachments/${file.id}`);
+  assert.equal(await original.text(), resumeCode);
+  assert.match(original.headers.get("content-disposition"), /^attachment;/);
+  assert.deepEqual(await request("/_expire-chat-attachment", { id: file.id }), {
+    size: resumeCode.length,
   });
   let delivery;
   for (let i = 0; i < 50; i++) {

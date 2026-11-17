@@ -6,6 +6,10 @@ import { dbTime } from "../database";
  * 云端只生成业务大步骤；任务启动通过持久化命令交接，具体页面操作由桌面完成。
  */
 import type { ThreadPage } from "../../../../packages/contracts/src/conversation";
+import {
+  attachmentCapabilities,
+  attachmentCapabilityError,
+} from "../../../../packages/contracts/src/attachments";
 import { validator } from "hono/validator";
 import { queueHelpReply } from "../execution-help";
 import { dispatchGraphEvent, wakeGraph } from "./dispatch";
@@ -15,7 +19,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv, Variables } from "../env";
 import { checkReasoningEffort, getModelProfile } from "../models";
-import { now, uid, taskFrom, type Row } from "../store";
+import { getRun, now, uid, taskFrom, type Row } from "../store";
 import { reserve } from "../tenancy";
 import { hash } from "../../../../packages/contracts/src/security";
 import {
@@ -31,6 +35,14 @@ import { preferencePolicy } from "../../../../packages/contracts/src/preferences
 import { D1MemoryStore } from "./memory";
 import { seal, unseal } from "../crypto";
 import { notifyDevices, notifyUser } from "../notifications";
+import {
+  acceptAttachmentMessage,
+  attachmentMetadata,
+  inboxContent,
+  parseAttachmentMessage,
+  readChatAttachment,
+  recentAttachmentRefs,
+} from "../chat-attachments";
 
 const conversationsBase = new Hono<{
   Bindings: AppEnv;
@@ -85,6 +97,20 @@ export async function threadPage(
       at: string;
       source_call_id: string | null;
     }>();
+  const queued = (
+    await env.DB.prepare(
+      "SELECT id,content,attachment_text,created_at AS at FROM conversation_inbox WHERE thread_id=? AND status='pending' AND mode='chat' ORDER BY ordinal",
+    )
+      .bind(id)
+      .all<NonNullable<ThreadPage["queued"]>[number] & { attachment_text: string | null }>()
+  ).results;
+  const attachments = await attachmentMetadata(env, id, [
+    ...rows.results
+      .filter((row) => row.id.endsWith("_user"))
+      .slice(0, 50)
+      .map((row) => row.id.slice(0, -5)),
+    ...queued.map((row) => row.id),
+  ]);
   const items: ThreadPage["messages"] = await Promise.all(
     rows.results
       .slice(0, 50)
@@ -92,6 +118,7 @@ export async function threadPage(
       .map(async ({ private_content, ...row }) => ({
         ...row,
         parts: JSON.parse(row.parts ?? "[]"),
+        attachments: row.id.endsWith("_user") ? attachments.get(row.id.slice(0, -5)) : undefined,
         private: !!private_content,
         content: private_content
           ? await unseal<string>(private_content, env.MASTER_KEY, `message:${id}:${row.id}`)
@@ -113,6 +140,20 @@ export async function threadPage(
     throw error;
   });
   const caps = pinned?.profile.capabilities;
+  const active = t.task_id ? await instructionRun(env, id) : null;
+  const executionModel = active ? (await getRun(env.DB, active.id)).task : null;
+  const media = executionModel
+    ? await getModelProfile(env, executionModel.modelId, executionModel.modelVersion).catch(
+        (error: unknown) => {
+          if (
+            error instanceof Error &&
+            ["MODEL_DISABLED", "MODEL_NOT_FOUND", "MODEL_PROTOCOL_RETIRED"].includes(error.message)
+          )
+            return null;
+          throw error;
+        },
+      )
+    : pinned;
   return {
     id,
     drafts: env.NOTIFICATIONS
@@ -124,6 +165,10 @@ export async function threadPage(
     scheduleCard: t.task_id ? await scheduleCard(env, t.task_id) : null,
     modelId: t.model_id,
     modelAvailable: !!caps?.connection && caps.tools && caps.structured !== "none",
+    attachmentCapabilities: attachmentCapabilities(
+      media?.profile.capabilities,
+      executionModel ? executionModel.reasoningEffort : t.reasoning_effort,
+    ),
     reasoningEffort: t.reasoning_effort ?? null,
     ...(caps?.reasoningEfforts ? { reasoningEfforts: caps.reasoningEfforts } : {}),
     version: t.version,
@@ -131,13 +176,14 @@ export async function threadPage(
     partial: JSON.parse(t.partial),
     activeTurn: t.active_turn,
     latestTurn: latest,
-    queued: (
-      await env.DB.prepare(
-        "SELECT id,content,created_at AS at FROM conversation_inbox WHERE thread_id=? AND status='pending' AND mode='chat' ORDER BY ordinal",
-      )
-        .bind(id)
-        .all<NonNullable<ThreadPage["queued"]>[number]>()
-    ).results,
+    queued: await Promise.all(
+      queued.map(async (row) => ({
+        id: row.id,
+        at: row.at,
+        content: await inboxContent(env, row),
+        attachments: attachments.get(row.id),
+      })),
+    ),
     conditions: t.task_id
       ? await env.DB.prepare(
           "SELECT c.*,t.version AS current_version FROM run_conditions c JOIN tasks t ON t.id=c.task_id WHERE c.task_id=? ORDER BY c.created_at DESC LIMIT 1",
@@ -178,6 +224,11 @@ export async function promoteInbox(env: AppEnv, threadId: string) {
     .bind(threadId)
     .first<Row>();
   if (!item) return;
+  const content = await inboxContent(env, {
+    id: item.id,
+    content: item.content,
+    attachment_text: item.attachment_text,
+  });
   const active = await instructionRun(env, threadId);
   if (active) {
     // 用户在云端交接期间排队的消息，交接落地后成为执行补充；不能再启动一次冲突规划。
@@ -194,7 +245,7 @@ export async function promoteInbox(env: AppEnv, threadId: string) {
         id: messageId,
         role: "user",
         source: "user",
-        content: item.content,
+        content,
         runId: active.id,
         replyTo: help?.id,
         private: true,
@@ -211,7 +262,7 @@ export async function promoteInbox(env: AppEnv, threadId: string) {
         "UPDATE execution_help SET reply_message_id=? WHERE id=? AND thread_id=? AND reply_message_id IS NULL AND EXISTS(SELECT 1 FROM ai_messages WHERE id=? AND thread_id=?)",
       ).bind(messageId, help?.id ?? "", threadId, messageId, threadId),
       env.DB.prepare(
-        "UPDATE conversation_inbox SET status='done',content='' WHERE id=? AND status='pending' AND EXISTS(SELECT 1 FROM ai_messages WHERE id=? AND thread_id=?)",
+        "UPDATE conversation_inbox SET status='done',content='',attachment_text=NULL WHERE id=? AND status='pending' AND EXISTS(SELECT 1 FROM ai_messages WHERE id=? AND thread_id=?)",
       ).bind(item.id, messageId, threadId),
     ]);
     if (writes[3].meta.changes) {
@@ -248,7 +299,7 @@ export async function promoteInbox(env: AppEnv, threadId: string) {
         turnId: item.id,
         role: "user",
         source: "user",
-        content: item.content,
+        content,
         at: item.created_at,
       },
       {
@@ -257,7 +308,7 @@ export async function promoteInbox(env: AppEnv, threadId: string) {
       },
     )),
     env.DB.prepare(
-      "UPDATE conversation_inbox SET status='processing' WHERE id=? AND EXISTS(SELECT 1 FROM ai_threads WHERE id=? AND active_turn=?)",
+      "UPDATE conversation_inbox SET status='processing',attachment_text=NULL WHERE id=? AND EXISTS(SELECT 1 FROM ai_threads WHERE id=? AND active_turn=?)",
     ).bind(item.id, threadId, item.id),
     env.DB.prepare(
       "INSERT OR IGNORE INTO ai_dispatch(id,graph_id,turn_id,thread_id,owner,kind,created_at) SELECT ?,?,?,id,user_id,'chat',? FROM ai_threads WHERE id=? AND active_turn=?",
@@ -290,6 +341,7 @@ export async function executeTurn(env: AppEnv, threadId: string, turnId: string)
   try {
     await reserve(env, t.user_id, "chat", turnId);
     const context = await conversationContext(env, t.id);
+    const input = context.find((message) => message.id === turnId + "_user");
     const taskPreferences = await capturePreferences(env, t.user_id, t.id, turnId);
     const messages: Message[] = [
       {
@@ -336,6 +388,10 @@ export async function executeTurn(env: AppEnv, threadId: string, turnId: string)
       context
         .filter((message) => message.role !== "user" && !message.private)
         .map((message) => ({ role: "assistant", content: message.content })),
+      {
+        attachments: await recentAttachmentRefs(env, t.id, input?.seq ?? 0),
+        attachmentsOnly: input?.content.trim() === "",
+      },
     );
     const reply = decision.reply;
     await guard();
@@ -635,8 +691,8 @@ export const conversations = conversationsBase
         `UPDATE ai_messages SET context_withdrawn=1 WHERE thread_id=? AND role='assistant' AND seq>=? AND ${fence}`,
       ).bind(t.id, message.seq, t.id, t.version),
       c.env.DB.prepare(
-        `UPDATE conversation_inbox SET content='[用户已将这条内容设为仅本人可见]' WHERE id=? AND ${fence}`,
-      ).bind(message.turn_id, t.id, t.version),
+        `UPDATE conversation_inbox SET content='[用户已将这条内容设为仅本人可见]',attachment_text=NULL WHERE (id=? OR id||'_user'=?) AND thread_id=? AND ${fence}`,
+      ).bind(message.turn_id, message.id, t.id, t.id, t.version),
       // 执行器可能已缓存旧正文，不能只过滤下次增量读取。取消旧运行后，模型、
       // 凭据与工具入口的租约检查均拒绝继续；已经发出的远端调用无法追回。
       c.env.DB.prepare(
@@ -753,8 +809,8 @@ export const conversations = conversationsBase
             private: true,
           },
           {
-            sql: `EXISTS(SELECT 1 FROM runs r WHERE r.id=? AND ${instructionRunPredicate})`,
-            values: [active.id],
+            sql: `EXISTS(SELECT 1 FROM runs r WHERE r.id=? AND ${instructionRunPredicate}) AND NOT EXISTS(SELECT 1 FROM conversation_inbox WHERE id=?)`,
+            values: [active.id, turnId],
           },
         );
         const [written] = await c.env.DB.batch([
@@ -776,10 +832,16 @@ export const conversations = conversationsBase
         }
       }
       await c.env.DB.prepare(
-        "INSERT OR IGNORE INTO conversation_inbox(id,thread_id,request_id,digest,content,mode,created_at) VALUES(?,?,?,?,?,'chat',?)",
+        `INSERT OR IGNORE INTO conversation_inbox(id,thread_id,request_id,digest,content,mode,created_at)
+         SELECT ?,?,?,?,?,'chat',? FROM ai_threads WHERE id=? AND closed=0`,
       )
-        .bind(turnId, t.id, b.requestId, digest, b.content, dbTime(now()))
+        .bind(turnId, t.id, b.requestId, digest, b.content, dbTime(now()), t.id)
         .run();
+      const accepted = await c.env.DB.prepare("SELECT digest FROM conversation_inbox WHERE id=?")
+        .bind(turnId)
+        .first<{ digest: string }>();
+      if (!accepted) throw Error("THREAD_NOT_FOUND");
+      if (accepted.digest !== digest) throw Error("MESSAGE_CONFLICT");
       await expireTurn(c.env, t);
       await promoteInbox(c.env, t.id);
       const turn = await c.env.DB.prepare("SELECT status,error FROM ai_turns WHERE id=?")
@@ -795,6 +857,48 @@ export const conversations = conversationsBase
         202,
       );
     },
+  )
+  .post("/threads/:id/attachment-messages", async (c) => {
+    const t = await ownedThread(c.env, c.req.param("id"));
+    const input = await parseAttachmentMessage(c.req.raw);
+    const turnId = await acceptAttachmentMessage(c.env, t.id, input, async () => {
+      const active = t.task_id ? await instructionRun(c.env, t.id) : null;
+      const task = active ? (await getRun(c.env.DB, active.id)).task : null;
+      const { profile } = await getModelProfile(
+        c.env,
+        task?.modelId ?? t.model_id,
+        task?.modelVersion ?? t.model_version,
+      );
+      const caps = attachmentCapabilities(
+        profile.capabilities,
+        task ? task.reasoningEffort : t.reasoning_effort,
+      );
+      for (const file of input.attachments) {
+        const error = attachmentCapabilityError(file.mime, caps);
+        if (error) throw Error(error);
+      }
+    });
+    if (
+      await c.env.DB.prepare("SELECT id FROM conversation_inbox WHERE id=? AND status='pending'")
+        .bind(turnId)
+        .first()
+    ) {
+      await expireTurn(c.env, t);
+      await promoteInbox(c.env, t.id);
+      await notifyUser(c.env, t.user_id);
+    }
+    const turn = await c.env.DB.prepare("SELECT status,error FROM ai_turns WHERE id=?")
+      .bind(turnId)
+      .first<{ status: string; error: string | null }>();
+    return c.json({ ...(await threadPage(c.env, t.id)), ...(turn ?? {}) }, 202);
+  })
+  .get("/threads/:id/attachments/:attachmentId", (c) =>
+    readChatAttachment(
+      c.env,
+      c.req.param("id"),
+      c.req.param("attachmentId"),
+      c.req.query("download") === "1",
+    ),
   )
   .get("/memories", async (c) =>
     c.json(

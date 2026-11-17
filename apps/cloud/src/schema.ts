@@ -1148,6 +1148,10 @@ export const conversationInbox = sqliteTable(
     status: text("status").notNull().default("pending"),
     /** 记录创建时点；UTC Unix 毫秒 */
     createdAt: integer("created_at").notNull(),
+    /** 选出唯一成功的上传尝试。 */
+    attachmentBatch: text("attachment_batch"),
+    /** 消息排队期间加密原文。 */
+    attachmentText: text("attachment_text"),
   },
   (t): SQLiteTableExtraConfigValue[] => [
     /** 与 SQL 基线同源的校验约束；不得在 ORM 迁移中放宽。 */
@@ -1161,6 +1165,28 @@ export const conversationInbox = sqliteTable(
     uniqueIndex("conversation_inbox_unique_1").on(t.threadId, t.requestId),
     uniqueIndex("conversation_inbox_unique_2").on(t.id),
     foreignKey({ columns: [t.threadId], foreignColumns: [aiThreads.id] }),
+  ],
+);
+
+/** 用户上传的聊天原件索引。发布后对象由会话保留，文件名和文件内容各自加密。 */
+export const chatAttachments = sqliteTable(
+  "chat_attachments",
+  {
+    id: text("id").primaryKey().notNull(),
+    threadId: text("thread_id").notNull(),
+    inboxId: text("inbox_id").notNull(),
+    position: integer("position").notNull(),
+    nameCipher: text("name_cipher").notNull(),
+    mime: text("mime").notNull(),
+    size: integer("size").notNull(),
+    objectKey: text("object_key").notNull(),
+  },
+  (t): SQLiteTableExtraConfigValue[] => [
+    index("chat_attachments_thread").on(t.threadId, t.id),
+    uniqueIndex("chat_attachments_position").on(t.inboxId, t.position),
+    uniqueIndex("chat_attachments_object").on(t.objectKey),
+    foreignKey({ columns: [t.threadId], foreignColumns: [aiThreads.id] }),
+    foreignKey({ columns: [t.inboxId], foreignColumns: [conversationInbox.id] }),
   ],
 );
 

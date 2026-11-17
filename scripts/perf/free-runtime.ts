@@ -21,6 +21,9 @@ import { z } from "zod";
 import { applicationDb } from "../../apps/cloud/src/database";
 import { validateSnapshotPng } from "../../apps/cloud/src/png";
 import type { DraftPublication } from "../../apps/cloud/src/chat-drafts";
+import { resolveChatAttachments } from "../../apps/cloud/src/chat-attachments";
+import type { EgressJob } from "../../apps/cloud/src/egress";
+import { getModelProfile } from "../../apps/cloud/src/models";
 app.onError((e, c) => {
   console.error("fixture error", e.message);
   return c.json({ error: e.message }, 500);
@@ -124,6 +127,16 @@ export default {
         "SELECT (SELECT count(*) FROM ai_checkpoint_chunks)+(SELECT count(*) FROM ai_write_chunks) AS n",
       ).first<{ n: number }>();
       return Response.json({ intact, remaining: remaining?.n });
+    }
+    if (path === "/_expire-chat-attachment") {
+      const row = await env.DB.prepare("SELECT object_key FROM chat_attachments WHERE id=?")
+        .bind(((await req.json()) as { id: string }).id)
+        .first<{ object_key: string }>();
+      if (!row) throw Error("ATTACHMENT_NOT_FOUND");
+      const store = env.EVIDENCE_STORE.getByName(row.object_key) as DurableObjectStub<Evidence>;
+      await store.expireStaging();
+      await store.duplicateAlarm();
+      return Response.json({ size: (await store.get(row.object_key))?.byteLength });
     }
     if (path === "/_evidence-publication") {
       const { threadId, runId } = (await req.json()) as { threadId: string; runId: string };
@@ -276,13 +289,27 @@ export class AiTurn extends ProductionAiTurn {
       jurisdiction: () => ({
         getByName: () => ({
           submitAndWait: async (id: string, cipher: string) => {
-            const job = await unseal<{
-              request: { schema?: { properties?: Record<string, unknown> }; messages: unknown[] };
-            }>(cipher, env.MASTER_KEY, `egress:${id}:request`);
-            const isHelp = !!job.request.schema?.properties?.askUser;
-            const replied = JSON.stringify(job.request.messages).includes(
-              "workerd-resume-code-0012",
-            );
+            const job = await unseal<EgressJob>(cipher, env.MASTER_KEY, `egress:${id}:request`);
+            if (job.kind !== "inference") throw Error("FIXTURE_INFERENCE_ONLY");
+            const isHelp = !!(job.request.schema?.properties as Record<string, unknown> | undefined)
+              ?.askUser;
+            const blocks = job.request.chatAttachments
+              ? await resolveChatAttachments(
+                  { ...env, DB: applicationDb(env.DB) },
+                  job.request.chatAttachments,
+                  job.userId,
+                  job.runId,
+                  (
+                    await getModelProfile(
+                      { ...env, DB: applicationDb(env.DB) },
+                      job.modelId,
+                      job.version,
+                      job.userId,
+                    )
+                  ).profile,
+                )
+              : [];
+            const replied = JSON.stringify(blocks).includes("workerd-resume-code-0012");
             const result = isHelp
               ? {
                   message: replied ? "已收到完整回复，继续读取。" : "请提供测试码。",

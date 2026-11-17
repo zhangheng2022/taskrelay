@@ -7,10 +7,16 @@ export type ThreadPage = {
   version: number;
   modelId: string;
   modelAvailable?: boolean;
+  attachmentCapabilities?: import("./attachments").AttachmentCapabilities;
   reasoningEffort?: ReasoningEffort | null;
   reasoningEfforts?: ModelCapabilities["reasoningEfforts"];
   taskId?: string | null;
-  queued?: { id: string; content: string; at: string }[];
+  queued?: {
+    id: string;
+    content: string;
+    at: string;
+    attachments?: import("./attachments").ChatAttachment[];
+  }[];
   conditions?: {
     run_id: string;
     task_version: number;
@@ -38,6 +44,7 @@ export type ThreadPage = {
     reply_to?: string | null;
     run_id?: string | null;
     parts?: import("./execution").ChatPart[];
+    attachments?: import("./attachments").ChatAttachment[];
   }[];
   nextCursor: number | null;
 };

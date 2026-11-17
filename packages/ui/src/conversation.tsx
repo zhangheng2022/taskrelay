@@ -3,13 +3,14 @@ import { DraftMessages } from "./chat-parts";
 import { ChatMarkdown } from "./chat-markdown";
 import { useState, useRef } from "react";
 import type { ModelProfile, TaskDefinition, TaskRun, Transport } from "../../contracts/src/index";
+import { attachmentCapabilities } from "../../contracts/src/attachments";
 import { canUseModel, ModelSelector, ReasoningEffortSelector } from "./model-selector";
 import { useThread } from "./use-thread";
 import { Thread, Composer, ChatMessage, ThreadActivity, SendingMessage } from "./chat-parts";
 import { MessageScrollerItem } from "./components/ui/message-scroller";
 import { Button } from "./components/ui/button";
 import { ErrorText, LoadFeedback } from "./feedback";
-import { ChatAttachments } from "./chat-attachments";
+import { ChatAttachments, SentAttachments } from "./chat-attachments";
 import { conversationRows, ExecutionProgress } from "./execution-progress";
 
 // 将用户消息、云端协助和执行器反馈合并到同一聊天；停止直接调用运行控制接口。
@@ -33,16 +34,23 @@ export function Conversation({
 }) {
   const thread = useThread(transport, "chat", task.modelId, task.id);
   const [text, setText] = useState(""),
+    [files, setFiles] = useState<File[]>([]),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
-  const [stopping, setStopping] = useState(false);
+  const [stopping, setStopping] = useState<string | null>(null);
   const [switching, setSwitching] = useState("");
   const sending = useRef(false);
+  const stopFlight = useRef<string | null>(null);
   const active =
     run &&
     (["queued", "running", "waiting_user", "verifying"].includes(run.status) ||
       run.cleanupPending ||
       run.dispatchGroupActive);
+  const cancellable =
+    run &&
+    (["queued", "running", "waiting_user", "verifying"].includes(run.status) ||
+      !!run.dispatchGroupActive);
+  const stopPending = !!run && (stopping === run.id || !!run.cancelRequested);
   const runLabels = new Map(runs.map((item) => [item.id, item.accountName]));
   if (run?.accountName) runLabels.set(run.id, run.accountName);
   const modelId = thread.page?.modelId ?? task.modelId;
@@ -74,26 +82,35 @@ export function Conversation({
   if (thread.sending) activity = "正在发送…";
   else if (thread.page?.activeTurn) activity = "云端助手正在处理…";
   else if (active) {
-    if (run.status === "unknown") activity = "本次操作结果待核查，后续账号已暂停";
+    if (stopPending) activity = "正在停止…";
+    else if (run.status === "unknown") activity = "本次操作结果待核查，后续账号已暂停";
     else if (run.cleanupPending && !["running", "waiting_user", "verifying"].includes(run.status))
       activity = "正在结束本次执行…";
     else if (thread.page?.waiting || run.status === "waiting_user") activity = "等待你的回复";
     else if (run.status === "queued") activity = "等待执行设备";
-    else if (run.cancelRequested) activity = "正在停止…";
     else activity = "执行器正在处理…";
   }
   const messages = [...(thread.page?.messages ?? [])].sort((a, b) => a.seq - b.seq);
   async function send() {
-    if (sending.current || !text.trim() || offline || (modelUnavailable && !active)) return;
+    if (
+      sending.current ||
+      (!text.trim() && !files.length) ||
+      offline ||
+      (cancellable && stopPending) ||
+      (modelUnavailable && !active)
+    )
+      return;
     sending.current = true;
     setBusy(true);
     setError("");
     const value = text;
     setText("");
+    setFiles([]);
     try {
-      await thread.send(value);
+      await thread.send(value, undefined, undefined, files);
     } catch (e) {
       setText(value);
+      setFiles(files);
       setError((e as Error).message);
     } finally {
       sending.current = false;
@@ -101,18 +118,22 @@ export function Conversation({
     }
   }
   async function stop() {
-    if (!run) return;
-    setStopping(true);
+    if (!cancellable || !run || offline || stopPending || stopFlight.current === run.id) return;
+    stopFlight.current = run.id;
+    setStopping(run.id);
     setError("");
+    let accepted = false;
     try {
       await rpcData(
         createApi(transport).api.user.runs[":id"].cancel.$post({ param: { id: run.id } }),
       );
+      accepted = true;
       await refresh();
     } catch (e) {
       setError((e as Error).message);
     } finally {
-      setStopping(false);
+      if (stopFlight.current === run.id) stopFlight.current = null;
+      if (!accepted) setStopping((id) => (id === run.id ? null : id));
     }
   }
   return (
@@ -164,13 +185,25 @@ export function Conversation({
                     }}
                   />
                 )}
+                <SentAttachments
+                  files={"attachments" in m ? m.attachments : undefined}
+                  threadId={thread.page?.id}
+                  transport={transport}
+                />
               </ChatMessage>
             )}
           </MessageScrollerItem>
         ))}
         {thread.page?.queued?.map((m) => (
           <MessageScrollerItem key={m.id} messageId={m.id}>
-            <ChatMessage speaker="user">{m.content}</ChatMessage>
+            <ChatMessage speaker="user">
+              {m.content}
+              <SentAttachments
+                files={m.attachments}
+                threadId={thread.page?.id}
+                transport={transport}
+              />
+            </ChatMessage>
           </MessageScrollerItem>
         ))}
         <DraftMessages drafts={thread.page?.drafts} />
@@ -189,6 +222,25 @@ export function Conversation({
         setText={setText}
         onSend={() => void send()}
         busy={busy}
+        attachments={
+          transport.sendAttachments
+            ? {
+                files,
+                setFiles,
+                caps:
+                  thread.page?.attachmentCapabilities ??
+                  attachmentCapabilities(
+                    models?.find((model) => model.id === modelId)?.capabilities,
+                    active ? run.task.reasoningEffort : thread.page?.reasoningEffort,
+                  ),
+              }
+            : undefined
+        }
+        stop={
+          cancellable
+            ? { onStop: () => void stop(), pending: stopPending, disabled: offline }
+            : undefined
+        }
         disabled={offline || !thread.page || !!switching || (modelUnavailable && !active)}
         label="消息"
         placeholder={thread.page?.waiting ? "在这里回复，执行器会继续…" : "发送消息或补充要求…"}
@@ -226,16 +278,6 @@ export function Conversation({
             {run.accountName}
             {run.dispatchTotal ? ` · ${(run.dispatchIndex ?? 0) + 1}/${run.dispatchTotal}` : ""}
           </span>
-        )}
-        {active && (
-          <Button
-            type="button"
-            variant="outline"
-            disabled={stopping || !!run.cancelRequested}
-            onClick={() => void stop()}
-          >
-            停止执行
-          </Button>
         )}
       </Composer>
     </div>

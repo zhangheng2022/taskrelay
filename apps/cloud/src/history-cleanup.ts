@@ -6,6 +6,7 @@ import { dbTime } from "./database";
 import type { AppEnv } from "./env";
 import { now, uid } from "./store";
 import { deleteEvidence } from "./evidence";
+import { removeChatAttachments } from "./chat-attachments";
 import { notifyDevices, notifyUser } from "./notifications";
 
 export type CleanupScope = "all" | "task" | "clear" | "thread";
@@ -210,7 +211,7 @@ export async function drainHistoryCleanups(env: AppEnv) {
           if (kind === "thread")
             statements.push(
               env.DB.prepare(
-                "UPDATE conversation_inbox SET content='',status='failed' WHERE rowid IN(SELECT rowid FROM conversation_inbox WHERE thread_id=? AND (content<>'' OR status<>'failed') LIMIT 100) RETURNING 1 AS touched",
+                "UPDATE conversation_inbox SET content='',attachment_text=NULL,status='failed' WHERE rowid IN(SELECT rowid FROM conversation_inbox WHERE thread_id=? AND (content<>'' OR attachment_text IS NOT NULL OR status<>'failed') LIMIT 100) RETURNING 1 AS touched",
               ).bind(resource),
             );
           const graphWhere = kind === "thread" ? "parent_thread=?" : "run_id=?";
@@ -243,7 +244,12 @@ export async function drainHistoryCleanups(env: AppEnv) {
           }
           const results = await env.DB.batch(statements);
           // 再经过一个无删除轮次才完成，避免刚好满批时漏掉余下内容。
-          if (!images.results.length && results.every((r) => r.results.length === 0))
+          const attachments = kind === "thread" ? await removeChatAttachments(env, resource) : 0;
+          if (
+            !attachments &&
+            !images.results.length &&
+            results.every((r) => r.results.length === 0)
+          )
             await env.DB.prepare(
               "UPDATE history_cleanup_targets SET done=1 WHERE job_id=? AND kind=? AND resource_id=?",
             )

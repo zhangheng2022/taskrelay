@@ -105,6 +105,18 @@ export function createWebTransport(): Transport {
     // 同源图片请求沿用网站会话；地址不携带令牌，服务端仍检查图片归属。
     artifactUrl: (id, variant) =>
       `/api/user/artifacts/${encodeURIComponent(id)}${variant === "thumbnail" ? "?variant=thumbnail" : ""}`,
+    attachmentUrl: (threadId, id, download) =>
+      `/api/user/threads/${encodeURIComponent(threadId)}/attachments/${encodeURIComponent(id)}${download ? "?download=1" : ""}`,
+    sendAttachments(threadId, message) {
+      const form = new FormData();
+      form.set("requestId", message.requestId);
+      form.set("content", message.content);
+      for (const file of message.files) form.append("files", file);
+      return requestJson(`/api/user/threads/${encodeURIComponent(threadId)}/attachment-messages`, {
+        method: "POST",
+        body: form,
+      });
+    },
     subscribe(listener) {
       // 同一个回调的两次订阅仍独立计数，避免其中一次退订提前释放共享资源。
       const subscription = () => listener();

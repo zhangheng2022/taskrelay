@@ -4,6 +4,63 @@ import type { ChatPart } from "../../contracts/src/execution";
 import type { Transport } from "../../contracts/src/index";
 import { AccountCard } from "./account-card";
 import { ChatImage, ImagePreviewContext, ImagePreviewProvider } from "./chat-image";
+import type { ChatAttachment } from "../../contracts/src/attachments";
+import { Download, FileText } from "lucide-react";
+import {
+  Attachment,
+  AttachmentAction,
+  AttachmentActions,
+  AttachmentContent,
+  AttachmentDescription,
+  AttachmentMedia,
+  AttachmentTitle,
+} from "./components/ui/attachment";
+import { attachmentSizeLabel } from "./compose-attachments";
+
+export function SentAttachments({
+  files,
+  threadId,
+  transport,
+}: {
+  files?: ChatAttachment[];
+  threadId?: string;
+  transport: Transport;
+}) {
+  if (!files?.length || !threadId) return null;
+  return (
+    <div className="flex min-w-0 flex-col gap-2" aria-label="消息附件">
+      {files.map((file) => {
+        const url = transport.attachmentUrl?.(threadId, file.id);
+        const download = transport.attachmentUrl?.(threadId, file.id, true);
+        return (
+          <div key={file.id} className="flex min-w-0 flex-col gap-1">
+            {file.mime.startsWith("image/") && url && (
+              <ChatImage src={url} thumbnail={url} alt={file.name} />
+            )}
+            <Attachment size="sm">
+              <AttachmentMedia>
+                <FileText aria-hidden="true" />
+              </AttachmentMedia>
+              <AttachmentContent>
+                <AttachmentTitle title={file.name}>{file.name}</AttachmentTitle>
+                <AttachmentDescription>{attachmentSizeLabel(file.size)}</AttachmentDescription>
+              </AttachmentContent>
+              {download && (
+                <AttachmentActions>
+                  <AttachmentAction asChild>
+                    <a href={download} download={file.name} aria-label={`下载 ${file.name}`}>
+                      <Download aria-hidden="true" />
+                    </a>
+                  </AttachmentAction>
+                </AttachmentActions>
+              )}
+            </Attachment>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 // 正常聊天共用 Thread 的单图预览；独立附件宿主也具备相同的资源生命周期。
 export function ChatAttachments(props: Parameters<typeof Attachments>[0]) {

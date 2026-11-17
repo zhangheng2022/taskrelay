@@ -1,5 +1,6 @@
 import { dbTime } from "../database";
 import { deleteEvidence } from "../evidence";
+import { removeChatAttachments } from "../chat-attachments";
 import type { AppEnv } from "../env";
 
 // 显式清理覆盖直接关联运行的调用，也覆盖经图关联运行或聊天的调用。
@@ -53,7 +54,7 @@ export async function retainHistory(env: AppEnv, cutoff: string) {
       "DELETE FROM ai_messages WHERE thread_id IN(SELECT id FROM ai_threads WHERE deleted=1 AND id NOT IN(SELECT resource_id FROM history_cleanup_targets WHERE kind='thread'))",
     ),
     env.DB.prepare(
-      "UPDATE conversation_inbox SET content='',status='failed' WHERE thread_id IN(SELECT id FROM ai_threads WHERE deleted=1 AND id NOT IN(SELECT resource_id FROM history_cleanup_targets WHERE kind='thread'))",
+      "UPDATE conversation_inbox SET content='',attachment_text=NULL,status='failed' WHERE thread_id IN(SELECT id FROM ai_threads WHERE deleted=1 AND id NOT IN(SELECT resource_id FROM history_cleanup_targets WHERE kind='thread'))",
     ),
     env.DB.prepare(
       "UPDATE conversation_commands SET run_task=NULL,state='done' WHERE thread_id IN(SELECT id FROM ai_threads WHERE deleted=1 AND id NOT IN(SELECT resource_id FROM history_cleanup_targets WHERE kind='thread'))",
@@ -78,6 +79,7 @@ export async function retainHistory(env: AppEnv, cutoff: string) {
     await deleteEvidence(env, image.object_key);
     await env.DB.prepare("DELETE FROM artifacts WHERE id=?").bind(image.id).run();
   }
+  await removeChatAttachments(env);
   await env.DB.prepare(
     "DELETE FROM execution_help WHERE thread_id IN (SELECT id FROM ai_threads WHERE deleted=1 AND id NOT IN(SELECT resource_id FROM history_cleanup_targets WHERE kind='thread'))",
   ).run();

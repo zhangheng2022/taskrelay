@@ -12,7 +12,9 @@ export interface Message {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
   content_blocks?: Array<
-    { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }
+    | { type: "text"; text: string }
+    | { type: "image_url"; image_url: { url: string } }
+    | { type: "input_file"; filename: string; file_data: string }
   >;
   tool_call_id?: string;
   tool_calls?: Array<{
@@ -31,6 +33,8 @@ export interface Inference {
   reasoningEffort?: ReasoningEffort;
   image?: string;
   imageRef?: { artifactId: string; epoch: number };
+  /** 只供云端持久化出站作业使用，提供方调用前解析。 */
+  chatAttachments?: { threadId: string; ids: string[]; epoch?: number };
   tools?: Tool[];
   toolChoice?: "auto" | "required";
   schema?: Record<string, unknown>;
@@ -57,6 +61,7 @@ export async function infer(
 ): Promise<ModelResponse> {
   if (profile.protocol !== "responses") throw Error("MODEL_PROTOCOL_RETIRED");
   if (request.imageRef) throw Error("IMAGE_REFERENCE_UNRESOLVED");
+  if (request.chatAttachments) throw Error("ATTACHMENT_REFERENCE_UNRESOLVED");
   // 从尾部单次扫描，避免未匹配的长斜杠序列触发正则反复回溯。
   let end = profile.baseUrl.length;
   while (end > 0 && profile.baseUrl[end - 1] === "/") end--;
@@ -90,7 +95,9 @@ export async function infer(
           m.content_blocks?.map((part) =>
             part.type === "text"
               ? { type: m.role === "assistant" ? "output_text" : "input_text", text: part.text }
-              : { type: "input_image", image_url: part.image_url.url, detail: "low" },
+              : part.type === "input_file"
+                ? part
+                : { type: "input_image", image_url: part.image_url.url, detail: "low" },
           ) ?? m.content,
       });
   }

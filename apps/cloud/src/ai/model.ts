@@ -39,6 +39,7 @@ export interface RelayModelOptions extends BaseChatModelCallOptions {
   maxTokens?: number;
   image?: string;
   imageRef?: { artifactId: string; epoch: number };
+  chatAttachments?: Inference["chatAttachments"];
   /** Explicit formats are used by capability probes before capabilities are known. */
   schema?: Record<string, unknown>;
   jsonMode?: boolean;
@@ -75,6 +76,7 @@ export class RelayChatModel extends BaseChatModel<RelayModelOptions> {
     history: Message[],
     guard: () => Promise<void>,
     preview?: DraftTarget,
+    chatAttachments?: Inference["chatAttachments"],
   ): Promise<T> {
     const { profile } = await getModelProfile(this.env, this.modelId, this.version);
     const protectedMessages = toLangChainMessages(protectedInput);
@@ -90,7 +92,7 @@ export class RelayChatModel extends BaseChatModel<RelayModelOptions> {
       await guard();
       const result = await this.withStructuredOutput<T>(schema, { includeRaw: true }).invoke(
         toLangChainMessages(messages),
-        { preview },
+        { preview, chatAttachments },
       );
       await guard();
       if (!(result.raw instanceof AIMessage)) throw Error("MODEL_INVALID_RESPONSE");
@@ -211,6 +213,7 @@ export class RelayChatModel extends BaseChatModel<RelayModelOptions> {
         ...(options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
         ...(options.image ? { image: options.image } : {}),
         ...(options.imageRef ? { imageRef: options.imageRef } : {}),
+        ...(options.chatAttachments ? { chatAttachments: options.chatAttachments } : {}),
         ...(options.schema ? { schema: options.schema } : {}),
         ...(options.jsonMode ? { jsonMode: true } : {}),
         ...(options.capabilityProbe ? { stream: false } : {}),
@@ -302,6 +305,7 @@ export class RelayChatModel extends BaseChatModel<RelayModelOptions> {
           reasoningEffort: this.reasoningEffort,
           ...(options?.image ? { image: options.image } : {}),
           ...(options?.imageRef ? { imageRef: options.imageRef } : {}),
+          ...(options?.chatAttachments ? { chatAttachments: options.chatAttachments } : {}),
           ...(wireSchema ? { wireSchema } : {}),
           ...(config.method ? { format: config.method === "jsonMode" ? "json" : "schema" } : {}),
         },
