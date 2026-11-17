@@ -1,6 +1,6 @@
 import { dbTime } from "../apps/cloud/src/database";
 import { finishRequest, browserClosedRequest } from "./runner-request";
-import { PROTOCOL_VERSION } from "../packages/contracts/src/index";
+import { limits, PROTOCOL_VERSION } from "../packages/contracts/src/index";
 import { commitDecision } from "../apps/cloud/src/ai/commands";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -85,6 +85,66 @@ async function fixture() {
   }
   return { db, sql, env, request, cookies, ownedTask };
 }
+
+test("管理员设备快照按服务端心跳判在线并保留清理与核查状态", async (t) => {
+  const s = await fixture();
+  t.after(() => s.sql.close());
+  const at = Date.now();
+  t.mock.method(Date, "now", () => at);
+  const device = s.sql.prepare(
+    "UPDATE devices SET last_seen=?,claim_ready=?,protocol_version=? WHERE id=?",
+  );
+  device.run(at - limits.leaseMs + 1, 1, PROTOCOL_VERSION, "d1");
+  device.run(at - limits.leaseMs, 0, PROTOCOL_VERSION - 1, "d2");
+  const task = await s.ownedTask("alice", "device_operations");
+  const unknown = await enqueue(s.db, task, "admin_unknown");
+  const cleanup = await enqueue(s.db, task, "admin_cleanup");
+  const update = s.sql.prepare("UPDATE runs SET status=?,cleanup_pending=?,device_id=? WHERE id=?");
+  update.run("unknown", 0, "d1", unknown.id);
+  update.run("failed", 1, "d2", cleanup.id);
+  s.sql.exec("UPDATE settings SET value='0' WHERE key='claimsEnabled'");
+  s.sql.exec("INSERT OR REPLACE INTO settings(key,value) VALUES('maintenance','1')");
+
+  const path = "/api/admin/operations";
+  assert.equal((await s.request(path, s.cookies.alice)).status, 403);
+  assert.equal((await s.request(path)).status, 401);
+  const bearer = await app.request(
+    "http://localhost" + path,
+    { headers: { Authorization: "Bearer " + "a".repeat(64) } },
+    s.env,
+  );
+  assert.equal(bearer.status, 403);
+
+  const response = await s.request(path, s.cookies.owner);
+  assert.equal(response.status, 200);
+  const data = (await response.json()) as {
+    devices: {
+      id: string;
+      online: boolean;
+      claimReady: boolean;
+      protocol_version: number;
+      activeRunIds: string[];
+      relatedRuns: { id: string; status: string; cleanupPending: boolean }[];
+    }[];
+    settings: { claimsEnabled: string; maintenance: boolean };
+  };
+  assert.deepEqual(data.settings, { claimsEnabled: "0", maintenance: true });
+  const [recent, expired] = data.devices;
+  assert.equal(recent.id, "d1");
+  assert.equal(recent.online, true);
+  assert.equal(recent.claimReady, true);
+  assert.deepEqual(recent.activeRunIds, [unknown.id]);
+  assert.deepEqual(recent.relatedRuns, [
+    { id: unknown.id, status: "unknown", cleanupPending: false },
+  ]);
+  assert.equal(expired.id, "d2");
+  assert.equal(expired.online, false);
+  assert.equal(expired.claimReady, false);
+  assert.equal(expired.protocol_version, PROTOCOL_VERSION - 1);
+  assert.deepEqual(expired.relatedRuns, [
+    { id: cleanup.id, status: "failed", cleanupPending: true },
+  ]);
+});
 
 test("服务删除与引用预览只允许管理员会话，拒绝普通用户、匿名和设备令牌", async (t) => {
   const s = await fixture();

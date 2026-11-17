@@ -1,6 +1,7 @@
 /** 管理员运维按设备、成员和执行池拆分视图，写操作共享确认及结果反馈。 */
 import { useState } from "react";
 import type { InferResponseType } from "hono/client";
+import { RefreshCw } from "lucide-react";
 import { PROTOCOL_VERSION, type Transport } from "../../contracts/src/index";
 import { createApi, rpcData } from "./api";
 import { QueryBoundary, useTransportQuery } from "./queries";
@@ -11,7 +12,9 @@ import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "./component
 import { FormSelect } from "./form-select";
 import { SelectItem } from "./components/ui/select";
 import { Field, FieldGroup, FieldLabel } from "./components/ui/field";
-import { Badge } from "./components/ui/badge";
+import { Spinner } from "./components/ui/spinner";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
+import { DeviceConnectionHelp, DeviceList, DeviceLoadFeedback } from "./device-list";
 import { LoadFeedback, Status, formatDate } from "./feedback";
 import {
   SettingsSearch,
@@ -20,7 +23,7 @@ import {
   useConfirmation,
   useSettingsDirty,
 } from "./settings-support";
-type Operations = InferResponseType<
+export type Operations = InferResponseType<
   ReturnType<typeof createApi>["api"]["admin"]["operations"]["$get"]
 >;
 type Props = {
@@ -48,7 +51,9 @@ function OperationsPanel({ transport, section = "operations", currentUserId }: P
   const [search, setSearch] = useState(""),
     [filter, setFilter] = useState("all"),
     [role, setRole] = useState("all");
+  const [deviceTab, setDeviceTab] = useState("devices");
   const act = (id: string, fn: () => Promise<unknown>) => action.act(id, fn, operations.refresh);
+  const refresh = () => void operations.refresh().catch(() => {});
   const users =
     data?.users.filter(
       (u) =>
@@ -65,28 +70,46 @@ function OperationsPanel({ transport, section = "operations", currentUserId }: P
           <h2>
             {section === "devices" ? "执行设备" : section === "users" ? "用户管理" : "运行维护"}
           </h2>
-          <p>
-            {section === "devices"
-              ? "在 Windows 执行器中发起连接，通过系统浏览器完成管理员授权。"
-              : section === "users"
+          {section !== "devices" && (
+            <p>
+              {section === "users"
                 ? "管理成员状态；个人次数限制保持关闭。"
                 : "暂停领取不会停止已开始的任务。"}
-          </p>
+            </p>
+          )}
         </div>
         <Button
           variant="outline"
           disabled={operations.isFetching || !!action.busy}
-          onClick={() => void operations.refresh().catch(() => {})}
+          onClick={refresh}
         >
+          {section === "devices" &&
+            (operations.isFetching ? (
+              <Spinner data-icon="inline-start" />
+            ) : (
+              <RefreshCw data-icon="inline-start" />
+            ))}
           刷新状态
         </Button>
       </div>
-      <LoadFeedback
-        loading={operations.isPending}
-        error={operations.error?.message ?? ""}
-        label="正在读取管理信息…"
-        onRetry={() => void operations.refresh().catch(() => {})}
-      />
+      {section === "devices" ? (
+        <>
+          <DeviceConnectionHelp />
+          <DeviceLoadFeedback
+            loading={operations.isPending}
+            error={operations.error?.message ?? ""}
+            lastUpdatedAt={operations.dataUpdatedAt}
+            retry={refresh}
+          />
+        </>
+      ) : (
+        <LoadFeedback
+          loading={operations.isPending}
+          error={operations.error?.message ?? ""}
+          label="正在读取管理信息…"
+          onRetry={refresh}
+        />
+      )}
       {data && section === "users" && (
         <>
           <SettingsSearch
@@ -179,85 +202,68 @@ function OperationsPanel({ transport, section = "operations", currentUserId }: P
         </>
       )}
       {data && section === "devices" && (
-        <>
-          {!data.devices.length && (
-            <SettingsEmpty
-              title="尚未连接设备"
-              description="安装 Windows 执行器，在状态窗口发起连接并完成授权。"
-            />
-          )}
-          {data.devices.map((d) => (
-            <Item key={d.id} asChild>
-              <article>
-                <ItemContent>
-                  <h3>{d.name}</h3>
-                  <p>最近连接：{d.last_seen ? formatDate(d.last_seen) : "尚未连接"}</p>
-                  <Badge
-                    variant={
-                      d.revoked || d.protocol_version !== PROTOCOL_VERSION
-                        ? "destructive"
-                        : "secondary"
-                    }
-                  >
-                    {d.revoked
-                      ? "已吊销"
-                      : d.protocol_version !== PROTOCOL_VERSION
-                        ? "需要升级客户端"
-                        : "协议兼容"}
-                  </Badge>
-                  <p>{d.activeRunIds?.join("、") || "没有执行中或待清理的关联运行"}</p>
-                </ItemContent>
-                <ItemActions>
-                  <Button
-                    variant="outline"
-                    disabled={!!action.busy || !!d.revoked}
-                    onClick={() =>
-                      void (async () => {
-                        if (
-                          await ask(
-                            `吊销“${d.name}”的授权？`,
-                            "设备将失去访问权限，正在执行的任务无法继续；重新连接需要再次授权。",
-                            "吊销授权",
-                          )
-                        )
-                          await act(d.id, () =>
-                            createApi(transport).api.admin.devices[":id"].revoke.$post({
-                              param: { id: d.id },
-                            }),
-                          );
-                      })()
-                    }
-                  >
-                    吊销授权
-                  </Button>
-                </ItemActions>
-              </article>
-            </Item>
-          ))}
-          <h3 className="text-base font-semibold">账号优先执行设备</h3>
-          <p className="text-sm text-muted-foreground">
-            先确认旧设备已停止。结果未知或持有清理锁的账号不能迁移；网站可能要求重新登录。
-          </p>
-          {!data.accounts.length && (
-            <SettingsEmpty title="暂无站点账号" description="用户保存账号后可分配优先设备。" />
-          )}
-          {data.accounts.map((a) => (
-            <Migration
-              key={a.id}
-              account={a}
+        <Tabs value={deviceTab} onValueChange={setDeviceTab} className="gap-4">
+          <TabsList aria-label="执行设备管理" variant="line">
+            <TabsTrigger value="devices">设备列表</TabsTrigger>
+            <TabsTrigger value="accounts">账号分配</TabsTrigger>
+          </TabsList>
+          <TabsContent value="devices" forceMount hidden={deviceTab !== "devices"}>
+            <DeviceList
               data={data}
               busy={!!action.busy}
-              save={(deviceId) =>
-                act(a.id, () =>
-                  createApi(transport).api.admin.accounts[":id"].migrate.$post({
-                    param: { id: a.id },
-                    json: { deviceId, oldExecutionStopped: true },
-                  }),
-                )
+              onRevoke={(device) =>
+                void (async () => {
+                  if (
+                    await ask(
+                      `吊销“${device.name}”的授权？`,
+                      "设备将失去访问权限，正在执行的任务无法继续；重新连接需要再次授权。",
+                      "吊销授权",
+                    )
+                  )
+                    await action.act(
+                      device.id,
+                      () =>
+                        createApi(transport).api.admin.devices[":id"].revoke.$post({
+                          param: { id: device.id },
+                        }),
+                      operations.refresh,
+                      "已吊销授权",
+                    );
+                })()
               }
             />
-          ))}
-        </>
+          </TabsContent>
+          {/* 保留表单挂载，让同页切换及后台刷新不丢失账号分配草稿。 */}
+          <TabsContent value="accounts" forceMount hidden={deviceTab !== "accounts"}>
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-1">
+                <h3 className="text-base font-semibold">账号优先执行设备</h3>
+                <p className="text-sm text-muted-foreground">
+                  先确认旧设备已停止。结果未知或持有清理锁的账号不能迁移，网站可能要求重新登录。
+                </p>
+              </div>
+              {!data.accounts.length && (
+                <SettingsEmpty title="暂无站点账号" description="用户保存账号后可分配优先设备。" />
+              )}
+              {data.accounts.map((a) => (
+                <Migration
+                  key={a.id}
+                  account={a}
+                  data={data}
+                  busy={!!action.busy}
+                  save={(deviceId) =>
+                    act(a.id, () =>
+                      createApi(transport).api.admin.accounts[":id"].migrate.$post({
+                        param: { id: a.id },
+                        json: { deviceId, oldExecutionStopped: true },
+                      }),
+                    )
+                  }
+                />
+              ))}
+            </div>
+          </TabsContent>
+        </Tabs>
       )}
     </div>
   );
@@ -389,7 +395,7 @@ function Migration({
       }}
     >
       <FieldGroup>
-        <p>
+        <p className="[overflow-wrap:anywhere]">
           {a.name} · {a.origin} · {data.users.find((u) => u.id === a.user_id)?.email || a.user_id}
         </p>
         <p className="text-sm text-muted-foreground">

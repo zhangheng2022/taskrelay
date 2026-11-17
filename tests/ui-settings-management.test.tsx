@@ -272,7 +272,7 @@ test("设备管理只允许兼容设备迁移，要求停止确认，锁冲突�
   const data = {
     users: [],
     runs: [],
-    settings: { claimsEnabled: "0" },
+    settings: { claimsEnabled: "1", maintenance: false },
     devices: [
       {
         id: "ready",
@@ -281,6 +281,9 @@ test("设备管理只允许兼容设备迁移，要求停止确认，锁冲突�
         revoked: 0,
         protocol_version: PROTOCOL_VERSION,
         activeRunIds: ["run_active"],
+        claimReady: true,
+        online: true,
+        relatedRuns: [{ id: "run_active", status: "unknown", cleanupPending: false }],
       },
       {
         id: "old",
@@ -289,6 +292,9 @@ test("设备管理只允许兼容设备迁移，要求停止确认，锁冲突�
         revoked: 0,
         protocol_version: PROTOCOL_VERSION - 1,
         activeRunIds: [],
+        claimReady: false,
+        online: false,
+        relatedRuns: [],
       },
     ],
     accounts: [
@@ -314,9 +320,19 @@ test("设备管理只允许兼容设备迁移，要求停止确认，锁冲突�
     return { ok: true };
   });
   const view = render(<AdminPanel section="devices" transport={transport} />);
-  const select = await view.findByLabelText("优先设备");
-  assert.ok(view.getByText("需要升级客户端"));
-  assert.ok(view.getByText("run_active"));
+  const devicesTab = await view.findByRole("tab", { name: "设备列表" });
+  const accountsTab = view.getByRole("tab", { name: "账号分配" });
+  assert.equal(devicesTab.getAttribute("aria-selected"), "true");
+  assert.equal(view.queryByRole("combobox", { name: "优先设备" }), null);
+  const authorized = within(view.getByRole("list", { name: "已授权设备" }));
+  assert.ok(authorized.getByText("需要升级客户端"));
+  assert.ok(authorized.getByText("可接任务"));
+  assert.equal(authorized.queryByText("run_active"), null);
+  fireEvent.click(authorized.getByRole("button", { name: "关联运行 1" }));
+  assert.ok(authorized.getByText("run_active"));
+  assert.ok(authorized.getByText("结果待核查"));
+  fireEvent.mouseDown(accountsTab, { button: 0 });
+  const select = await view.findByRole("combobox", { name: "优先设备" });
   fireEvent.keyDown(select, { key: "ArrowDown" });
   const menu = within(await view.findByRole("listbox"));
   assert.equal(menu.queryByRole("option", { name: "旧设备" }), null);
@@ -324,6 +340,11 @@ test("设备管理只允许兼容设备迁移，要求停止确认，锁冲突�
   const save = view.getByRole("button", { name: "设置优先设备" });
   assert.equal((save as HTMLButtonElement).disabled, true);
   fireEvent.click(view.getByLabelText("已确认旧设备停止该账号的执行"));
+  fireEvent.mouseDown(devicesTab, { button: 0 });
+  fireEvent.click(view.getByRole("button", { name: "刷新状态" }));
+  fireEvent.mouseDown(accountsTab, { button: 0 });
+  await waitFor(() => assert.equal(save.hasAttribute("disabled"), false));
+  assert.equal(select.textContent, "新设备");
   fireEvent.click(save);
   await view.findByRole("alert");
   assert.equal(select.textContent, "新设备");
@@ -333,12 +354,93 @@ test("设备管理只允许兼容设备迁移，要求停止确认，锁冲突�
   await view.findByText("当前：新设备");
   assert.deepEqual(writes[1].body, { deviceId: "ready", oldExecutionStopped: true });
   await waitFor(() => assert.equal(select.textContent, "选择设备"));
-  fireEvent.click(view.getAllByRole("button", { name: "吊销授权" })[0]);
-  const dialog = await view.findByRole("alertdialog");
+  fireEvent.mouseDown(devicesTab, { button: 0 });
+  const openRevoke = async () => {
+    fireEvent.keyDown(view.getByRole("button", { name: "更多操作：新设备" }), { key: "Enter" });
+    fireEvent.click(await view.findByRole("menuitem", { name: "吊销授权" }));
+    return view.findByRole("alertdialog");
+  };
+  let dialog = await openRevoke();
   assert.match(dialog.textContent!, /新设备/);
+  fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+  await waitFor(() => assert.equal(view.queryByRole("alertdialog"), null));
+  assert.equal(writes.length, 2);
+  dialog = await openRevoke();
   fireEvent.click(within(dialog).getByRole("button", { name: "吊销授权" }));
-  await view.findByText("已吊销");
+  await view.findByText("已吊销授权");
+  const history = await view.findByRole("button", { name: /已吊销设备/ });
+  assert.equal(history.getAttribute("aria-expanded"), "false");
+  fireEvent.click(history);
+  const revoked = within(view.getByRole("list", { name: "已吊销设备" }));
+  assert.ok(revoked.getByText("已吊销"));
+  assert.equal(revoked.queryByRole("button", { name: /更多操作/ }), null);
+  fireEvent.click(revoked.getByRole("button", { name: "关联运行 1" }));
+  assert.ok(revoked.getByText("run_active"));
   assert.equal(writes.at(-1)?.path, "/api/admin/devices/ready/revoke");
+});
+
+test("设备状态按可领取情况归组，刷新失败保留并标记上次结果", async () => {
+  const at = new Date().toISOString();
+  const device = {
+    last_seen: at,
+    revoked: 0,
+    protocol_version: PROTOCOL_VERSION,
+    online: true,
+    claimReady: true,
+    relatedRuns: [],
+  };
+  const data = {
+    users: [],
+    runs: [],
+    accounts: [],
+    settings: { claimsEnabled: "1", maintenance: false },
+    devices: [
+      { ...device, id: "offline", name: "离线电脑", online: false },
+      {
+        ...device,
+        id: "cleanup",
+        name: "待清理电脑",
+        relatedRuns: [{ id: "run_cleanup", status: "unknown", cleanupPending: true }],
+      },
+      { ...device, id: "paused", name: "未就绪电脑", claimReady: false },
+      { ...device, id: "ready", name: "就绪电脑" },
+    ],
+  };
+  let unavailable = false;
+  const view = render(
+    <AdminPanel
+      section="devices"
+      transport={transportWith(async () => {
+        if (unavailable) throw Error("NETWORK_OFFLINE");
+        return structuredClone(data);
+      })}
+    />,
+  );
+  assert.ok(view.getByText("正在读取设备状态…"));
+  const list = within(await view.findByRole("list", { name: "已授权设备" }));
+  assert.deepEqual(
+    list.getAllByRole("heading").map((row) => row.textContent),
+    ["就绪电脑", "待清理电脑", "离线电脑", "未就绪电脑"],
+  );
+  assert.ok(list.getByText("待清理"));
+  assert.ok(list.getByText("本机未就绪"));
+  assert.ok(list.getByText("离线"));
+  const refresh = view.getByRole("button", { name: "刷新状态" });
+  unavailable = true;
+  fireEvent.click(refresh);
+  await view.findByText(/刷新失败，正在显示上次结果。上次更新/);
+  assert.ok(list.getByText("可接任务"));
+  unavailable = false;
+  data.settings.claimsEnabled = "0";
+  fireEvent.click(view.getByRole("button", { name: "重新加载" }));
+  await view.findByText("管理员已暂停领取新任务。");
+  assert.ok(list.getByText("暂停领取"));
+  assert.equal(list.queryByText("可接任务"), null);
+  data.settings.maintenance = true;
+  fireEvent.click(refresh);
+  await view.findByText("云端维护中，暂不领取任务。");
+  assert.ok(list.getByText("云端维护"));
+  assert.ok(list.getByText("待清理"));
 });
 
 test("登录会话分别撤销指定及全部其他会话，当前会话始终保留", async (t) => {

@@ -1,6 +1,6 @@
 import { dbTime } from "./database";
 import { validator } from "hono/validator";
-import { PROTOCOL_VERSION } from "../../../packages/contracts/src/index";
+import { limits, PROTOCOL_VERSION, type TaskRun } from "../../../packages/contracts/src/index";
 import { z } from "zod";
 import { admin as baseAdmin } from "./user";
 const adminBase = baseAdmin;
@@ -24,6 +24,7 @@ const poolInput = z.object({ claimsEnabled: z.boolean() }).strict();
 const accountMigrationInput = z
   .object({ deviceId: z.string().min(1).max(100), oldExecutionStopped: z.literal(true) })
   .strict();
+type RelatedRunRow = { id: string; status: TaskRun["status"]; cleanupPending: number };
 export const admin = adminBase
   .get("/streaming", async (c) => {
     const flags = await c.env.DB.prepare(
@@ -67,12 +68,17 @@ export const admin = adminBase
   )
   .route("/storage", storageAdmin)
   .get("/operations", async (c) => {
+    const onlineAfter = Date.now() - limits.leaseMs;
     const [members, devices, runs, accounts, settings] = await c.env.DB.batch<Row>([
       c.env.DB.prepare(
         "SELECT id,email,role,disabled,daily_runs,scheduled_tasks,queued_runs,daily_chat,daily_models FROM members ORDER BY email",
       ),
       c.env.DB.prepare(
-        "SELECT id,name,last_seen,revoked,protocol_version,(SELECT json_group_array(r.id) FROM runs r WHERE r.device_id=devices.id AND (r.status IN ('running','waiting_user','verifying','unknown') OR r.cleanup_pending=1)) active_run_ids FROM devices ORDER BY name",
+        `SELECT id,name,last_seen,revoked,protocol_version,claim_ready,
+           (SELECT json_group_array(json_object('id',r.id,'status',r.status,'cleanupPending',r.cleanup_pending))
+            FROM runs r WHERE r.device_id=devices.id
+             AND (r.status IN ('running','waiting_user','verifying','unknown') OR r.cleanup_pending=1)) related_runs
+         FROM devices ORDER BY name,id`,
       ),
       c.env.DB.prepare(
         "SELECT id,user_id,device_id,status,created_at,updated_at,json_extract(result,'$.errorCode') error_code FROM run_details ORDER BY created_at DESC,id DESC LIMIT 50",
@@ -80,7 +86,9 @@ export const admin = adminBase
       c.env.DB.prepare(
         "SELECT id,name,origin,user_id,assigned_device_id,login_reset FROM accounts",
       ),
-      c.env.DB.prepare("SELECT key,value FROM settings WHERE key='claimsEnabled'"),
+      c.env.DB.prepare(
+        "SELECT key,value FROM settings WHERE key IN ('claimsEnabled','maintenance')",
+      ),
     ]);
     return c.json({
       users: members.results.map((m) => ({
@@ -94,14 +102,24 @@ export const admin = adminBase
         daily_chat: Number(m.daily_chat),
         daily_models: Number(m.daily_models),
       })),
-      devices: devices.results.map((d) => ({
-        id: String(d.id),
-        name: String(d.name),
-        last_seen: d.last_seen == null ? null : String(d.last_seen),
-        revoked: Number(d.revoked),
-        protocol_version: Number(d.protocol_version),
-        activeRunIds: JSON.parse(String(d.active_run_ids ?? "[]")) as string[],
-      })),
+      devices: devices.results.map((d) => {
+        const lastSeen = d.last_seen == null ? null : String(d.last_seen);
+        const relatedRuns = (JSON.parse(String(d.related_runs)) as RelatedRunRow[]).map((run) => ({
+          ...run,
+          cleanupPending: run.cleanupPending === 1,
+        }));
+        return {
+          id: String(d.id),
+          name: String(d.name),
+          last_seen: lastSeen,
+          revoked: Number(d.revoked),
+          protocol_version: Number(d.protocol_version),
+          online: lastSeen !== null && Date.parse(lastSeen) > onlineAfter,
+          claimReady: Number(d.claim_ready) === 1,
+          activeRunIds: relatedRuns.map((run) => run.id),
+          relatedRuns,
+        };
+      }),
       runs: runs.results.map((r) => ({
         id: String(r.id),
         user_id: String(r.user_id),
@@ -123,6 +141,7 @@ export const admin = adminBase
         claimsEnabled: String(
           settings.results.find((s) => s.key === "claimsEnabled")?.value ?? "0",
         ),
+        maintenance: settings.results.some((s) => s.key === "maintenance" && s.value === "1"),
       },
     });
   })
