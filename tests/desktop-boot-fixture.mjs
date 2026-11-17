@@ -20,7 +20,7 @@ const app = Object.assign(events(), {
   setAppUserModelId: () => send("appId"),
   getLoginItemSettings: () => ({ launchItems: [] }),
   setLoginItemSettings: (settings) => send("login", settings),
-  exit: (code) => process.exit(code),
+  exit: (code) => process.send({ type: "exit" }, () => process.exit(code)),
 });
 const frame = {};
 const webContents = Object.assign(events(), {
@@ -104,9 +104,14 @@ registerHooks({
   },
 });
 let claims = 0;
+let holdReadiness = false;
 globalThis.fetch = async (input) => {
   const url = new URL(input);
   let body = {};
+  if (holdReadiness && url.pathname === "/api/device/readiness") {
+    send("pendingReadiness");
+    return new Promise(() => {});
+  }
   if (url.pathname === "/api/runner/claim") {
     send("claim");
     body = {
@@ -127,6 +132,11 @@ globalThis.fetch = async (input) => {
 };
 async function handleMessage({ id, method, input }) {
   try {
+    if (method === "resume" || method === "holdReadiness") {
+      holdReadiness = method === "holdReadiness";
+      electron.powerMonitor.emit("resume");
+      return;
+    }
     if (method === "quit") {
       trayMenu.find((item) => item.label === "退出 TaskRelay").click();
       return;

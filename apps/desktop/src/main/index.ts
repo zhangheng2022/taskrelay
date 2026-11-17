@@ -275,20 +275,20 @@ async function prepareQuit() {
   if (updater?.status.phase === "installing") throw Error("执行器正在安装更新。");
   quitting = true;
   try {
-    // 领取可能已送达云端。先等本次领取返回，再停止它实际启动的运行。
-    await poller?.waitForPoll();
     await host?.stop(true);
+    // 浏览器立即停止。仅等已送到云端的领取消解；回传可以由 journal 在下次启动时继续。
+    await poller?.waitForClaim();
   } catch {
     quitting = false;
     lastError = "PROCESS_CLEANUP_FAILED";
     throw Error(lastError);
   }
   cloud?.close();
-  journal?.close();
   updater?.stop();
 }
 function finishQuit() {
   try {
+    journal?.close();
     control?.close();
     tray?.destroy();
   } finally {

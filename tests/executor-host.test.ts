@@ -571,6 +571,44 @@ test("Poller 在 connect 等待后重新检查更新门闩，避免新增租约"
   assert.equal(poller.unsettled, false);
 });
 
+test("退出期间收到迟到的租约，保存取消和关闭事实而不启动浏览器", async (t) => {
+  const s = fixture(t);
+  const delivered = deferred<void>();
+  const response = deferred<{ run: TaskRun }>();
+  const run = { ...s.run("quit-late-claim"), cleanupPending: true };
+  let quitting = false;
+  const cloud = {
+    paired: true,
+    connect: async () => ({ maintenance: false }),
+    request: async <T>(_method: string, route: string) => {
+      if (route.endsWith("/readiness")) return {} as T;
+      delivered.resolve();
+      return (await response.promise) as T;
+    },
+  };
+  const poller = new RunnerPoller(cloud, s.host, s.journal, {
+    quitting: () => quitting,
+    blocksClaims: () => false,
+    installing: () => false,
+    result: () => {},
+    settled: () => {},
+  });
+  const poll = poller.poll();
+  await delivered.promise;
+  quitting = true;
+  const settled = poller.waitForClaim();
+  response.resolve({ run });
+  await Promise.all([poll, settled]);
+  assert.equal(s.children.length, 0);
+  assert.equal(s.journal.get("claimRequest"), null);
+  const reports = s.journal.pending();
+  assert.deepEqual(
+    reports.map((row) => row.id),
+    [`finish_${run.id}`, `closed_${run.id}`],
+  );
+  assert.equal(JSON.parse(reports[0].body).status, "cancelled");
+});
+
 test("Host 更新空闲状态等待已进入 RPC 的云端请求结束", async (t) => {
   const s = fixture(t),
     response = deferred<unknown>();

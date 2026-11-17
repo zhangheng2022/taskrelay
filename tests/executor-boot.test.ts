@@ -119,8 +119,13 @@ test("后台 Main 领取并启动运行，独立桌面进程控制同一执行�
     assert.equal((await foreground.call<DesktopStatus>("status")).paused, true);
     foreground.send("trayPause");
     assert.equal((await foreground.call<DesktopStatus>("status")).paused, false);
+    foreground.send("resume");
+    await foreground.wait("utility", (value) => value === "start");
+    foreground.send("holdReadiness");
+    await foreground.wait("pendingReadiness");
     const exited = once(foreground.child, "exit");
     foreground.send("quit");
+    await foreground.wait("utility", (value) => value === "cancel");
     assert.deepEqual(await exited, [0, null]);
 
     const reboot = launch("background");
