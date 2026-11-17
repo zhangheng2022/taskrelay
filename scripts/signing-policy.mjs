@@ -2,7 +2,7 @@
 import certificate from "../resources/signing/certificate-info.json" with { type: "json" };
 
 export const signingCertificate = certificate;
-export function validateSigning(manifest, { allowTest = false } = {}) {
+export function validateSigning(manifest, { allowTest = false, legacyResume = false } = {}) {
   const report = manifest.signing;
   const fail = () => {
     throw Error("RELEASE_SIGNATURE_INVALID");
@@ -42,10 +42,14 @@ export function validateSigning(manifest, { allowTest = false } = {}) {
     "installed-stub",
     "installed-updater",
   ];
+  // 只有固定清单恢复可以读取 0.27.0 的历史服务签名证据。
   const serviceArtifact = manifest.artifacts?.find((entry) =>
     entry.file.endsWith("/TaskRelay.Service.Setup.exe"),
   );
-  if (serviceArtifact) roles.push("service-setup", "service-host");
+  if (serviceArtifact) {
+    if (!legacyResume || manifest.version !== "0.27.0") fail();
+    roles.push("service-setup", "service-host");
+  }
   if (!Array.isArray(report.files) || report.files.length !== roles.length) fail();
   const files = new Map(report.files.map((file) => [file.role, file]));
   for (const role of roles) {

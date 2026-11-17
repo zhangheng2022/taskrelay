@@ -2,7 +2,6 @@ import { z } from "zod";
 
 export const UPDATE_ORIGIN = "https://tr.zhangheng.eu.org";
 export const UPDATE_PATH = "/api/updates/windows-x64";
-export const SERVICE_UPDATE_PATH = "/api/updates/windows-service-x64";
 // 通知只使客户端重新读取固定更新源，不承载下载地址或安装指令。
 export const updateEventSchema = z
   .object({ type: z.literal("update.available"), version: z.literal(1) })
@@ -19,24 +18,6 @@ export const releaseSchema = z
   })
   .strict();
 export type DesktopRelease = z.infer<typeof releaseSchema>;
-export const serviceReleaseSchema = releaseSchema.omit({ sha1: true });
-export type ServiceRelease = z.infer<typeof serviceReleaseSchema>;
-export const serviceCatalogSchema = z
-  .object({
-    latest: releaseSchema.shape.version.nullable(),
-    releases: z.array(serviceReleaseSchema).max(100),
-  })
-  .strict()
-  .refine(
-    (c) =>
-      new Set(c.releases.map((r) => r.version)).size === c.releases.length &&
-      (c.latest === null || c.releases.some((r) => r.version === c.latest)),
-    "INVALID_SERVICE_CATALOG",
-  );
-export const serviceSetupName = "TaskRelay.Service.Setup.exe";
-export function servicePackagePath(release: ServiceRelease) {
-  return `${SERVICE_UPDATE_PATH}/${release.version}/${release.sha256}/${serviceSetupName}`;
-}
 export const releaseCatalogSchema = z
   .object({
     latest: releaseSchema.shape.version.nullable(),

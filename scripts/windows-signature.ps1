@@ -84,11 +84,6 @@ if ($Installed) {
     $evidence += Get-SignatureEvidence $installedReport.executablePath 'installed-app'
     $evidence += Get-SignatureEvidence (Join-Path $installRoot 'Update.exe') 'installed-updater'
     $evidence += Get-SignatureEvidence (Join-Path $installRoot 'TaskRelay.exe') 'installed-stub'
-    $serviceSetup = Join-Path $makeDirectory 'TaskRelay.Service.Setup.exe'
-    if (Test-Path -LiteralPath $serviceSetup) {
-        $evidence += Get-SignatureEvidence $serviceSetup 'service-setup'
-        $evidence += Get-SignatureEvidence (Join-Path $env:ProgramFiles 'TaskRelayService/bin/TaskRelay.Service.exe') 'service-host'
-    }
 }
 $report = [ordered]@{
     schema = 1; type = 'self-signed'; testOnly = $info.testOnly; certificateSha256 = $fingerprint

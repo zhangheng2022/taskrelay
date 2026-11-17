@@ -26,6 +26,22 @@ const release = {
   notes: "修复与改进",
   publishedAt: "2026-11-04T00:00:00.000Z",
 };
+
+test("已撤回的后台服务更新目录为空且不再代理安装包", async () => {
+  const catalog = { latest: release.version, releases: [release] };
+  const base = `${UPDATE_ORIGIN}/api/updates/windows-service-x64`;
+  const unexpected = async () => {
+    assert.fail("退役通道不能请求上游");
+  };
+  const metadata = await serveUpdate(new Request(`${base}/latest.json`), catalog, unexpected);
+  assert.deepEqual(await metadata.json(), { release: null });
+  const installer = await serveUpdate(
+    new Request(`${base}/${release.version}/${release.sha256}/TaskRelay.Service.Setup.exe`),
+    catalog,
+    unexpected,
+  );
+  assert.equal(installer.status, 404);
+});
 class Native extends EventEmitter {
   feed = "";
   checks = 0;

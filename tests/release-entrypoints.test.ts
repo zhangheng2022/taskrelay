@@ -151,7 +151,6 @@ test("真实生产发布入口核对 SQL、安装包和恢复结果，异常保�
         ],
       );
       assert.equal(output.unknownLocks, 1);
-      assert.equal(JSON.parse(output.state.windowsServiceReleaseCatalog).latest, "0.17.1");
     }
     if (!expected.phase) {
       assert.deepEqual(output.commands, []);

@@ -67,7 +67,7 @@ export async function verifyFiles(kind, root, sha, { legacyResume = false } = {}
       acceptance.signed === false &&
       version &&
       (Number(version[1]) < 19 || (Number(version[1]) === 19 && Number(version[2]) < 6));
-    if (!oldUnsigned) validateSigning(acceptance);
+    if (!oldUnsigned) validateSigning(acceptance, { legacyResume });
     for (const artifact of acceptance.artifacts ?? []) {
       if (!artifact.file.startsWith("apps/desktop/out/make/")) continue;
       const file = actual[artifact.file];
@@ -92,11 +92,6 @@ export async function verifyFiles(kind, root, sha, { legacyResume = false } = {}
         JSON.stringify(report) !== JSON.stringify(acceptance.reports[name])
       )
         throw Error("ARTIFACT_ACCEPTANCE_MISMATCH");
-    }
-    if (acceptance.reports?.service) {
-      const report = JSON.parse(await readFile(path.join(root, "out/service-smoke.json"), "utf8"));
-      if (JSON.stringify(report) !== JSON.stringify(acceptance.reports.service))
-        throw Error("ARTIFACT_SERVICE_ACCEPTANCE_MISMATCH");
     }
   }
   return manifest;
@@ -191,8 +186,7 @@ export async function verifyBundle(root, sha, expectedHash, required = ["web", "
   return { plan, hash: sha256(bytes) };
 }
 async function stageWindows() {
-  const manifest = JSON.parse(await readFile("out/release-manifest.json", "utf8"));
-  validateSigning(manifest);
+  validateSigning(JSON.parse(await readFile("out/release-manifest.json", "utf8")));
   const root = "out/candidate-windows";
   await mkdir(root, { recursive: true });
   for (const file of [
@@ -202,7 +196,6 @@ async function stageWindows() {
     "out/system-entry.json",
     "out/packaged-smoke.json",
     "out/installed-smoke.json",
-    ...(manifest.reports?.service ? ["out/service-smoke.json"] : []),
   ]) {
     await mkdir(path.dirname(path.join(root, file)), { recursive: true });
     await cp(file, path.join(root, file), { recursive: true });

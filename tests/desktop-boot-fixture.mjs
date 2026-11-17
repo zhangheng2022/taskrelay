@@ -7,10 +7,11 @@ import { pathToFileURL } from "node:url";
 import { run } from "./ui-fixtures.ts";
 
 const [profile, resources, mode] = process.argv.slice(2);
-if (mode === "background") process.argv.push("--taskrelay-background");
+if (mode === "legacy-boot") process.argv.push("--taskrelay-background");
 const handlers = new Map();
 const send = (type, data) => process.send({ type, data });
 const events = () => new EventEmitter();
+let loginItem = [];
 const app = Object.assign(events(), {
   isPackaged: true,
   getVersion: () => "0.26.9",
@@ -18,8 +19,14 @@ const app = Object.assign(events(), {
   whenReady: async () => {},
   requestSingleInstanceLock: () => true,
   setAppUserModelId: () => send("appId"),
-  getLoginItemSettings: () => ({ launchItems: [] }),
-  setLoginItemSettings: (settings) => send("login", settings),
+  getLoginItemSettings: () => ({ launchItems: loginItem }),
+  setLoginItemSettings: (settings) => {
+    loginItem = settings.openAtLogin
+      ? [{ name: settings.name, scope: "user", args: settings.args, enabled: settings.enabled }]
+      : [];
+    send("login", settings);
+  },
+  quit: () => process.send({ type: "exit" }, () => process.exit(0)),
   exit: (code) => process.send({ type: "exit" }, () => process.exit(code)),
 });
 const frame = {};
@@ -96,91 +103,10 @@ await writeFile(
     .join(""),
 );
 const fixtureUrl = pathToFileURL(mock).href;
-let service, serviceMock;
-if (mode === "service-ui") {
-  let cancelled = true;
-  let paired = false;
-  let paused = false;
-  let version = "0.27.0";
-  let release = "0.27.0";
-  const adapter = new (class {
-    supported = true;
-    async info() {
-      return service ?? null;
-    }
-    async setStartup(enabled) {
-      service.mode = enabled ? "auto" : "manual";
-    }
-    async start() {
-      service.running = true;
-    }
-    async prepareInstall(selected) {
-      return {
-        run: async () => {
-          if (cancelled) {
-            cancelled = false;
-            throw Error("SERVICE_UAC_CANCELLED");
-          }
-          service = { mode: service?.mode ?? "auto", running: true };
-          version = selected.version;
-          release = "0.27.1";
-        },
-        cleanup: async () => {},
-      };
-    }
-    async call(method, input) {
-      if (method === "quit") {
-        service.running = false;
-        return;
-      }
-      if (method === "status")
-        return {
-          paired,
-          version,
-          cloudUrl: "https://127.0.0.1:1",
-          paused,
-          online: paired,
-          activeRunId: null,
-          error: null,
-        };
-      if (method === "configure") return { url: input + "/pair", code: "123456" };
-      if (method === "pairPoll") {
-        paired = true;
-        return true;
-      }
-      if (method === "pause") paused = input;
-      if (method === "idleForService") return true;
-    }
-  })();
-  globalThis.executorServiceFixture = {
-    WindowsService: class {
-      constructor() {
-        return adapter;
-      }
-    },
-    fetchServiceRelease: async () => ({ version: release }),
-    readServiceEnvironment: () => {
-      throw Error("UNEXPECTED_SERVICE_MODE");
-    },
-    serveServiceCommands: () => {
-      throw Error("UNEXPECTED_SERVICE_MODE");
-    },
-  };
-  const file = path.join(profile, "service-fixture.cjs");
-  await writeFile(
-    file,
-    Object.keys(globalThis.executorServiceFixture)
-      .map((name) => `exports.${name}=globalThis.executorServiceFixture.${name};`)
-      .join(""),
-  );
-  serviceMock = pathToFileURL(file).href;
-}
 registerHooks({
   resolve(specifier, context, next) {
     if (specifier === "electron")
       return { url: fixtureUrl, format: "commonjs", shortCircuit: true };
-    if (specifier === "./windows-service" && serviceMock)
-      return { url: serviceMock, format: "commonjs", shortCircuit: true };
     return next(specifier === "original-fs" ? "node:fs" : specifier, context);
   },
 });
