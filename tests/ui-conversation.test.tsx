@@ -512,6 +512,89 @@ test("截图直接显示在聊天，不渲染旧运行事件卡；停止不调�
   assert.ok(writes[0].path.endsWith("/cancel"));
 });
 
+test("同一按钮在空稿停止和附件发送间切换，附件失败原样重试", async () => {
+  let page: ThreadPage = {
+    ...threadPage,
+    taskId: task.id,
+    attachmentCapabilities: { vision: true, pdf: false },
+  };
+  let finishStop!: () => void;
+  const requests: Array<{ requestId: string; content: string; files: readonly File[] }> = [];
+  let stops = 0;
+  const transport = transportWith(async (method, path) => {
+    if (path.split("?")[0] === "/api/user/threads")
+      return { items: [{ id: page.id, task_id: task.id }], nextCursor: null };
+    if (method === "POST" && path.endsWith("/cancel")) {
+      stops++;
+      await new Promise<void>((resolve) => {
+        finishStop = resolve;
+      });
+    }
+    return page;
+  });
+  transport.sendAttachments = async (_, request) => {
+    requests.push(request);
+    if (requests.length === 1) throw Error("REQUEST_UNCONFIRMED");
+    page = {
+      ...page,
+      messages: [
+        {
+          id: "sent",
+          seq: 1,
+          role: "user",
+          content: "",
+          at: new Date().toISOString(),
+          attachments: [{ id: "text-id", name: "资料.txt", mime: "text/plain", size: 4 }],
+        },
+      ],
+    };
+    return page;
+  };
+  const webTransport = createWebTransport();
+  transport.attachmentUrl = (...args) => webTransport.attachmentUrl!(...args);
+  const v = render(
+    <Conversation
+      transport={transport}
+      task={task}
+      run={run}
+      offline={false}
+      refresh={async () => {}}
+    />,
+  );
+  const input = v.getByRole("textbox");
+  await waitFor(() => assert.equal((input as HTMLTextAreaElement).disabled, false));
+  const button = v.getByRole("button", { name: "停止执行" });
+  fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+  assert.equal(stops, 0);
+  const picture = new window.File(["image"], "粘贴.png", { type: "image/png" });
+  fireEvent.paste(input, { clipboardData: { files: [picture], getData: () => "" } });
+  assert.equal(v.getByRole("button", { name: "发送消息" }), button);
+  fireEvent.click(v.getByRole("button", { name: "移除 粘贴.png" }));
+  assert.equal(v.getByRole("button", { name: "停止执行" }), button);
+  const file = new window.File(["data"], "资料.txt", { type: "text/plain" });
+  const invalid = new window.File(["bad"], "bad.svg", { type: "image/svg+xml" });
+  fireEvent.drop(input, { dataTransfer: { types: ["Files"], files: [file, invalid] } });
+  assert.ok(v.getByText("资料.txt"));
+  assert.ok(v.getByText(/文件格式不受支持/));
+  fireEvent.keyDown(input, { key: "Enter", isComposing: true, keyCode: 229 });
+  assert.equal(requests.length, 0);
+  fireEvent.click(button);
+  await v.findByRole("button", { name: "移除 资料.txt" });
+  assert.equal(requests.length, 1);
+  fireEvent.click(button);
+  const download = await v.findByRole("link", { name: "下载 资料.txt" });
+  assert.match(download.getAttribute("href")!, /attachments\/text-id\?download=1$/);
+  assert.equal(requests[0].requestId, requests[1].requestId);
+  assert.equal(requests[1].content, "");
+  assert.deepEqual(requests[1].files, [file]);
+  assert.equal(v.getByRole("button", { name: "停止执行" }), button);
+  fireEvent.click(button);
+  assert.equal(v.getByRole("button", { name: "正在停止执行" }), button);
+  fireEvent.click(button);
+  assert.equal(stops, 1);
+  await act(async () => finishStop());
+});
+
 test("连续运行通知合并读取，不饿死聊天刷新", async () => {
   let notify: (() => void) | undefined,
     pending: ((value: any) => void) | undefined,

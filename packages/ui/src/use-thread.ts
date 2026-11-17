@@ -51,7 +51,9 @@ export function useThread(
   resumeThreadId?: string,
 ) {
   const [page, setPage] = useState<ThreadPage | null>(null),
-    [sending, setSending] = useState<{ id: string; content: string } | null>(null),
+    [sending, setSending] = useState<{ id: string; content: string; filenames?: string[] } | null>(
+      null,
+    ),
     [error, setError] = useState(""),
     [loading, setLoading] = useState(!!(taskId || resumeThreadId)),
     [retryIndex, setRetryIndex] = useState(0);
@@ -60,6 +62,7 @@ export function useThread(
     attempt = useRef<{
       content: string;
       requestId: string;
+      files: readonly File[];
     } | null>(null);
   const revision = useRef(0),
     reading = useRef(0),
@@ -241,21 +244,34 @@ export function useThread(
     content: string,
     onThreadCreated?: (id: string) => void,
     effort?: ReasoningEffort | null,
+    files: readonly File[] = [],
   ) {
     let p = current.current;
     if (!p && (kind !== "compose" || resumeThreadId || !modelId)) throw new Error("会话尚未加载");
     if (writing.current) throw new Error("消息正在发送");
-    if (attempt.current && attempt.current.content !== content)
+    if (files.length && !transport.sendAttachments) throw Error("ATTACHMENT_UNAVAILABLE");
+    if (
+      attempt.current &&
+      (attempt.current.content !== content ||
+        attempt.current.files.length !== files.length ||
+        attempt.current.files.some((file, i) => file !== files[i]))
+    )
       throw new Error("请先重试上一条消息以确认结果");
     attempt.current ??= {
       content,
       requestId: crypto.randomUUID(),
+      files,
     };
+    const pending = attempt.current;
     const g = generation.current,
       d = draftRevision.current;
     revision.current++;
     writing.current = true;
-    setSending({ id: `pending_${attempt.current.requestId}`, content });
+    setSending({
+      id: `pending_${pending.requestId}`,
+      content,
+      ...(files.length ? { filenames: files.map((file) => file.name) } : {}),
+    });
     try {
       const api = createApi(transport).api.user.threads;
       if (!p) {
@@ -266,12 +282,15 @@ export function useThread(
         accept(p);
         onThreadCreated?.(p.id);
       }
-      const result = await rpcData(
-        api[":id"].messages.$post({
-          param: { id: p.id },
-          json: attempt.current,
-        }),
-      );
+      const result =
+        files.length && transport.sendAttachments
+          ? await transport.sendAttachments(p.id, pending)
+          : await rpcData(
+              api[":id"].messages.$post({
+                param: { id: p.id },
+                json: { requestId: pending.requestId, content: pending.content },
+              }),
+            );
       if (g !== generation.current) return result;
       accept(
         mergeLatest(
@@ -281,9 +300,10 @@ export function useThread(
       );
       attempt.current = null;
       if (
-        ("status" in result ? result.status : undefined) === "failed" ||
-        ("status" in result ? result.status : undefined) === "unknown" ||
-        ("status" in result ? result.status : undefined) === "cancelled"
+        !files.length &&
+        (("status" in result ? result.status : undefined) === "failed" ||
+          ("status" in result ? result.status : undefined) === "unknown" ||
+          ("status" in result ? result.status : undefined) === "cancelled")
       )
         throw new Error(
           ("error" in result && typeof result.error === "string" ? result.error : undefined) ??
@@ -292,7 +312,16 @@ export function useThread(
       return result;
     } catch (error) {
       // 会话尚未创建成功时，消息请求还没有发出，允许直接修改原文重试。
-      if (!p && g === generation.current) attempt.current = null;
+      if (
+        g === generation.current &&
+        (!p ||
+          (files.length &&
+            error instanceof Error &&
+            /^ATTACHMENT_|^BODY_TOO_LARGE$|^INVALID_INPUT$|^MODEL_DISABLED$|^MODEL_NOT_FOUND$|^MESSAGE_CONFLICT$/.test(
+              error.message,
+            )))
+      )
+        attempt.current = null;
       throw error;
     } finally {
       if (g === generation.current) {

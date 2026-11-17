@@ -208,8 +208,10 @@ export class Evidence extends DurableObject<AppEnv> {
       this.env.DB.prepare(
         `INSERT OR IGNORE INTO evidence_retirements(object_key,retired_at)
         SELECT ?,? WHERE NOT EXISTS(SELECT 1 FROM artifacts a JOIN ai_threads t ON t.id=a.thread_id
-          WHERE a.object_key=? AND a.persistent=1 AND t.closed=0)`,
-      ).bind(key, dbTime(new Date().toISOString()), key),
+          WHERE a.object_key=? AND a.persistent=1 AND t.closed=0)
+        AND NOT EXISTS(SELECT 1 FROM chat_attachments a JOIN ai_threads t ON t.id=a.thread_id
+          WHERE a.object_key=? AND t.closed=0)`,
+      ).bind(key, dbTime(new Date().toISOString()), key, key),
       this.env.DB.prepare("SELECT object_key FROM evidence_retirements WHERE object_key=?").bind(
         key,
       ),

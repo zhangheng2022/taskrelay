@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { enqueue } from "../apps/cloud/src/store";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -114,6 +114,12 @@ test("移除 Chat 协议只退休固定到旧版本的运行，保留历史和�
   assert.deepEqual(sql.prepare("PRAGMA foreign_key_check").all(), []);
   await assert.rejects(invoke(env, mixed.id, 1, { messages: [] }), /MODEL_PROTOCOL_RETIRED/);
   assert.equal((await storeModel(env, input, mixed.id, 2)).version, 3);
+  // 验证历史迁移后，再用当前路由读取已升级到当前结构的存量历史。
+  const migrations = new URL("../apps/cloud/migrations/", import.meta.url);
+  for (const file of readdirSync(migrations)
+    .filter((name) => name > "0009_remove_retired_models.sql" && name.endsWith(".sql"))
+    .sort())
+    sql.exec(readFileSync(new URL(file, migrations), "utf8"));
   const runPage = await app.request("http://localhost/api/user/runs/" + runId, {}, env);
   assert.equal(runPage.status, 200);
   assert.equal(((await runPage.json()) as { usage: { cost: number }[] }).usage[0]?.cost, 0.000035);

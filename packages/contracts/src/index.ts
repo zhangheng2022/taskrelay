@@ -237,6 +237,7 @@ export interface ModelCapabilities {
       {
         structured: "schema" | "json";
         vision: boolean;
+        pdf?: boolean;
         streaming: Array<"text" | "tools" | "structured">;
       }
     >
@@ -248,6 +249,7 @@ export interface ModelCapabilities {
   structured: "schema" | "json" | "none";
   vision: boolean;
   visionTestedAt?: string;
+  pdf?: boolean;
   testedAt: string | null;
   error?: string;
 }
@@ -330,6 +332,11 @@ export interface Transport {
   ): Promise<T>;
   /** 宿主提供受鉴权的图片地址；图片二进制不经过 JSON 请求通道。 */
   artifactUrl?(id: string, variant?: "original" | "thumbnail"): string;
+  sendAttachments?(
+    threadId: string,
+    message: import("./attachments").AttachmentMessage,
+  ): Promise<import("./conversation").ThreadPage & { status?: string; error?: string | null }>;
+  attachmentUrl?(threadId: string, id: string, download?: boolean): string;
   subscribe?(fn: () => void): () => void;
   subscribeDrafts?(fn: (event: import("./streaming").DraftEvent) => void): () => void;
   desktop?: {

@@ -1,8 +1,15 @@
 import { ImagePreviewProvider } from "./chat-image";
 import { Spinner } from "./components/ui/spinner";
 import { ChatMarkdown } from "./chat-markdown";
-import { useLayoutEffect, type ReactNode } from "react";
-import { ArrowUp, Loader2, CirclePause } from "lucide-react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { ArrowUp, Loader2, CirclePause, Paperclip, Square } from "lucide-react";
+import { attachmentAccept, type AttachmentCapabilities } from "../../contracts/src/attachments";
+import {
+  addAttachmentFiles,
+  ComposeAttachmentList,
+  draftAttachmentError,
+} from "./compose-attachments";
+import { ErrorText } from "./feedback";
 import {
   InputGroup,
   InputGroupAddon,
@@ -137,11 +144,20 @@ export function ThreadActivity({
   );
 }
 // 新交办和既有聊天共用发送回显。确认后由服务端消息替换，失败后原文回到输入框重试。
-export function SendingMessage({ message }: { message: { id: string; content: string } | null }) {
+export function SendingMessage({
+  message,
+}: {
+  message: { id: string; content: string; filenames?: string[] } | null;
+}) {
   if (!message) return null;
   return (
     <MessageScrollerItem messageId={message.id}>
-      <ChatMessage speaker="user">{message.content}</ChatMessage>
+      <ChatMessage speaker="user">
+        {message.content}
+        {message.filenames?.length ? (
+          <div className="break-all text-sm">{message.filenames.join("、")}</div>
+        ) : null}
+      </ChatMessage>
     </MessageScrollerItem>
   );
 }
@@ -156,6 +172,8 @@ export function Composer({
   maxLength = 6000,
   modelControls,
   children,
+  attachments,
+  stop,
 }: {
   text: string;
   setText: (value: string) => void;
@@ -167,17 +185,59 @@ export function Composer({
   maxLength?: number;
   modelControls?: ReactNode;
   children?: ReactNode;
+  attachments?: {
+    files: readonly File[];
+    setFiles: (files: File[]) => void;
+    caps: AttachmentCapabilities;
+  };
+  stop?: { onStop: () => void; pending: boolean; disabled?: boolean };
 }) {
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [fileError, setFileError] = useState("");
+  const hasDraft = !!text.trim() || !!attachments?.files.length;
+  const showStop = !!stop && (!hasDraft || stop.pending) && !busy;
+  const capabilityError = attachments && draftAttachmentError(attachments.files, attachments.caps);
+  const inputLocked = !!disabled || busy || !!stop?.pending;
+  function add(files: File[]) {
+    if (!attachments || inputLocked || !files.length) return;
+    const result = addAttachmentFiles(attachments.files, files);
+    attachments.setFiles(result.files);
+    setFileError(result.error);
+  }
   return (
+    // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- 拖放是附件选择器的可选入口；键盘使用添加附件按钮。
     <form
       aria-busy={busy}
       className="mx-auto w-full max-w-3xl shrink-0 px-4 pb-4 pt-2 md:px-8"
       onSubmit={(e) => {
         e.preventDefault();
-        if (text.trim() && !busy && !disabled) onSend();
+        if (hasDraft && !inputLocked && !capabilityError) {
+          setFileError("");
+          onSend();
+        }
+      }}
+      onDragOver={(e) => {
+        if (attachments && e.dataTransfer.types.includes("Files")) e.preventDefault();
+      }}
+      onDrop={(e) => {
+        if (!attachments || !e.dataTransfer.types.includes("Files")) return;
+        e.preventDefault();
+        add(Array.from(e.dataTransfer.files));
       }}
     >
       <InputGroup className="rounded-2xl bg-muted">
+        {!!attachments?.files.length && (
+          <InputGroupAddon align="block-start" className="min-w-0">
+            <ComposeAttachmentList
+              files={attachments.files}
+              disabled={busy || stop?.pending}
+              onRemove={(index) => {
+                attachments.setFiles(attachments.files.filter((_, i) => i !== index));
+                setFileError("");
+              }}
+            />
+          </InputGroupAddon>
+        )}
         <InputGroupTextarea
           aria-label={label}
           value={text}
@@ -185,10 +245,19 @@ export function Composer({
           placeholder={placeholder}
           rows={2}
           maxLength={maxLength}
-          readOnly={busy}
+          readOnly={busy || stop?.pending}
           disabled={disabled}
           autoComplete="off"
           spellCheck={false}
+          onPaste={(e) => {
+            if (!attachments) return;
+            const images = Array.from(e.clipboardData.files).filter((file) =>
+              file.type.startsWith("image/"),
+            );
+            if (!images.length) return;
+            if (!e.clipboardData.getData("text/plain")) e.preventDefault();
+            add(images);
+          }}
           onKeyDown={(e) => {
             if (
               e.key === "Enter" &&
@@ -202,19 +271,54 @@ export function Composer({
           }}
         />
         <InputGroupAddon align="block-end" className="flex-wrap">
+          {attachments && (
+            <>
+              <input
+                ref={fileInput}
+                type="file"
+                multiple
+                accept={attachmentAccept}
+                hidden
+                aria-label="选择附件文件"
+                onChange={(e) => {
+                  add(Array.from(e.currentTarget.files ?? []));
+                  e.currentTarget.value = "";
+                }}
+              />
+              <InputGroupButton
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label="添加附件"
+                title="添加附件"
+                disabled={inputLocked}
+                onClick={() => fileInput.current?.click()}
+              >
+                <Paperclip aria-hidden="true" />
+              </InputGroupButton>
+            </>
+          )}
           {children}
           <div className="ml-auto flex min-w-0 max-w-full items-center justify-end gap-2">
             {modelControls}
             <InputGroupButton
-              type="submit"
+              type={showStop ? "button" : "submit"}
               size="icon-sm"
               variant="default"
               className="shrink-0 rounded-full"
-              aria-label="发送消息"
-              disabled={busy || disabled || !text.trim()}
+              aria-label={showStop ? (stop.pending ? "正在停止执行" : "停止执行") : "发送消息"}
+              title={showStop ? (stop.pending ? "正在停止执行" : "停止执行") : "发送消息"}
+              onClick={showStop ? stop.onStop : undefined}
+              disabled={
+                showStop
+                  ? stop.disabled || stop.pending
+                  : inputLocked || !hasDraft || !!capabilityError
+              }
             >
-              {busy ? (
+              {busy || (showStop && stop.pending) ? (
                 <Spinner aria-hidden="true" data-icon="inline-start" />
+              ) : showStop ? (
+                <Square data-icon="inline-start" aria-hidden="true" className="fill-current" />
               ) : (
                 <ArrowUp data-icon="inline-start" />
               )}
@@ -222,6 +326,7 @@ export function Composer({
           </div>
         </InputGroupAddon>
       </InputGroup>
+      {(capabilityError || fileError) && <ErrorText error={capabilityError || fileError} />}
       <p className="mt-2 text-center text-xs text-muted-foreground">
         Enter 发送 · Shift + Enter 换行
       </p>

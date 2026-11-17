@@ -38,6 +38,7 @@ import {
   storeModel,
   probe,
   probeVision,
+  probePdf,
   probeReasoningEffort,
 } from "./models";
 import { seal, unseal } from "./crypto";
@@ -601,6 +602,24 @@ export const admin = adminBase
       await probeVision({ ...c.env, adminProbeModelId: id }, id, c.req.valid("query").version),
     );
   })
+  .post(
+    "/models/:id/pdf",
+    probeVersion,
+    validator("json", (value) =>
+      z.object({ effort: reasoningEffortSchema.nullable() }).strict().parse(value),
+    ),
+    async (c) => {
+      const id = c.req.param("id");
+      return c.json(
+        await probePdf(
+          { ...c.env, adminProbeModelId: id },
+          id,
+          c.req.valid("query").version,
+          c.req.valid("json").effort,
+        ),
+      );
+    },
+  )
   .post(
     "/models/:id/reasoning-effort",
     probeVersion,

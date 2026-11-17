@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { ChatMarkdown } from "./chat-markdown";
 import type { ReasoningEffort, Snapshot, Transport } from "../../contracts/src/index";
+import { attachmentCapabilities } from "../../contracts/src/attachments";
 import { useThread } from "./use-thread";
 import { canUseModel, ModelSelector, ReasoningEffortSelector } from "./model-selector";
 import { Thread, ChatMessage, Composer, ThreadActivity, SendingMessage } from "./chat-parts";
 import { MessageScrollerItem } from "./components/ui/message-scroller";
 import { Button } from "./components/ui/button";
 import { ErrorText, LoadFeedback } from "./feedback";
-import { ChatAttachments } from "./chat-attachments";
+import { ChatAttachments, SentAttachments } from "./chat-attachments";
 import { DraftMessages } from "./chat-parts";
 
 // 新任务以普通聊天交办；云端返回 taskId 后沿用原会话进入任务页，不在本地创建执行计划。
@@ -40,6 +41,7 @@ export function TaskCompose({
   const [effort, setEffort] = useState<ReasoningEffort | null>(null);
   const optionsLocked = offline || !!thread.page?.activeTurn || !!thread.page?.queued?.length;
   const [text, setText] = useState(""),
+    [files, setFiles] = useState<File[]>([]),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const flight = useRef(false),
@@ -58,16 +60,18 @@ export function TaskCompose({
     }
   }, [thread.page?.taskId, onSaved]);
   async function send() {
-    if (flight.current || offline || !text.trim() || !canSend) return;
+    if (flight.current || offline || (!text.trim() && !files.length) || !canSend) return;
     flight.current = true;
     setBusy(true);
     setError("");
     const content = text;
     setText("");
+    setFiles([]);
     try {
-      await thread.send(content, onThreadCreated, effort);
+      await thread.send(content, onThreadCreated, effort, files);
     } catch (e) {
       setText(content);
+      setFiles(files);
       setError((e as Error).message);
     } finally {
       flight.current = false;
@@ -133,12 +137,24 @@ export function TaskCompose({
                 offline={offline}
                 onAccountSaved={thread.refresh}
               />
+              <SentAttachments
+                files={m.attachments}
+                threadId={thread.page?.id}
+                transport={transport}
+              />
             </ChatMessage>
           </MessageScrollerItem>
         ))}
         {thread.page?.queued?.map((m) => (
           <MessageScrollerItem key={m.id} messageId={m.id}>
-            <ChatMessage speaker="user">{m.content}</ChatMessage>
+            <ChatMessage speaker="user">
+              {m.content}
+              <SentAttachments
+                files={m.attachments}
+                threadId={thread.page?.id}
+                transport={transport}
+              />
+            </ChatMessage>
           </MessageScrollerItem>
         ))}
         <DraftMessages drafts={thread.page?.drafts} />
@@ -157,6 +173,17 @@ export function TaskCompose({
         setText={setText}
         onSend={() => void send()}
         busy={busy}
+        attachments={
+          transport.sendAttachments
+            ? {
+                files,
+                setFiles,
+                caps:
+                  thread.page?.attachmentCapabilities ??
+                  attachmentCapabilities(selectedModel?.capabilities, effort),
+              }
+            : undefined
+        }
         disabled={offline || !canSend}
         label="任务需求"
         placeholder="交代任务，或继续补充要求…"

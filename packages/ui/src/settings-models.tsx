@@ -279,6 +279,14 @@ export function SettingsModels({
                   ? "未通过"
                   : "未验证"}
             </p>
+            <p>
+              PDF 输入{" "}
+              {selected.capabilities.pdf === undefined
+                ? "未验证"
+                : selected.capabilities.pdf
+                  ? "通过"
+                  : "未通过"}
+            </p>
             {selected.capabilities.testedAt && (
               <p>上次测试：{formatDate(selected.capabilities.testedAt)}</p>
             )}
@@ -331,6 +339,41 @@ export function SettingsModels({
                 {busy === "reasoning:" + selected.id && <Spinner data-icon="inline-start" />}
                 {busy === "reasoning:" + selected.id ? "正在测试档位…" : "测试所选档位"}
               </Button>
+              {selected.capabilities.reasoningEfforts?.[effort] && (
+                <Button
+                  className="self-start"
+                  variant="outline"
+                  disabled={!!busy}
+                  onClick={() =>
+                    void action.act(
+                      "pdf-effort:" + selected.id,
+                      () =>
+                        rpcData(
+                          api[":id"].pdf.$post({
+                            param: { id: selected.id },
+                            query: { version: selected.version },
+                            json: { effort },
+                          }),
+                        ),
+                      refresh,
+                      "PDF 测试完成",
+                    )
+                  }
+                >
+                  {busy === "pdf-effort:" + selected.id && <Spinner data-icon="inline-start" />}
+                  测试所选档位的 PDF
+                </Button>
+              )}
+              {selected.capabilities.reasoningEfforts?.[effort] && (
+                <FieldDescription>
+                  所选档位 PDF{" "}
+                  {selected.capabilities.reasoningEfforts[effort]?.pdf === undefined
+                    ? "未验证"
+                    : selected.capabilities.reasoningEfforts[effort]?.pdf
+                      ? "通过"
+                      : "未通过"}
+                </FieldDescription>
+              )}
             </Field>
             {action.feedback}
             <div className="flex flex-wrap gap-2">
@@ -343,6 +386,33 @@ export function SettingsModels({
                 onClick={() => void testVersion(selected, true)}
               >
                 测试图像
+              </Button>
+              <Button
+                variant="outline"
+                disabled={
+                  !!busy ||
+                  !selected.capabilities.connection ||
+                  !selected.capabilities.tools ||
+                  selected.capabilities.structured === "none"
+                }
+                onClick={() =>
+                  void action.act(
+                    "pdf:" + selected.id,
+                    () =>
+                      rpcData(
+                        api[":id"].pdf.$post({
+                          param: { id: selected.id },
+                          query: { version: selected.version },
+                          json: { effort: null },
+                        }),
+                      ),
+                    refresh,
+                    "PDF 测试完成",
+                  )
+                }
+              >
+                {busy === "pdf:" + selected.id && <Spinner data-icon="inline-start" />}
+                测试 PDF
               </Button>
             </div>
           </DialogContent>

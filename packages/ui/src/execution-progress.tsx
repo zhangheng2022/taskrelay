@@ -21,7 +21,7 @@ export function conversationRows(messages: Message[]): Row[] {
     groups = new Map<string, Row>(),
     seen = new Set<string>();
   for (const message of messages) {
-    if (!message.content.trim() && !message.parts?.length) continue;
+    if (!message.content.trim() && !message.parts?.length && !message.attachments?.length) continue;
     if (seen.has(message.id)) continue;
     seen.add(message.id);
     const progress =

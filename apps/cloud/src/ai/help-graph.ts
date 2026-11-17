@@ -11,6 +11,7 @@ import type { ExecutionHelp, HelpResponse } from "../../../../packages/contracts
 import type { Message } from "../../../../packages/model/src/index";
 import type { AppEnv } from "../env";
 import { messageStatement, conversationContext, runThread } from "../chat-messages";
+import { recentAttachmentRefs } from "../chat-attachments";
 import { seal, unseal } from "../crypto";
 import { getRun, now, requireLease, type Row } from "../store";
 import { openGraph } from "./graph";
@@ -155,18 +156,25 @@ export async function executeHelpGraph(env: AppEnv, event: GraphEvent) {
         run.task.reasoningEffort,
       );
       return {
-        answer: await model.runAgent(answerSchema, state.messages, state.history, runtime.guard, {
-          threadId: stored.thread_id,
-          id: `${event.graph_id}:${state.round}:question`,
-          mode: "question",
-          source: "cloud",
-          graphId: event.graph_id,
-          generation: runtime.generation,
-          runId: run.id,
-          epoch: run.leaseEpoch,
-          deviceId: run.deviceId ?? undefined,
-          userSeq: state.latestUserSeq,
-        }),
+        answer: await model.runAgent(
+          answerSchema,
+          state.messages,
+          state.history,
+          runtime.guard,
+          {
+            threadId: stored.thread_id,
+            id: `${event.graph_id}:${state.round}:question`,
+            mode: "question",
+            source: "cloud",
+            graphId: event.graph_id,
+            generation: runtime.generation,
+            runId: run.id,
+            epoch: run.leaseEpoch,
+            deviceId: run.deviceId ?? undefined,
+            userSeq: state.latestUserSeq,
+          },
+          await recentAttachmentRefs(env, stored.thread_id, state.latestUserSeq, run.leaseEpoch),
+        ),
       };
     })
     .addNode("publish", async (state) => {

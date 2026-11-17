@@ -5,7 +5,7 @@ import { resolveScheduleIntent } from "../task-schedules";
  */
 import { Annotation, StateGraph, START, END } from "@langchain/langgraph";
 import { z } from "zod";
-import type { Message } from "../../../../packages/model/src/index";
+import type { Inference, Message } from "../../../../packages/model/src/index";
 import type { Row } from "../store";
 import { commitDecision } from "./commands";
 import { GRAPH_VERSION, openGraph, type GraphScope } from "./graph";
@@ -44,6 +44,7 @@ export async function planConversation(
   thread: Row,
   messages: Message[],
   history: Message[] = [],
+  input?: { attachments?: Inference["chatAttachments"]; attachmentsOnly?: boolean },
 ) {
   const { env, id } = scope;
   const runtime = await openGraph(scope, {
@@ -66,9 +67,18 @@ export async function planConversation(
         runtime.generation,
         thread.reasoning_effort ?? undefined,
       );
-      const decision = await model.runAgent(
+      const answer = await model.runAgent(
         decisionSchema,
-        state.messages,
+        input?.attachmentsOnly
+          ? [
+              ...state.messages,
+              {
+                role: "system",
+                content:
+                  "本轮用户只发送了附件。可以说明看到的资料或询问用途；用户没有交办网站操作，start 和 changesRequirements 都必须是 false。",
+              },
+            ]
+          : state.messages,
         state.history,
         runtime.guard,
         {
@@ -80,7 +90,18 @@ export async function planConversation(
           generation: runtime.generation,
           turnId: id,
         },
+        input?.attachments,
       );
+      const decision = input?.attachmentsOnly
+        ? {
+            ...answer,
+            start: false,
+            changesRequirements: false,
+            reply: answer.start
+              ? "已收到附件。你希望我查看哪些内容，或怎么使用这些资料？"
+              : answer.reply,
+          }
+        : answer;
       await runtime.guard();
       if (thread.task_id)
         await resolveScheduleIntent(
