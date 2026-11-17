@@ -233,7 +233,7 @@
 
 /* 设置条目保留底部分隔和窄屏操作换行，覆盖 Item 自带的尺寸工具类。 */
 @layer utilities {
-  .settings-detail [data-slot="item"] {
+  .settings-detail [data-slot="item"]:not([data-layout="device-row"]) {
     @apply items-start gap-4 rounded-none border-0 border-b border-border px-0 py-5;
   }
   .settings-detail [data-slot="item-content"] {

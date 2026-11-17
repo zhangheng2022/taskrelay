@@ -65,7 +65,9 @@ export function useConfirmation() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{dialog?.title}</AlertDialogTitle>
+            <AlertDialogTitle className="[overflow-wrap:anywhere]">
+              {dialog?.title}
+            </AlertDialogTitle>
             <AlertDialogDescription>{dialog?.description}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
