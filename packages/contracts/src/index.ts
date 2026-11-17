@@ -319,6 +319,8 @@ export interface DesktopStatus {
   activeRunId: string | null;
   version: string;
   autoStart: boolean;
+  boot?: "unavailable" | "not-installed" | "pairing" | "enabled" | "disabled" | "offline";
+  serviceRelease?: import("./updates").ServiceRelease | null;
   error: string | null;
 }
 export interface Transport {
@@ -338,6 +340,7 @@ export interface Transport {
     pairPoll(): Promise<boolean>;
     pause(value: boolean): Promise<void>;
     autoStart(value: boolean): Promise<void>;
+    updateService?(): Promise<void>;
     stop(): Promise<void>;
     diagnostics(): Promise<string>;
     checkUpdate(): Promise<void>;

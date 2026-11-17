@@ -81,6 +81,7 @@ export function Status({ value, outcome }: { value: string; outcome?: string }) 
 }
 export function ErrorText({ error }: { error: string }) {
   const friendly: Record<string, string> = {
+    SERVICE_UAC_CANCELLED: "已取消 Windows 管理员授权。",
     RESOURCE_VERSION_CONFLICT: "设置已被其他操作更新，请刷新列表后重新操作。",
     MODEL_DISABLE_BEFORE_DELETE: "此模型已有使用记录。请先停用，再删除模型配置。",
     RESOURCE_IN_USE:

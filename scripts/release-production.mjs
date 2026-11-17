@@ -55,12 +55,23 @@ const command = (args) =>
   });
 const original = await readState();
 let record;
-let manifest, candidate, releasePlan, planHash;
+let manifest, candidate, serviceCandidate, releasePlan, planHash;
 const packageRoot = "artifacts/windows/apps/desktop/out/make/squirrel.windows/x64";
 const loadDesktop = async () => {
   manifest = JSON.parse(readFileSync("artifacts/windows/out/release-manifest.json", "utf8"));
   if (mode !== "resume") validateSigning(manifest);
   candidate = JSON.parse(readFileSync("artifacts/windows/out/desktop-release.json", "utf8"));
+  const service = manifest.artifacts.find((item) =>
+    item.file.endsWith("/TaskRelay.Service.Setup.exe"),
+  );
+  if (service)
+    serviceCandidate = {
+      version: candidate.version,
+      sha256: service.sha256,
+      bytes: service.bytes,
+      notes: candidate.notes,
+      publishedAt: candidate.publishedAt,
+    };
   if (
     manifest.sourceCommit !== sha ||
     manifest.sourceDirty ||
@@ -284,6 +295,57 @@ const updateCatalog = async (activate) => {
     ]);
   if ((await catalogValue()) !== next) throw Error("CATALOG_CONFLICT");
 };
+const updateServiceCatalog = async (activate) => {
+  if (!serviceCandidate) return;
+  await assertOwnership();
+  const { serviceCatalogSchema, serviceReleaseSchema } = await import(
+    pathToFileURL(path.resolve("packages/contracts/src/updates.ts")).href
+  );
+  serviceReleaseSchema.parse(serviceCandidate);
+  const read = async () =>
+    (await query("SELECT value FROM settings WHERE key='windowsServiceReleaseCatalog'"))[0]
+      .results[0]?.value;
+  const current = await read();
+  const catalog = serviceCatalogSchema.parse(
+    current ? JSON.parse(current) : { latest: null, releases: [] },
+  );
+  const existing = catalog.releases.find((release) => release.version === serviceCandidate.version);
+  if (
+    existing &&
+    (existing.sha256 !== serviceCandidate.sha256 || existing.bytes !== serviceCandidate.bytes)
+  )
+    throw Error("IMMUTABLE_SERVICE_RELEASE_CHANGED");
+  if (!existing) catalog.releases.push(serviceCandidate);
+  if (activate) catalog.latest = serviceCandidate.version;
+  const next = JSON.stringify(serviceCatalogSchema.parse(catalog));
+  if (current)
+    await query(
+      "UPDATE settings SET value=? WHERE key='windowsServiceReleaseCatalog' AND value=?",
+      [next, current],
+    );
+  else
+    await query(
+      "INSERT OR IGNORE INTO settings(key,value) VALUES('windowsServiceReleaseCatalog',?)",
+      [next],
+    );
+  if ((await read()) !== next) throw Error("SERVICE_CATALOG_CONFLICT");
+};
+async function verifyPackage(assetPath, asset) {
+  const response = await fetch(productionOrigin + assetPath, {
+    redirect: "error",
+    signal: AbortSignal.timeout(600_000),
+  });
+  if (!response.ok || !response.body) throw Error(`CLOUDFLARE_DOWNLOAD_FAILED:${response.status}`);
+  const hash = createHash("sha256");
+  let size = 0;
+  for await (const chunk of response.body) {
+    size += chunk.length;
+    if (size > asset.bytes) throw Error("DOWNLOAD_SIZE_MISMATCH");
+    hash.update(chunk);
+  }
+  if (size !== asset.bytes || hash.digest("hex") !== asset.sha256)
+    throw Error("CLOUDFLARE_DOWNLOAD_HASH_MISMATCH");
+}
 const io = {
   assertOwnership,
   save: async (_before, next) => {
@@ -389,33 +451,40 @@ const io = {
     }
     if (release.draft) await github(`/releases/${release.id}`, "PATCH", { draft: false });
   },
-  register: async () => updateCatalog(false),
+  register: async () => {
+    await updateCatalog(false);
+    await updateServiceCatalog(false);
+  },
   verifyDownload: async () => {
-    const { packagePath } = await import(
+    const { packagePath, servicePackagePath } = await import(
       pathToFileURL(path.resolve("packages/contracts/src/updates.ts")).href
     );
-    const response = await fetch(productionOrigin + packagePath(candidate), {
-      redirect: "error",
-      signal: AbortSignal.timeout(600_000),
-    });
-    if (!response.ok || !response.body)
-      throw Error(`CLOUDFLARE_DOWNLOAD_FAILED:${response.status}`);
-    const hash = createHash("sha256");
-    let size = 0;
-    for await (const chunk of response.body) {
-      size += chunk.length;
-      if (size > candidate.bytes) throw Error("DOWNLOAD_SIZE_MISMATCH");
-      hash.update(chunk);
-    }
-    if (size !== candidate.bytes || hash.digest("hex") !== candidate.sha256)
-      throw Error("CLOUDFLARE_DOWNLOAD_HASH_MISMATCH");
+    await verifyPackage(packagePath(candidate), candidate);
+    if (serviceCandidate)
+      await verifyPackage(servicePackagePath(serviceCandidate), serviceCandidate);
   },
   activate: async () => {
+    await updateServiceCatalog(true);
     await updateCatalog(true);
     // 公开清单读取会持久登记版本通知；失败时保持发布阶段可恢复。
-    const { UPDATE_PATH, releaseSchema } = await import(
+    const { UPDATE_PATH, SERVICE_UPDATE_PATH, releaseSchema, serviceReleaseSchema } = await import(
       pathToFileURL(path.resolve("packages/contracts/src/updates.ts")).href
     );
+    if (serviceCandidate) {
+      const serviceResponse = await fetch(`${productionOrigin}${SERVICE_UPDATE_PATH}/latest.json`, {
+        redirect: "error",
+        cache: "no-store",
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!serviceResponse.ok) throw Error("PUBLIC_SERVICE_RELEASE_UNAVAILABLE");
+      const service = serviceReleaseSchema.parse((await serviceResponse.json()).release);
+      if (
+        service.version !== serviceCandidate.version ||
+        service.sha256 !== serviceCandidate.sha256 ||
+        service.bytes !== serviceCandidate.bytes
+      )
+        throw Error("PUBLIC_SERVICE_RELEASE_MISMATCH");
+    }
     const response = await fetch(`${productionOrigin}${UPDATE_PATH}/latest.json`, {
       redirect: "error",
       cache: "no-store",

@@ -138,6 +138,30 @@ test("后台 Main 领取并启动运行，独立桌面进程控制同一执行�
     const closed = once(viewer.child, "exit");
     viewer.send("quit");
     assert.deepEqual(await closed, [0, null]);
+
+    const settings = new Journal(dir);
+    settings.set("paused", true);
+    settings.close();
+    const installer = launch("service-ui");
+    await installer.wait("window");
+    assert.equal((await installer.call<DesktopStatus>("status")).boot, "not-installed");
+    await assert.rejects(installer.call("autoStart", true), /SERVICE_UAC_CANCELLED/);
+    assert.equal((await installer.call<DesktopStatus>("status")).boot, "not-installed");
+    await installer.call("autoStart", true);
+    assert.equal((await installer.call<DesktopStatus>("status")).boot, "pairing");
+    await installer.call("configure", "https://127.0.0.1:1");
+    await installer.call("pairPoll");
+    assert.equal((await installer.call<DesktopStatus>("status")).boot, "enabled");
+    assert.equal((await installer.call<DesktopStatus>("status")).paused, true);
+    await installer.call("autoStart", false);
+    assert.equal((await installer.call<DesktopStatus>("status")).boot, "disabled");
+    await installer.call("checkUpdate");
+    assert.equal((await installer.call<DesktopStatus>("status")).serviceRelease?.version, "0.27.1");
+    await installer.call("updateService");
+    assert.equal((await installer.call<DesktopStatus>("status")).version, "0.27.1");
+    const serviceClosed = once(installer.child, "exit");
+    installer.send("quit");
+    assert.deepEqual(await serviceClosed, [0, null]);
   } finally {
     await cleanup();
   }

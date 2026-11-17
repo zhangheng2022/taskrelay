@@ -1,12 +1,16 @@
 import { PROTOCOL_VERSION } from "../../../packages/contracts/src/index";
 import type { AppEnv } from "./env";
-import { serveUpdate } from "./updates";
+import { SERVICE_UPDATE_PATH } from "../../../packages/contracts/src/updates";
+import { serveServiceUpdate, serveUpdate } from "./updates";
 export default {
   async fetch(request: Request, env: AppEnv) {
     const url = new URL(request.url);
     if (url.pathname.startsWith("/api/updates/")) {
       try {
-        return serveUpdate(request, await env.REQUESTS.getByName("updates").releaseCatalog());
+        const updates = env.REQUESTS.getByName("updates");
+        if (url.pathname.startsWith(SERVICE_UPDATE_PATH + "/"))
+          return serveServiceUpdate(request, await updates.serviceReleaseCatalog());
+        return serveUpdate(request, await updates.releaseCatalog());
       } catch {
         return Response.json(
           { error: "UPDATE_UNAVAILABLE" },
