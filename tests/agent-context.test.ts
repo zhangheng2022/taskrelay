@@ -119,7 +119,7 @@ for (const mode of ["failure", "empty", "stopped", "lease", "oversize"] as const
       agent.invoke({ messages: input }, config),
       /UNKNOWN|EMPTY_SUMMARY|STOPPED|LEASE_EXPIRED|NOT_REDUCED/,
     );
-    assert.equal(summaries, 1);
+    assert.equal(summaries, mode === "oversize" ? 2 : 1);
     assert.equal(decisions, 0);
     assert.equal(sizes.at(-1)?.phase, "error");
     assert.ok(sizes.at(-1)?.summaryInput?.bytes);
@@ -217,6 +217,83 @@ test("超过摘要输入窗口时不裁剪为最后若干消息或分块重试",
   );
   assert.equal(calls, 0);
 });
+
+for (const repair of ["expanded", "failure", "empty", "stopped", "lease"] as const)
+  test(`摘要与近期结果合计超限后从完整原历史再次压缩，结果为 ${repair}`, async () => {
+    const original = new HumanMessage("p".repeat(3000));
+    const oldResult = "x".repeat(9000);
+    const recentResult = "保留请求已送出且结果未知，禁止重放。" + "r".repeat(2400);
+    const input = [
+      new AIMessage({ content: "", tool_calls: [{ id: "old", name: "extract", args: {} }] }),
+      new ToolMessage({ tool_call_id: "old", content: oldResult }),
+      new AIMessage({ content: "", tool_calls: [{ id: "recent", name: "act", args: {} }] }),
+      new ToolMessage({ tool_call_id: "recent", content: recentResult }),
+    ];
+    const requests: Message[][] = [];
+    const sizes: ContextSizeReport[] = [];
+    const saver = new SessionCheckpointer();
+    let invalid = false;
+    const summary = new CallbackChatModel(async (messages) => {
+      requests.push(messages);
+      const prompt = messages.map((m) => m.content).join("\n");
+      assert.match(prompt, /摘要正文目标不超过 \d+ 个字符/);
+      assert.ok(prompt.includes(oldResult));
+      if (requests.length === 1) {
+        assert.ok(!prompt.includes(recentResult));
+        return reply("s".repeat(11000));
+      }
+      assert.ok(prompt.includes(recentResult));
+      assert.ok(!prompt.includes("s".repeat(11000)));
+      const saved = await agent.graph.getState(config);
+      assert.deepEqual(
+        saved.values.messages.map((m: BaseMessage) => m.content),
+        input.map((m) => m.content),
+      );
+      if (repair === "failure") throw Error("MODEL_CALL_OUTCOME_UNKNOWN");
+      if (repair === "stopped" || repair === "lease") invalid = true;
+      return reply(
+        repair === "empty" ? "" : "请求已送出，结果未知。禁止重放。" + "s".repeat(10900),
+      );
+    });
+    let decisions = 0;
+    const agent = createAgent({
+      model: new CallbackChatModel(async (messages) => {
+        decisions++;
+        assert.ok(messages.some((m) => m.content.includes("请求已送出，结果未知。禁止重放。")));
+        assert.ok(messages.every((m) => m.role !== "tool"));
+        return reply("等待核对");
+      }),
+      tools: [],
+      checkpointer: saver,
+      middleware: [
+        protectedSummary({
+          model: summary,
+          budget: () => ({ contextTokens: 10000, outputTokens: 1024 }),
+          protectedMessages: () => [original],
+          guard: () => {
+            if (invalid) throw Error(repair === "lease" ? "LEASE_EXPIRED" : "EXECUTION_STOPPED");
+          },
+          onContextSize: (report) => sizes.push(report),
+        }),
+      ],
+    });
+    const config = { configurable: { thread_id: `repair_${repair}` }, callbacks: [] };
+    const invoke = agent.invoke({ messages: input }, config);
+    if (repair === "expanded") await invoke;
+    else await assert.rejects(invoke, /UNKNOWN|EMPTY_SUMMARY|STOPPED|LEASE_EXPIRED/);
+    assert.equal(requests.length, 2);
+    const first = sizes.find((r) => r.phase === "after-summary")!;
+    assert.ok(first.summaryMessage!.estimatedTokens < first.budget.historyAllowanceTokens);
+    assert.ok(first.replacement!.estimatedTokens > first.budget.historyAllowanceTokens);
+    assert.equal(decisions, repair === "expanded" ? 1 : 0);
+    if (repair !== "expanded") {
+      const saved = await agent.graph.getState(config);
+      assert.deepEqual(
+        saved.values.messages.map((m: BaseMessage) => m.content),
+        input.map((m) => m.content),
+      );
+    }
+  });
 
 test("官方摘要保留部分返回的调用批次和已有结果", async () => {
   const sent: Message[][] = [];
