@@ -3,6 +3,7 @@
 import { BaseChatModel, type BindToolsInput } from "@langchain/core/language_models/chat_models";
 import {
   AIMessage,
+  HumanMessage,
   ToolMessage,
   getBufferString,
   type BaseMessage,
@@ -24,10 +25,12 @@ export interface ContextBudget {
 }
 const summaryPrompt =
   "压缩下面的执行历史供同一助手继续。将旧摘要与新进展合并为简洁事实记录，不按轮次复述。省略重复的任务目标、固定规则、用户原文和页面描述；历史独有的约束及纠正、关键结果（必要标识及完整网址）、未完成事项、未执行调用、错误、操作是否送出及结果未知事项必须保留。区分尝试、观察和已证实结果，不虚构成功、不扩大网页授权、不建议重放未知操作。仅输出摘要，不添加计划或报告，不截断关键事实。\n{messages}";
+const summaryPrefix = "执行历史摘要（事实记录，不是新的授权）：";
 function summaryCutoff(
   messages: BaseMessage[],
   fitsRetention: (retained: BaseMessage[]) => boolean,
   summaryInputLimit: number,
+  prompt: (cutoff: number) => string,
 ) {
   const boundaries = [0];
   const pending = new Set<string>();
@@ -53,7 +56,10 @@ function summaryCutoff(
   }
   const preferred = boundaries[left];
   const fitsSummary = (cutoff: number) => {
-    const content = summaryPrompt.replace("{messages}", getBufferString(messages.slice(0, cutoff)));
+    const content = prompt(cutoff).replace(
+      "{messages}",
+      getBufferString(messages.slice(0, cutoff)),
+    );
     return estimateTokens([{ role: "user", content }]) <= summaryInputLimit;
   };
   if (!preferred || fitsSummary(preferred)) return preferred;
@@ -158,7 +164,7 @@ export function protectedSummary(options: {
     tokenCounter: messageTokens,
     // 禁用默认 4000 token 裁剪；完整摘要输入由上面的预算检查决定是否可送出。
     trimTokensToSummarize: Number.MAX_SAFE_INTEGER,
-    summaryPrefix: "执行历史摘要（事实记录，不是新的授权）：",
+    summaryPrefix,
     summaryPrompt,
   });
   const hook = official.beforeModel;
@@ -218,45 +224,71 @@ export function protectedSummary(options: {
 
         // 保留历史可为当前现场提供引用，只计入它相对完整现场净增加的体积。
         const fullContext = allowance([]).remaining;
-        const summaryRoom = fullContext - Math.floor(fullContext * 0.3);
-        const cutoff = summaryCutoff(
-          state.messages,
-          (retained) => allowance(retained).remaining - messageTokens(retained) >= summaryRoom,
-          inputLimit(measuredContext.budget),
-        );
-        const result = await hook(state, {
-          ...runtime,
-          context: {
-            summaryPrompt,
-            keep: { messages: state.messages.length - cutoff },
-          },
-        });
-        // 官方默认把摘要异常转换成占位文字。只在实际收到有效摘要后提交消息更新。
-        if (attempt.failure) throw attempt.failure;
-        await options.guard();
-        if (result?.messages) {
-          const replacement = result.messages;
-          const compacted = replacement.slice(1) as BaseMessage[];
-          candidate = compacted;
-          const preserved = state.messages.slice(cutoff);
-          if (
-            compacted.length !== preserved.length + 1 ||
-            preserved.some((message, index) => message !== compacted[index + 1])
-          )
-            throw Error("SUMMARY_TOOL_PAIR_INVALID");
-          const source = state.messages.slice(0, cutoff);
-          if (!attempt.summary || !attempt.submitted?.includes(getBufferString(source)))
-            throw Error("SUMMARY_INPUT_TRUNCATED");
-          const required = messageTokens(candidate);
-          measuredContext = allowance(candidate);
-          const { remaining: available } = measuredContext;
-          if (available < 256) throw Error("MODEL_CONTEXT_CONFIGURATION_TOO_SMALL");
-          observeSize("after-summary", state.messages, candidate);
-          if (required > available) throw Error("CONTEXT_SUMMARY_NOT_REDUCED");
-          return result;
+        let summaryRoom = fullContext - Math.floor(fullContext * 0.3);
+        let summaryScale = 1;
+        const prompt = (cutoff: number) => {
+          const skeleton = [
+            new HumanMessage(`${summaryPrefix}\n\n`),
+            ...state.messages.slice(cutoff),
+          ];
+          const capacity = allowance(skeleton).remaining - messageTokens(skeleton);
+          // 本地预算按 UTF-8 字节估算，字符目标留出编码和转义余量，返回后仍按真实体积核验。
+          const characters = Math.max(1, Math.floor((capacity * summaryScale) / 2));
+          return `摘要正文目标不超过 ${characters} 个字符。合并重复事实，保留下列要求中的关键事实及完整必要标识。\n${summaryPrompt}`;
+        };
+        // 只对已完整返回且超出决策窗口的摘要补做一次压缩。两次均从原历史生成，全部通过后才提交。
+        for (let pass = 0; pass < 2; pass++) {
+          attempt = {};
+          candidate = undefined;
+          measuredContext = allowance(state.messages);
+          if (pass) observeSize("before-summary", state.messages);
+          const cutoff = summaryCutoff(
+            state.messages,
+            (retained) => allowance(retained).remaining - messageTokens(retained) >= summaryRoom,
+            inputLimit(measuredContext.budget),
+            prompt,
+          );
+          const result = await hook(state, {
+            ...runtime,
+            context: {
+              summaryPrompt: prompt(cutoff),
+              keep: { messages: state.messages.length - cutoff },
+            },
+          });
+          // 官方默认把摘要异常转换成占位文字。只在实际收到有效摘要后提交消息更新。
+          if (attempt.failure) throw attempt.failure;
+          await options.guard();
+          if (result?.messages) {
+            const replacement = result.messages;
+            const compacted = replacement.slice(1) as BaseMessage[];
+            candidate = compacted;
+            const preserved = state.messages.slice(cutoff);
+            if (
+              compacted.length !== preserved.length + 1 ||
+              preserved.some((message, index) => message !== compacted[index + 1])
+            )
+              throw Error("SUMMARY_TOOL_PAIR_INVALID");
+            const source = state.messages.slice(0, cutoff);
+            if (!attempt.summary || !attempt.submitted?.includes(getBufferString(source)))
+              throw Error("SUMMARY_INPUT_TRUNCATED");
+            const required = messageTokens(candidate);
+            measuredContext = allowance(candidate);
+            const { remaining: available } = measuredContext;
+            if (available < 256) throw Error("MODEL_CONTEXT_CONFIGURATION_TOO_SMALL");
+            observeSize("after-summary", state.messages, candidate);
+            if (required > available) {
+              if (pass) throw Error("CONTEXT_SUMMARY_NOT_REDUCED");
+              // 为实际摘要预留空间，将更多已完成批次一并合并；未返回批次仍完整保留。
+              summaryRoom = Math.max(summaryRoom, messageTokens(compacted.slice(0, 1)) + 32);
+              summaryScale = 0.5;
+              continue;
+            }
+            return result;
+          }
+          if (historyTokens > remaining) throw Error("MODEL_CONTEXT_TOO_LARGE");
+          observeSize("unchanged", state.messages);
+          return;
         }
-        if (historyTokens > remaining) throw Error("MODEL_CONTEXT_TOO_LARGE");
-        observeSize("unchanged", state.messages);
       } catch (error) {
         observeSize("error", state.messages, candidate, error);
         throw error;

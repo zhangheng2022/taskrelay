@@ -114,6 +114,33 @@ test("正式 execute 将近期超大工具结果纳入同次摘要后继续决�
   assert.equal(result.closed, true);
 });
 
+test("正式 execute 连续 33 次工具调用后可收紧已返回的长摘要，操作不重复", async () => {
+  let summaries = 0;
+  const turns = [
+    ...Array.from({ length: 13 }, () => tool("act", { instruction: "点击当前页面按钮" })),
+    ...Array.from({ length: 13 }, () => tool("extract", { instruction: "读取当前页面事实" })),
+    ...Array.from({ length: 7 }, () => tool("observe", { instruction: "查找当前页面控件" })),
+  ];
+  const result = await scenario(turns, {
+    extraction: "合成页面信息".repeat(130),
+    actionFeedback: "已操作并取得页面反馈。".repeat(90),
+    original: "只按本次交办范围处理。".repeat(70),
+    summaryText: () =>
+      ++summaries === 1 ? "较长的已知摘要".repeat(900) : "已操作并读取页面，请继续核对。",
+  });
+  assert.equal(result.finish.status, "succeeded", result.finish.result.summary);
+  assert.equal(result.clicks, 13);
+  const timing = executionTimingSchema.parse(result.checkpoints.at(-1).payload.timing);
+  assert.equal(timing.phases.extract?.calls, 13);
+  assert.equal(timing.phases.observe?.calls, 7);
+  assert.ok(summaries >= 2);
+  const models = result.calls.filter((c) => c.path.endsWith("/model"));
+  assert.equal(new Set(models.map((c) => c.body.requestId)).size, models.length);
+  assert.equal(models.filter((c) => c.body.purpose === "decision").length, 34);
+  assert.equal(result.sessionCloses, 1);
+  assert.equal(result.closed, true);
+});
+
 for (const changingNetworkFacts of [false, true])
   test(`正式 execute 保留完整网址及最新网络状态，并使用可解析引用：${changingNetworkFacts}`, async () => {
     const longUrl = "https://example.com/login?state=" + "a%2Fb".repeat(510) + "#fragment";
@@ -521,7 +548,7 @@ async function scenario(
     networkFacts?: boolean;
     changingNetworkFacts?: boolean;
     actionFeedback?: string;
-    summaryText?: string;
+    summaryText?: string | ((messages: import("../packages/model/src/index").Message[]) => string);
     navigationError?: boolean;
     cancelConnect?: boolean;
     createError?: boolean;
@@ -687,7 +714,11 @@ async function scenario(
       if (path.endsWith("/model")) {
         if (body.purpose === "summary")
           return {
-            response: answer(options.summaryText ?? "已读取页面并尝试操作，保留最近工具反馈继续。"),
+            response: answer(
+              typeof options.summaryText === "function"
+                ? options.summaryText(body.messages)
+                : (options.summaryText ?? "已读取页面并尝试操作，保留最近工具反馈继续。"),
+            ),
           } as T;
         if (options.cancel) cancelled = true;
         const firstModel = options.firstModel;
