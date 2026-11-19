@@ -1,5 +1,11 @@
 # TaskRelay 验收记录
 
+## 2026-11-19 摘要与近期结果合计超限（0.27.4 生产验收）
+
+- [修复 PR #100](https://github.com/zhangheng2022/taskrelay/pull/100) 已合入，提交 `7da98e65cad60399247237a7696c440b387c5089` 的[主分支 CI](https://github.com/zhangheng2022/taskrelay/actions/runs/44492151684)和[生产发布](https://github.com/zhangheng2022/taskrelay/actions/runs/44493437397)均通过。Worker 版本为 `9c53f427-44be-4e08-bfe6-76e15ee150e4`，D1 无新增迁移。
+- 主域和备用域均返回该提交、协议 19 及 [Windows 0.27.4](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.27.4)。两个安装包端点 HEAD 为 200，清单、响应头和 GitHub 资产一致，大小 387898541 字节，SHA-256 为 `bd24731de608dd791d6bb25b25db01ffe50df440edebe93c632310bd6c70e875`。完整下载与哈希由发布作业核验。两域匿名及 Bearer 权限边界检查通过。
+- 托管 Windows 已核验签名、包内 smoke、实际安装、系统快捷方式启动及安装 ASAR。用户设备的升级与 Rewards 原任务真实模型复验尚未核验；33 次调用回归和修复前对照属于隔离源码证据。
+
 ## 2026-11-19 摘要与近期结果合计超限（0.27.4 源码验收）
 
 - 用户提供的 0.27.3 诊断中，11 月 19 日两次运行都因 `CONTEXT_SUMMARY_NOT_REDUCED` 中断。最近一次历史额度为 5518 个本地估算 token，摘要 3601、近期消息约 2100，替换后 5700。另一次额度为 5151，摘要 4371、近期消息约 1289，替换后 5659。诊断显示连续摘要仍占据大部分额度，0.27.3 的切分修复未覆盖此情况。以上为序列化字节估算，分组包装及取整导致数值不能直接相加。
