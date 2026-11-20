@@ -26,6 +26,8 @@ export type EgressResult = {
 };
 const CHUNK_SIZE = 60_000;
 const TTL = 180_000;
+// 覆盖提供方 120 秒响应窗口及 alarm 调度、加密回传时间，先于桌面的 180 秒请求截止。
+const RPC_TIMEOUT_MS = 150_000;
 
 // One object per inference. Payloads are encrypted, short-lived and never replayed
 // after an alarm has crossed the durable "running" boundary.
@@ -39,11 +41,11 @@ export class EgressState {
 
   async submitAndWait(id: string, cipher: string): Promise<EgressResult> {
     await this.submit(id, cipher);
-    const deadline = Date.now() + 90_000;
+    const deadline = Date.now() + RPC_TIMEOUT_MS;
     // Keep the wait inside the original RPC. A new RPC during alarm execution
     // can replace the DO's current I/O context with visitor request metadata.
-    while (Date.now() < deadline) {
-      const result = await this.wait();
+    for (let remaining = deadline - Date.now(); remaining > 0; remaining = deadline - Date.now()) {
+      const result = await this.wait(remaining);
       if (result.status !== "pending" && result.status !== "running") return result;
     }
     throw new Error("MODEL_EGRESS_TIMEOUT");
@@ -107,7 +109,7 @@ export class EgressState {
       ...(meta.status === "done" ? { cipher: await this.payload(meta) } : {}),
     };
   }
-  async wait(): Promise<EgressResult> {
+  async wait(remaining: number): Promise<EgressResult> {
     const first = await this.read();
     if (first.status !== "pending" && first.status !== "running") return first;
     await new Promise<void>((resolve) => {
@@ -116,7 +118,7 @@ export class EgressState {
         this.listeners.delete(notify);
         resolve();
       };
-      const timer = setTimeout(notify, 15_000);
+      const timer = setTimeout(notify, Math.min(15_000, remaining));
       this.listeners.add(notify);
       void this.read().then((latest) => {
         if (latest.status !== "pending" && latest.status !== "running") notify();

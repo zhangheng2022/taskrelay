@@ -122,10 +122,34 @@ for (const failure of [false, true]) {
   });
 }
 
-test("对象内等待超过 90 秒明确超时，不执行或重放作业", async (t) => {
+test("同一次 RPC 能接收 90 秒之后完成的 alarm 作业", async (t) => {
   let clock = Date.now(),
     calls = 0;
   t.mock.method(Date, "now", () => clock);
+  const started = clock;
+  const state = new EgressState(fakeStorage().storage, key, async () => {
+    calls++;
+    return { ok: true };
+  });
+  t.mock.method(state, "wait", async () => {
+    clock += 15_000;
+    if (clock - started === 105_000) await state.alarm();
+    return state.read();
+  });
+  const id = crypto.randomUUID();
+  const result = await state.submitAndWait(
+    id,
+    await seal({ kind: "trace" }, key, `egress:${id}:request`),
+  );
+  assert.deepEqual(await unseal(result.cipher!, key, `egress:${id}:response`), { ok: true });
+  assert.equal(calls, 1);
+});
+
+test("同一次 RPC 到 150 秒返回超时，不执行或重放作业", async (t) => {
+  let clock = Date.now(),
+    calls = 0;
+  t.mock.method(Date, "now", () => clock);
+  const started = clock;
   const state = new EgressState(fakeStorage().storage, key, async () => {
     calls++;
   });
@@ -138,6 +162,7 @@ test("对象内等待超过 90 秒明确超时，不执行或重放作业", asyn
   await assert.rejects(() => state.submitAndWait(id, cipher), {
     message: "MODEL_EGRESS_TIMEOUT",
   });
+  assert.equal(clock - started, 150_000);
   assert.equal(calls, 0);
   assert.equal((await state.read()).status, "pending");
 });

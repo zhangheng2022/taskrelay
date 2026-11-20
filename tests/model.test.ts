@@ -267,7 +267,45 @@ test("SDK 不继承环境组织凭据；未配置密钥的兼容端点不发送 
   );
 });
 
-test("SDK 超时覆盖未结束的响应正文并取消读取，不重发", async (t) => {
+test("Responses 在 60 秒后收到响应头仍能完成，只发送一次请求", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let deliver!: () => void;
+  let calls = 0;
+  const started = new Promise<void>((resolve) => {
+    deliver = resolve;
+  });
+  const result = infer(
+    profile,
+    "key",
+    { messages: [{ role: "user", content: "test" }] },
+    async (_input, init) => {
+      calls++;
+      const response = new Promise<Response>((resolve, reject) => {
+        const timer = setTimeout(
+          () =>
+            resolve(Response.json({ output: [], usage: { input_tokens: 12, output_tokens: 3 } })),
+          75_000,
+        );
+        init?.signal?.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(timer);
+            reject(init.signal!.reason);
+          },
+          { once: true },
+        );
+      });
+      deliver();
+      return response;
+    },
+  );
+  await started;
+  t.mock.timers.tick(75_000);
+  assert.deepEqual((await result).usage, { input: 12, output: 3 });
+  assert.equal(calls, 1);
+});
+
+test("未结束的响应正文在 120 秒截止并取消读取，不重发", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   let ready!: () => void,
     cancelled = false,
@@ -296,7 +334,9 @@ test("SDK 超时覆盖未结束的响应正文并取消读取，不重发", asyn
   );
   const checked = assert.rejects(pending, { message: "MODEL_TIMEOUT" });
   await started;
-  t.mock.timers.tick(60_001);
+  t.mock.timers.tick(119_999);
+  assert.equal(cancelled, false);
+  t.mock.timers.tick(1);
   await checked;
   assert.equal(calls, 1);
   assert.equal(cancelled, true);

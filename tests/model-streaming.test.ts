@@ -357,6 +357,46 @@ test("流读取取消终止底层等待并保留超时分类", async () => {
   assert.equal(cancelled, true);
 });
 
+test("流式调用收到首片后可跨过 60 秒，完整终止事件后才交付结果", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  // Node 的 AbortSignal.timeout 不走全局定时器；合成时钟须覆盖流式正文的独立计时。
+  t.mock.method(AbortSignal, "timeout", (ms: number) => {
+    const abort = new AbortController();
+    setTimeout(() => abort.abort(), ms);
+    return abort.signal;
+  });
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  let first!: () => void;
+  const preview = new Promise<void>((resolve) => {
+    first = resolve;
+  });
+  let calls = 0;
+  const result = infer(
+    profile,
+    "key",
+    { messages: [{ role: "user", content: "test" }], stream: true },
+    async () => {
+      calls++;
+      return new Response(
+        new ReadableStream({
+          start(c) {
+            controller = c;
+            c.enqueue(event(delta("进度")));
+          },
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    },
+    async () => first(),
+  );
+  await preview;
+  t.mock.timers.tick(75_000);
+  controller.enqueue(event(completedText("正式结果")));
+  controller.close();
+  assert.equal((await result).text, "正式结果");
+  assert.equal(calls, 1);
+});
+
 test("结构化修复生成新草稿版本，内部字段不会进入预览", async (t) => {
   const f = await productionModelFixture(t);
   await f.db.prepare("UPDATE settings SET value='1' WHERE key='modelStreamingEnabled'").run();

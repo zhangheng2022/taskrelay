@@ -50,6 +50,7 @@ export interface ModelResponse {
   structured?: unknown;
 }
 type Fetcher = (input: string | URL, init?: RequestInit) => Promise<Response>;
+const RESPONSE_TIMEOUT_MS = 120_000;
 class ModelBoundaryError extends Error {}
 export async function infer(
   profile: { baseUrl: string } & Pick<ModelProfile, "protocol" | "model"> &
@@ -145,12 +146,12 @@ export async function infer(
     project: null,
     adminAPIKey: null,
     maxRetries: 0,
-    timeout: 60_000,
+    timeout: RESPONSE_TIMEOUT_MS,
     logLevel: "off",
     fetch: async (input, init) => {
       const signal = AbortSignal.any([
         ...(init?.signal ? [init.signal] : []),
-        AbortSignal.timeout(60_000),
+        AbortSignal.timeout(RESPONSE_TIMEOUT_MS),
       ]);
       try {
         const headers = new Headers(init?.headers);

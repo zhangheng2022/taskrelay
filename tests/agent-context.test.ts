@@ -76,7 +76,7 @@ test("实际摘要请求聚焦进展但保留完整旧历史，未知写入与�
   assert.equal(decisions, 1);
 });
 
-for (const mode of ["failure", "empty", "stopped", "lease", "oversize"] as const)
+for (const mode of ["failure", "timeout", "empty", "stopped", "lease", "oversize"] as const)
   test(`官方摘要 ${mode} 不提交历史替换、不继续决策`, async () => {
     const sizes: ContextSizeReport[] = [];
     let summaries = 0,
@@ -86,6 +86,7 @@ for (const mode of ["failure", "empty", "stopped", "lease", "oversize"] as const
     const summary = new CallbackChatModel(async () => {
       summaries++;
       if (mode === "failure") throw Error("MODEL_CALL_OUTCOME_UNKNOWN");
+      if (mode === "timeout") throw Error("MODEL_TIMEOUT");
       if (mode === "stopped" || mode === "lease") invalid = true;
       return reply(mode === "empty" ? "" : mode === "oversize" ? "s".repeat(16000) : "旧事实");
     });
@@ -117,12 +118,13 @@ for (const mode of ["failure", "empty", "stopped", "lease", "oversize"] as const
       };
     await assert.rejects(
       agent.invoke({ messages: input }, config),
-      /UNKNOWN|EMPTY_SUMMARY|STOPPED|LEASE_EXPIRED|NOT_REDUCED/,
+      /UNKNOWN|MODEL_TIMEOUT|EMPTY_SUMMARY|STOPPED|LEASE_EXPIRED|NOT_REDUCED/,
     );
     assert.equal(summaries, mode === "oversize" ? 2 : 1);
     assert.equal(decisions, 0);
     assert.equal(sizes.at(-1)?.phase, "error");
     assert.ok(sizes.at(-1)?.summaryInput?.bytes);
+    if (mode === "timeout") assert.equal(sizes.at(-1)?.failure, "MODEL_TIMEOUT");
     if (mode === "oversize") {
       const report = sizes.at(-1)!;
       assert.equal(report.failure, "CONTEXT_SUMMARY_NOT_REDUCED");
