@@ -44,7 +44,7 @@
     "@langchain/langgraph-checkpoint": "1.2.2",
     "better-auth": "1.7.18",
     "chrome-remote-interface": "0.34.0",
-    "cron-parser": "5.10.3",
+    "cron-parser": "5.10.6",
     "drizzle-orm": "0.45.4",
     "hono": "4.13.16",
     "ipaddr.js": "2.5.0",
