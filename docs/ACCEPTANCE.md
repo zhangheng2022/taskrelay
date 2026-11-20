@@ -1,5 +1,11 @@
 # TaskRelay 验收记录
 
+## 2026-11-20 模型请求超时（0.27.5 生产验收）
+
+- [修复 PR #102](https://github.com/zhangheng2022/taskrelay/pull/102) 已合入，提交 `2acc354bbe5a160304b56baf5c79c6c101789581` 的[主分支 CI](https://github.com/zhangheng2022/taskrelay/actions/runs/44656315592)和[生产发布](https://github.com/zhangheng2022/taskrelay/actions/runs/44657295048)均通过。Worker 版本为 `c0cf118a-d65b-4954-b496-74fac28f3171`，D1 无新增迁移。
+- 主域与备用域均返回该提交、协议 19 及 [Windows 0.27.5](https://github.com/zhangheng2022/taskrelay/releases/tag/v0.27.5) 更新。两个更新包端点 HEAD 为 200，清单、下载响应头和 GitHub 资产一致，大小 387899526 字节，SHA-256 为 `cc5edb20f9e3c165f98b530e0a061a0731fae39a11827a4ad2da4f44e5183386`。发布作业核验了完整下载与哈希。两域匿名及 Bearer 权限检查通过。
+- 托管 Windows 验证了签名、包内 smoke、实际安装、系统快捷方式启动和安装 ASAR。120 秒窗口的时间边界由隔离回归验证，用户设备升级和真实 Rewards 任务尚待复验。
+
 ## 2026-11-20 模型请求超时（0.27.5 源码验收）
 
 - 0.27.4 的执行器诊断记录第 96 轮摘要在 63.4 秒时报错。云端对应同一请求在出站后约 61.8 秒记为 `MODEL_TIMEOUT`、结果未知，当时使用已选模型的非流式路径。这一轮历史估算为 5044，允许 5546，摘要请求已送出。数据仅取执行阶段、体积及云端调用元数据。
