@@ -79,6 +79,7 @@ export const contextSizeReportSchema = z.strictObject({
       "SUMMARY_TOOL_PAIR_INVALID",
       "CONTEXT_SUMMARY_NOT_REDUCED",
       "MODEL_CONTEXT_TOO_LARGE",
+      "MODEL_TIMEOUT",
       "other",
     ])
     .optional(),

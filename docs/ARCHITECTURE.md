@@ -4,7 +4,7 @@
 
 聊天展示由共享 `ChatMarkdown` 使用 Streamdown 解析助手正文，新交办、任务会话和云端/执行器草稿共用；用户原文、来源状态、Trace 和附件独立展示。草稿只在视图中补全未闭合语法，pending/interrupted 不表示继续生成；正式消息静态解析保存的原文，不改协议或存储。代码块沿用 shadcn CodeBlock；HTML 不执行，图片语法只显示替代文字，链接只开放完整、不带凭据的 HTTP/HTTPS 地址并在新标签页打开。原始附件仍使用受鉴权的图片链路；滚动、去重和草稿交接仍由既有 MessageScroller/useThread 负责。
 
-模型侧使用官方 OpenAI SDK 的 Responses HTTP 流。公网校验、禁止重定向、60 秒整个响应超时、2 MB 上限、固定错误和 `maxRetries:0` 继续由 adapter 负责；成功流逐块读取，只有终止事件完整到达后返回原有 ModelResponse。文字预览独立发送，工具参数及结构化结果仍完整汇总、校验后交给 LangGraph；Stagehand ClientLLM.generate 也保留完整返回约定。内部摘要、推理分片、工具参数及 Stagehand 输出不发布到聊天正文。
+模型侧使用官方 OpenAI SDK 的 Responses HTTP 流。适配器负责公网校验、禁止重定向、120 秒整请求期限、2 MB 上限、固定错误和 `maxRetries:0`。期限覆盖首次响应和完整正文，收到分片不会重新计时。成功流逐块读取，只有终止事件完整到达后返回原有 ModelResponse。文字预览独立发送，工具参数及结构化结果仍完整汇总、校验后交给 LangGraph。Stagehand ClientLLM.generate 也保留完整返回约定。内部摘要、推理分片、工具参数及 Stagehand 输出不发布到聊天正文。
 
 生产路径仍为 `models.invoke → egress → ModelEgress（版本固定区域）→ alarm → AI Gateway`。同一 submitAndWait RPC 等待终态并 ack，流期间没有新增 RPC 轮询。alarm 主动向用户的 NotificationHub 发布草稿，网站连接生命周期不影响任务。每个固定模型配置版本分别记录 text/tools/structured 流能力；未知类型先发送不含用户业务的独立探测。仅明确不支持且同格式非流式控制探测通过后，后续业务选用同模型完整响应；网络故障保持未知。业务调用已发送后的超时、断流、未知结果均不重发或切换模型，调用去重先于能力选择和开关读取。
 
@@ -251,7 +251,7 @@ Stagehand 视觉输入上传为 `purpose=vision` 的私有临时图片，后续 
 
 桌面执行器使用自动工具选择。能力探测与相应的流式探测发送相同的选择方式，并检查返回的函数名与实参。文本、工具及结构化流式分开探测。版本读取与最终出站均检查固定版本协议，清理旧配置后，有任务或聊天外键引用的版本只保留历史标识。旧费用在删除单价前固化到使用记录。管理员也可删除已停用的平台模型配置；已发送调用迟到的用量按原模型版本单价入账。
 
-submitAndWait 一次 RPC 完成提交与等待，循环在对象内部。alarm 期间不能新建读取 RPC 替换入站 I/O 上下文，终态才 ack。作业与结果短期加密，未确认记录过期清理。上游调用前持久化 running；中断保持 MODEL_CALL_OUTCOME_UNKNOWN，不重放。workerd 的 MODEL_REGION_REQUIRES_DEPLOYMENT 不得绕过，地区和真实模型证据必须来自部署环境。
+submitAndWait 一次 RPC 完成提交与等待，循环在对象内部。150 秒等待为上游的 120 秒期限保留调度和回传余量，桌面模型请求的 HTTP 截止为 180 秒。alarm 期间不能新建读取 RPC 替换入站 I/O 上下文，终态才 ack。作业与结果短期加密，未确认记录过期清理。上游调用前持久化 running；中断保持 MODEL_CALL_OUTCOME_UNKNOWN，不重放。workerd 的 MODEL_REGION_REQUIRES_DEPLOYMENT 不得绕过，地区和真实模型证据必须来自部署环境。
 
 模型名自由输入，统一使用 Responses API。缺少必需能力时拒绝使用，不暗换模型或提供方。自定义服务仅允许校验后的公网 HTTPS，拒绝跨域重定向传递凭据；上游错误映射公开分类，不返回响应正文。用量来自实际响应，缺少 token 或价格显示“未知”。
 
