@@ -46,7 +46,7 @@
     "chrome-remote-interface": "0.34.0",
     "cron-parser": "5.10.3",
     "drizzle-orm": "0.45.4",
-    "hono": "4.13.16",
+    "hono": "4.13.19",
     "ipaddr.js": "2.5.0",
     "jose": "6.2.15",
     "langchain": "1.6.2",
