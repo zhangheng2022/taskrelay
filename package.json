@@ -39,9 +39,9 @@
   "dependencies": {
     "@better-auth/drizzle-adapter": "1.7.18",
     "@browserbasehq/stagehand": "4.4.0",
-    "@langchain/core": "1.3.5",
-    "@langchain/langgraph": "1.7.1",
-    "@langchain/langgraph-checkpoint": "1.2.2",
+    "@langchain/core": "1.4.2",
+    "@langchain/langgraph": "1.7.5",
+    "@langchain/langgraph-checkpoint": "1.2.3",
     "better-auth": "1.7.18",
     "chrome-remote-interface": "0.34.0",
     "cron-parser": "5.10.3",
@@ -49,8 +49,8 @@
     "hono": "4.13.16",
     "ipaddr.js": "2.5.0",
     "jose": "6.2.15",
-    "langchain": "1.6.2",
-    "openai": "7.52.0",
+    "langchain": "1.6.7",
+    "openai": "7.61.0",
     "p-limit": "7.3.3",
     "zod": "4.6.7"
   },
